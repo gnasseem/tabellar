@@ -1,5 +1,29 @@
 import type { Metadata } from "next";
+import { Syne, DM_Sans, Space_Mono } from "next/font/google";
 import "./globals.css";
+
+const syne = Syne({
+  subsets: ["latin"],
+  weight: ["400", "700", "800"],
+  variable: "--font-syne",
+  display: "swap",
+});
+
+const dmSans = DM_Sans({
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "700"],
+  style: ["normal", "italic"],
+  variable: "--font-dm-sans",
+  display: "swap",
+});
+
+const spaceMono = Space_Mono({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  style: ["normal", "italic"],
+  variable: "--font-space-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "RuneMail - AI Email Manager",
@@ -15,17 +39,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className={`${syne.variable} ${dmSans.variable} ${spaceMono.variable}`}>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link
           rel="preconnect"
           href="https://fonts.gstatic.com"
           crossOrigin="anonymous"
-        />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300..700;1,9..40,400&family=Space+Mono:ital,wght@0,400;0,700;1,400&display=swap"
         />
         <link
           rel="stylesheet"

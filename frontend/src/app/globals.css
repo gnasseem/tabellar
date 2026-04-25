@@ -38,7 +38,7 @@ body {
   color: var(--foreground);
   background: var(--background);
   font-family:
-    "DM Sans",
+    var(--font-dm-sans),
     system-ui,
     -apple-system,
     sans-serif;
@@ -124,7 +124,7 @@ input[type="datetime-local"] {
 
 /* ── RuneMail wordmark ── */
 .runemail-wordmark {
-  font-family: "Syne", sans-serif;
+  font-family: var(--font-syne), sans-serif;
   font-weight: 800;
   letter-spacing: -0.02em;
   background: linear-gradient(135deg, #c4954a 5%, #82b07a 52%, #3a6b48 95%);
