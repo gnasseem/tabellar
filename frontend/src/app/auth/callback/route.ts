@@ -53,6 +53,7 @@ export async function GET(request: Request) {
   const isSignUp = searchParams.get("is_signup") === "1";
   const pendingMode = searchParams.get("ai_mode");
   const pendingTheme = searchParams.get("theme");
+  const pendingBriefingScope = searchParams.get("briefing_scope");
 
   const base = pickBase(request, origin);
 
@@ -134,6 +135,8 @@ export async function GET(request: Request) {
       updates.ai_mode = pendingMode;
     if (pendingTheme && ["dark", "light"].includes(pendingTheme))
       updates.theme = pendingTheme;
+    if (pendingBriefingScope && ["today_new", "past_2_days", "past_week", "all_recent"].includes(pendingBriefingScope))
+      updates.briefing_scope = pendingBriefingScope;
     if (Object.keys(updates).length > 0) {
       await supabase.from("profiles").update(updates).eq("id", userId);
     }

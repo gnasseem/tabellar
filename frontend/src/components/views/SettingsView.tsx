@@ -1854,25 +1854,25 @@ export default function SettingsView() {
                     {
                       id: "today_new",
                       icon: "today",
-                      label: "New emails today",
-                      desc: "Only emails that arrived today and haven't been briefed yet.",
+                      label: "Today",
+                      desc: "New emails from today only.",
                     },
                     {
-                      id: "today_unread",
-                      icon: "mark_email_unread",
-                      label: "Unread emails today",
-                      desc: "Emails that arrived today and are still unread in Gmail.",
+                      id: "past_2_days",
+                      icon: "calendar_view_day",
+                      label: "2 days",
+                      desc: "Everything from the last 2 days; good for catching up after a day off.",
                     },
                     {
                       id: "past_week",
                       icon: "date_range",
-                      label: "Past week",
+                      label: "Week",
                       desc: "Emails from the last 7 days for a broader overview.",
                     },
                     {
                       id: "all_recent",
                       icon: "inbox",
-                      label: "Last 40 emails",
+                      label: "Full inbox",
                       desc: "Your 40 most recent emails regardless of date.",
                     },
                   ] as const

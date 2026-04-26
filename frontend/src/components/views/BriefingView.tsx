@@ -463,10 +463,20 @@ function SectionHeader({ icon, label, color }: { icon: string; label: string; co
   );
 }
 
+type BriefingScope = "today_new" | "past_2_days" | "past_week" | "all_recent";
+
+const BRIEFING_SCOPE_OPTIONS: { id: BriefingScope; label: string; desc: string }[] = [
+  { id: "today_new", label: "Today", desc: "New emails from today" },
+  { id: "past_2_days", label: "2 days", desc: "Last 2 days catch-up" },
+  { id: "past_week", label: "Week", desc: "Past 7 days" },
+  { id: "all_recent", label: "Full inbox", desc: "40 most recent emails" },
+];
+
 export default function BriefingView() {
   const {
     user,
     profile,
+    updateProfile,
     getViewCache,
     setViewCache,
     invalidateViewCache,
@@ -504,6 +514,17 @@ export default function BriefingView() {
     } catch { return new Set(); }
   });
   const generateBriefingOnDemandRef = useRef<(() => void) | null>(null);
+  const validScopes = BRIEFING_SCOPE_OPTIONS.map((o) => o.id);
+  const rawScope = profile?.briefing_scope ?? "today_new";
+  const activeScope: BriefingScope = validScopes.includes(rawScope as BriefingScope) ? (rawScope as BriefingScope) : "today_new";
+  const [scopeDropdownOpen, setScopeDropdownOpen] = useState(false);
+
+  const saveScope = useCallback(async (scope: BriefingScope) => {
+    setScopeDropdownOpen(false);
+    updateProfile({ briefing_scope: scope });
+    await supabase.from("profiles").update({ briefing_scope: scope }).eq("id", user.id);
+    void requestBriefingRegeneration();
+  }, [supabase, user.id, updateProfile, requestBriefingRegeneration]);
 
   const isFromToday = (ts: number | null | undefined): boolean => {
     if (!ts) return false;
@@ -839,6 +860,34 @@ export default function BriefingView() {
                     {briefingRegenerating ? "progress_activity" : "refresh"}
                   </span>
                 </button>
+                {/* Subtle scope selector */}
+                <div className="relative">
+                  <button
+                    onClick={() => setScopeDropdownOpen((v) => !v)}
+                    className="flex items-center gap-1 rounded-full border border-[var(--border)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted)] transition-colors hover:border-[var(--accent)]/50 hover:text-[var(--foreground)]"
+                    title="Briefing scope"
+                  >
+                    {BRIEFING_SCOPE_OPTIONS.find((o) => o.id === activeScope)?.label ?? "Today"}
+                    <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>expand_more</span>
+                  </button>
+                  {scopeDropdownOpen && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setScopeDropdownOpen(false)} />
+                      <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-lg overflow-hidden">
+                        {BRIEFING_SCOPE_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.id}
+                            onClick={() => void saveScope(opt.id)}
+                            className={`w-full text-left px-3 py-2 flex flex-col transition-colors hover:bg-[var(--surface-2)] ${activeScope === opt.id ? "text-[var(--accent)]" : "text-[var(--foreground)]"}`}
+                          >
+                            <span className="text-[12px] font-medium">{opt.label}</span>
+                            <span className="text-[10px] text-[var(--muted)]">{opt.desc}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
                 <SolveAgentButton disabled={!hasContent || briefingRegenerating} />
               </div>
             </div>
@@ -853,19 +902,26 @@ export default function BriefingView() {
               </div>
             ) : !hasContent ? (
               <div className="text-center py-16 text-[var(--muted)]">
-                <span className="material-symbols-outlined mb-3" style={{ fontSize: "48px" }}>mark_email_read</span>
-                <p className="text-sm font-medium">No briefing available</p>
-                <p className="text-xs mt-1 opacity-70 mb-4">Generate a briefing from your current inbox.</p>
-                <button
-                  onClick={() => void requestBriefingRegeneration()}
-                  disabled={briefingRegenerating}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-                >
-                  <span className={`material-symbols-outlined ${briefingRegenerating ? "animate-spin" : ""}`} style={{ fontSize: "16px" }}>
-                    {briefingRegenerating ? "progress_activity" : "auto_awesome"}
-                  </span>
-                  {briefingRegenerating ? "Generating..." : "Generate Briefing"}
-                </button>
+                {briefingRegenerating ? (
+                  <>
+                    <span className="material-symbols-outlined mb-3 animate-spin text-[var(--accent)]" style={{ fontSize: "48px" }}>progress_activity</span>
+                    <p className="text-sm font-medium text-[var(--foreground)]">Generating your briefing...</p>
+                    <p className="text-xs mt-1 opacity-70">This takes a moment. You can keep using the app.</p>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined mb-3" style={{ fontSize: "48px" }}>mark_email_read</span>
+                    <p className="text-sm font-medium">No briefing available</p>
+                    <p className="text-xs mt-1 opacity-70 mb-4">Generate a briefing from your current inbox.</p>
+                    <button
+                      onClick={() => void requestBriefingRegeneration()}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>auto_awesome</span>
+                      Generate Briefing
+                    </button>
+                  </>
+                )}
               </div>
             ) : (
               <div className="space-y-5">

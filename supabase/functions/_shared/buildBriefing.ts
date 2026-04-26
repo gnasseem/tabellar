@@ -13,7 +13,7 @@ import {
   refineBriefingCards,
 } from "./ai.ts";
 
-type BriefingScope = "today_new" | "today_unread" | "past_week" | "all_recent";
+type BriefingScope = "today_new" | "today_unread" | "past_2_days" | "past_week" | "all_recent";
 
 type Bucket = "crucial" | "replyNeeded" | "deadlines" | "nonEssential";
 
@@ -451,7 +451,7 @@ export async function buildBriefingForUser(
   requestedScope?: BriefingScope,
 ): Promise<NormalizedBriefing> {
   let scope: BriefingScope = requestedScope ?? "today_new";
-  if (!["today_new", "today_unread", "past_week", "all_recent"].includes(scope)) {
+  if (!["today_new", "today_unread", "past_2_days", "past_week", "all_recent"].includes(scope)) {
     scope = "today_new";
   }
   if (!requestedScope) {
@@ -483,6 +483,9 @@ export async function buildBriefingForUser(
   const weekAgo = new Date(
     now.getTime() - 7 * 24 * 60 * 60 * 1000,
   ).toISOString();
+  const twoDaysAgo = new Date(
+    now.getTime() - 2 * 24 * 60 * 60 * 1000,
+  ).toISOString();
 
   if (scope === "today_new") {
     emailsQuery = emailsQuery.gte("received_at", todayStart).limit(100);
@@ -491,6 +494,8 @@ export async function buildBriefingForUser(
       .gte("received_at", todayStart)
       .eq("is_read", false)
       .limit(100);
+  } else if (scope === "past_2_days") {
+    emailsQuery = emailsQuery.gte("received_at", twoDaysAgo).limit(100);
   } else if (scope === "past_week") {
     emailsQuery = emailsQuery.gte("received_at", weekAgo).limit(100);
   } else {

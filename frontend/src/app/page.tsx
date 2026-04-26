@@ -5,6 +5,14 @@ import { createClient } from "@/lib/supabase/client";
 import "./landing.css";
 
 type AIMode = "cloud" | "local" | "hybrid";
+type BriefingScope = "today_new" | "past_2_days" | "past_week" | "all_recent";
+
+const BRIEFING_SCOPES: { id: BriefingScope; label: string; desc: string }[] = [
+  { id: "today_new", label: "Today", desc: "New emails from today" },
+  { id: "past_2_days", label: "2 days", desc: "Last 2 days catch-up" },
+  { id: "past_week", label: "Week", desc: "Past 7 days" },
+  { id: "all_recent", label: "Full inbox", desc: "40 most recent emails" },
+];
 
 const AI_MODES: { id: AIMode; name: string; desc: string; icon: React.ReactNode }[] = [
   {
@@ -42,9 +50,10 @@ const AI_MODES: { id: AIMode; name: string; desc: string; icon: React.ReactNode 
   },
 ];
 
-function AIModeModal({ onContinue, onClose }: { onContinue: (mode: AIMode, theme: "dark" | "light") => void; onClose: () => void }) {
+function AIModeModal({ onContinue, onClose }: { onContinue: (mode: AIMode, theme: "dark" | "light", scope: BriefingScope) => void; onClose: () => void }) {
   const [selected, setSelected] = useState<AIMode>("cloud");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [briefingScope, setBriefingScope] = useState<BriefingScope>("today_new");
 
   return (
     <div className="ax-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -113,7 +122,27 @@ function AIModeModal({ onContinue, onClose }: { onContinue: (mode: AIMode, theme
           </button>
         </div>
 
-        <button className="ax-modal-continue" style={{ marginTop: 32 }} onClick={() => onContinue(selected, theme)}>
+        {/* Briefing scope */}
+        <div className="ax-modal-section-label" style={{ marginTop: 28 }}>Briefing scope</div>
+        <div className="ax-mode-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
+          {BRIEFING_SCOPES.map((scope) => (
+            <button
+              key={scope.id}
+              className={`ax-mode-card${briefingScope === scope.id ? " selected" : ""}`}
+              onClick={() => setBriefingScope(scope.id)}
+            >
+              <div className="ax-mode-check">
+                <div className="ax-mode-check-dot" />
+              </div>
+              <div>
+                <div className="ax-mode-name">{scope.label}</div>
+                <div className="ax-mode-desc">{scope.desc}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+
+        <button className="ax-modal-continue" style={{ marginTop: 32 }} onClick={() => onContinue(selected, theme, briefingScope)}>
           <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
             <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
@@ -150,13 +179,13 @@ export default function LandingPage() {
     "https://www.googleapis.com/auth/directory.readonly",
   ].join(" ");
 
-  const triggerOAuth = async (mode: AIMode, theme: "dark" | "light") => {
+  const triggerOAuth = async (mode: AIMode, theme: "dark" | "light", scope: BriefingScope) => {
     setShowModeModal(false);
     const supabase = createClient();
     await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback?ai_mode=${mode}&theme=${theme}&is_signup=1`,
+        redirectTo: `${window.location.origin}/auth/callback?ai_mode=${mode}&theme=${theme}&briefing_scope=${scope}&is_signup=1`,
         scopes: GOOGLE_SCOPES,
         queryParams: { access_type: "offline", prompt: "consent" },
       },
@@ -390,7 +419,7 @@ export default function LandingPage() {
   return (
     <>
       {showModeModal && (
-        <AIModeModal onContinue={(mode, theme) => triggerOAuth(mode, theme)} onClose={() => setShowModeModal(false)} />
+        <AIModeModal onContinue={(mode, theme, scope) => triggerOAuth(mode, theme, scope)} onClose={() => setShowModeModal(false)} />
       )}
 
       {/* Cursor glow */}

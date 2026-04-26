@@ -1804,12 +1804,13 @@ Deno.serve(async (req) => {
         const scopeParam = urlObj.searchParams.get("scope");
         const scopeArg =
           scopeParam &&
-          ["today_new", "today_unread", "past_week", "all_recent"].includes(
+          ["today_new", "today_unread", "past_2_days", "past_week", "all_recent"].includes(
             scopeParam,
           )
             ? (scopeParam as
                 | "today_new"
                 | "today_unread"
+                | "past_2_days"
                 | "past_week"
                 | "all_recent")
             : undefined;
