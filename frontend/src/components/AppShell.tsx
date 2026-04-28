@@ -923,6 +923,26 @@ export default function AppShell({
     [],
   );
 
+  // Polling fallback: re-sync session every 5s while active, in case a
+  // Realtime UPDATE event was missed (requires REPLICA IDENTITY FULL which is
+  // now set, but belt-and-suspenders keeps the UI from getting stuck).
+  useEffect(() => {
+    const sid = agentSession?.id;
+    if (!sid || sid === "__starting__") return;
+    if (!["planning", "asking", "executing"].includes(agentSession?.status ?? ""))
+      return;
+    const interval = setInterval(async () => {
+      const supabase = createClient();
+      const session = await apiFetchSession(supabase, sid);
+      if (!session) return;
+      if (session.status !== agentSession?.status) {
+        setAgentSession(session);
+        await loadAgentTurns(sid);
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [agentSession?.id, agentSession?.status, loadAgentTurns]);
+
   // ── Background TTS jobs ────────────────────────────────────────────────
   const [ttsJobs, setTtsJobs] = useState<Record<string, TtsJob>>({});
   const ttsJobsRef = useRef<Record<string, TtsJob>>({});
