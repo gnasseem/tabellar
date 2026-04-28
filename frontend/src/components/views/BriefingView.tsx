@@ -272,12 +272,14 @@ function EmailCard({
   onDismiss,
   hideUrgency,
   accent = "crucial",
+  isResolved,
 }: {
   email: BriefingEmail;
   onClick?: () => void;
   onDismiss?: () => void;
   hideUrgency?: boolean;
   accent?: BriefingAccent;
+  isResolved?: boolean;
 }) {
   const hasNoReply = email.tags?.includes("NO_REPLY");
   const borderAccent = ACCENT_BORDER[hideUrgency ? "noise" : accent];
@@ -302,9 +304,16 @@ function EmailCard({
         onKeyDown={onClick ? (e) => e.key === "Enter" && onClick() : undefined}
       >
         <div className="flex-1 min-w-0">
-          <span className="text-[12px] font-medium text-[var(--foreground)] truncate block leading-snug font-['DM_Sans',ui-sans-serif,sans-serif]">
-            {email.subject}
-          </span>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[12px] font-medium text-[var(--foreground)] truncate block leading-snug font-['DM_Sans',ui-sans-serif,sans-serif]">
+              {email.subject}
+            </span>
+            {isResolved && (
+              <span className="shrink-0 text-[9px] px-1 py-0.5 rounded font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+                resolved
+              </span>
+            )}
+          </div>
           {senderLabel && (
             <span className="text-[10px] text-[var(--muted)] truncate block leading-snug">{senderLabel}</span>
           )}
@@ -358,6 +367,11 @@ function EmailCard({
               {tag}
             </span>
           ))}
+          {isResolved && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+              resolved
+            </span>
+          )}
         </div>
         {onDismiss && (
           <button
@@ -396,11 +410,13 @@ function GroupedEmailCard({
   onClickEmail,
   onDismiss,
   accent = "crucial",
+  resolvedIds,
 }: {
   group: BriefingEmail[];
   onClickEmail?: (email: BriefingEmail) => void;
   onDismiss?: (email: BriefingEmail) => void;
   accent?: BriefingAccent;
+  resolvedIds?: Set<string>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const sorted = [...group].sort((a, b) => (URGENCY_ORDER[a.urgency] ?? 3) - (URGENCY_ORDER[b.urgency] ?? 3));
@@ -412,6 +428,7 @@ function GroupedEmailCard({
       <EmailCard
         email={primary}
         accent={accent}
+        isResolved={primary.email_id ? resolvedIds?.has(primary.email_id) : false}
         onClick={primary.email_id && onClickEmail ? () => onClickEmail(primary) : undefined}
         onDismiss={primary.email_id && onDismiss ? () => onDismiss(primary) : undefined}
       />
@@ -434,6 +451,7 @@ function GroupedEmailCard({
                   key={email.email_id ?? i}
                   email={email}
                   accent={accent}
+                  isResolved={email.email_id ? resolvedIds?.has(email.email_id) : false}
                   onClick={email.email_id && onClickEmail ? () => onClickEmail(email) : undefined}
                   onDismiss={email.email_id && onDismiss ? () => onDismiss(email) : undefined}
                 />
@@ -518,6 +536,13 @@ export default function BriefingView() {
   const rawScope = profile?.briefing_scope ?? "today_new";
   const activeScope: BriefingScope = validScopes.includes(rawScope as BriefingScope) ? (rawScope as BriefingScope) : "today_new";
   const [scopeDropdownOpen, setScopeDropdownOpen] = useState(false);
+  const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
+  const [resolvedSortToEnd, setResolvedSortToEnd] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem(`runemail_resolved_sort_end_${user.id}`);
+      return raw === null ? true : raw === "true";
+    } catch { return true; }
+  });
 
   const saveScope = useCallback(async (scope: BriefingScope) => {
     setScopeDropdownOpen(false);
@@ -646,6 +671,26 @@ export default function BriefingView() {
       loadCachedBriefing();
     }
   }, [briefingVersion, invalidateViewCache, loadCachedBriefing]);
+
+  useEffect(() => {
+    if (!briefing) return;
+    const norm = normalizeBriefing(briefing, followUps);
+    const ids = [
+      ...norm.crucial,
+      ...norm.replyNeeded,
+      ...norm.deadlines,
+      ...norm.nonEssential,
+    ].map((e) => e.email_id).filter((id): id is string => Boolean(id));
+    if (ids.length === 0) return;
+    supabase
+      .from("emails")
+      .select("id, resolved_at")
+      .in("id", ids)
+      .not("resolved_at", "is", null)
+      .then(({ data }) => {
+        if (data) setResolvedIds(new Set(data.map((r: any) => r.id)));
+      });
+  }, [briefing, followUps, supabase]);
 
   const dismissCard = useCallback((id: string) => {
     setDismissedIds((prev) => {
@@ -873,7 +918,7 @@ export default function BriefingView() {
                   {scopeDropdownOpen && (
                     <>
                       <div className="fixed inset-0 z-10" onClick={() => setScopeDropdownOpen(false)} />
-                      <div className="absolute right-0 top-full z-20 mt-1 w-44 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-lg overflow-hidden">
+                      <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-lg overflow-hidden">
                         {BRIEFING_SCOPE_OPTIONS.map((opt) => (
                           <button
                             key={opt.id}
@@ -884,6 +929,22 @@ export default function BriefingView() {
                             <span className="text-[10px] text-[var(--muted)]">{opt.desc}</span>
                           </button>
                         ))}
+                        <div className="border-t border-[var(--border)] px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = !resolvedSortToEnd;
+                              setResolvedSortToEnd(next);
+                              try { localStorage.setItem(`runemail_resolved_sort_end_${user.id}`, String(next)); } catch { /* ignore */ }
+                            }}
+                            className="w-full flex items-center justify-between gap-2 text-left"
+                          >
+                            <span className="text-[11px] text-[var(--foreground)]">Resolved emails sort to end</span>
+                            <span className={`relative inline-flex h-4 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors ${resolvedSortToEnd ? "bg-emerald-500" : "bg-[var(--border)]"}`}>
+                              <span className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow-sm transform transition-transform ${resolvedSortToEnd ? "translate-x-3" : "translate-x-0"}`} />
+                            </span>
+                          </button>
+                        </div>
                       </div>
                     </>
                   )}
@@ -1047,6 +1108,7 @@ export default function BriefingView() {
                                   key={group[0].email_id ?? i}
                                   group={group}
                                   accent="reply"
+                                  resolvedIds={resolvedIds}
                                   onClickEmail={(e) => e.email_id && openEmailById(e.email_id)}
                                   onDismiss={(e) => e.email_id && dismissCard(e.email_id)}
                                 />
@@ -1063,6 +1125,7 @@ export default function BriefingView() {
                                   key={email.email_id ?? i}
                                   email={email}
                                   accent="reply"
+                                  isResolved={email.email_id ? resolvedIds.has(email.email_id) : false}
                                   onClick={email.email_id ? () => openEmailById(email.email_id!) : undefined}
                                   onDismiss={email.email_id ? () => dismissCard(email.email_id!) : undefined}
                                 />
@@ -1115,6 +1178,7 @@ export default function BriefingView() {
                                       ? "noise"
                                       : "crucial"
                                 }
+                                isResolved={email.email_id ? resolvedIds.has(email.email_id) : false}
                                 onClick={email.email_id ? () => openEmailById(email.email_id!) : undefined}
                                 onDismiss={email.email_id ? () => dismissCard(email.email_id!) : undefined}
                               />
@@ -1137,6 +1201,7 @@ export default function BriefingView() {
                               key={group[0].email_id ?? i}
                               group={group}
                               accent="reply"
+                              resolvedIds={resolvedIds}
                               onClickEmail={(e) => e.email_id && openEmailById(e.email_id)}
                               onDismiss={(e) => e.email_id && dismissCard(e.email_id)}
                             />
@@ -1155,6 +1220,7 @@ export default function BriefingView() {
                               key={email.email_id ?? i}
                               email={email}
                               accent="reply"
+                              isResolved={email.email_id ? resolvedIds.has(email.email_id) : false}
                               onClick={email.email_id ? () => openEmailById(email.email_id!) : undefined}
                               onDismiss={email.email_id ? () => dismissCard(email.email_id!) : undefined}
                             />
@@ -1174,6 +1240,7 @@ export default function BriefingView() {
                                 key={group[0].email_id ?? i}
                                 group={group}
                                 accent="crucial"
+                                resolvedIds={resolvedIds}
                                 onClickEmail={(e) => e.email_id && openEmailById(e.email_id)}
                                 onDismiss={(e) => e.email_id && dismissCard(e.email_id)}
                               />
@@ -1199,6 +1266,7 @@ export default function BriefingView() {
                                     key={group[0].email_id ?? i}
                                     group={group}
                                     accent="crucial"
+                                    resolvedIds={resolvedIds}
                                     onClickEmail={(e) => e.email_id && openEmailById(e.email_id)}
                                     onDismiss={(e) => e.email_id && dismissCard(e.email_id)}
                                   />
@@ -1219,6 +1287,7 @@ export default function BriefingView() {
                               key={group[0].email_id ?? i}
                               group={group}
                               accent="deadline"
+                              resolvedIds={resolvedIds}
                               onClickEmail={(e) => e.email_id && openEmailById(e.email_id)}
                               onDismiss={(e) => e.email_id && dismissCard(e.email_id)}
                             />
@@ -1256,6 +1325,7 @@ export default function BriefingView() {
                                 key={email.email_id ?? i}
                                 email={email}
                                 hideUrgency
+                                isResolved={email.email_id ? resolvedIds.has(email.email_id) : false}
                                 onClick={email.email_id ? () => openEmailById(email.email_id!) : undefined}
                                 onDismiss={email.email_id ? () => dismissCard(email.email_id!) : undefined}
                               />

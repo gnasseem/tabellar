@@ -48,6 +48,13 @@ const PAGE_SIZE = 20;
 // We fetch this many rows up-front and paginate client-side when smart sort is active.
 const SMART_SORT_WINDOW = 100;
 
+function getResolvedSortToEnd(userId: string): boolean {
+  try {
+    const raw = localStorage.getItem(`runemail_resolved_sort_end_${userId}`);
+    return raw === null ? true : raw === "true";
+  } catch { return true; }
+}
+
 export default function InboxView() {
   const {
     user,
@@ -168,14 +175,20 @@ export default function InboxView() {
       }
       const to = from + fetchLimit - 1;
 
+      const resolvedSortToEnd = getResolvedSortToEnd(user.id);
       let query = supabase
         .from("emails")
         .select("*, email_processed!inner(*)")
         .eq("user_id", user.id)
         .eq("is_archived", false)
         .not("label_ids", "cs", '{"SENT"}') // exclude imported sent emails from inbox
-        .or("is_snoozed.eq.false,snooze_until.lt." + new Date().toISOString())
-        .order("resolved_at", { ascending: true, nullsFirst: true })
+        .or("is_snoozed.eq.false,snooze_until.lt." + new Date().toISOString());
+
+      if (resolvedSortToEnd) {
+        query = query.order("resolved_at", { ascending: true, nullsFirst: true });
+      }
+
+      query = query
         .order("received_at", { ascending: false })
         .range(from, to + 1);
 
@@ -1027,7 +1040,7 @@ export default function InboxView() {
 
           if (e.is_starred) s += 10;
 
-          if (e.resolved_at) s -= 1000;
+          if (e.resolved_at && getResolvedSortToEnd(user.id)) s -= 1000;
 
           const ageHours =
             (Date.now() - new Date(e.received_at).getTime()) / 3600000;

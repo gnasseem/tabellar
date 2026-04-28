@@ -102,6 +102,7 @@ export interface BriefingEmail {
   evidence?: string;
   relationshipHint?: "first-party" | "known-contact" | "stranger" | "auto" | string;
   suggestedAction?: "reply" | "todo" | "meeting" | "archive" | "ignore" | string;
+  resolved_at?: string | null;
 }
 
 export interface DeadlineItem {
