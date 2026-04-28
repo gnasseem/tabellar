@@ -23,6 +23,7 @@ type Email = {
   is_archived: boolean;
   has_attachments: boolean;
   thread_id?: string;
+  resolved_at?: string | null;
   email_processed: {
     category: string;
     summary: string;
@@ -174,6 +175,7 @@ export default function InboxView() {
         .eq("is_archived", false)
         .not("label_ids", "cs", '{"SENT"}') // exclude imported sent emails from inbox
         .or("is_snoozed.eq.false,snooze_until.lt." + new Date().toISOString())
+        .order("resolved_at", { ascending: true, nullsFirst: true })
         .order("received_at", { ascending: false })
         .range(from, to + 1);
 
@@ -1025,6 +1027,8 @@ export default function InboxView() {
 
           if (e.is_starred) s += 10;
 
+          if (e.resolved_at) s -= 1000;
+
           const ageHours =
             (Date.now() - new Date(e.received_at).getTime()) / 3600000;
           s += 30 * Math.exp(-ageHours / 12);
@@ -1395,6 +1399,11 @@ export default function InboxView() {
                               style={{ fontSize: "12px" }}
                             >
                               attachment
+                            </span>
+                          )}
+                          {latest.resolved_at && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 shrink-0">
+                              resolved
                             </span>
                           )}
                           <div className="ml-auto flex items-center gap-1">

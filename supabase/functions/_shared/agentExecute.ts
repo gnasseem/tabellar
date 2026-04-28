@@ -119,7 +119,7 @@ export async function executeAgentPlan(
           if (action.linked_email_id) {
             await supabase
               .from("emails")
-              .update({ is_read: true })
+              .update({ is_read: true, resolved_at: new Date().toISOString() })
               .eq("id", action.linked_email_id)
               .eq("user_id", userId);
           }
@@ -162,6 +162,14 @@ export async function executeAgentPlan(
             is_read: true,
             label_ids: ["SENT"],
           });
+          if (action.linked_email_id) {
+            await supabase
+              .from("emails")
+              .update({ resolved_at: new Date().toISOString() })
+              .eq("id", action.linked_email_id)
+              .eq("user_id", userId)
+              .is("resolved_at", null);
+          }
           results[action.id] = {
             status: "success",
             info: `Sent reply to ${to}`,
@@ -174,6 +182,14 @@ export async function executeAgentPlan(
             subject,
             body_html: plainToHtml(body),
           });
+          if (action.linked_email_id) {
+            await supabase
+              .from("emails")
+              .update({ resolved_at: new Date().toISOString() })
+              .eq("id", action.linked_email_id)
+              .eq("user_id", userId)
+              .is("resolved_at", null);
+          }
           results[action.id] = {
             status: "success",
             info: `Draft saved for ${to}`,
@@ -195,6 +211,14 @@ export async function executeAgentPlan(
           row.email_id = action.linked_email_id;
         }
         await supabase.from("todos").insert(row);
+        if (action.linked_email_id) {
+          await supabase
+            .from("emails")
+            .update({ resolved_at: new Date().toISOString() })
+            .eq("id", action.linked_email_id)
+            .eq("user_id", userId)
+            .is("resolved_at", null);
+        }
         results[action.id] = {
           status: "success",
           info: `Added todo "${title}"`,
@@ -263,6 +287,14 @@ export async function executeAgentPlan(
           console.warn("[agentExecute] calendar create failed:", calErr);
         }
 
+        if (action.linked_email_id) {
+          await supabase
+            .from("emails")
+            .update({ resolved_at: new Date().toISOString() })
+            .eq("id", action.linked_email_id)
+            .eq("user_id", userId)
+            .is("resolved_at", null);
+        }
         results[action.id] = {
           status: "success",
           info: `Scheduled "${title}" at ${startIso}${meetingRow ? "" : " (local only)"}`,
@@ -274,9 +306,10 @@ export async function executeAgentPlan(
         if (!ids.length) throw new Error("Archive action has no email_ids");
         await supabase
           .from("emails")
-          .update({ is_archived: true })
+          .update({ is_archived: true, resolved_at: new Date().toISOString() })
           .in("id", ids)
-          .eq("user_id", userId);
+          .eq("user_id", userId)
+          .is("resolved_at", null);
         results[action.id] = {
           status: "success",
           info: `Archived ${ids.length} email${ids.length === 1 ? "" : "s"}`,

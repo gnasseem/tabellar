@@ -721,6 +721,25 @@ export async function runAgentStep(
   };
 
   let draftActions = [...(session.draft_actions ?? [])];
+
+  // If this sub-agent's bucket was already finalized in a previous run (e.g.
+  // another bucket asked a question causing a re-launch), skip it immediately.
+  // Without this, previously-finalized sub-agents loop on text-only responses
+  // after seeing their completed turn history.
+  if (bucket && bucket !== "single") {
+    const { data: ft } = await supabase
+      .from("agent_turns")
+      .select("id")
+      .eq("session_id", sessionId)
+      .eq("role", "tool")
+      .eq("tool_name", "finalize")
+      .eq("bucket", bucket)
+      .limit(1);
+    if (ft?.length) {
+      return { status: "bucket_done", plan: null, draft_actions: draftActions, summary: "" };
+    }
+  }
+
   const system = buildSystemPrompt(userTimezone, bucket);
 
   try {
