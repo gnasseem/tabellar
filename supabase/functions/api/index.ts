@@ -3981,9 +3981,18 @@ Deno.serve(async (req) => {
       };
       const sessionId = await startAgentSession(supabase, userId);
       // Fire-and-forget: kick off the parallel bucket orchestrator.
-      runAgentStepParallel(sessionId, supabase, body.timezone ?? "UTC").catch(
-        (e) => console.error("[agent/start] initial parallel step failed:", e),
+      // waitUntil keeps the execution context alive after the response is sent
+      // so the orchestrator's consolidation step actually completes.
+      const bgStart = runAgentStepParallel(
+        sessionId,
+        supabase,
+        body.timezone ?? "UTC",
+      ).catch((e) =>
+        console.error("[agent/start] initial parallel step failed:", e),
       );
+      (globalThis as unknown as Record<symbol, { waitUntil: (p: Promise<unknown>) => void }>)[
+        Symbol.for("EdgeRuntime")
+      ]?.waitUntil(bgStart);
       return json({ session_id: sessionId }, 200, corsHeaders);
     }
 
@@ -4007,12 +4016,15 @@ Deno.serve(async (req) => {
       if (!session) {
         return json({ error: "Session not found" }, 404, corsHeaders);
       }
-      const result = await runAgentStepParallel(
+      const bgStep = runAgentStepParallel(
         body.session_id,
         supabase,
         body.timezone ?? "UTC",
-      );
-      return json(result, 200, corsHeaders);
+      ).catch((e) => console.error("[agent/step] parallel step failed:", e));
+      (globalThis as unknown as Record<symbol, { waitUntil: (p: Promise<unknown>) => void }>)[
+        Symbol.for("EdgeRuntime")
+      ]?.waitUntil(bgStep);
+      return json({ status: "planning" }, 200, corsHeaders);
     }
 
     // Submit the user's answer to a pending question and resume planning.
@@ -4057,14 +4069,18 @@ Deno.serve(async (req) => {
       } else {
         await answerPendingQuestion(supabase, body.session_id, body);
       }
-      // Continue the parallel orchestrator so the bucket that paused resumes
-      // without blocking the others.
-      const result = await runAgentStepParallel(
+      // Fire-and-forget: resume the orchestrator. waitUntil keeps the context
+      // alive so consolidation completes; the frontend learns the new state
+      // via its existing Realtime subscription.
+      const bgAnswer = runAgentStepParallel(
         body.session_id,
         supabase,
         body.timezone ?? "UTC",
-      );
-      return json(result, 200, corsHeaders);
+      ).catch((e) => console.error("[agent/answer] parallel step failed:", e));
+      (globalThis as unknown as Record<symbol, { waitUntil: (p: Promise<unknown>) => void }>)[
+        Symbol.for("EdgeRuntime")
+      ]?.waitUntil(bgAnswer);
+      return json({ status: "planning" }, 200, corsHeaders);
     }
 
     // Execute an approved plan.
