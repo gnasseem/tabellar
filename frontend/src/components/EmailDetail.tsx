@@ -329,10 +329,30 @@ function lightenColor([r, g, b]: [number, number, number]): string {
 
 
 
+function processLinks(html: string): string {
+  if (typeof window === "undefined") return html;
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll("a[href]").forEach((a) => {
+      (a as HTMLElement).setAttribute("target", "_blank");
+      (a as HTMLElement).setAttribute("rel", "noopener noreferrer");
+      (a as HTMLElement).style.color = "#3b82f6";
+    });
+    return doc.body.innerHTML;
+  } catch {
+    return html;
+  }
+}
+
 function adaptTextForDarkMode(html: string): string {
   if (typeof window === "undefined") return html;
   try {
     const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll("a[href]").forEach((a) => {
+      (a as HTMLElement).setAttribute("target", "_blank");
+      (a as HTMLElement).setAttribute("rel", "noopener noreferrer");
+      (a as HTMLElement).style.color = "#60a5fa";
+    });
     const walk = (el: Element): void => {
       if (el instanceof HTMLElement) {
         // Lighten explicit dark text colors
@@ -370,7 +390,7 @@ function adaptTextForDarkMode(html: string): string {
 function EmailBody({ html, isDark }: { html: string; isDark: boolean }) {
   const processed = useMemo(() => {
     const content = fixMojibake(html);
-    return isDark ? adaptTextForDarkMode(content) : content;
+    return isDark ? adaptTextForDarkMode(content) : processLinks(content);
   }, [html, isDark]);
 
   return (
