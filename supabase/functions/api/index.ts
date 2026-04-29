@@ -2227,6 +2227,75 @@ Deno.serve(async (req) => {
       return json({ slots }, 200, corsHeaders);
     }
 
+    // ── GET /calendar/events ───────────────────────────────────────────────
+    if (path === "/calendar/events" && req.method === "GET") {
+      const accessToken = await getCalendarAccessTokenSafe(supabase, userId);
+      if (!accessToken) {
+        return json({ error: "No calendar access", events: [] }, 200, corsHeaders);
+      }
+      const url = new URL(req.url);
+      const dateParam = url.searchParams.get("date"); // YYYY-MM-DD, defaults to today
+      const timezone = url.searchParams.get("timezone") || "UTC";
+
+      const now = new Date();
+      const [y, mo, d] = dateParam
+        ? dateParam.split("-").map(Number)
+        : [now.getFullYear(), now.getMonth() + 1, now.getDate()];
+
+      // Build day boundaries in the user's timezone by shifting to midnight UTC equivalent
+      function zonedMidnight(year: number, month: number, day: number, tz: string, endOfDay: boolean): Date {
+        const guess = new Date(Date.UTC(year, month, day, endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0));
+        const fmt = new Intl.DateTimeFormat("en-US", {
+          timeZone: tz, year: "numeric", month: "numeric", day: "numeric",
+          hour: "numeric", minute: "numeric", hour12: false,
+        });
+        const parts = Object.fromEntries(fmt.formatToParts(guess).map((p) => [p.type, p.value]));
+        const tzMs = Date.UTC(parseInt(parts.year), parseInt(parts.month) - 1, parseInt(parts.day),
+          parseInt(parts.hour) % 24, parseInt(parts.minute));
+        return new Date(guess.getTime() + (guess.getTime() - tzMs));
+      }
+
+      const timeMin = zonedMidnight(y, mo - 1, d, timezone, false);
+      const timeMax = zonedMidnight(y, mo - 1, d, timezone, true);
+
+      const calRes = await fetch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
+          new URLSearchParams({
+            timeMin: timeMin.toISOString(),
+            timeMax: timeMax.toISOString(),
+            singleEvents: "true",
+            orderBy: "startTime",
+            maxResults: "25",
+            fields: "items(id,summary,start,end,attendees,location,hangoutLink,conferenceData,htmlLink,status,description)",
+          }),
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+
+      if (!calRes.ok) {
+        console.error("[calendar/events] google error:", await calRes.text());
+        return json({ error: "Calendar API failed", events: [] }, 200, corsHeaders);
+      }
+      const calData = await calRes.json();
+      const items = (calData.items ?? []) as any[];
+      const events = items
+        .filter((ev: any) => ev.status !== "cancelled")
+        .map((ev: any) => ({
+          id: ev.id,
+          title: ev.summary ?? "(No title)",
+          start: ev.start?.dateTime ?? ev.start?.date ?? null,
+          end: ev.end?.dateTime ?? ev.end?.date ?? null,
+          allDay: !ev.start?.dateTime,
+          attendees: (ev.attendees ?? []).map((a: any) => a.displayName || a.email).filter(Boolean),
+          location: ev.location ?? null,
+          meetingLink: ev.hangoutLink ?? ev.conferenceData?.entryPoints?.[0]?.uri ?? null,
+          htmlLink: ev.htmlLink ?? null,
+          status: ev.status ?? "confirmed",
+          source: "google_calendar",
+        }));
+
+      return json({ events }, 200, corsHeaders);
+    }
+
     // ── POST /calendar/create-event ────────────────────────────────────────
     if (path === "/calendar/create-event" && req.method === "POST") {
       const body = await req.json();

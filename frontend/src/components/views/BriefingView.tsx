@@ -511,6 +511,7 @@ export default function BriefingView() {
   const [briefing, setBriefing] = useState<BriefingResult | null>(null);
   const [briefingAt, setBriefingAt] = useState<string | null>(null);
   const [meetings, setMeetings] = useState<any[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedEmail, setSelectedEmail] = useState<any | null>(null);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
@@ -620,6 +621,24 @@ export default function BriefingView() {
       .lte("start_time", endOfDay.toISOString())
       .order("start_time", { ascending: true });
     setMeetings((data || []) as any[]);
+
+    // Fetch Google Calendar events for today
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token;
+      if (accessToken) {
+        const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const today = new Date().toISOString().split("T")[0];
+        const res = await fetch(`${apiUrl}/calendar/events?date=${today}&timezone=${encodeURIComponent(timezone)}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        });
+        if (res.ok) {
+          const body = await res.json();
+          setCalendarEvents((body.events ?? []) as any[]);
+        }
+      }
+    } catch { /* non-critical */ }
   }, [user.id, supabase]);
 
   generateBriefingOnDemandRef.current = requestBriefingRegeneration;
@@ -720,6 +739,33 @@ export default function BriefingView() {
   }, [briefing?.executiveSummary, briefingTts, briefingTtsKey, startTts, stopTts]);
 
   const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+
+  // Merge DB meetings and Google Calendar events into a unified sorted list
+  const todayScheduleItems = (() => {
+    const dbItems = meetings.map((m: any) => ({
+      id: `db_${m.id}`,
+      title: m.title,
+      start: m.start_time,
+      end: m.end_time,
+      attendees: m.attendees ?? [],
+      status: m.status ?? "confirmed",
+      source: "runemail" as const,
+      meetingLink: m.zoom_join_url ?? m.calendar_event_id ? null : null,
+    }));
+    // Deduplicate: skip calendar events whose title matches a DB meeting at the same time
+    const dbKeys = new Set(dbItems.map((m) => `${m.title?.toLowerCase()}_${m.start?.slice(0, 16)}`));
+    const calItems = calendarEvents
+      .filter((ev: any) => {
+        const key = `${(ev.title ?? "").toLowerCase()}_${(ev.start ?? "").slice(0, 16)}`;
+        return !dbKeys.has(key);
+      })
+      .map((ev: any) => ({ ...ev, id: `cal_${ev.id}`, source: "google_calendar" as const }));
+    return [...dbItems, ...calItems].sort((a, b) => {
+      const ta = a.start ? new Date(a.start).getTime() : 0;
+      const tb = b.start ? new Date(b.start).getTime() : 0;
+      return ta - tb;
+    });
+  })();
 
   const normalized = briefing ? normalizeBriefing(briefing, followUps) : null;
 
@@ -831,7 +877,7 @@ export default function BriefingView() {
           </p>
         </div>
         <div className="flex-1 p-4">
-          {meetings.length === 0 ? (
+          {todayScheduleItems.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-48 text-[var(--muted)] text-center">
               <span className="material-symbols-outlined mb-2" style={{ fontSize: "40px" }}>event_available</span>
               <p className="text-sm">No meetings today</p>
@@ -839,24 +885,60 @@ export default function BriefingView() {
             </div>
           ) : (
             <div className="space-y-3">
-              {meetings.map((m: any) => (
-                <div key={m.id} className="flex gap-3">
-                  <div className="text-right shrink-0 w-14">
-                    <p className="text-xs font-medium text-slate-700 dark:text-slate-300">{formatTime(m.start_time)}</p>
-                    <p className="text-[10px] text-[var(--muted)]">{formatTime(m.end_time)}</p>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className={`p-2 rounded-lg border-l-2 ${m.status === "confirmed" ? "border-l-emerald-500 bg-emerald-50 dark:bg-emerald-900/20" : "border-l-blue-500 bg-blue-50 dark:bg-blue-900/20"}`}>
-                      <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{m.title}</p>
-                      {m.attendees?.length > 0 && (
-                        <p className="text-[11px] text-[var(--muted)] truncate mt-0.5">
-                          {m.attendees.slice(0, 2).join(", ")}{m.attendees.length > 2 ? ` +${m.attendees.length - 2}` : ""}
-                        </p>
+              {todayScheduleItems.map((m: any) => {
+                const isGcal = m.source === "google_calendar";
+                const confirmed = m.status === "confirmed";
+                const borderColor = confirmed ? "border-l-emerald-500" : "border-l-blue-500";
+                const bgColor = confirmed ? "bg-emerald-50 dark:bg-emerald-900/20" : "bg-blue-50 dark:bg-blue-900/20";
+                return (
+                  <div key={m.id} className="flex gap-3">
+                    <div className="text-right shrink-0 w-14">
+                      {m.start && !m.allDay && (
+                        <p className="text-xs font-medium text-slate-700 dark:text-slate-300">{formatTime(m.start)}</p>
+                      )}
+                      {m.end && !m.allDay && (
+                        <p className="text-[10px] text-[var(--muted)]">{formatTime(m.end)}</p>
+                      )}
+                      {m.allDay && (
+                        <p className="text-[10px] text-[var(--muted)] font-medium">All day</p>
                       )}
                     </div>
+                    <div className="flex-1 min-w-0">
+                      <div className={`p-2 rounded-lg border-l-2 ${borderColor} ${bgColor}`}>
+                        <div className="flex items-start gap-1.5">
+                          {isGcal && (
+                            <span className="material-symbols-outlined text-[var(--muted)] shrink-0 mt-px" style={{ fontSize: "13px" }}>event</span>
+                          )}
+                          <p className="text-sm font-medium text-slate-900 dark:text-white truncate leading-snug">{m.title}</p>
+                        </div>
+                        {m.attendees?.length > 0 && (
+                          <p className="text-[11px] text-[var(--muted)] truncate mt-0.5">
+                            {m.attendees.slice(0, 2).join(", ")}{m.attendees.length > 2 ? ` +${m.attendees.length - 2}` : ""}
+                          </p>
+                        )}
+                        {m.location && (
+                          <p className="text-[10px] text-[var(--muted)] truncate mt-0.5 flex items-center gap-0.5">
+                            <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>location_on</span>
+                            {m.location}
+                          </p>
+                        )}
+                        {m.meetingLink && (
+                          <a
+                            href={m.meetingLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-0.5 mt-0.5"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>videocam</span>
+                            Join meeting
+                          </a>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
