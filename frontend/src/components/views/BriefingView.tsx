@@ -956,6 +956,7 @@ export default function BriefingView() {
             onMarkUnread={() => setSelectedEmail(null)}
             onSnooze={() => setSelectedEmail(null)}
             onRethink={(updated: any) => setSelectedEmail((prev: any) => prev ? { ...prev, email_processed: updated } : prev)}
+            showBack
           />
         ) : (
           <div className="max-w-3xl mx-auto px-6 py-5">

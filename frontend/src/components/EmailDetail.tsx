@@ -23,6 +23,7 @@ type EmailDetailProps = {
   onMarkUnread?: () => void;
   onSnooze?: () => void;
   onRethink?: (updated: any) => void;
+  showBack?: boolean;
 };
 
 const CATEGORIES = [
@@ -395,6 +396,7 @@ export default function EmailDetail({
   onMarkUnread,
   onSnooze,
   onRethink,
+  showBack = false,
 }: EmailDetailProps) {
   const { user, profile, openCompose, addToast, theme, setView, setSearch } =
     useApp() as any;
@@ -1045,7 +1047,7 @@ export default function EmailDetail({
           <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={onBack}
-              className="md:hidden p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0"
+              className={`${showBack ? "flex" : "md:hidden"} p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 items-center gap-1 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors`}
             >
               <span
                 className="material-symbols-outlined"
@@ -1053,6 +1055,7 @@ export default function EmailDetail({
               >
                 arrow_back
               </span>
+              {showBack && <span className="text-xs font-medium">Back</span>}
             </button>
             <div className="min-w-0 flex-1">
               {/* Sender + subject + time + badges — first line */}

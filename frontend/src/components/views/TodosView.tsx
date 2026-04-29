@@ -209,21 +209,6 @@ export default function TodosView() {
     return `${Math.floor(h / 24)}d ago`;
   };
 
-  if (selectedEmail) {
-    return (
-      <EmailDetail
-        key={selectedEmail.id}
-        email={selectedEmail}
-        onBack={() => setSelectedEmail(null)}
-        onArchive={() => setSelectedEmail(null)}
-        onReply={() => setSelectedEmail(null)}
-        onMarkUnread={() => setSelectedEmail(null)}
-        onSnooze={() => setSelectedEmail(null)}
-        onRethink={(updated: any) => setSelectedEmail((prev: any) => prev ? { ...prev, email_processed: updated } : prev)}
-      />
-    );
-  }
-
   return (
     <div className="h-full flex overflow-hidden">
 
@@ -304,9 +289,22 @@ export default function TodosView() {
         </div>
       </div>
 
-      {/* ── Right panel: Todo list ── */}
+      {/* ── Right panel: Todo list or email detail ── */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Header + add input */}
+        {selectedEmail ? (
+          <EmailDetail
+            key={selectedEmail.id}
+            email={selectedEmail}
+            onBack={() => setSelectedEmail(null)}
+            onArchive={() => setSelectedEmail(null)}
+            onReply={() => setSelectedEmail(null)}
+            onMarkUnread={() => setSelectedEmail(null)}
+            onSnooze={() => setSelectedEmail(null)}
+            onRethink={(updated: any) => setSelectedEmail((prev: any) => prev ? { ...prev, email_processed: updated } : prev)}
+            showBack
+          />
+        ) : (
+        <>{/* Header + add input */}
         <div className="px-4 py-3 border-b border-[var(--border)] flex-shrink-0">
           <div className="flex items-center gap-3 mb-2.5">
             <h1 className="text-base font-bold text-slate-900 dark:text-white">My Tasks</h1>
@@ -413,6 +411,8 @@ export default function TodosView() {
             ))
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
   );
