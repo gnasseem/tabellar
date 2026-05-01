@@ -1026,6 +1026,29 @@ export async function runAgentStepParallel(
   supabase: SupabaseClient,
   userTimezone = "UTC",
 ): Promise<StepResult> {
+  try {
+    return await _runAgentStepParallel(sessionId, supabase, userTimezone);
+  } catch (err) {
+    const message = formatUnknownError(err);
+    console.error("[runAgentStepParallel] unhandled error:", message);
+    await supabase
+      .from("agent_sessions")
+      .update({
+        status: "error",
+        error: message,
+        pending_question: null,
+        pending_questions: [],
+      })
+      .eq("id", sessionId);
+    return { status: "error", draft_actions: [], error: message };
+  }
+}
+
+async function _runAgentStepParallel(
+  sessionId: string,
+  supabase: SupabaseClient,
+  userTimezone = "UTC",
+): Promise<StepResult> {
   const { data: session } = await supabase
     .from("agent_sessions")
     .select(
@@ -1130,14 +1153,39 @@ export async function runAgentStepParallel(
       ...((refreshed.draft_actions as DraftAction[]) ?? []),
       ...mergedFromRuns,
     ]);
+    // Merge questions from all sub-agents' returned values — the DB may have
+    // lost some due to concurrent writes (last writer wins per row update).
+    const allRunQuestions = results
+      .filter((r) => r.status === "fulfilled")
+      .flatMap(
+        (r) =>
+          ((r as PromiseFulfilledResult<StepResult>).value
+            .pending_questions as PendingQuestion[]) ?? [],
+      );
+    const dbQuestions =
+      ((refreshed.pending_questions as PendingQuestion[]) ?? []).length > 0
+        ? (refreshed.pending_questions as PendingQuestion[])
+        : refreshed.pending_question
+          ? [refreshed.pending_question as PendingQuestion]
+          : [];
+    const questionById = new Map<string, PendingQuestion>();
+    for (const q of [...dbQuestions, ...allRunQuestions]) {
+      if (q?.id) questionById.set(q.id, q);
+    }
+    const mergedQuestions = [...questionById.values()];
+    const firstQ = mergedQuestions[0] ?? null;
     await supabase
       .from("agent_sessions")
-      .update({ draft_actions: finalDraft })
+      .update({
+        draft_actions: finalDraft,
+        pending_question: firstQ,
+        pending_questions: mergedQuestions,
+      })
       .eq("id", sessionId);
     return {
       status: "asking",
-      pending_question: refreshed.pending_question,
-      pending_questions: refreshed.pending_questions,
+      pending_question: firstQ,
+      pending_questions: mergedQuestions,
       draft_actions: finalDraft,
     };
   }
