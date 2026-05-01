@@ -960,8 +960,14 @@ export async function runAgentStep(
         // If this is a sub-agent run (bucket is set and session is multi-bucket),
         // don't flip the session to ready here — the parent orchestrator decides.
         if (bucket && bucket !== "single") {
-          // Do not write draft_actions here: parallel buckets would overwrite each
-          // other. The orchestrator merges return values into one list.
+          // Atomically merge this bucket's actions into session.draft_actions so
+          // the orchestrator can recover them even if it re-runs after a timeout.
+          if (draftActions.length > 0) {
+            await supabase.rpc("merge_bucket_draft_actions", {
+              p_session_id: sessionId,
+              p_actions: draftActions,
+            });
+          }
           return {
             status: "bucket_done",
             plan,
@@ -1291,7 +1297,7 @@ async function _runAgentStepParallel(
     summary: finalSummary,
     finalized_at: new Date().toISOString(),
   };
-  await supabase
+  const { error: finalWriteError } = await supabase
     .from("agent_sessions")
     .update({
       status: "ready",
@@ -1302,6 +1308,11 @@ async function _runAgentStepParallel(
       pending_questions: [],
     })
     .eq("id", sessionId);
+  if (finalWriteError) {
+    throw new Error(
+      `Failed to mark session ready: ${finalWriteError.message ?? JSON.stringify(finalWriteError)}`,
+    );
+  }
   return {
     status: "ready",
     plan,
