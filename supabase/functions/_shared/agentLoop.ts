@@ -960,13 +960,18 @@ export async function runAgentStep(
         // If this is a sub-agent run (bucket is set and session is multi-bucket),
         // don't flip the session to ready here — the parent orchestrator decides.
         if (bucket && bucket !== "single") {
-          // Atomically merge this bucket's actions into session.draft_actions so
-          // the orchestrator can recover them even if it re-runs after a timeout.
+          // Best-effort: persist this bucket's actions into session.draft_actions
+          // so the orchestrator can recover them on a re-run after a timeout.
+          // Uses a 4-second timeout so a slow/hung RPC never blocks the return.
           if (draftActions.length > 0) {
-            await supabase.rpc("merge_bucket_draft_actions", {
+            const mergeRpc = supabase.rpc("merge_bucket_draft_actions", {
               p_session_id: sessionId,
               p_actions: draftActions,
             });
+            await Promise.race([
+              mergeRpc,
+              new Promise<void>((resolve) => setTimeout(resolve, 4000)),
+            ]).catch(() => {/* best-effort — orchestrator has in-memory copy */});
           }
           return {
             status: "bucket_done",
