@@ -185,10 +185,12 @@ async function allocTurnIdx(
   count = 1,
 ): Promise<number> {
   const n = Math.max(1, count);
-  const { data, error } = await supabase.rpc("alloc_agent_turn_idx", {
-    p_session_id: sessionId,
-    p_count: n,
-  });
+  const { data, error } = await Promise.race([
+    supabase.rpc("alloc_agent_turn_idx", { p_session_id: sessionId, p_count: n }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("allocTurnIdx timed out after 6s")), 6_000)
+    ),
+  ]);
   if (error) throw error;
   if (typeof data !== "number" || !Number.isFinite(data)) {
     throw new Error("alloc_agent_turn_idx returned invalid value");
@@ -1129,15 +1131,24 @@ async function _runAgentStepParallel(
   const hadBriefingWork = briefingCardsHaveEmails(snap.cards);
 
   // Parallel buckets share one session; allocTurnIdx serializes on the session row.
-  const results = await Promise.allSettled(
-    bucketPlans.map((bp) =>
-      runAgentStep(sessionId, supabase, userTimezone, {
-        bucket: bp.bucket,
-        bucketCards: bp.scoped,
-        bucketSnapshotText: bp.text,
-      }),
+  // 100s hard cap: if any bucket is somehow stuck, the outer catch marks session as error.
+  const results = await Promise.race([
+    Promise.allSettled(
+      bucketPlans.map((bp) =>
+        runAgentStep(sessionId, supabase, userTimezone, {
+          bucket: bp.bucket,
+          bucketCards: bp.scoped,
+          bucketSnapshotText: bp.text,
+        }),
+      ),
     ),
-  );
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error("Parallel bucket orchestration timed out after 100s")),
+        100_000,
+      )
+    ),
+  ]);
 
   // Consolidate: if any sub-agent paused, session is "asking".
   const { data: refreshed } = await supabase

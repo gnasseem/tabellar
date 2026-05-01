@@ -20,6 +20,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useLiveUpdates, type LiveChangeCounters } from "@/lib/useLiveUpdates";
 import {
   startAgent as apiStartAgent,
+  stepAgent as apiStepAgent,
   answerAgent as apiAnswerAgent,
   answerAgentBatch as apiAnswerAgentBatch,
   executeAgent as apiExecuteAgent,
@@ -682,6 +683,11 @@ export default function AppShell({
       ) {
         attachAgentRealtime(stored.id);
       }
+      // If the session was left in "planning" (e.g. edge function killed before
+      // completing), kick the orchestrator so it resumes instead of staying stuck.
+      if (session.status === "planning") {
+        apiStepAgent(supabase, stored.id).catch(() => {});
+      }
     })();
     return () => {
       agentUnsubRef.current?.();
@@ -935,10 +941,8 @@ export default function AppShell({
       const supabase = createClient();
       const session = await apiFetchSession(supabase, sid);
       if (!session) return;
-      if (session.status !== agentSession?.status) {
-        setAgentSession(session);
-        await loadAgentTurns(sid);
-      }
+      setAgentSession((prev) => (prev ? { ...prev, ...session } : session));
+      await loadAgentTurns(sid);
     }, 5000);
     return () => clearInterval(interval);
   }, [agentSession?.id, agentSession?.status, loadAgentTurns]);
