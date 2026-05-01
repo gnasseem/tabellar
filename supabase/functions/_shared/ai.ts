@@ -98,7 +98,7 @@ Respond with ONLY the category slug, nothing else.`,
   summarize:
     "Summarize the following email clearly and concisely. Capture the key point, any action required, and relevant context. Write 1-3 sentences as needed — use more if the email is complex or has multiple important points.",
   quick_actions:
-    'Look at this email and suggest 1-3 actions that would actually help the user clear it. Most real emails from people have at least one action (reply or todo). Return a JSON array of objects with "label" (descriptive phrase up to 10 words — for add_todo, include specific context like topic, name, chapter, deadline so the task is self-explanatory without re-reading the email; e.g. "Review French lesson chapter 2 audio files" or "Reply to Sarah about Q3 budget proposal"), "action" (one of: "reply", "add_todo", "schedule_meeting"), and optionally "text" (the reply body, only for reply/schedule_meeting). Rules: include a reply action whenever a human asked a question or expects a response; include an add_todo whenever the email implies a task to track; include schedule_meeting only when the email proposes a meeting or asks about availability. IMPORTANT: emails about jobs, interviews, medical appointments, legal matters, academic admissions, or financial decisions ALWAYS get at least one action even if the sender looks automated. Return [] only if the email is a newsletter, shipping receipt, marketing blast, or automated notification with absolutely no personal ask from the user. Example: [{"label":"Sounds good, happy to help","action":"reply","text":"Sounds good, thanks!"},{"label":"Follow up with John about contract renewal","action":"add_todo"}]',
+    'Look at this email and suggest 1-3 actions that would actually help the user clear it. Most real emails from people have at least one action (reply or todo). Return a JSON array of objects with "label" (descriptive phrase up to 12 words — for add_todo, include specific context: topic, sender name, deadline; for reply, state what the reply achieves; for schedule_meeting, name who and what to schedule), "action" (one of: "reply", "add_todo", "schedule_meeting"), and optionally "text" (the reply body for reply; meeting details for schedule_meeting). Rules: include a reply action whenever a human asked a question or expects a response — the "text" must directly address the specific ask, not a generic acknowledgment; include an add_todo whenever the email implies a task to track — label must be self-explanatory without re-reading; include schedule_meeting when the email mentions meeting, call, zoom, teams, phone/video call, coffee chat, catch-up, sync, check-in, interview, or asks about availability. IMPORTANT: emails about jobs, interviews, medical appointments, legal matters, academic admissions, or financial decisions ALWAYS get at least one action even if the sender looks automated. Return [] only if the email is a newsletter, shipping receipt, marketing blast, or automated notification with absolutely no personal ask from the user. Example: [{"label":"Confirm availability for Thursday interview with Acme","action":"reply","text":"Hi, Thursday works for me. I am available from 2-5pm EST. Please send a calendar invite."},{"label":"Prepare portfolio samples for Acme interview by Wed","action":"add_todo"},{"label":"Schedule 45-min interview with Acme recruiter","action":"schedule_meeting","text":"45-min technical interview with Acme"}]',
   process_email: `You are an email assistant. Analyze this email and return ONLY valid JSON with no markdown:
 {"reasoning":"...","category":"...","urgency":"...","summary":"...","actions":[...]}
 
@@ -132,19 +132,19 @@ summary: clear, concise summary of what the email is about and what (if anything
 
 actions: Suggest the actions that would actually help the user clear this email. Aim for 1-3 when urgency is medium or above OR when email is action-required/important. Return [] ONLY when urgency is low AND category is newsletter or informational with no personal ask.
 Rules for picking actions:
-- If a human asked a question or requested something, include a "reply" action with draft text.
-- If the email implies a task the user should track (read doc, prepare something, follow up later, pay invoice, submit form), include an "add_todo" action.
-- If the email proposes a meeting/call, asks about availability, or needs rescheduling, include a "schedule_meeting" action.
+- If a human asked a question or requested something, include a "reply" action. The "text" field must directly address the specific question or request using actual details from the email — not a generic acknowledgment like "Thanks, will review."
+- If the email implies a task the user should track (review document, prepare presentation, follow up, pay invoice, submit form, complete application, book appointment, sign agreement), include an "add_todo" action. The label must name the specific task, include the sender name when relevant, and include the deadline if one is stated.
+- If the email mentions meeting, call, zoom, teams, phone/video call, coffee chat, catch-up, sync, check-in, interview, office hours, or asks about availability or scheduling, include a "schedule_meeting" action. Put what to schedule and any duration/format in "text".
 - High-stakes emails (career/medical/legal/academic/financial) always get at least one action even if the sender looks automated.
 - Do not duplicate: one "reply" + one "add_todo" at most for the same intent.
-- Be concrete: todo labels must be self-explanatory without re-reading the email (mention topic, sender, chapter, deadline).
+- Be concrete: todo labels and reply texts must be self-explanatory without re-reading the email.
 
 Each action MUST be an object:
   {"label": "short descriptive phrase", "action": "reply"|"add_todo"|"schedule_meeting", "text": "optional content for reply or meeting"}
 Examples:
-  {"label": "Reply to John about budget", "action": "reply", "text": "Hi John, thanks for the update. I will review and get back to you."}
-  {"label": "Review Q3 budget proposal from Sarah by Friday", "action": "add_todo"}
-  {"label": "Schedule kickoff call with team", "action": "schedule_meeting", "text": "30-min project kickoff"}
+  {"label": "Reply to John confirming Q3 budget review by Friday", "action": "reply", "text": "Hi John, I can have the Q3 budget review done by Friday. I will send over my comments then."}
+  {"label": "Submit reimbursement form by Dec 15 (Finance team request)", "action": "add_todo"}
+  {"label": "Schedule 30-min catch-up with Sarah about project handoff", "action": "schedule_meeting", "text": "30-min project handoff sync with Sarah"}
 Return raw JSON only. No explanation, no markdown.`,
   draft:
     "You are an email drafting assistant. Write a professional, clear reply to the email below. Match the tone of the original. Keep it concise.",

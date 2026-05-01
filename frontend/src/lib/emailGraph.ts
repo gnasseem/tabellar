@@ -605,12 +605,14 @@ const qaMeetingAnalysisNode: NodeFn = async (state) => {
   const email = state.currentEmail;
   if (!email) return { _meetingOptions: [] };
 
-  const fullText = `${email.subject} ${email.snippet || ""}`.toLowerCase();
+  const fullText = `${email.subject} ${email.snippet || ""} ${(email.body_text || "").slice(0, 400)}`.toLowerCase();
   const meetingSignals = [
     "meeting", "call", "zoom", "teams", "meet", "conference",
     "catch up", "catch-up", "sync", "1-on-1", "schedule",
     "calendar", "availability", "available", "appointment",
     "let's meet", "let's chat", "workshop", "webinar",
+    "coffee chat", "phone call", "video call", "check-in",
+    "interview", "office hours", "hop on", "quick chat",
   ];
 
   // Keyword fast-check before LLM (mirrors original optimization)
@@ -621,12 +623,12 @@ const qaMeetingAnalysisNode: NodeFn = async (state) => {
   const body = (email.body_text || email.snippet || "").slice(0, 800);
 
   const raw = await localInference(
-    `Does this email request a meeting, call, or scheduling?
-If yes, describe WHAT to schedule (not when — times are handled separately).
-Output JSON array with at most 1 item (no "Schedule:" prefix). Return [] if no meeting needed.
-Example: ["meeting with Dr. Smith to discuss proposal"]`,
+    `Does this email request or mention any form of meeting, call, sync, catch-up, coffee chat, phone call, video call, interview, check-in, or scheduling?
+If yes, describe WHAT to schedule in 1 short phrase (e.g. "30-min sync with Alice about project", "coffee chat with recruiter from Acme", "interview with hiring team").
+Output JSON array with at most 1 item (no "Schedule:" prefix). Return [] only if there is truly no meeting or scheduling intent.
+Example: ["catch-up call with Sarah to discuss Q3 budget"]`,
     `Subject: ${email.subject}\nContent: ${body}`,
-    { temperature: 0.15, maxTokens: 96 },
+    { temperature: 0.15, maxTokens: 100 },
   );
 
   const options = extractJSON<string[]>(raw, []);
@@ -985,7 +987,7 @@ const todosNode: NodeFn = async (state) => {
 
   const emailsText = state.emails
     .slice(0, 12)
-    .map((e) => `Subject: ${e.subject}\nFrom: ${e.sender}\n${e.snippet || ""}`)
+    .map((e) => `Subject: ${e.subject}\nFrom: ${e.sender}\n${(e.body_text || e.snippet || "").slice(0, 600)}`)
     .join("\n---\n");
 
   const existingTodos = state.existingTodos || [];
@@ -995,8 +997,8 @@ const todosNode: NodeFn = async (state) => {
 
   const raw = await localInference(
     `Extract actionable tasks from these emails. Return JSON array only:
-[{"task": "<specific action to take>", "source": "<email subject, max 40 chars>"}]
-Only include tasks that genuinely require action. Return [] if nothing actionable.${existingBlock}`,
+[{"task": "<specific action starting with a verb, include sender name or topic and deadline if stated>", "source": "<email subject, max 40 chars>"}]
+Rules: only include tasks that genuinely require action (not just "read email"). Start each task with a verb. Include deadline if the email mentions one. Return [] if nothing actionable.${existingBlock}`,
     emailsText,
     { temperature: 0.3, maxTokens: 512 },
   );
@@ -1024,7 +1026,7 @@ const meetingsNode: NodeFn = async (state) => {
   const emailsText = state.emails
     .slice(0, 12)
     .map((e) =>
-      `Subject: ${e.subject}\nFrom: ${e.sender} <${e.sender_email || ""}>\n${e.snippet || ""}`,
+      `Subject: ${e.subject}\nFrom: ${e.sender} <${e.sender_email || ""}>\n${(e.body_text || e.snippet || "").slice(0, 600)}`,
     )
     .join("\n---\n");
 
@@ -1033,9 +1035,9 @@ const meetingsNode: NodeFn = async (state) => {
     : "";
 
   const raw = await localInference(
-    `Identify emails requesting a meeting, call, or scheduling. Return JSON array only:
-[{"title": "<meeting title>", "attendees": ["<email>"], "suggestedTime": "<specific date/time within working hours if inferable, else omit>", "source": "<email subject>"}]
-Only include emails that explicitly ask to meet/call/schedule. Return [] if none found.${whNote}`,
+    `Identify emails requesting a meeting, call, interview, sync, catch-up, coffee chat, phone/video call, or any form of scheduling. Return JSON array only:
+[{"title": "<descriptive meeting title mentioning purpose and participants>", "attendees": ["<sender email>"], "suggestedTime": "<specific date/time within working hours if inferable, else omit>", "source": "<email subject>"}]
+Be inclusive: if an email mentions wanting to meet, chat, call, or schedule time, include it. Return [] only if there is truly no meeting/scheduling intent.${whNote}`,
     emailsText,
     { temperature: 0.2, maxTokens: 512 },
   );

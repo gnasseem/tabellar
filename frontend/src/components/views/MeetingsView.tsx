@@ -215,11 +215,12 @@ export default function MeetingsView() {
           const actions = Array.isArray(p.quick_actions) ? p.quick_actions : [];
           const meetingAction = actions.find((a: any) => a.action === "schedule_meeting");
           if (meetingAction) {
+            const rawTitle = meetingAction.text?.trim() || meetingAction.label?.replace(/^Schedule:\s*/i, "") || `Meeting re: ${email?.subject?.slice(0, 40) || ""}`;
             suggestions.push({
               email_id: p.email_id,
               email_subject: email?.subject || "(no subject)",
               email_sender: email?.sender || email?.sender_email || "",
-              title: meetingAction.label?.replace(/^Schedule:\s*/i, "") || `Meeting re: ${email?.subject?.slice(0, 40) || ""}`,
+              title: rawTitle,
               attendees: email?.sender_email ? [email.sender_email] : [],
             });
           }
