@@ -137,6 +137,9 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
   const [executing, setExecuting] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showReasoning, setShowReasoning] = useState(false);
+  const [showThinking, setShowThinking] = useState(false);
+  const lastTurnCountRef = useRef(0);
+  const lastTurnTimeRef = useRef(Date.now());
   const streamRef = useRef<HTMLDivElement>(null);
 
   // Build a map from email_id to a human label + bucket from the cached
@@ -302,6 +305,28 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
 
   const bucketKeys = Object.keys(stepsByBucket);
   const hasMultipleBuckets = bucketKeys.length > 1;
+
+  // Track when turns last arrived; show a "Generating..." indicator after 8s of silence.
+  useEffect(() => {
+    const count = agentTurns?.length ?? 0;
+    if (count !== lastTurnCountRef.current) {
+      lastTurnCountRef.current = count;
+      lastTurnTimeRef.current = Date.now();
+      setShowThinking(false);
+    }
+  }, [agentTurns?.length]);
+
+  useEffect(() => {
+    const s = agentSession?.status ?? "planning";
+    if (s !== "planning" || (agentTurns?.length ?? 0) === 0) {
+      setShowThinking(false);
+      return;
+    }
+    const id = setInterval(() => {
+      if (Date.now() - lastTurnTimeRef.current > 8_000) setShowThinking(true);
+    }, 2_000);
+    return () => clearInterval(id);
+  }, [agentSession?.status, agentTurns?.length]);
 
   // Autoscroll on new steps / turn count.
   useLayoutEffect(() => {
@@ -687,6 +712,17 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                 <p className="mt-3 pl-8 text-[12px] italic leading-snug text-[var(--muted)]">
                   &ldquo;{assistantStatusLine}&rdquo;
                 </p>
+              )}
+
+              {showThinking && (
+                <div className="mt-3 flex items-center gap-2 pl-1 text-[12px] text-[var(--muted)]">
+                  <span className="inline-flex solve-dot-wave">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  Generating next step
+                </div>
               )}
             </div>
           )}

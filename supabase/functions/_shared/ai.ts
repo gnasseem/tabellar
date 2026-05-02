@@ -401,8 +401,8 @@ export async function llmWithTools(params: {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(
-        () => reject(new Error("Agent LLM request timed out after 60s")),
-        60_000,
+        () => reject(new Error("Agent LLM request timed out after 25s")),
+        25_000,
       );
     });
     let res: Response;
