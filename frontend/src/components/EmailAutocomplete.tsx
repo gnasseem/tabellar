@@ -222,9 +222,8 @@ function useEmailAutocomplete(contacts: Contact[], accountId: string, multi = tr
 
   const applySuggestion = useCallback(
     (value: string, contact: Contact) => {
-      const formatted = contact.name
-        ? `${contact.name} <${contact.email}>`
-        : contact.email;
+      // Insert only the email address — name is shown in the dropdown for identification only
+      const formatted = contact.email;
       if (multi) {
         const parts = value.split(",");
         parts[parts.length - 1] = " " + formatted;
@@ -276,8 +275,14 @@ export function EmailField({
     useEmailAutocomplete(contacts, accountId, multi);
   const ref = useRef<HTMLInputElement>(null);
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+  // Detect theme from the nearest .dark ancestor so the portal inherits it
+  const [isDark, setIsDark] = useState(false);
 
-  // Recompute dropdown position on every render when suggestions are open
+  useEffect(() => {
+    setIsDark(!!document.querySelector(".dark"));
+  }, [suggestions.length]);
+
+  // Recompute dropdown position whenever suggestions open/change
   useEffect(() => {
     if (!suggestions.length || !ref.current) return;
     const rect = ref.current.getBoundingClientRect();
@@ -302,31 +307,34 @@ export function EmailField({
 
   const dropdown = suggestions.length > 0 && typeof document !== "undefined"
     ? createPortal(
-        <div
-          style={dropdownStyle}
-          className="bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden text-[var(--foreground)]"
-        >
-          {suggestions.map((c, i) => (
-            <button
-              key={c.email}
-              type="button"
-              onMouseDown={() => onChange(applySuggestion(value, c))}
-              className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-[var(--surface-2)] ${i === activeIdx ? "bg-[var(--surface-2)]" : ""}`}
-            >
-              <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "14px" }}>
-                {c.source === "directory" ? "domain" : "person"}
-              </span>
-              <span className="truncate flex-1">
-                {c.name && <span className="font-medium">{c.name} </span>}
-                <span className="text-[var(--muted)]">{c.email}</span>
-              </span>
-              {c.source === "directory" && (
-                <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 font-medium">
-                  org
+        // Wrap in the theme class so CSS variables resolve correctly outside the app root
+        <div className={isDark ? "dark" : ""}>
+          <div
+            style={dropdownStyle}
+            className="bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden text-[var(--foreground)]"
+          >
+            {suggestions.map((c, i) => (
+              <button
+                key={c.email}
+                type="button"
+                onMouseDown={() => onChange(applySuggestion(value, c))}
+                className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-[var(--surface-2)] ${i === activeIdx ? "bg-[var(--surface-2)]" : ""}`}
+              >
+                <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "14px" }}>
+                  {c.source === "directory" ? "domain" : "person"}
                 </span>
-              )}
-            </button>
-          ))}
+                <span className="truncate flex-1">
+                  {c.name && <span className="font-medium">{c.name} </span>}
+                  <span className="text-[var(--muted)]">{c.email}</span>
+                </span>
+                {c.source === "directory" && (
+                  <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 font-medium">
+                    org
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>,
         document.body
       )
