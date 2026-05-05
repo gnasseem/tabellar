@@ -2775,12 +2775,16 @@ Deno.serve(async (req) => {
       }
 
       let totalSynced = 0;
+      let needsReauth = false;
       for (const account of accounts) {
         if (!account.tokens_encrypted) continue;
         try {
           const all = await listAllGoogleContacts(account.tokens_encrypted);
-          if (!all.length) continue;
-          // Batch upsert in chunks of 500 to avoid payload limits
+          if (!all.length) {
+            // Google returned nothing — likely missing contacts/directory scope
+            needsReauth = true;
+            continue;
+          }
           const chunkSize = 500;
           for (let i = 0; i < all.length; i += chunkSize) {
             const chunk = all.slice(i, i + chunkSize).map((c) => ({
@@ -2797,10 +2801,10 @@ Deno.serve(async (req) => {
           }
           totalSynced += all.length;
         } catch {
-          /* ignore per-account failures */
+          needsReauth = true;
         }
       }
-      return json({ synced: totalSynced }, 200, corsHeaders);
+      return json({ synced: totalSynced, needs_reauth: needsReauth && totalSynced === 0 }, 200, corsHeaders);
     }
 
     // ── GET /oauth/google-url ──────────────────────────────────────────────

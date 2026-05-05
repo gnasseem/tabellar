@@ -45,61 +45,65 @@ export function useContacts(userId: string): {
   };
 
   useEffect(() => {
+    if (!userId) return;
     (async () => {
+      const seen = new Map<string, Contact>();
+
+      // Run all independent queries in parallel, handling each failure individually
       const [
-        { data: accounts },
-        { data: sentRows },
-        { data: meetingRows },
-        { data: memoryRows },
-        { data: cachedContacts },
+        accountsRes,
+        sentRes,
+        meetingRes,
+        memoryRes,
+        cachedRes,
       ] = await Promise.all([
         supabase.from("gmail_accounts").select("id").eq("user_id", userId).eq("is_active", true),
         supabase.from("scheduled_emails").select("to_addresses, cc_addresses, bcc_addresses").eq("user_id", userId).limit(200),
         supabase.from("meetings").select("attendees").eq("user_id", userId).limit(200),
-        supabase.from("email_memory").select("sender_email, sender_name").eq("user_id", userId).order("interaction_count", { ascending: false }).limit(300),
+        supabase.from("email_memory").select("sender_email, sender_name").eq("user_id", userId).order("interaction_count", { ascending: false }).limit(500),
         supabase.from("contacts").select("email, name, source").eq("user_id", userId).limit(5000),
       ]);
 
-      const accountIds = (accounts ?? []).map((a: { id: string }) => a.id);
+      const accountIds = (accountsRes.data ?? []).map((a: { id: string }) => a.id);
       if (accountIds.length > 0) setPrimaryAccountId(accountIds[0]);
 
-      const seen = new Map<string, Contact>();
-
-      // Cached Google Contacts + directory (highest priority names)
-      for (const row of cachedContacts ?? []) {
+      // Cached Google Contacts + directory (highest priority — good display names)
+      for (const row of cachedRes.data ?? []) {
         if (row.email && !seen.has(row.email)) {
           seen.set(row.email, { email: row.email, name: row.name ?? "", source: row.source });
         }
       }
 
+      // email_memory: ranked contacts with frequency data — best display names
+      // sender_name is stored as RFC 2822 format e.g. "Name <email@x.com>", parse it
+      for (const row of memoryRes.data ?? []) {
+        const email = row.sender_email?.toLowerCase?.();
+        if (!email || !email.includes("@")) continue;
+        const parsedName = parseAddress(row.sender_name ?? "")?.name
+          || row.sender_name?.split("<")[0]?.replace(/^"|"$/g, "").trim()
+          || "";
+        const existing = seen.get(email);
+        seen.set(email, { email, name: parsedName || existing?.name || "", source: existing?.source });
+      }
+
       // Senders from received emails — use `sender` field (RFC 2822) to extract name
       if (accountIds.length > 0) {
-        const { data: emailRows } = await supabase
-          .from("emails")
-          .select("sender_email, sender")
-          .in("gmail_account_id", accountIds)
-          .not("sender_email", "is", null)
-          .limit(1000);
-        for (const row of emailRows ?? []) {
-          const email = row.sender_email?.toLowerCase();
+        const [emailsRes, recipientsRes] = await Promise.all([
+          supabase.from("emails").select("sender_email, sender").in("gmail_account_id", accountIds).not("sender_email", "is", null).limit(1000),
+          supabase.from("emails").select("recipients").in("gmail_account_id", accountIds).not("recipients", "is", null).limit(500),
+        ]);
+
+        for (const row of emailsRes.data ?? []) {
+          const email = row.sender_email?.toLowerCase?.();
           if (!email || !email.includes("@")) continue;
           if (seen.has(email)) continue;
-          // Try to extract name from the full sender header
           const parsed = parseAddress(row.sender ?? row.sender_email);
           seen.set(email, { email, name: parsed?.name ?? "" });
         }
 
-        // Also extract recipients from received emails for people we emailed back
-        const { data: recipRows } = await supabase
-          .from("emails")
-          .select("recipients")
-          .in("gmail_account_id", accountIds)
-          .not("recipients", "is", null)
-          .limit(500);
-        for (const row of recipRows ?? []) {
+        for (const row of recipientsRes.data ?? []) {
           if (!row.recipients) continue;
-          const parts = row.recipients.split(",");
-          for (const part of parts) {
+          for (const part of row.recipients.split(",")) {
             const parsed = parseAddress(part.trim());
             if (parsed && !seen.has(parsed.email)) {
               seen.set(parsed.email, { email: parsed.email, name: parsed.name });
@@ -109,13 +113,8 @@ export function useContacts(userId: string): {
       }
 
       // Recipients from sent/scheduled emails
-      for (const row of sentRows ?? []) {
-        const addrs = [
-          ...(row.to_addresses ?? []),
-          ...(row.cc_addresses ?? []),
-          ...(row.bcc_addresses ?? []),
-        ];
-        for (const raw of addrs) {
+      for (const row of sentRes.data ?? []) {
+        for (const raw of [...(row.to_addresses ?? []), ...(row.cc_addresses ?? []), ...(row.bcc_addresses ?? [])]) {
           const parsed = parseAddress(raw);
           if (parsed && !seen.has(parsed.email)) {
             seen.set(parsed.email, { email: parsed.email, name: parsed.name });
@@ -124,22 +123,13 @@ export function useContacts(userId: string): {
       }
 
       // Meeting attendees
-      for (const row of meetingRows ?? []) {
+      for (const row of meetingRes.data ?? []) {
         for (const raw of row.attendees ?? []) {
           const parsed = parseAddress(raw);
           if (parsed && !seen.has(parsed.email)) {
             seen.set(parsed.email, { email: parsed.email, name: parsed.name });
           }
         }
-      }
-
-      // email_memory ranked contacts — override name if better
-      for (const row of memoryRows ?? []) {
-        const email = row.sender_email?.toLowerCase();
-        if (!email) continue;
-        const existing = seen.get(email);
-        const name = row.sender_name || existing?.name || "";
-        seen.set(email, { email, name, source: existing?.source });
       }
 
       setContacts(Array.from(seen.values()));
@@ -153,6 +143,9 @@ export function useContacts(userId: string): {
 }
 
 let syncTriggered = false;
+// Exported so ComposeModal can read and show a re-auth hint
+export let contactSyncNeedsReauth = false;
+
 async function triggerContactsSync() {
   if (syncTriggered) return;
   syncTriggered = true;
@@ -161,10 +154,14 @@ async function triggerContactsSync() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
     const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
-    await fetch(`${apiUrl}/contacts/sync`, {
+    const res = await fetch(`${apiUrl}/contacts/sync`, {
       method: "POST",
       headers: { Authorization: `Bearer ${session.access_token}` },
     });
+    if (res.ok) {
+      const body = await res.json() as { synced: number; needs_reauth?: boolean };
+      if (body.needs_reauth) contactSyncNeedsReauth = true;
+    }
   } catch {
     syncTriggered = false; // allow retry next session
   }
