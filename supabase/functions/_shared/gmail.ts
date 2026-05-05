@@ -876,6 +876,36 @@ export async function listAllGoogleContacts(
     /* contacts.readonly scope not granted */
   }
 
+  // Other Contacts via otherContacts.list (contacts.other.readonly)
+  // This is what Gmail uses — auto-collected from email history, no explicit save needed
+  try {
+    let pageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        readMask: "names,emailAddresses",
+        pageSize: "1000",
+        ...(pageToken ? { pageToken } : {}),
+      });
+      const res = await fetch(
+        `https://people.googleapis.com/v1/otherContacts?${params}`,
+        { headers: { Authorization: `Bearer ${tokenData.token}` } },
+      );
+      if (!res.ok) break;
+      const data = await res.json();
+      for (const p of data.otherContacts ?? []) {
+        const name = p.names?.[0]?.displayName ?? "";
+        const email = p.emailAddresses?.[0]?.value?.toLowerCase();
+        if (email && !seen.has(email)) {
+          seen.add(email);
+          results.push({ name, email, source: "contact" });
+        }
+      }
+      pageToken = data.nextPageToken;
+    } while (pageToken && results.length < 3000);
+  } catch {
+    /* contacts.other.readonly scope not granted */
+  }
+
   // Workspace directory via listDirectoryPeople (paginated)
   try {
     let pageToken: string | undefined;
@@ -903,7 +933,7 @@ export async function listAllGoogleContacts(
       pageToken = data.nextPageToken;
     } while (pageToken && results.length < 5000);
   } catch {
-    /* directory.readonly scope not granted */
+    /* directory.readonly scope not granted or admin restricted */
   }
 
   return results;
@@ -939,7 +969,7 @@ export async function searchGoogleContacts(
     /* not a Workspace account or scope not granted */
   }
 
-  // Also search personal contacts
+  // Search personal contacts (contacts.readonly)
   try {
     const contRes = await fetch(
       `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(query)}&readMask=names,emailAddresses&pageSize=10`,
@@ -959,6 +989,29 @@ export async function searchGoogleContacts(
     }
   } catch {
     /* ignore */
+  }
+
+  // Search "Other Contacts" — people Gmail auto-collected from email history
+  // (contacts.other.readonly scope) — this is what Gmail uses for friend suggestions
+  try {
+    const otherRes = await fetch(
+      `https://people.googleapis.com/v1/otherContacts:search?query=${encodeURIComponent(query)}&readMask=names,emailAddresses&pageSize=10`,
+      { headers: { Authorization: `Bearer ${tokenData.token}` } },
+    );
+    if (otherRes.ok) {
+      const data = await otherRes.json();
+      for (const r of data.results ?? []) {
+        const p = r.person;
+        const name = p.names?.[0]?.displayName ?? "";
+        const email = p.emailAddresses?.[0]?.value?.toLowerCase();
+        if (email && !seen.has(email)) {
+          seen.add(email);
+          results.push({ name, email, source: "contact" });
+        }
+      }
+    }
+  } catch {
+    /* contacts.other.readonly scope not granted */
   }
 
   return results;
