@@ -10,6 +10,45 @@ export interface Contact {
   source?: "directory" | "contact";
 }
 
+// Local-part prefixes that indicate automated/marketing senders
+const MARKETING_LOCAL_PREFIXES = [
+  "noreply", "no-reply", "donotreply", "do-not-reply", "do_not_reply",
+  "notifications", "notification", "newsletter", "newsletters",
+  "mailer-daemon", "mailer", "bounce", "bounces", "unsubscribe",
+  "marketing", "automated", "alerts", "updates", "info-",
+  "reply-", "bounce-", "return-",
+];
+
+// Domains that are bulk email platforms (never real people)
+const MARKETING_DOMAINS = new Set([
+  "mailchimp.com", "list-manage.com", "sendgrid.net", "sendgrid.com",
+  "sparkpostmail.com", "mailgun.org", "mailgun.net",
+  "constantcontact.com", "campaignmonitor.com", "cmail19.com", "cmail20.com",
+  "klaviyo.com", "klaviyomail.com", "braze.com", "sailthru.com",
+  "marketo.com", "exacttarget.com", "salesforce.com", "pardot.com",
+  "customerio.com", "mailjet.com", "sendinblue.com", "brevo.com",
+  "hubspot.com", "hs-marketing.com", "amazonses.com", "email.amazon.com",
+  "iterable.com", "drip.com", "activecampaign.com", "getresponse.com",
+  "icontact.com", "aweber.com", "postmarkapp.com", "mandrill.com",
+]);
+
+/** Returns true if the email is an automated/marketing address that shouldn't appear in suggestions. */
+function isMarketingEmail(email: string): boolean {
+  const lower = email.toLowerCase();
+  const atIdx = lower.indexOf("@");
+  if (atIdx < 0) return false;
+  const local = lower.slice(0, atIdx);
+  const domain = lower.slice(atIdx + 1);
+
+  if (MARKETING_DOMAINS.has(domain)) return true;
+
+  // Check local part starts with or exactly matches a marketing prefix
+  for (const prefix of MARKETING_LOCAL_PREFIXES) {
+    if (local === prefix || local.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 /** Parse a raw RFC 2822 address like `"Name" <email>` or `Name <email>` or bare `email` */
 function parseAddress(raw: string): { email: string; name: string } | null {
   if (!raw) return null;
@@ -70,7 +109,7 @@ export function useContacts(userId: string): {
 
       // Cached Google Contacts + directory (highest priority — good display names)
       for (const row of cachedRes.data ?? []) {
-        if (row.email && !seen.has(row.email)) {
+        if (row.email && !seen.has(row.email) && !isMarketingEmail(row.email)) {
           seen.set(row.email, { email: row.email, name: row.name ?? "", source: row.source });
         }
       }
@@ -79,7 +118,7 @@ export function useContacts(userId: string): {
       // sender_name is stored as RFC 2822 format e.g. "Name <email@x.com>", parse it
       for (const row of memoryRes.data ?? []) {
         const email = row.sender_email?.toLowerCase?.();
-        if (!email || !email.includes("@")) continue;
+        if (!email || !email.includes("@") || isMarketingEmail(email)) continue;
         const parsedName = parseAddress(row.sender_name ?? "")?.name
           || row.sender_name?.split("<")[0]?.replace(/^"|"$/g, "").trim()
           || "";
@@ -96,7 +135,7 @@ export function useContacts(userId: string): {
 
         for (const row of emailsRes.data ?? []) {
           const email = row.sender_email?.toLowerCase?.();
-          if (!email || !email.includes("@")) continue;
+          if (!email || !email.includes("@") || isMarketingEmail(email)) continue;
           if (seen.has(email)) continue;
           const parsed = parseAddress(row.sender ?? row.sender_email);
           seen.set(email, { email, name: parsed?.name ?? "" });
@@ -106,7 +145,7 @@ export function useContacts(userId: string): {
           if (!row.recipients) continue;
           for (const part of row.recipients.split(",")) {
             const parsed = parseAddress(part.trim());
-            if (parsed && !seen.has(parsed.email)) {
+            if (parsed && !seen.has(parsed.email) && !isMarketingEmail(parsed.email)) {
               seen.set(parsed.email, { email: parsed.email, name: parsed.name });
             }
           }
@@ -117,7 +156,7 @@ export function useContacts(userId: string): {
       for (const row of sentRes.data ?? []) {
         for (const raw of [...(row.to_addresses ?? []), ...(row.cc_addresses ?? []), ...(row.bcc_addresses ?? [])]) {
           const parsed = parseAddress(raw);
-          if (parsed && !seen.has(parsed.email)) {
+          if (parsed && !seen.has(parsed.email) && !isMarketingEmail(parsed.email)) {
             seen.set(parsed.email, { email: parsed.email, name: parsed.name });
           }
         }
@@ -127,7 +166,7 @@ export function useContacts(userId: string): {
       for (const row of meetingRes.data ?? []) {
         for (const raw of row.attendees ?? []) {
           const parsed = parseAddress(raw);
-          if (parsed && !seen.has(parsed.email)) {
+          if (parsed && !seen.has(parsed.email) && !isMarketingEmail(parsed.email)) {
             seen.set(parsed.email, { email: parsed.email, name: parsed.name });
           }
         }
@@ -206,7 +245,7 @@ function useEmailAutocomplete(contacts: Contact[], accountId: string, multi = tr
               const seen = new Set(prev.map((c) => c.email));
               const merged = [...prev];
               for (const c of live as Contact[]) {
-                if (!seen.has(c.email)) {
+                if (!seen.has(c.email) && !isMarketingEmail(c.email)) {
                   seen.add(c.email);
                   merged.push(c);
                 }
