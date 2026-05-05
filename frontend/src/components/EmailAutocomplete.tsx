@@ -42,9 +42,9 @@ function isMarketingEmail(email: string): boolean {
 
   if (MARKETING_DOMAINS.has(domain)) return true;
 
-  // Check local part starts with or exactly matches a marketing prefix
+  // Check if local part contains any marketing prefix (noreply can appear mid-string: payments-noreply@)
   for (const prefix of MARKETING_LOCAL_PREFIXES) {
-    if (local === prefix || local.startsWith(prefix)) return true;
+    if (local.includes(prefix)) return true;
   }
   return false;
 }

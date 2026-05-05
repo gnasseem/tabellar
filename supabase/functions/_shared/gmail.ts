@@ -936,6 +936,51 @@ export async function listAllGoogleContacts(
     /* directory.readonly scope not granted or admin restricted */
   }
 
+  // Extract contacts from Gmail sent mail — uses gmail.modify scope (always available).
+  // This finds every person the user has ever emailed, covering friends not in other lists.
+  try {
+    const sentListRes = await fetch(
+      `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=in:sent&maxResults=500&fields=messages/id`,
+      { headers: { Authorization: `Bearer ${tokenData.token}` } },
+    );
+    if (sentListRes.ok) {
+      const sentData = await sentListRes.json();
+      const messageIds: string[] = (sentData.messages ?? []).map((m: { id: string }) => m.id);
+
+      // Fetch headers in concurrent batches of 25
+      const batchSize = 25;
+      for (let i = 0; i < messageIds.length; i += batchSize) {
+        const batch = messageIds.slice(i, i + batchSize);
+        const headerResults = await Promise.all(
+          batch.map((id) =>
+            fetch(
+              `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=To&metadataHeaders=Cc&fields=payload/headers`,
+              { headers: { Authorization: `Bearer ${tokenData.token}` } },
+            ).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+          ),
+        );
+
+        for (const msg of headerResults) {
+          if (!msg) continue;
+          for (const header of msg.payload?.headers ?? []) {
+            if (header.name !== "To" && header.name !== "Cc") continue;
+            for (const part of (header.value as string).split(",")) {
+              const angleMatch = part.match(/^(.*?)<([^>]+)>\s*$/);
+              const email = (angleMatch ? angleMatch[2] : part).trim().toLowerCase();
+              const name = angleMatch ? angleMatch[1].trim().replace(/^"|"$/g, "").trim() : "";
+              if (email && email.includes("@") && !seen.has(email)) {
+                seen.add(email);
+                results.push({ name, email, source: "contact" });
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
   return results;
 }
 
