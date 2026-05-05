@@ -8,9 +8,12 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const supabase = await createClient();
+  // Middleware already validated the session with getUser() on every request.
+  // getSession() reads from cookie (no network round-trip) which is safe here.
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    data: { session },
+  } = await supabase.auth.getSession();
+  const user = session?.user ?? null;
 
   if (!user) {
     redirect("/");

@@ -15,7 +15,7 @@ type Email = {
   sender: string;
   sender_email: string;
   snippet: string;
-  body_text: string;
+  body_text?: string;
   body_html?: string;
   received_at: string;
   is_read: boolean;
@@ -151,8 +151,10 @@ export default function InboxView() {
       // once and paginate client-side. Newest-sort uses classic server-side paging.
       const useSmartWindow = inboxSort === "smart" && !search;
       const cacheKey = useSmartWindow ? "inbox:smart" : "inbox";
+      const ssKey = `inbox:${user.id}:${useSmartWindow ? "smart" : "newest"}`;
 
       if (pageNum === 0 && !search) {
+        // Check in-memory cache first (survives view switches, ~5 min TTL)
         const cached = getViewCache(cacheKey);
         if (cached) {
           setEmails(cached.emails);
@@ -160,6 +162,25 @@ export default function InboxView() {
           setLoading(false);
           return;
         }
+
+        // Check sessionStorage (survives page reloads, ~10 min TTL)
+        // Fresh entries (< 90s) skip the network fetch entirely.
+        // Stale entries are shown immediately while a background refresh runs.
+        try {
+          const raw = sessionStorage.getItem(ssKey);
+          if (raw) {
+            const { emails: se, hasMore: shm, ts } = JSON.parse(raw);
+            const age = Date.now() - ts;
+            if (age < 10 * 60 * 1000) {
+              setEmails(se);
+              setHasMore(shm);
+              setLoading(false);
+              setViewCache(cacheKey, { emails: se, hasMore: shm });
+              if (age < 90 * 1000) return; // fresh enough, skip re-fetch
+              // stale: fall through and refresh in background (loading stays false)
+            }
+          }
+        } catch {}
       }
 
       setLoading((prev) => prev || pageNum > 0);
@@ -179,7 +200,7 @@ export default function InboxView() {
       let query = supabase
         .from("emails")
         .select(
-          "id, user_id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, snippet, body_text, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed!inner(*)",
+          "id, user_id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, snippet, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed!inner(*)",
         )
         .eq("user_id", user.id)
         .eq("is_archived", false)
@@ -221,6 +242,12 @@ export default function InboxView() {
 
       if (pageNum === 0 && !search) {
         setViewCache(cacheKey, { emails: rows, hasMore: hasMoreEmails });
+        try {
+          sessionStorage.setItem(
+            ssKey,
+            JSON.stringify({ emails: rows, hasMore: hasMoreEmails, ts: Date.now() }),
+          );
+        } catch {} // quota exceeded, skip
       }
     },
     [user.id, search, inboxSort],
@@ -571,6 +598,7 @@ export default function InboxView() {
       // unprocessed emails that need to be analyzed in the browser.
       if (newEmailCount === 0 && !isFirstFetch && !useLocalAI) {
         invalidateViewCache("inbox", "inbox:smart");
+        try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
         await fetchEmails(0);
         setInitialPhase(-1);
         return;
@@ -688,6 +716,7 @@ export default function InboxView() {
           if (!mountedRef.current) return;
           setInitialPhase(-1);
           invalidateViewCache("inbox", "inbox:smart");
+        try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
           fetchEmails(0);
         }, 300_000);
 
@@ -758,12 +787,14 @@ export default function InboxView() {
         if (!mountedRef.current) return;
         setInitialPhase(3);
         invalidateViewCache("inbox", "inbox:smart");
+        try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
         await fetchEmails(0);
         setInitialPhase(-1);
       } else {
         // Non-initial sync: run in background, no blocking overlay
         await Promise.allSettled([analyzePromise, localStylePromise]);
         invalidateViewCache("inbox", "inbox:smart");
+        try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
         await fetchEmails(0);
       }
     } catch {
