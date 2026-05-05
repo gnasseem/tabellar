@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
 
 export interface Contact {
@@ -143,8 +144,6 @@ export function useContacts(userId: string): {
 }
 
 let syncTriggered = false;
-// Exported so ComposeModal can read and show a re-auth hint
-export let contactSyncNeedsReauth = false;
 
 async function triggerContactsSync() {
   if (syncTriggered) return;
@@ -154,16 +153,12 @@ async function triggerContactsSync() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
     const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
-    const res = await fetch(`${apiUrl}/contacts/sync`, {
+    await fetch(`${apiUrl}/contacts/sync`, {
       method: "POST",
       headers: { Authorization: `Bearer ${session.access_token}` },
     });
-    if (res.ok) {
-      const body = await res.json() as { synced: number; needs_reauth?: boolean };
-      if (body.needs_reauth) contactSyncNeedsReauth = true;
-    }
   } catch {
-    syncTriggered = false; // allow retry next session
+    syncTriggered = false;
   }
 }
 
@@ -280,6 +275,20 @@ export function EmailField({
   const { suggestions, activeIdx, setActiveIdx, getSuggestions, applySuggestion, clear } =
     useEmailAutocomplete(contacts, accountId, multi);
   const ref = useRef<HTMLInputElement>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
+
+  // Recompute dropdown position on every render when suggestions are open
+  useEffect(() => {
+    if (!suggestions.length || !ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    setDropdownStyle({
+      position: "fixed",
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: Math.max(320, rect.width),
+      zIndex: 9999,
+    });
+  }, [suggestions.length]);
 
   const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!suggestions.length) return;
@@ -291,30 +300,11 @@ export function EmailField({
     } else if (e.key === "Escape") { clear(); }
   };
 
-  return (
-    <div className={`relative ${label ? "flex items-center gap-2" : ""} ${className ?? ""}`}>
-      {label && (
-        <span className="text-xs text-[var(--muted)] w-8 shrink-0">{label}</span>
-      )}
-      <input
-        ref={ref}
-        type="text"
-        value={value}
-        onChange={(e) => { onChange(e.target.value); getSuggestions(e.target.value); }}
-        onKeyDown={handleKey}
-        onBlur={() => setTimeout(clear, 150)}
-        placeholder={placeholder}
-        className={
-          inputClassName ??
-          (label
-            ? "flex-1 px-2 py-1.5 border-b border-[var(--border)] bg-transparent text-sm focus:outline-none focus:border-[var(--accent)]"
-            : "w-full px-3 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none")
-        }
-      />
-      {suffix}
-      {suggestions.length > 0 && (
+  const dropdown = suggestions.length > 0 && typeof document !== "undefined"
+    ? createPortal(
         <div
-          className={`absolute ${label ? "left-10" : "left-0"} top-full z-50 w-80 bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-lg overflow-hidden text-[var(--foreground)]`}
+          style={dropdownStyle}
+          className="bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden text-[var(--foreground)]"
         >
           {suggestions.map((c, i) => (
             <button
@@ -337,8 +327,33 @@ export function EmailField({
               )}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
+      )
+    : null;
+
+  return (
+    <div className={`relative ${label ? "flex items-center gap-2" : ""} ${className ?? ""}`}>
+      {label && (
+        <span className="text-xs text-[var(--muted)] w-8 shrink-0">{label}</span>
       )}
+      <input
+        ref={ref}
+        type="text"
+        value={value}
+        onChange={(e) => { onChange(e.target.value); getSuggestions(e.target.value); }}
+        onKeyDown={handleKey}
+        onBlur={() => setTimeout(clear, 150)}
+        placeholder={placeholder}
+        className={
+          inputClassName ??
+          (label
+            ? "flex-1 px-2 py-1.5 border-b border-[var(--border)] bg-transparent text-sm focus:outline-none focus:border-[var(--accent)]"
+            : "w-full px-3 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none")
+        }
+      />
+      {suffix}
+      {dropdown}
     </div>
   );
 }

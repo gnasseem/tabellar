@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useApp } from "./AppShell";
 import { initWebLLM } from "@/lib/webllm";
 import { emailGraph } from "@/lib/emailGraph";
-import { EmailField, useContacts, contactSyncNeedsReauth } from "./EmailAutocomplete";
+import { EmailField, useContacts } from "./EmailAutocomplete";
 import DateTimePicker from "./DateTimePicker";
 
 type ComposeProps = {
@@ -1121,13 +1121,6 @@ export default function ComposeModal({
                       </option>
                     ))}
                   </select>
-                </div>
-              )}
-
-              {contactSyncNeedsReauth && (
-                <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-400">
-                  <span className="material-symbols-outlined shrink-0" style={{ fontSize: "13px" }}>info</span>
-                  <span>Reconnect your Gmail account to enable name suggestions and org directory.</span>
                 </div>
               )}
 
