@@ -438,6 +438,9 @@ export default function EmailDetail({
   const [emailTags, setEmailTags] = useState<string[]>(
     Array.isArray(proc?.extra_labels) ? proc.extra_labels : [],
   );
+  const [bodyHtml, setBodyHtml] = useState<string | null | undefined>(
+    email.body_html,
+  );
   const tagRef = useRef<HTMLDivElement>(null);
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
   // Follow-up tracking
@@ -460,6 +463,20 @@ export default function EmailDetail({
       .eq("thread_id", email.thread_id)
       .then(({ count }) => setIsTracked((count ?? 0) > 0));
   }, [email.thread_id, user.id]);
+
+  // Lazy-load body_html if it wasn't included in the inbox list query
+  useEffect(() => {
+    setBodyHtml(email.body_html);
+    if (email.body_html !== undefined) return;
+    supabase
+      .from("emails")
+      .select("body_html")
+      .eq("id", email.id)
+      .single()
+      .then(({ data }) => {
+        if (data) setBodyHtml(data.body_html);
+      });
+  }, [email.id, email.body_html]);
 
   // Preload attachments into the module-level cache so preview opens instantly.
   // Fires after mount; errors are silently swallowed — this is best-effort only.
@@ -1052,7 +1069,7 @@ export default function EmailDetail({
     (!isNoreply || meetingActions.length > 0 || todoActions.length > 0);
 
   const singleMessageBody = resolveEmailBodyDisplay({
-    body_html: email.body_html,
+    body_html: bodyHtml,
     body_text: email.body_text,
     snippet: email.snippet,
   });

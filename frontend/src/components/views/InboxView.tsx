@@ -16,7 +16,7 @@ type Email = {
   sender_email: string;
   snippet: string;
   body_text: string;
-  body_html: string;
+  body_html?: string;
   received_at: string;
   is_read: boolean;
   is_starred: boolean;
@@ -178,7 +178,9 @@ export default function InboxView() {
       const resolvedSortToEnd = getResolvedSortToEnd(user.id);
       let query = supabase
         .from("emails")
-        .select("*, email_processed!inner(*)")
+        .select(
+          "id, user_id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, snippet, body_text, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed!inner(*)",
+        )
         .eq("user_id", user.id)
         .eq("is_archived", false)
         .not("label_ids", "cs", '{"SENT"}') // exclude imported sent emails from inbox
@@ -200,7 +202,7 @@ export default function InboxView() {
       }
 
       const { data } = await query;
-      let rows = (data || []) as Email[];
+      let rows = (data || []) as unknown as Email[];
 
       const hasMoreEmails = rows.length > fetchLimit;
       if (hasMoreEmails) rows = rows.slice(0, fetchLimit);
