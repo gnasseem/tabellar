@@ -125,7 +125,7 @@ function validateRecipients(list: unknown): {
 
 function getAllowedAddGmailOrigins(): string[] {
   const raw = getEnv("ALLOWED_FRONTEND_ORIGINS");
-  if (!raw) return ["https://runemail.app", "http://localhost:3000"];
+  if (!raw) return ["https://runemail.app", "https://www.runemail.org", "http://localhost:3000"];
   return raw
     .split(",")
     .map((s) => s.trim())
