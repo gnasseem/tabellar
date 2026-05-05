@@ -24,7 +24,7 @@ function parseAddress(raw: string): { email: string; name: string } | null {
   return null;
 }
 
-/** Loads all known contacts from DB: senders, recipients, meeting attendees */
+/** Loads all known contacts from DB and triggers a background Google Contacts sync. */
 export function useContacts(userId: string): {
   contacts: Contact[];
   addContacts: (newContacts: Contact[]) => void;
@@ -36,46 +36,74 @@ export function useContacts(userId: string): {
 
   const addContacts = (newContacts: Contact[]) => {
     setContacts((prev) => {
-      const seen = new Map(prev.map((c) => [c.email, c.name]));
+      const seen = new Map(prev.map((c) => [c.email, c]));
       for (const c of newContacts) {
-        if (!seen.has(c.email)) seen.set(c.email, c.name);
+        if (!seen.has(c.email)) seen.set(c.email, c);
       }
-      return Array.from(seen.entries()).map(([email, name]) => ({ email, name }));
+      return Array.from(seen.values());
     });
   };
 
   useEffect(() => {
     (async () => {
-      // Run accounts + the three user-id-only queries in parallel; emails query depends on accountIds
       const [
         { data: accounts },
         { data: sentRows },
         { data: meetingRows },
         { data: memoryRows },
+        { data: cachedContacts },
       ] = await Promise.all([
         supabase.from("gmail_accounts").select("id").eq("user_id", userId).eq("is_active", true),
         supabase.from("scheduled_emails").select("to_addresses, cc_addresses, bcc_addresses").eq("user_id", userId).limit(200),
         supabase.from("meetings").select("attendees").eq("user_id", userId).limit(200),
         supabase.from("email_memory").select("sender_email, sender_name").eq("user_id", userId).order("interaction_count", { ascending: false }).limit(300),
+        supabase.from("contacts").select("email, name, source").eq("user_id", userId).limit(5000),
       ]);
 
       const accountIds = (accounts ?? []).map((a: { id: string }) => a.id);
       if (accountIds.length > 0) setPrimaryAccountId(accountIds[0]);
 
-      const seen = new Map<string, string>(); // email -> name
+      const seen = new Map<string, Contact>();
 
-      // Senders from received emails (needs accountIds from above)
+      // Cached Google Contacts + directory (highest priority names)
+      for (const row of cachedContacts ?? []) {
+        if (row.email && !seen.has(row.email)) {
+          seen.set(row.email, { email: row.email, name: row.name ?? "", source: row.source });
+        }
+      }
+
+      // Senders from received emails — use `sender` field (RFC 2822) to extract name
       if (accountIds.length > 0) {
         const { data: emailRows } = await supabase
           .from("emails")
-          .select("sender_email, sender_name")
+          .select("sender_email, sender")
           .in("gmail_account_id", accountIds)
-          .limit(500);
+          .not("sender_email", "is", null)
+          .limit(1000);
         for (const row of emailRows ?? []) {
-          const parsed = parseAddress(row.sender_email);
-          if (!parsed) continue;
-          if (!seen.has(parsed.email)) {
-            seen.set(parsed.email, row.sender_name || parsed.name);
+          const email = row.sender_email?.toLowerCase();
+          if (!email || !email.includes("@")) continue;
+          if (seen.has(email)) continue;
+          // Try to extract name from the full sender header
+          const parsed = parseAddress(row.sender ?? row.sender_email);
+          seen.set(email, { email, name: parsed?.name ?? "" });
+        }
+
+        // Also extract recipients from received emails for people we emailed back
+        const { data: recipRows } = await supabase
+          .from("emails")
+          .select("recipients")
+          .in("gmail_account_id", accountIds)
+          .not("recipients", "is", null)
+          .limit(500);
+        for (const row of recipRows ?? []) {
+          if (!row.recipients) continue;
+          const parts = row.recipients.split(",");
+          for (const part of parts) {
+            const parsed = parseAddress(part.trim());
+            if (parsed && !seen.has(parsed.email)) {
+              seen.set(parsed.email, { email: parsed.email, name: parsed.name });
+            }
           }
         }
       }
@@ -89,7 +117,9 @@ export function useContacts(userId: string): {
         ];
         for (const raw of addrs) {
           const parsed = parseAddress(raw);
-          if (parsed && !seen.has(parsed.email)) seen.set(parsed.email, parsed.name);
+          if (parsed && !seen.has(parsed.email)) {
+            seen.set(parsed.email, { email: parsed.email, name: parsed.name });
+          }
         }
       }
 
@@ -97,25 +127,47 @@ export function useContacts(userId: string): {
       for (const row of meetingRows ?? []) {
         for (const raw of row.attendees ?? []) {
           const parsed = parseAddress(raw);
-          if (parsed && !seen.has(parsed.email)) seen.set(parsed.email, parsed.name);
+          if (parsed && !seen.has(parsed.email)) {
+            seen.set(parsed.email, { email: parsed.email, name: parsed.name });
+          }
         }
       }
 
-      // email_memory (ranked contacts - override name if available)
+      // email_memory ranked contacts — override name if better
       for (const row of memoryRows ?? []) {
-        const parsed = parseAddress(row.sender_email);
-        if (parsed) {
-          seen.set(parsed.email, row.sender_name || parsed.name || seen.get(parsed.email) || "");
-        }
+        const email = row.sender_email?.toLowerCase();
+        if (!email) continue;
+        const existing = seen.get(email);
+        const name = row.sender_name || existing?.name || "";
+        seen.set(email, { email, name, source: existing?.source });
       }
 
-      setContacts(
-        Array.from(seen.entries()).map(([email, name]) => ({ email, name }))
-      );
+      setContacts(Array.from(seen.values()));
+
+      // Background sync of Google Contacts (fire-and-forget, runs once per session)
+      triggerContactsSync();
     })();
   }, [userId]);
 
   return { contacts, addContacts, primaryAccountId };
+}
+
+let syncTriggered = false;
+async function triggerContactsSync() {
+  if (syncTriggered) return;
+  syncTriggered = true;
+  try {
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+    const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+    await fetch(`${apiUrl}/contacts/sync`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session.access_token}` },
+    });
+  } catch {
+    syncTriggered = false; // allow retry next session
+  }
 }
 
 /** Autocomplete logic for a comma-separated email field */
@@ -136,7 +188,7 @@ function useEmailAutocomplete(contacts: Contact[], accountId: string, multi = tr
         .filter(
           (c) =>
             c.email.toLowerCase().includes(lower) ||
-            c.name.toLowerCase().includes(lower)
+            (c.name && c.name.toLowerCase().includes(lower))
         )
         .slice(0, 6);
 
@@ -156,7 +208,7 @@ function useEmailAutocomplete(contacts: Contact[], accountId: string, multi = tr
               { headers: { Authorization: `Bearer ${session.access_token}` } },
             );
             if (!res.ok) return;
-            const { contacts: live } = await res.json() as { contacts: { name: string; email: string }[] };
+            const { contacts: live } = await res.json() as { contacts: { name: string; email: string; source?: string }[] };
             if (!live?.length) return;
             setSuggestions((prev) => {
               const seen = new Set(prev.map((c) => c.email));

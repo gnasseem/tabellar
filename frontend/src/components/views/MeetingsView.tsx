@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useApp } from "../AppShell";
 import DateTimePicker from "../DateTimePicker";
+import { EmailField, useContacts } from "../EmailAutocomplete";
 
 type Meeting = {
   id: string;
@@ -123,6 +124,7 @@ function getNextWorkingSlot(wh: WorkingHours): string {
 
 export default function MeetingsView() {
   const { user, profile, addToast, getViewCache, setViewCache, liveChanges } = useApp();
+  const { contacts, primaryAccountId } = useContacts(user?.id ?? "");
   const supabase = createClient();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
   const [loading, setLoading] = useState(true);
@@ -734,14 +736,15 @@ export default function MeetingsView() {
                 {/* Attendees */}
                 <div>
                   <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">
-                    Recipients <span className="text-[var(--muted)] font-normal">(comma-separated emails)</span>
+                    Recipients
                   </label>
-                  <textarea
+                  <EmailField
                     value={newAttendees}
-                    onChange={(e) => setNewAttendees(e.target.value)}
+                    onChange={setNewAttendees}
+                    contacts={contacts}
+                    accountId={primaryAccountId}
                     placeholder="alex@example.com, sarah@example.com"
-                    rows={2}
-                    className="w-full px-3 py-2.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 resize-none text-slate-900 dark:text-white"
+                    multi={true}
                   />
                 </div>
 
@@ -1017,13 +1020,15 @@ export default function MeetingsView() {
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">
-                    Attendees <span className="font-normal">(comma-separated emails)</span>
+                    Attendees
                   </label>
-                  <textarea
+                  <EmailField
                     value={editAttendees}
-                    onChange={(e) => setEditAttendees(e.target.value)}
-                    rows={2}
-                    className="w-full px-3 py-2.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 resize-none text-slate-900 dark:text-white"
+                    onChange={setEditAttendees}
+                    contacts={contacts}
+                    accountId={primaryAccountId}
+                    placeholder="alex@example.com, sarah@example.com"
+                    multi={true}
                   />
                 </div>
                 {selectedMeeting.calendar_event_id && (

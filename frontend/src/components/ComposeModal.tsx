@@ -264,7 +264,7 @@ export default function ComposeModal({
   const [selectedAccountId, setSelectedAccountId] = useState<string>(
     replyTo?.gmail_account_id || "",
   );
-  const { contacts, addContacts } = useContacts(user.id);
+  const { contacts, addContacts, primaryAccountId } = useContacts(user.id);
 
   // Signatures
   const [allSignatures, setAllSignatures] = useState<
@@ -1129,7 +1129,7 @@ export default function ComposeModal({
                 value={to}
                 onChange={setTo}
                 contacts={contacts}
-                accountId={selectedAccountId}
+                accountId={selectedAccountId || primaryAccountId}
                 suffix={
                   !showCcBcc ? (
                     <button
@@ -1166,14 +1166,14 @@ export default function ComposeModal({
                     value={cc}
                     onChange={setCc}
                     contacts={contacts}
-                    accountId={selectedAccountId}
+                    accountId={selectedAccountId || primaryAccountId}
                   />
                   <EmailField
                     label="Bcc"
                     value={bcc}
                     onChange={setBcc}
                     contacts={contacts}
-                    accountId={selectedAccountId}
+                    accountId={selectedAccountId || primaryAccountId}
                   />
                 </>
               )}

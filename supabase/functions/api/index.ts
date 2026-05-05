@@ -39,6 +39,7 @@ import {
   fetchSentEmails,
   fetchGoogleContacts,
   searchGoogleContacts,
+  listAllGoogleContacts,
   fetchAttachment,
   sendEmail,
   setupGmailWatch,
@@ -2757,6 +2758,49 @@ Deno.serve(async (req) => {
         query,
       );
       return json({ contacts }, 200, corsHeaders);
+    }
+
+    // ── POST /contacts/sync ────────────────────────────────────────────────
+    // Bulk-downloads all Google Contacts + Workspace directory for all active
+    // accounts and upserts them into the contacts table.
+    if (path === "/contacts/sync" && req.method === "POST") {
+      const { data: accounts } = await supabase
+        .from("gmail_accounts")
+        .select("id, tokens_encrypted")
+        .eq("user_id", userId)
+        .eq("is_active", true);
+
+      if (!accounts?.length) {
+        return json({ synced: 0 }, 200, corsHeaders);
+      }
+
+      let totalSynced = 0;
+      for (const account of accounts) {
+        if (!account.tokens_encrypted) continue;
+        try {
+          const all = await listAllGoogleContacts(account.tokens_encrypted);
+          if (!all.length) continue;
+          // Batch upsert in chunks of 500 to avoid payload limits
+          const chunkSize = 500;
+          for (let i = 0; i < all.length; i += chunkSize) {
+            const chunk = all.slice(i, i + chunkSize).map((c) => ({
+              user_id: userId,
+              gmail_account_id: account.id,
+              email: c.email,
+              name: c.name,
+              source: c.source,
+              updated_at: new Date().toISOString(),
+            }));
+            await supabase
+              .from("contacts")
+              .upsert(chunk, { onConflict: "user_id,email", ignoreDuplicates: false });
+          }
+          totalSynced += all.length;
+        } catch {
+          /* ignore per-account failures */
+        }
+      }
+      return json({ synced: totalSynced }, 200, corsHeaders);
     }
 
     // ── GET /oauth/google-url ──────────────────────────────────────────────

@@ -838,6 +838,77 @@ export async function fetchGoogleContacts(
   return contacts;
 }
 
+/** Fetches ALL Google Contacts + Workspace directory people for a given account.
+ *  Returns up to ~2000 contacts (paginated) for bulk caching. */
+export async function listAllGoogleContacts(
+  encryptedTokens: string,
+): Promise<{ name: string; email: string; source: "directory" | "contact" }[]> {
+  const { tokenData } = await resolveTokens(encryptedTokens);
+  const results: { name: string; email: string; source: "directory" | "contact" }[] = [];
+  const seen = new Set<string>();
+
+  // Personal contacts via connections.list (paginated)
+  try {
+    let pageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        readMask: "names,emailAddresses",
+        pageSize: "1000",
+        ...(pageToken ? { pageToken } : {}),
+      });
+      const res = await fetch(
+        `https://people.googleapis.com/v1/people/me/connections?${params}`,
+        { headers: { Authorization: `Bearer ${tokenData.token}` } },
+      );
+      if (!res.ok) break;
+      const data = await res.json();
+      for (const p of data.connections ?? []) {
+        const name = p.names?.[0]?.displayName ?? "";
+        const email = p.emailAddresses?.[0]?.value?.toLowerCase();
+        if (email && !seen.has(email)) {
+          seen.add(email);
+          results.push({ name, email, source: "contact" });
+        }
+      }
+      pageToken = data.nextPageToken;
+    } while (pageToken && results.length < 2000);
+  } catch {
+    /* contacts.readonly scope not granted */
+  }
+
+  // Workspace directory via listDirectoryPeople (paginated)
+  try {
+    let pageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        readMask: "names,emailAddresses",
+        sources: "DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE",
+        pageSize: "1000",
+        ...(pageToken ? { pageToken } : {}),
+      });
+      const res = await fetch(
+        `https://people.googleapis.com/v1/people:listDirectoryPeople?${params}`,
+        { headers: { Authorization: `Bearer ${tokenData.token}` } },
+      );
+      if (!res.ok) break;
+      const data = await res.json();
+      for (const p of data.people ?? []) {
+        const name = p.names?.[0]?.displayName ?? "";
+        const email = p.emailAddresses?.[0]?.value?.toLowerCase();
+        if (email && !seen.has(email)) {
+          seen.add(email);
+          results.push({ name, email, source: "directory" });
+        }
+      }
+      pageToken = data.nextPageToken;
+    } while (pageToken && results.length < 5000);
+  } catch {
+    /* directory.readonly scope not granted */
+  }
+
+  return results;
+}
+
 /** Search Google contacts and Workspace directory by name or email query. */
 export async function searchGoogleContacts(
   encryptedTokens: string,
