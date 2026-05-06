@@ -140,7 +140,7 @@ export type AppContextType = {
   briefingVersion: number;
   notifyBriefingUpdated: () => void;
   briefingRegenerating: boolean;
-  requestBriefingRegeneration: () => void;
+  requestBriefingRegeneration: (scope?: string) => void;
   prefetchBriefingExecutiveTts: (executiveSummary: string) => void;
   /** Stored in localStorage so settings save does not require a DB migration. */
   briefingAudioAutoplay: boolean;
@@ -237,6 +237,8 @@ export default function AppShell({
   const [briefingVersion, setBriefingVersion] = useState(0);
   const [briefingRegenerating, setBriefingRegenerating] = useState(false);
   const briefingGenLockRef = useRef(false);
+  const pendingScopeRef = useRef<string | null>(null);
+  const requestBriefingRegenerationRef = useRef<((scope?: string) => void) | null>(null);
   const viewRef = useRef(viewRaw);
   useEffect(() => {
     viewRef.current = viewRaw;
@@ -515,7 +517,8 @@ export default function AppShell({
     [user.id],
   );
 
-  const requestBriefingRegeneration = useCallback(async () => {
+  const requestBriefingRegeneration = useCallback(async (scope?: string) => {
+    if (scope) pendingScopeRef.current = scope;
     if (briefingGenLockRef.current) return;
     briefingGenLockRef.current = true;
     setBriefingRegenerating(true);
@@ -526,7 +529,12 @@ export default function AppShell({
       } = await supabase.auth.getSession();
       if (!session?.access_token) return;
       const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
-      const res = await fetch(`${apiUrl}/briefing`, {
+      const scopeToUse = pendingScopeRef.current;
+      pendingScopeRef.current = null;
+      const briefingUrl = scopeToUse
+        ? `${apiUrl}/briefing?scope=${encodeURIComponent(scopeToUse)}`
+        : `${apiUrl}/briefing`;
+      const res = await fetch(briefingUrl, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
       if (!res.ok) return;
@@ -570,6 +578,10 @@ export default function AppShell({
     } finally {
       briefingGenLockRef.current = false;
       setBriefingRegenerating(false);
+      // Re-run if a scope change arrived while we were locked
+      if (pendingScopeRef.current) {
+        void requestBriefingRegenerationRef.current?.();
+      }
     }
   }, [
     user.id,
@@ -582,6 +594,7 @@ export default function AppShell({
   // Keep refs in sync so useLiveUpdates callbacks can call these without stale closures
   addToastRef.current = addToast;
   onBriefingUpdatedRef.current = notifyBriefingUpdated;
+  requestBriefingRegenerationRef.current = requestBriefingRegeneration;
 
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));

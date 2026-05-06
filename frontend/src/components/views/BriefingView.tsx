@@ -549,8 +549,14 @@ export default function BriefingView() {
     setScopeDropdownOpen(false);
     updateProfile({ briefing_scope: scope });
     await supabase.from("profiles").update({ briefing_scope: scope }).eq("id", user.id);
-    void requestBriefingRegeneration();
-  }, [supabase, user.id, updateProfile, requestBriefingRegeneration]);
+    // Clear stale cache so the user sees "generating..." instead of the old briefing
+    invalidateViewCache("briefing");
+    try { localStorage.removeItem(`runemail_briefing_cache_${user.id}`); } catch { /* ignore */ }
+    setBriefing(null);
+    setBriefingAt(null);
+    // Pass scope explicitly so the API call uses the correct scope even if locked
+    void requestBriefingRegeneration(scope);
+  }, [supabase, user.id, updateProfile, invalidateViewCache, requestBriefingRegeneration]);
 
   const isFromToday = (ts: number | null | undefined): boolean => {
     if (!ts) return false;
