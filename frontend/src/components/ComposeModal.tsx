@@ -879,7 +879,7 @@ export default function ComposeModal({
           }
         }
       } else if (attachments.length === 0 && !trackOpens) {
-        // Undo Send: queue in scheduled_emails with 30-second window (no attachments/tracking)
+        // Cancel Send: queue in scheduled_emails with 15-second window (no attachments/tracking)
         const { data: scheduled, error: undoErr } = await supabase
           .from("scheduled_emails")
           .insert({
@@ -892,7 +892,7 @@ export default function ComposeModal({
             body_html: sendBody,
             in_reply_to: replyTo?.gmail_id,
             thread_id: replyTo?.thread_id,
-            send_at: new Date(Date.now() + 30_000).toISOString(),
+            send_at: new Date(Date.now() + 15_000).toISOString(),
           })
           .select("id")
           .single();
@@ -904,10 +904,10 @@ export default function ComposeModal({
         }
 
         const scheduledId = scheduled.id;
-        addToast("info", "Sending in 30s...", {
-          duration: 30_000,
+        addToast("info", "Sending in 15s...", {
+          duration: 15_000,
           action: {
-            label: "Undo",
+            label: "Cancel",
             onClick: async () => {
               if (scheduledId) {
                 await supabase
