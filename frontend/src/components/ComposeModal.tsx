@@ -161,12 +161,8 @@ export default function ComposeModal({
   const [showSaveTemplate, setShowSaveTemplate] = useState(false);
   const [saveTemplateName, setSaveTemplateName] = useState("");
 
-  // Right side panel: 'meeting' | 'templates' | null
-  const [rightPanel, setRightPanel] = useState<null | "meeting" | "templates">(
-    null,
-  );
-  const togglePanel = (panel: "meeting" | "templates") =>
-    setRightPanel((prev) => (prev === panel ? null : panel));
+  const [showMeetingPanel, setShowMeetingPanel] = useState(false);
+  const [showTemplatesPopover, setShowTemplatesPopover] = useState(false);
 
   // Schedule send popup
   const [showSchedulePopup, setShowSchedulePopup] = useState(false);
@@ -371,7 +367,7 @@ export default function ComposeModal({
   const applyTemplate = (t: Template) => {
     if (t.subject && !replyTo) setSubject(t.subject);
     setBody(t.body_html);
-    setRightPanel(null);
+    setShowTemplatesPopover(false);
     setShowSaveTemplate(false);
   };
 
@@ -820,7 +816,7 @@ export default function ComposeModal({
         effectiveAccountId = accounts[0].id;
       }
 
-      if (rightPanel === "meeting" && meetingDate && meetingDuration) {
+      if (showMeetingPanel && meetingDate && meetingDuration) {
         await createMeetingRecord();
       }
 
@@ -1056,69 +1052,56 @@ export default function ComposeModal({
 
   return (
     <>
-      {/* AI Draft Preview overlay */}
-
       <div
         data-compose-modal
-        className="fixed bottom-0 z-50 w-full shadow-2xl rounded-t-xl border border-b-0 border-[var(--border)] bg-[var(--background)] flex flex-col"
+        className="fixed bottom-0 z-50 shadow-2xl rounded-t-2xl border border-b-0 border-[var(--border)] bg-[var(--background)] flex flex-col overflow-hidden"
         style={{
           right: assistantOpen ? "388px" : "16px",
-          maxWidth: `${680 + (rightPanel === "templates" ? 256 : rightPanel === "meeting" ? 240 : 0)}px`,
-          maxHeight: "min(75vh, 620px)",
-          transition: "right 0.2s ease, max-width 0.2s ease",
+          width: "780px",
+          maxWidth: "calc(100vw - 32px)",
+          maxHeight: "min(82vh, 700px)",
+          transition: "right 0.2s ease",
         }}
       >
         {/* Title bar */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-[var(--accent)] rounded-t-xl cursor-default select-none shrink-0">
-          <span className="text-sm font-medium text-white">
+        <div className="flex items-center justify-between px-4 py-3 bg-[var(--accent)] rounded-t-2xl cursor-default select-none shrink-0">
+          <span className="text-sm font-semibold text-white tracking-wide">
             {replyTo ? "Reply" : "New Message"}
           </span>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             <button
               onClick={onMinimize}
-              className="p-1 rounded hover:bg-white/10 text-white/70 hover:text-white"
+              className="p-1.5 rounded-lg hover:bg-white/15 text-white/80 hover:text-white transition-colors cursor-pointer"
               title="Minimize"
             >
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "18px" }}
-              >
-                minimize
-              </span>
+              <span className="material-symbols-outlined" style={{ fontSize: "17px" }}>minimize</span>
             </button>
             <button
               onClick={onClose}
-              className="p-1 rounded hover:bg-white/10 text-white/70 hover:text-white"
+              className="p-1.5 rounded-lg hover:bg-white/15 text-white/80 hover:text-white transition-colors cursor-pointer"
               title="Close"
             >
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "18px" }}
-              >
-                close
-              </span>
+              <span className="material-symbols-outlined" style={{ fontSize: "17px" }}>close</span>
             </button>
           </div>
         </div>
 
-        {/* Form + optional right side panel */}
-        <div className="flex flex-1 overflow-hidden">
-          {/* Main compose area */}
-          <div className="flex-1 overflow-auto flex flex-col min-w-0">
-            <div className="flex-1 overflow-auto px-4 pt-3 pb-2 space-y-2">
-              {/* From selector */}
+        {/* Compose form */}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* Scrollable content area */}
+          <div className="flex-1 overflow-auto">
+            {/* Header fields */}
+            <div className="px-5 pt-1">
               {gmailAccounts.length > 1 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-[var(--muted)] w-8">From</span>
+                <div className="flex items-center gap-3 py-2.5 border-b border-[var(--border)]">
+                  <span className="text-xs font-medium text-[var(--muted)] w-12 shrink-0">From</span>
                   <select
                     value={selectedAccountId}
                     onChange={(e) => setSelectedAccountId(e.target.value)}
-                    className="flex-1 px-2 py-1.5 border-b border-[var(--border)] bg-[var(--surface)] text-sm focus:outline-none focus:border-[var(--accent)]"
+                    className="flex-1 bg-transparent text-sm focus:outline-none"
                   >
                     {gmailAccounts.map((acc) => (
-                      <option key={acc.id} value={acc.id}>
-                        {acc.gmail_address}
-                      </option>
+                      <option key={acc.id} value={acc.id}>{acc.gmail_address}</option>
                     ))}
                   </select>
                 </div>
@@ -1134,26 +1117,17 @@ export default function ComposeModal({
                   !showCcBcc ? (
                     <button
                       onClick={() => setShowCcBcc(true)}
-                      className="text-xs text-[var(--muted)] hover:text-[var(--accent)] shrink-0"
+                      className="text-xs text-[var(--muted)] hover:text-[var(--accent)] shrink-0 transition-colors cursor-pointer"
                     >
                       Cc/Bcc
                     </button>
                   ) : (
                     <button
-                      onClick={() => {
-                        setShowCcBcc(false);
-                        setCc("");
-                        setBcc("");
-                      }}
-                      className="text-xs text-[var(--muted)] hover:text-[var(--accent)] shrink-0"
+                      onClick={() => { setShowCcBcc(false); setCc(""); setBcc(""); }}
+                      className="text-xs text-[var(--muted)] hover:text-[var(--accent)] shrink-0 transition-colors cursor-pointer"
                       title="Hide Cc/Bcc"
                     >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{ fontSize: "14px" }}
-                      >
-                        close
-                      </span>
+                      <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>close</span>
                     </button>
                   )
                 }
@@ -1161,123 +1135,144 @@ export default function ComposeModal({
 
               {showCcBcc && (
                 <>
-                  <EmailField
-                    label="Cc"
-                    value={cc}
-                    onChange={setCc}
-                    contacts={contacts}
-                    accountId={selectedAccountId || primaryAccountId}
-                  />
-                  <EmailField
-                    label="Bcc"
-                    value={bcc}
-                    onChange={setBcc}
-                    contacts={contacts}
-                    accountId={selectedAccountId || primaryAccountId}
-                  />
+                  <EmailField label="Cc" value={cc} onChange={setCc} contacts={contacts} accountId={selectedAccountId || primaryAccountId} />
+                  <EmailField label="Bcc" value={bcc} onChange={setBcc} contacts={contacts} accountId={selectedAccountId || primaryAccountId} />
                 </>
               )}
 
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-[var(--muted)] w-8">Sub</span>
+              <div className="flex items-center gap-2 py-2.5 border-b border-[var(--border)]">
+                <span className="text-xs font-medium text-[var(--muted)] w-8 shrink-0">Sub</span>
                 <input
                   type="text"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
                   placeholder="Subject"
-                  className="flex-1 px-2 py-1.5 border-b border-[var(--border)] bg-transparent text-sm focus:outline-none focus:border-[var(--accent)]"
+                  className="flex-1 bg-transparent text-sm focus:outline-none"
                 />
               </div>
+            </div>
 
+            {/* Inline meeting card */}
+            {showMeetingPanel && (
+              <div className="mx-5 mt-3 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-light)] overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--accent)]/15">
+                  <span className="material-symbols-outlined text-[var(--accent)]" style={{ fontSize: "15px" }}>event</span>
+                  <span className="text-xs font-semibold text-[var(--accent)]">Schedule Meeting</span>
+                  <button
+                    onClick={() => setShowMeetingPanel(false)}
+                    className="ml-auto p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>close</span>
+                  </button>
+                </div>
+                <div className="p-4 space-y-3">
+                  <DateTimePicker
+                    value={meetingDatetime}
+                    onChange={setMeetingDatetime}
+                    placeholder="Pick date and time"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { label: "15 min", value: "15" },
+                      { label: "30 min", value: "30" },
+                      { label: "45 min", value: "45" },
+                      { label: "1 hr", value: "60" },
+                      { label: "1.5 hr", value: "90" },
+                      { label: "2 hr", value: "120" },
+                    ].map(({ label, value }) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setMeetingDuration(value)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${
+                          meetingDuration === value
+                            ? "bg-[var(--accent)] text-white border-[var(--accent)]"
+                            : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--accent)] bg-[var(--background)]"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex gap-3 items-center">
+                    <input
+                      type="text"
+                      value={meetingLocation}
+                      onChange={(e) => setMeetingLocation(e.target.value)}
+                      placeholder="Location (optional)"
+                      className="flex-1 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs focus:outline-none focus:border-[var(--accent)] transition-colors"
+                    />
+                    <label className="flex items-center gap-1.5 text-xs text-[var(--muted)] cursor-pointer shrink-0 select-none">
+                      <input
+                        type="checkbox"
+                        checked={createZoomLink}
+                        onChange={(e) => setCreateZoomLink(e.target.checked)}
+                        className="rounded"
+                      />
+                      Zoom link
+                    </label>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Body */}
+            <div className="px-5 pb-2">
               <textarea
                 value={body}
                 onChange={(e) => {
                   setBody(e.target.value);
                   if (aiGenerated) setAiGenerated(false);
                 }}
-                placeholder="Write your message intent or draft…"
-                rows={7}
-                className="w-full px-2 py-2 bg-transparent text-sm focus:outline-none resize-none"
+                placeholder="Write your message intent or draft..."
+                rows={showMeetingPanel ? 6 : 10}
+                className="w-full pt-3 pb-2 bg-transparent text-sm focus:outline-none resize-none"
               />
 
-              {/* AI refine bar  -  shown after AI generation */}
+              {/* AI refine bar */}
               {aiGenerated && (
-                <div className="mx-2 rounded-lg border border-[var(--border)] bg-slate-50 dark:bg-slate-800/60 overflow-hidden">
+                <div className="mb-2 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/60 overflow-hidden">
                   {!showRefinePanel ? (
                     <button
                       onClick={() => setShowRefinePanel(true)}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-[var(--muted)] hover:text-[var(--accent)] hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors"
+                      className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--muted)] hover:text-[var(--accent)] hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors cursor-pointer"
                     >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{ fontSize: "14px" }}
-                      >
-                        edit_note
-                      </span>
+                      <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>edit_note</span>
                       Not right? Tell the AI what to change
-                      <span
-                        className="material-symbols-outlined ml-auto"
-                        style={{ fontSize: "14px" }}
-                      >
-                        chevron_right
-                      </span>
+                      <span className="material-symbols-outlined ml-auto" style={{ fontSize: "14px" }}>chevron_right</span>
                     </button>
                   ) : (
-                    <div className="p-2.5 space-y-2">
-                      <div className="flex items-center gap-1.5 mb-1">
-                        <span
-                          className="material-symbols-outlined text-[var(--accent)]"
-                          style={{ fontSize: "14px" }}
-                        >
-                          edit_note
-                        </span>
-                        <span className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                          What should change?
-                        </span>
+                    <div className="p-3 space-y-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="material-symbols-outlined text-[var(--accent)]" style={{ fontSize: "14px" }}>edit_note</span>
+                        <span className="text-xs font-semibold text-[var(--foreground)]">What should change?</span>
                         <button
-                          onClick={() => {
-                            setShowRefinePanel(false);
-                            setRefineFeedback("");
-                          }}
-                          className="ml-auto text-[var(--muted)] hover:text-slate-900 dark:hover:text-white"
+                          onClick={() => { setShowRefinePanel(false); setRefineFeedback(""); }}
+                          className="ml-auto text-[var(--muted)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
                         >
-                          <span
-                            className="material-symbols-outlined"
-                            style={{ fontSize: "14px" }}
-                          >
-                            close
-                          </span>
+                          <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>close</span>
                         </button>
                       </div>
                       <textarea
                         value={refineFeedback}
                         onChange={(e) => setRefineFeedback(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey))
-                            refineWithFeedback();
-                        }}
+                        onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) refineWithFeedback(); }}
                         placeholder="e.g. Make it shorter, use a more casual tone, add a question at the end..."
                         rows={2}
-                        className="w-full px-2 py-1.5 rounded border border-[var(--border)] bg-[var(--background)] text-xs focus:outline-none focus:border-[var(--accent)] resize-none"
+                        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs focus:outline-none focus:border-[var(--accent)] resize-none transition-colors"
                         autoFocus
                       />
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-[var(--muted)]">
-                          Cmd+Enter to apply. Feedback is saved to your
-                          knowledge base.
-                        </span>
+                        <span className="text-[10px] text-[var(--muted)]">Cmd+Enter to apply. Feedback is saved to your knowledge base.</span>
                         <button
                           onClick={refineWithFeedback}
                           disabled={refining || !refineFeedback.trim()}
-                          className="ml-auto flex items-center gap-1 px-2.5 py-1 rounded-full bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-50"
+                          className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
                         >
-                          <span
-                            className={`material-symbols-outlined ${refining ? "animate-spin" : ""}`}
-                            style={{ fontSize: "13px" }}
-                          >
+                          <span className={`material-symbols-outlined ${refining ? "animate-spin" : ""}`} style={{ fontSize: "12px" }}>
                             {refining ? "progress_activity" : "auto_awesome"}
                           </span>
-                          {refining ? "Updating…" : "Apply"}
+                          {refining ? "Updating..." : "Apply"}
                         </button>
                       </div>
                     </div>
@@ -1287,447 +1282,255 @@ export default function ComposeModal({
 
               {/* Attachment pills */}
               {attachments.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 px-2 pb-2">
+                <div className="flex flex-wrap gap-1.5 pb-2">
                   {attachments.map((file, idx) => (
                     <div
                       key={idx}
-                      className="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-xs text-[var(--foreground)]"
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-xs text-[var(--foreground)]"
                     >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{ fontSize: "13px" }}
-                      >
-                        attach_file
-                      </span>
-                      <span className="max-w-[140px] truncate">
-                        {file.name}
-                      </span>
-                      <span className="text-[var(--muted)]">
-                        ({formatFileSize(file.size)})
-                      </span>
+                      <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>attach_file</span>
+                      <span className="max-w-[140px] truncate">{file.name}</span>
+                      <span className="text-[var(--muted)]">({formatFileSize(file.size)})</span>
                       <button
                         onClick={() => removeAttachment(idx)}
-                        className="ml-0.5 text-[var(--muted)] hover:text-red-500"
+                        className="text-[var(--muted)] hover:text-red-500 transition-colors cursor-pointer"
                       >
-                        <span
-                          className="material-symbols-outlined"
-                          style={{ fontSize: "13px" }}
-                        >
-                          close
-                        </span>
+                        <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>close</span>
                       </button>
                     </div>
                   ))}
                 </div>
               )}
 
-              {/* Hidden file input */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={handleFileSelect}
-              />
-            </div>
-
-            {/* Bottom toolbar */}
-            <div className="flex items-center gap-1.5 px-3 py-2 border-t border-[var(--border)] shrink-0">
-              {/* Generate button */}
-              <button
-                onClick={() => generateDraft()}
-                disabled={generatingDraft || !to || !subject}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                <span
-                  className={`material-symbols-outlined ${generatingDraft ? "animate-spin" : ""}`}
-                  style={{ fontSize: "16px" }}
-                >
-                  {generatingDraft ? "progress_activity" : "auto_awesome"}
-                </span>
-                {generatingDraft ? "Generating…" : "Generate"}
-              </button>
-
-              {/* Send directly (without AI) */}
-              <button
-                onClick={() => handleSend()}
-                disabled={sending || !to || !subject}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border)] text-sm text-[var(--muted)] hover:text-slate-900 dark:hover:text-white hover:border-slate-400 disabled:opacity-50"
-                title="Send without AI"
-              >
-                <span
-                  className="material-symbols-outlined"
-                  style={{ fontSize: "16px" }}
-                >
-                  send
-                </span>
-                {sending ? "Sending…" : scheduleAt ? "Schedule" : "Send"}
-              </button>
-
-              <div className="flex items-center gap-0.5 ml-1">
-                {/* Attach file */}
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`flex items-center gap-1 px-2 py-1.5 rounded-full text-xs hover:bg-slate-100 dark:hover:bg-slate-800 ${attachments.length > 0 ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
-                  title="Attach files"
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "16px" }}
-                  >
-                    attach_file
-                  </span>
-                  {attachments.length > 0 ? `${attachments.length}` : "Attach"}
-                </button>
-
-                {/* Track email */}
-                <button
-                  onClick={() => setTrackOpens(!trackOpens)}
-                  className={`flex items-center gap-1 px-2 py-1.5 rounded-full text-xs hover:bg-slate-100 dark:hover:bg-slate-800 ${trackOpens ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
-                  title={trackOpens ? "Read receipts ON" : "Read receipts OFF"}
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "16px" }}
-                  >
-                    {trackOpens ? "mark_email_read" : "mail"}
-                  </span>
-                  Track
-                </button>
-
-                {/* Templates */}
-                <button
-                  onClick={() => {
-                    togglePanel("templates");
-                    setShowSaveTemplate(false);
-                  }}
-                  className={`flex items-center gap-1 px-2 py-1.5 rounded-full text-xs hover:bg-slate-100 dark:hover:bg-slate-800 ${rightPanel === "templates" ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
-                  title="Templates"
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "16px" }}
-                  >
-                    description
-                  </span>
-                  Templates
-                </button>
-
-                {/* Schedule meeting  -  disabled until To + Subject filled */}
-                <button
-                  onClick={() => togglePanel("meeting")}
-                  disabled={!to || !subject}
-                  className={`flex items-center gap-1 px-2 py-1.5 rounded-full text-xs hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed ${rightPanel === "meeting" ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
-                  title={
-                    !to || !subject
-                      ? "Enter recipient and subject first"
-                      : "Schedule meeting"
-                  }
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "16px" }}
-                  >
-                    event
-                  </span>
-                  Meeting
-                </button>
-
-                {/* Schedule send popup */}
-                <div className="relative">
-                  <button
-                    onClick={() => {
-                      if (!showSchedulePopup && !scheduleAt) {
-                        const wh = profile?.working_hours as WorkingHours;
-                        const slot = getNextWorkingSlot(wh);
-                        setScheduleAt(slot.toISOString());
-                      }
-                      setShowSchedulePopup((p) => !p);
-                    }}
-                    className={`p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 ${scheduleAt || showSchedulePopup ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
-                    title="Schedule send"
-                  >
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "18px" }}
-                    >
-                      schedule_send
-                    </span>
-                  </button>
-                  {showSchedulePopup && (
-                    <div
-                      className="absolute bottom-full mb-2 right-0 z-50 bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-2xl p-3 w-80"
-                      style={{ maxHeight: "80vh", overflowY: "auto" }}
-                    >
-                      <div className="flex items-center justify-between mb-2.5">
-                        <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                          Schedule send
-                        </span>
-                        <button
-                          onClick={() => setShowSchedulePopup(false)}
-                          className="text-[var(--muted)] hover:text-slate-900 dark:hover:text-white"
-                        >
-                          <span
-                            className="material-symbols-outlined"
-                            style={{ fontSize: "15px" }}
-                          >
-                            close
-                          </span>
-                        </button>
-                      </div>
-                      <DateTimePicker
-                        value={isoToDatetimeLocal(scheduleAt)}
-                        onChange={(dtl) =>
-                          setScheduleAt(datetimeLocalToIso(dtl))
-                        }
-                        placeholder="Pick date and time"
-                        showWarning={
-                          !!(
-                            scheduleAt &&
-                            isOutsideWorkingHours(
-                              scheduleAt,
-                              profile?.working_hours as WorkingHours,
-                            )
-                          )
-                        }
-                      />
-                      {scheduleAt &&
-                        isOutsideWorkingHours(
-                          scheduleAt,
-                          profile?.working_hours as WorkingHours,
-                        ) && (
-                          <p className="flex items-center gap-1 text-[11px] text-amber-500 mt-2">
-                            <span
-                              className="material-symbols-outlined"
-                              style={{ fontSize: "12px" }}
-                            >
-                              warning
-                            </span>
-                            Outside your working hours
-                          </p>
-                        )}
-                      <div className="flex items-center gap-2 mt-2.5">
-                        {scheduleAt && (
-                          <button
-                            onClick={() => setScheduleAt("")}
-                            className="text-xs text-[var(--muted)] hover:text-red-500 flex items-center gap-1"
-                          >
-                            <span
-                              className="material-symbols-outlined"
-                              style={{ fontSize: "13px" }}
-                            >
-                              close
-                            </span>
-                            Clear
-                          </button>
-                        )}
-                        <button
-                          onClick={() => setShowSchedulePopup(false)}
-                          className="ml-auto px-3 py-1 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90"
-                        >
-                          {scheduleAt ? "Confirm" : "Close"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Save draft */}
-                <button
-                  onClick={saveDraft}
-                  className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)]"
-                  title="Save draft"
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "18px" }}
-                  >
-                    save
-                  </span>
-                </button>
-              </div>
-
-              {/* Discard */}
-              <button
-                onClick={onClose}
-                className="p-1.5 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)] ml-auto"
-                title="Discard"
-              >
-                <span
-                  className="material-symbols-outlined"
-                  style={{ fontSize: "20px" }}
-                >
-                  delete
-                </span>
-              </button>
+              <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
             </div>
           </div>
 
-          {/* Right side panel  -  Meeting */}
-          {rightPanel === "meeting" && (
-            <div className="w-60 border-l border-[var(--border)] overflow-auto p-3 space-y-2.5 bg-slate-50 dark:bg-slate-800/50 shrink-0">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Schedule Meeting
-                </span>
-                <button
-                  onClick={() => setRightPanel(null)}
-                  className="text-[var(--muted)] hover:text-slate-900 dark:hover:text-white"
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "16px" }}
-                  >
-                    close
-                  </span>
-                </button>
-              </div>
-              <div className="text-xs text-[var(--muted)] bg-[var(--background)] rounded px-2 py-1.5 border border-[var(--border)] space-y-0.5">
-                <div className="truncate">
-                  <span className="font-medium">To:</span> {to || "-"}
-                </div>
-                <div className="truncate">
-                  <span className="font-medium">Title:</span> {subject || "-"}
-                </div>
-              </div>
-              <DateTimePicker
-                value={meetingDatetime}
-                onChange={setMeetingDatetime}
-                placeholder="Pick date and time"
-              />
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { label: "15 min", value: "15" },
-                  { label: "30 min", value: "30" },
-                  { label: "45 min", value: "45" },
-                  { label: "1 hr", value: "60" },
-                  { label: "1.5 hr", value: "90" },
-                  { label: "2 hr", value: "120" },
-                ].map(({ label, value }) => (
-                  <button
-                    key={value}
-                    type="button"
-                    onClick={() => setMeetingDuration(value)}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
-                      meetingDuration === value
-                        ? "bg-[var(--accent)] text-white border-[var(--accent)]"
-                        : "border-[var(--border)] text-slate-600 dark:text-slate-400 hover:border-[var(--accent)] hover:text-[var(--accent)]"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <input
-                type="text"
-                value={meetingLocation}
-                onChange={(e) => setMeetingLocation(e.target.value)}
-                placeholder="Location (optional)"
-                className="w-full px-2 py-1.5 rounded border border-[var(--border)] bg-transparent text-sm focus:outline-none"
-              />
-              <label className="flex items-center gap-2 text-xs text-[var(--muted)] cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={createZoomLink}
-                  onChange={(e) => setCreateZoomLink(e.target.checked)}
-                  className="rounded"
-                />
-                Create Zoom link
-              </label>
-            </div>
-          )}
+          {/* Toolbar */}
+          <div className="flex items-center gap-2 px-4 py-2.5 border-t border-[var(--border)] shrink-0 bg-[var(--background)]">
+            {/* Primary actions */}
+            <button
+              onClick={() => generateDraft()}
+              disabled={generatingDraft || !to || !subject}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity shrink-0 cursor-pointer"
+            >
+              <span className={`material-symbols-outlined ${generatingDraft ? "animate-spin" : ""}`} style={{ fontSize: "16px" }}>
+                {generatingDraft ? "progress_activity" : "auto_awesome"}
+              </span>
+              {generatingDraft ? "Generating..." : "Generate"}
+            </button>
 
-          {/* Right side panel  -  Templates */}
-          {rightPanel === "templates" && (
-            <div className="w-64 border-l border-[var(--border)] overflow-auto flex flex-col bg-slate-50 dark:bg-slate-800/50 shrink-0">
-              <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">
-                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Templates
+            <button
+              onClick={() => handleSend()}
+              disabled={sending || !to || !subject}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-[var(--border)] text-sm text-[var(--foreground)] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50 transition-colors shrink-0 cursor-pointer"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>send</span>
+              {sending ? "Sending..." : scheduleAt ? "Schedule" : "Send"}
+            </button>
+
+            {/* Divider */}
+            <div className="w-px h-5 bg-[var(--border)] mx-0.5 shrink-0" />
+
+            {/* Secondary actions */}
+            <div className="flex items-center gap-0.5 flex-1 overflow-x-auto">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 ${attachments.length > 0 ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
+                title="Attach files"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>attach_file</span>
+                {attachments.length > 0 ? `${attachments.length} file${attachments.length > 1 ? "s" : ""}` : "Attach"}
+              </button>
+
+              <button
+                onClick={() => setTrackOpens(!trackOpens)}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 ${trackOpens ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
+                title={trackOpens ? "Read receipts ON" : "Read receipts OFF"}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>
+                  {trackOpens ? "mark_email_read" : "mail"}
                 </span>
+                Track
+              </button>
+
+              {/* Templates popover */}
+              <div className="relative">
                 <button
-                  onClick={() => {
-                    setRightPanel(null);
-                    setShowSaveTemplate(false);
-                  }}
-                  className="text-[var(--muted)] hover:text-slate-900 dark:hover:text-white"
+                  onClick={() => { setShowTemplatesPopover((p) => !p); setShowSaveTemplate(false); }}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 ${showTemplatesPopover ? "text-[var(--accent)] bg-[var(--accent-light)]" : "text-[var(--muted)]"}`}
+                  title="Templates"
                 >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "16px" }}
-                  >
-                    close
-                  </span>
+                  <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>description</span>
+                  Templates
                 </button>
-              </div>
-              <div className="flex-1 overflow-auto">
-                {templates.length === 0 ? (
-                  <p className="text-xs text-[var(--muted)] px-3 py-3">
-                    No templates yet. Save your current message as one below.
-                  </p>
-                ) : (
-                  templates.map((t) => (
-                    <div
-                      key={t.id}
-                      className="flex items-center justify-between px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-700 border-b border-[var(--border)] last:border-0"
-                    >
+                {showTemplatesPopover && (
+                  <div
+                    className="absolute bottom-full mb-2 left-0 z-50 bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-2xl flex flex-col overflow-hidden"
+                    style={{ width: "288px", maxHeight: "340px" }}
+                  >
+                    <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--border)] shrink-0">
+                      <span className="text-xs font-semibold text-[var(--foreground)]">Templates</span>
                       <button
-                        onClick={() => applyTemplate(t)}
-                        className="text-[12px] text-slate-900 dark:text-white text-left flex-1 truncate"
+                        onClick={() => { setShowTemplatesPopover(false); setShowSaveTemplate(false); }}
+                        className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
                       >
-                        {t.name}
-                      </button>
-                      <button
-                        onClick={() => deleteTemplate(t.id)}
-                        className="text-[var(--muted)] hover:text-red-500 ml-2 shrink-0"
-                      >
-                        <span
-                          className="material-symbols-outlined"
-                          style={{ fontSize: "14px" }}
-                        >
-                          delete
-                        </span>
+                        <span className="material-symbols-outlined" style={{ fontSize: "15px" }}>close</span>
                       </button>
                     </div>
-                  ))
-                )}
-              </div>
-              {/* Save current as template */}
-              <div className="border-t border-[var(--border)] p-2.5">
-                {showSaveTemplate ? (
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={saveTemplateName}
-                      onChange={(e) => setSaveTemplateName(e.target.value)}
-                      placeholder="Template name"
-                      className="flex-1 px-2 py-1 rounded border border-[var(--border)] bg-[var(--background)] text-xs focus:outline-none"
-                      autoFocus
-                    />
-                    <button
-                      onClick={saveAsTemplate}
-                      disabled={!saveTemplateName.trim() || !body}
-                      className="px-2 py-1 rounded bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-50"
-                    >
-                      Save
-                    </button>
+                    <div className="flex-1 overflow-auto">
+                      {templates.length === 0 ? (
+                        <div className="flex flex-col items-center gap-2 px-4 py-6 text-center">
+                          <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "28px" }}>description</span>
+                          <p className="text-xs text-[var(--muted)]">No templates yet. Save your current message as one below.</p>
+                        </div>
+                      ) : (
+                        templates.map((t) => (
+                          <div
+                            key={t.id}
+                            className="flex items-center gap-2 px-3.5 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 border-b border-[var(--border)] last:border-0 group transition-colors cursor-pointer"
+                          >
+                            <button onClick={() => applyTemplate(t)} className="flex-1 text-left min-w-0">
+                              <div className="text-xs font-medium text-[var(--foreground)] truncate">{t.name}</div>
+                              {t.subject && <div className="text-[11px] text-[var(--muted)] truncate mt-0.5">{t.subject}</div>}
+                            </button>
+                            <button
+                              onClick={() => deleteTemplate(t.id)}
+                              className="opacity-0 group-hover:opacity-100 p-1 rounded text-[var(--muted)] hover:text-red-500 transition-all shrink-0 cursor-pointer"
+                            >
+                              <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>delete</span>
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                    <div className="border-t border-[var(--border)] p-2.5 shrink-0">
+                      {showSaveTemplate ? (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={saveTemplateName}
+                            onChange={(e) => setSaveTemplateName(e.target.value)}
+                            placeholder="Template name"
+                            onKeyDown={(e) => { if (e.key === "Enter") saveAsTemplate(); if (e.key === "Escape") setShowSaveTemplate(false); }}
+                            className="flex-1 px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs focus:outline-none focus:border-[var(--accent)] transition-colors"
+                            autoFocus
+                          />
+                          <button
+                            onClick={saveAsTemplate}
+                            disabled={!saveTemplateName.trim() || !body}
+                            className="px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setShowSaveTemplate(true)}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-[var(--muted)] hover:text-[var(--accent)] hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>add</span>
+                          Save current as template
+                        </button>
+                      )}
+                    </div>
                   </div>
-                ) : (
-                  <button
-                    onClick={() => setShowSaveTemplate(true)}
-                    className="w-full px-2 py-1.5 text-xs text-[var(--muted)] hover:text-[var(--accent)] hover:bg-slate-100 dark:hover:bg-slate-700 rounded flex items-center gap-1.5"
-                  >
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "14px" }}
-                    >
-                      add
-                    </span>
-                    Save current as template
-                  </button>
                 )}
               </div>
+
+              {/* Meeting toggle */}
+              <button
+                onClick={() => setShowMeetingPanel((p) => !p)}
+                disabled={!to || !subject}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer ${showMeetingPanel ? "text-[var(--accent)] bg-[var(--accent-light)]" : "text-[var(--muted)]"}`}
+                title={!to || !subject ? "Enter recipient and subject first" : "Schedule meeting"}
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>event</span>
+                Meeting
+              </button>
+
+              {/* Schedule send */}
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    if (!showSchedulePopup && !scheduleAt) {
+                      const wh = profile?.working_hours as WorkingHours;
+                      const slot = getNextWorkingSlot(wh);
+                      setScheduleAt(slot.toISOString());
+                    }
+                    setShowSchedulePopup((p) => !p);
+                  }}
+                  className={`p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${scheduleAt || showSchedulePopup ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
+                  title="Schedule send"
+                >
+                  <span className="material-symbols-outlined" style={{ fontSize: "17px" }}>schedule_send</span>
+                </button>
+                {showSchedulePopup && (
+                  <div
+                    className="absolute bottom-full mb-2 right-0 z-50 bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-2xl p-3.5 w-80"
+                    style={{ maxHeight: "80vh", overflowY: "auto" }}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs font-semibold text-[var(--foreground)]">Schedule send</span>
+                      <button
+                        onClick={() => setShowSchedulePopup(false)}
+                        className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: "15px" }}>close</span>
+                      </button>
+                    </div>
+                    <DateTimePicker
+                      value={isoToDatetimeLocal(scheduleAt)}
+                      onChange={(dtl) => setScheduleAt(datetimeLocalToIso(dtl))}
+                      placeholder="Pick date and time"
+                      showWarning={!!(scheduleAt && isOutsideWorkingHours(scheduleAt, profile?.working_hours as WorkingHours))}
+                    />
+                    {scheduleAt && isOutsideWorkingHours(scheduleAt, profile?.working_hours as WorkingHours) && (
+                      <p className="flex items-center gap-1 text-[11px] text-amber-500 mt-2">
+                        <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>warning</span>
+                        Outside your working hours
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2 mt-3">
+                      {scheduleAt && (
+                        <button
+                          onClick={() => setScheduleAt("")}
+                          className="text-xs text-[var(--muted)] hover:text-red-500 flex items-center gap-1 transition-colors cursor-pointer"
+                        >
+                          <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>close</span>
+                          Clear
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setShowSchedulePopup(false)}
+                        className="ml-auto px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
+                      >
+                        {scheduleAt ? "Confirm" : "Close"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Save draft */}
+              <button
+                onClick={saveDraft}
+                className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)] transition-colors cursor-pointer"
+                title="Save draft"
+              >
+                <span className="material-symbols-outlined" style={{ fontSize: "17px" }}>save</span>
+              </button>
             </div>
-          )}
+
+            {/* Discard */}
+            <button
+              onClick={onClose}
+              className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)] hover:text-red-500 transition-colors cursor-pointer shrink-0"
+              title="Discard"
+            >
+              <span className="material-symbols-outlined" style={{ fontSize: "19px" }}>delete</span>
+            </button>
+          </div>
         </div>
       </div>
     </>
