@@ -573,6 +573,8 @@ export default function BriefingView() {
 
   const loadCachedBriefing = useCallback(async () => {
     const currentScope = profile?.briefing_scope ?? "today_new";
+    // If profile has no last_briefing_at the DB was cleared; local cache is unverified.
+    const dbHasBriefing = Boolean(profile?.last_briefing_at);
 
     const memCached = getViewCache("briefing");
     if (memCached) {
@@ -583,7 +585,7 @@ export default function BriefingView() {
         setBriefingAt(memCached.at);
         setLoading(false);
         const cachedTs = memCached.at ? new Date(memCached.at).getTime() : null;
-        if (!isFromToday(cachedTs)) generateBriefingOnDemandRef.current?.();
+        if (!isFromToday(cachedTs) || !dbHasBriefing) generateBriefingOnDemandRef.current?.();
         return;
       }
       // Scope changed or empty - fall through to get fresh data
@@ -600,7 +602,8 @@ export default function BriefingView() {
           if (at) setBriefingAt(at);
           setViewCache("briefing", { data, at, scope: cachedScope } as any);
           setLoading(false);
-          if (!isFromToday(ts)) generateBriefingOnDemandRef.current?.();
+          // If DB has no briefing, treat local copy as unverified and regenerate
+          if (!isFromToday(ts) || !dbHasBriefing) generateBriefingOnDemandRef.current?.();
           return;
         }
       }
@@ -626,7 +629,7 @@ export default function BriefingView() {
     } catch { /* ignore */ }
 
     setLoading(false);
-  }, [user.id, profile?.briefing_scope, supabase, getViewCache, setViewCache]);
+  }, [user.id, profile?.briefing_scope, profile?.last_briefing_at, supabase, getViewCache, setViewCache]);
 
   const loadMeetings = useCallback(async () => {
     const startOfDay = new Date();
