@@ -10,6 +10,30 @@ export type ToastItem = {
   duration?: number;
 };
 
+const TYPE_CONFIG = {
+  success: {
+    icon: "check_circle",
+    barClass: "bg-green-500",
+    iconClass: "text-green-500 dark:text-green-400",
+    actionClass:
+      "text-green-700 dark:text-green-400 bg-green-500/10 hover:bg-green-500/20",
+  },
+  error: {
+    icon: "error",
+    barClass: "bg-red-500",
+    iconClass: "text-red-500 dark:text-red-400",
+    actionClass:
+      "text-red-700 dark:text-red-400 bg-red-500/10 hover:bg-red-500/20",
+  },
+  info: {
+    icon: "info",
+    barClass: "bg-[var(--accent)]",
+    iconClass: "text-[var(--accent)]",
+    actionClass:
+      "text-[var(--accent)] bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20",
+  },
+};
+
 function SingleToast({
   toast,
   onRemove,
@@ -26,49 +50,66 @@ function SingleToast({
   }, [onRemove, duration]);
 
   useEffect(() => {
-    if (!toast.action) return;
     const interval = setInterval(() => {
-      setTimeLeft((prev) => Math.max(0, prev - 100));
-    }, 100);
+      setTimeLeft((prev) => Math.max(0, prev - 50));
+    }, 50);
     return () => clearInterval(interval);
-  }, [toast.action]);
+  }, []);
 
-  const icons = { success: "check_circle", error: "error", info: "info" };
-  const colors = {
-    success:
-      "bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-700 text-green-800 dark:text-green-300",
-    error:
-      "bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-700 text-red-800 dark:text-red-300",
-    info: "bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-700 text-blue-800 dark:text-blue-300",
-  };
+  const cfg = TYPE_CONFIG[toast.type];
+  const progress = timeLeft / duration;
 
   return (
-    <div
-      className={`pointer-events-auto flex items-center gap-2 px-3 py-2.5 rounded-lg border shadow-lg text-sm font-medium ${colors[toast.type]}`}
-    >
-      <span
-        className="material-symbols-outlined shrink-0"
-        style={{ fontSize: "18px" }}
-      >
-        {icons[toast.type]}
-      </span>
-      <span className="flex-1">{toast.message}</span>
-      {toast.action && (
-        <button
-          onClick={() => { toast.action!.onClick(); onRemove(); }}
-          className="shrink-0 text-xs font-semibold underline underline-offset-2 hover:opacity-80 ml-1"
-        >
-          {toast.action.label}
-          {timeLeft > 0 && (
-            <span className="ml-1 opacity-60 font-normal">({Math.ceil(timeLeft / 1000)}s)</span>
-          )}
-        </button>
-      )}
-      <button onClick={onRemove} className="opacity-60 hover:opacity-100 ml-1">
-        <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>
-          close
-        </span>
-      </button>
+    <div className="pointer-events-auto relative overflow-hidden rounded-lg bg-[var(--sidebar-bg)] border border-[var(--border)] shadow-md">
+      {/* Left accent strip */}
+      <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${cfg.barClass}`} />
+
+      <div className="pl-4 pr-3 pt-2.5 pb-2.5">
+        {/* Icon + message + close */}
+        <div className="flex items-start gap-2">
+          <span
+            className={`material-symbols-outlined shrink-0 mt-px ${cfg.iconClass}`}
+            style={{ fontSize: "15px" }}
+          >
+            {cfg.icon}
+          </span>
+          <span className="flex-1 text-[12px] font-medium text-[var(--foreground)] leading-snug">
+            {toast.message}
+          </span>
+          <button
+            onClick={onRemove}
+            className="shrink-0 opacity-40 hover:opacity-80 transition-opacity -mt-0.5 -mr-0.5"
+          >
+            <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>
+              close
+            </span>
+          </button>
+        </div>
+
+        {/* Action row */}
+        {toast.action && (
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-[11px] opacity-40 text-[var(--foreground)] tabular-nums">
+              {Math.ceil(timeLeft / 1000)}s
+            </span>
+            <button
+              onClick={() => {
+                toast.action!.onClick();
+                onRemove();
+              }}
+              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-md transition-colors ${cfg.actionClass}`}
+            >
+              {toast.action.label}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Draining progress bar */}
+      <div
+        className={`absolute bottom-0 left-0 h-[2px] ${cfg.barClass} opacity-50`}
+        style={{ width: `${progress * 100}%`, transition: "width 50ms linear" }}
+      />
     </div>
   );
 }
