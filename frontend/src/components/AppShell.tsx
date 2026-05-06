@@ -346,6 +346,7 @@ export default function AppShell({
       },
       onBriefingUpdated: () => onBriefingUpdatedRef.current?.(),
     },
+    profileState?.briefing_scope ?? null,
   );
 
   // Background prefetch of common view data after initial load

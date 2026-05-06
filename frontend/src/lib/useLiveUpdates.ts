@@ -73,6 +73,7 @@ export function useLiveUpdates(
     analyzeLocally: () => Promise<void>;
     onBriefingUpdated?: () => void;
   },
+  briefingScope?: string | null,
 ) {
   const supabase = createClient();
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -344,9 +345,22 @@ export function useLiveUpdates(
       const cooldownElapsed =
         Date.now() - lastBriefingUpdate >= BRIEFING_COOLDOWN_MS;
 
-      // Resolve the current cached briefing and its timestamp (localStorage first, then DB).
+      // Resolve the current cached briefing and its timestamp.
+      // Skip empty localStorage briefings — they may be stale scope-mismatch artifacts.
+      // Fall back to DB which always has the authoritative version.
       let previousBriefing: unknown = null;
       let briefingTimestamp: string | null = lastBriefingAt;
+
+      const briefingHasContent = (b: unknown): boolean => {
+        if (!b || typeof b !== "object") return false;
+        const d = b as Record<string, unknown>;
+        return (
+          (Array.isArray(d.crucial) && d.crucial.length > 0) ||
+          (Array.isArray(d.replyNeeded) && d.replyNeeded.length > 0) ||
+          (Array.isArray(d.deadlines) && d.deadlines.length > 0) ||
+          (Array.isArray(d.nonEssential) && d.nonEssential.length > 0)
+        );
+      };
 
       const localCached = localStorage.getItem(
         `runemail_briefing_cache_${userId}`,
@@ -354,7 +368,7 @@ export function useLiveUpdates(
       if (localCached) {
         try {
           const parsed = JSON.parse(localCached);
-          if (parsed?.data) {
+          if (parsed?.data && briefingHasContent(parsed.data)) {
             previousBriefing = parsed.data;
             if (parsed.ts)
               briefingTimestamp = new Date(parsed.ts).toISOString();
@@ -385,8 +399,9 @@ export function useLiveUpdates(
 
       const runCloudFreshBriefing = async (): Promise<boolean> => {
         try {
-          const scope = briefingIsStale ? "today_new" : "all_recent";
-          const freshRes = await fetch(`${apiUrl}/briefing?scope=${scope}`, {
+          // Use user's configured scope; fall back to safe defaults only if not set.
+          const scope = briefingScope ?? (briefingIsStale ? "today_new" : "all_recent");
+          const freshRes = await fetch(`${apiUrl}/briefing?scope=${encodeURIComponent(scope)}`, {
             headers,
           });
           if (!freshRes.ok) return false;
@@ -396,7 +411,7 @@ export function useLiveUpdates(
           const ts = Date.now();
           localStorage.setItem(
             `runemail_briefing_cache_${userId}`,
-            JSON.stringify({ data: freshData, ts }),
+            JSON.stringify({ data: freshData, ts, scope }),
           );
           localStorage.setItem(briefingCooldownKey, String(ts));
           await supabase
