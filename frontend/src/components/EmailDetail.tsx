@@ -1047,14 +1047,14 @@ export default function EmailDetail({
     }
   };
 
-  const submitInputAction = () => {
+  const submitInputAction = (replyAll = false) => {
     if (!activeInputAction) return;
     const { qa, answers } = activeInputAction;
     let text = qa.text || qa.label;
     for (const [k, v] of Object.entries(answers)) {
       text = text.replace(new RegExp(`\\{\\{${k}\\}\\}`, "g"), (v as string) || `[${k}]`);
     }
-    openCompose({ ...email, _prefillBody: text, _autoGenerate: true });
+    openCompose({ ...email, _prefillBody: text, _autoGenerate: true, ...(replyAll ? { _replyAll: true } : {}) });
     setActiveInputAction(null);
   };
 
@@ -1073,6 +1073,9 @@ export default function EmailDetail({
     (qa: any) => qa.action === "add_todo",
   );
   const hasNoActions = !proc?.quick_actions || proc.quick_actions.length === 0;
+  const hasReplyAll =
+    !!(email.cc_recipients) ||
+    (email.recipients || "").split(",").filter(Boolean).length > 1;
   // Only show the panel when there are actual actions to render.
   // If the AI ran and returned [] it made a deliberate decision — hide the panel.
   const hasActions =
@@ -1621,43 +1624,68 @@ export default function EmailDetail({
                   const prefill = qa.text || label;
                   const hasQuestions = qa.questions?.length > 0;
                   const isActive = activeInputAction?.qa === qa;
+                  const baseChipClass = isActive
+                    ? "border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200"
+                    : "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50";
                   return (
-                    <button
-                      key={`reply-${i}`}
-                      onClick={() => {
-                        if (hasQuestions) {
-                          setActiveInputAction({ qa, answers: {} });
-                        } else {
-                          openCompose({
-                            ...email,
-                            _prefillBody: prefill,
-                            _autoGenerate: true,
-                          });
-                        }
-                      }}
-                      className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-[11px] font-medium transition-colors ${
-                        isActive
-                          ? "border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200"
-                          : "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50"
-                      }`}
-                      title={label}
-                    >
-                      <span
-                        className="material-symbols-outlined text-blue-400"
-                        style={{ fontSize: "12px" }}
+                    <div key={`reply-${i}`} className="flex items-stretch">
+                      <button
+                        onClick={() => {
+                          if (hasQuestions) {
+                            setActiveInputAction({ qa, answers: {} });
+                          } else {
+                            openCompose({
+                              ...email,
+                              _prefillBody: prefill,
+                              _autoGenerate: true,
+                            });
+                          }
+                        }}
+                        className={`flex items-center gap-1 px-3 py-1.5 border text-[11px] font-medium transition-colors ${hasReplyAll ? "rounded-l-xl border-r-0" : "rounded-xl"} ${baseChipClass}`}
+                        title={label}
                       >
-                        chat_bubble
-                      </span>
-                      <span>{label}</span>
-                      {hasQuestions && (
                         <span
-                          className="material-symbols-outlined text-blue-400 opacity-70"
-                          style={{ fontSize: "11px" }}
+                          className="material-symbols-outlined text-blue-400"
+                          style={{ fontSize: "12px" }}
                         >
-                          edit
+                          chat_bubble
                         </span>
+                        <span>{label}</span>
+                        {hasQuestions && (
+                          <span
+                            className="material-symbols-outlined text-blue-400 opacity-70"
+                            style={{ fontSize: "11px" }}
+                          >
+                            edit
+                          </span>
+                        )}
+                      </button>
+                      {hasReplyAll && (
+                        <button
+                          onClick={() => {
+                            if (hasQuestions) {
+                              setActiveInputAction({ qa, answers: {} });
+                            } else {
+                              openCompose({
+                                ...email,
+                                _prefillBody: prefill,
+                                _autoGenerate: true,
+                                _replyAll: true,
+                              });
+                            }
+                          }}
+                          className={`flex items-center px-1.5 py-1.5 rounded-r-xl border text-[11px] transition-colors ${baseChipClass}`}
+                          title={`${label} (Reply All)`}
+                        >
+                          <span
+                            className="material-symbols-outlined text-blue-400"
+                            style={{ fontSize: "12px" }}
+                          >
+                            reply_all
+                          </span>
+                        </button>
                       )}
-                    </button>
+                    </div>
                   );
                 })}
                 {meetingActions.map((qa: any, i: number) => {
@@ -1762,9 +1790,23 @@ export default function EmailDetail({
                   })}
 
                   {/* Submit row */}
-                  <div className="flex justify-end">
+                  <div className="flex justify-end gap-1.5">
+                    {hasReplyAll && (
+                      <button
+                        onClick={() => submitInputAction(true)}
+                        disabled={
+                          (activeInputAction.qa.questions || []).some(
+                            (q: any) => !(activeInputAction.answers[q.key] || "").trim()
+                          )
+                        }
+                        className="flex items-center gap-1 px-3 py-1 text-[11px] font-medium rounded-lg border border-blue-400 text-blue-600 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>reply_all</span>
+                        <span>Reply All</span>
+                      </button>
+                    )}
                     <button
-                      onClick={submitInputAction}
+                      onClick={() => submitInputAction(false)}
                       disabled={
                         (activeInputAction.qa.questions || []).some(
                           (q: any) => !(activeInputAction.answers[q.key] || "").trim()
@@ -1799,8 +1841,8 @@ export default function EmailDetail({
             Reply
           </button>
 
-          {/* Reply All — show when the email had multiple recipients or CC */}
-          {(email.recipients || email.cc_recipients) && (
+          {/* Reply All — show when there are CC recipients or multiple TO recipients */}
+          {hasReplyAll && (
             <button
               onClick={() => openCompose({ ...email, _replyAll: true })}
               className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--border)] text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
