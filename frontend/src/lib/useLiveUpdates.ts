@@ -24,15 +24,6 @@ type TableName =
   | "scheduled_emails"
   | "read_receipts";
 
-const WATCHED_TABLES: TableName[] = [
-  "emails",
-  "email_processed",
-  "todos",
-  "meetings",
-  "draft_emails",
-  "scheduled_emails",
-  "read_receipts",
-];
 
 // Background sync interval (ms) — Gmail push notifications are the primary delivery
 // mechanism; this is just a safety fallback for missed Pub/Sub deliveries.
@@ -130,23 +121,6 @@ export function useLiveUpdates(
   useEffect(() => {
     const subscribe = () => {
       const channel = supabase.channel(`live-updates-${userId}`);
-
-      // All tables except emails/email_processed: generic handler
-      for (const table of WATCHED_TABLES) {
-        if (table === "emails" || table === "email_processed") continue;
-        channel.on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table,
-            filter: `user_id=eq.${userId}`,
-          },
-          () => {
-            bumpTable(table);
-          },
-        );
-      }
 
       // emails INSERT: increment pending count and schedule immediate analysis
       channel.on(
@@ -270,17 +244,6 @@ export function useLiveUpdates(
         },
         () => bumpTable("email_processed"),
       );
-      channel.on(
-        "postgres_changes",
-        {
-          event: "DELETE",
-          schema: "public",
-          table: "email_processed",
-          filter: `user_id=eq.${userId}`,
-        },
-        () => bumpTable("email_processed"),
-      );
-
       channel.subscribe((status) => {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           setTimeout(() => {
