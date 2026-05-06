@@ -26,15 +26,15 @@ type EmailSuggestion = {
 const CATEGORY_PRIORITY: Record<string, number> = {
   "action-required": 4,
   important: 3,
-  informational: 2,
-  newsletter: 1,
+  updates: 2,
+  promotions: 1,
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
   "action-required": "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
   important: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-  informational: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-  newsletter: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+  updates: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+  promotions: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
 };
 
 export default function TodosView() {
@@ -98,7 +98,7 @@ export default function TodosView() {
               emailSubject: email.subject || "(no subject)",
               emailSender: (email.sender || "").replace(/<.*>/, "").trim(),
               emailReceivedAt: email.received_at,
-              category: row.category || "informational",
+              category: row.category || "updates",
             });
           }
         }

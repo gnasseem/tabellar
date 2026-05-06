@@ -9,17 +9,17 @@ const CATEGORY_COLORS: Record<string, string> = {
     "bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400 ring-1 ring-red-200 dark:ring-red-900/50",
   "action-required":
     "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 ring-1 ring-amber-200 dark:ring-amber-900/50",
-  newsletter:
+  promotions:
     "bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-400 ring-1 ring-violet-200 dark:ring-violet-900/50",
-  informational:
+  updates:
     "bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400 ring-1 ring-sky-200 dark:ring-sky-900/50",
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
   important: "Important",
   "action-required": "Action Required",
-  newsletter: "Newsletter",
-  informational: "Informational",
+  promotions: "Promotions",
+  updates: "Updates",
 };
 
 const TAG_COLORS: Record<string, string> = {
@@ -382,7 +382,7 @@ export default function TutorialInboxView({
         {MOCK_EMAILS.map((email) => {
           const isSelected = selectedEmail?.id === email.id;
           const isHighlighted = highlightEmailId === email.id;
-          const cat = email.email_processed?.category ?? "informational";
+          const cat = email.email_processed?.category ?? "updates";
           const tags = email.email_processed?.extra_labels ?? [];
 
           return (

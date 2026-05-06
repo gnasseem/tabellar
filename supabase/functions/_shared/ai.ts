@@ -66,13 +66,13 @@ const PROMPTS = {
   categorize: `You are an expert email categorizer. Classify the email into exactly one category.
 
 STEP 1 — HIGH-STAKES CHECK (run this before anything else):
-If this email concerns any of these life-event domains, it is NEVER "informational" or "newsletter":
+If this email concerns any of these life-event domains, it is NEVER "updates" or "promotions":
 - Career: job offer, offer letter, interview invitation, application update (hired/shortlisted/rejected/next steps/offer extended), onboarding, background check, recruiter asking for a reply, contract to sign
 - Academic: admission/acceptance/rejection, financial aid, scholarship offer, enrollment deadline
 - Legal: contract, agreement, legal notice, court filing, settlement, lease, terms requiring signature
 - Medical: appointment confirmation/change, lab or test results, prescription, diagnosis, referral
 - Financial decision: mortgage/loan approval or denial, credit application, account suspended, fraud alert requiring action
-ATS or HR system emails (Greenhouse, Workday, Lever, Taleo, SmartRecruiters, iCIMS, Jobvite, Breezy, BambooHR) about a job or interview are NOT informational.
+ATS or HR system emails (Greenhouse, Workday, Lever, Taleo, SmartRecruiters, iCIMS, Jobvite, Breezy, BambooHR) about a job or interview are NOT updates.
 If STEP 1 triggers: use action-required when the email expects a reply/action from you; use important when it is status-only FYI.
 
 STEP 2 — STANDARD PRIORITY ORDER (first rule that fits wins):
@@ -83,54 +83,54 @@ STEP 2 — STANDARD PRIORITY ORDER (first rule that fits wins):
 2. important
    A real human wrote to you and the message is genuinely worth reading, but no response/action is required right now. Examples: status update from a colleague, personal note from a friend, intro/announcement from a known contact, meeting notes you were CC'd on, FYI from your boss. Do NOT use "important" as a safe default; only use it for person-to-person mail that matters.
 
-3. newsletter
-   Bulk content a mailing list delivers to many recipients: digests, promotional campaigns, brand announcements, product newsletters, weekly round-ups, sales. If the writing pattern is marketing/editorial and the same email went to many people, it is newsletter, even from a company you like.
+3. promotions
+   Bulk content sent to many recipients: marketing campaigns, sales emails, promotional announcements, brand newsletters, weekly content digests, product round-ups, sponsored content. If the writing pattern is marketing/editorial and the same email went to many people, it is promotions — even from a company you like.
 
-4. informational
-   Automated, transactional, or system-generated messages that are not marketing. Receipts, order confirmations, shipping updates, bank/card alerts, security alerts, password resets, calendar reminders, billing statements, service status pings, app notifications, no-reply automation.
+4. updates
+   Automated, transactional, or system-generated messages that are NOT marketing. Receipts, order confirmations, shipping updates, bank/card alerts, security alerts, password resets, calendar reminders, billing statements, service status pings, app notifications, no-reply automation.
 
 Tie-breakers:
-- An unsubscribe link alone does not make something a newsletter: transactional emails often include one. Judge by content.
-- A direct question from a real person always beats "important" or "informational".
-- Balance matters: do NOT default to "important" for anything unclear. When unsure between important and informational, prefer informational for automated content and important only for human-to-human messages.
+- An unsubscribe link alone does not make something promotions: transactional emails often include one. Judge by content and intent.
+- A direct question from a real person always beats "important" or "updates".
+- Balance matters: do NOT default to "important" for anything unclear. When unsure between important and updates, prefer updates for automated content and important only for human-to-human messages.
 
 Respond with ONLY the category slug, nothing else.`,
   summarize:
-    "Summarize the following email clearly and concisely. Capture the key point, any action required, and relevant context. Write 1-3 sentences as needed — use more if the email is complex or has multiple important points.",
+    "Summarize this email in 1-3 sentences. Lead with the single most important fact — if there is a specific dollar amount, deadline, decision, or named ask, state it first. Name the sender only if they are a real person (skip for no-reply/automated). Capture what is needed from the reader, if anything. Be direct and concrete; no vague filler like 'This email contains information about...'",
   quick_actions:
-    'Look at this email and suggest 1-3 actions that would actually help the user clear it. Most real emails from people have at least one action (reply or todo). Return a JSON array of objects with "label" (descriptive phrase up to 12 words — for add_todo, include specific context: topic, sender name, deadline; for reply, state what the reply achieves; for schedule_meeting, name who and what to schedule), "action" (one of: "reply", "add_todo", "schedule_meeting"), and optionally "text" (the reply body for reply; meeting details for schedule_meeting). Rules: include a reply action whenever a human asked a question or expects a response — the "text" must directly address the specific ask, not a generic acknowledgment; include an add_todo whenever the email implies a task to track — label must be self-explanatory without re-reading; include schedule_meeting when the email mentions meeting, call, zoom, teams, phone/video call, coffee chat, catch-up, sync, check-in, interview, or asks about availability. IMPORTANT: emails about jobs, interviews, medical appointments, legal matters, academic admissions, or financial decisions ALWAYS get at least one action even if the sender looks automated. Return [] only if the email is a newsletter, shipping receipt, marketing blast, or automated notification with absolutely no personal ask from the user. Example: [{"label":"Confirm availability for Thursday interview with Acme","action":"reply","text":"Hi, Thursday works for me. I am available from 2-5pm EST. Please send a calendar invite."},{"label":"Prepare portfolio samples for Acme interview by Wed","action":"add_todo"},{"label":"Schedule 45-min interview with Acme recruiter","action":"schedule_meeting","text":"45-min technical interview with Acme"}]',
+    'Look at this email and suggest 1-3 actions that would actually help the user clear it. Most real emails from people have at least one action (reply or todo). Return a JSON array of objects with "label" (descriptive phrase up to 12 words — for add_todo, include specific context: topic, sender name, deadline; for reply, state what the reply achieves; for schedule_meeting, name who and what to schedule), "action" (one of: "reply", "add_todo", "schedule_meeting"), and optionally "text" (the reply body for reply; meeting details for schedule_meeting). Rules: include a reply action whenever a human asked a question or expects a response — the "text" must directly address the specific ask using actual details from the email, not a generic acknowledgment; include an add_todo whenever the email implies a task to track — label must be self-explanatory without re-reading; include schedule_meeting when the email mentions meeting, call, zoom, teams, phone/video call, coffee chat, catch-up, sync, check-in, interview, or asks about availability. IMPORTANT: emails about jobs, interviews, medical appointments, legal matters, academic admissions, or financial decisions ALWAYS get at least one action even if the sender looks automated. Return [] only if the email is a promotions/marketing blast, shipping receipt, or automated notification with absolutely no personal ask from the user. Example: [{"label":"Confirm availability for Thursday interview with Acme","action":"reply","text":"Hi, Thursday works for me. I am available from 2-5pm EST. Please send a calendar invite."},{"label":"Prepare portfolio samples for Acme interview by Wed","action":"add_todo"},{"label":"Schedule 45-min interview with Acme recruiter","action":"schedule_meeting","text":"45-min technical interview with Acme"}]',
   process_email: `You are an email assistant. Analyze this email and return ONLY valid JSON with no markdown:
 {"reasoning":"...","category":"...","urgency":"...","summary":"...","actions":[...]}
 
 STEP 1 — HIGH-STAKES CHECK (run before picking a category):
-If this email concerns any of these life-event domains, it is NEVER "informational" or "newsletter":
+If this email concerns any of these life-event domains, it is NEVER "updates" or "promotions":
 - Career: job offer, offer letter, interview invitation, application update (hired/shortlisted/rejected/next steps/offer extended), onboarding, background check, recruiter asking for a response, contract to sign
 - Academic: admission/acceptance/rejection, financial aid, scholarship offer, enrollment deadline
 - Legal: contract, agreement, legal notice, court filing, settlement, lease, terms requiring signature
 - Medical: appointment confirmation/change, lab or test results, prescription, diagnosis, referral
 - Financial decision: mortgage/loan approval or denial, credit application, account suspended, fraud alert requiring action
-ATS or HR system senders (Greenhouse, Workday, Lever, Taleo, SmartRecruiters, iCIMS, Jobvite, Breezy, BambooHR) writing about a job or interview are NOT informational.
+ATS or HR system senders (Greenhouse, Workday, Lever, Taleo, SmartRecruiters, iCIMS, Jobvite, Breezy, BambooHR) writing about a job or interview are NOT updates.
 If STEP 1 triggers: action-required when a reply/action is expected; important when status-only FYI.
 
 CATEGORIES (pick exactly one; STEP 1 overrides if triggered):
 1. action-required: a real person is waiting on YOU to do something concrete with a clear finish line — reply with an answer, approve, sign, pay, schedule, RSVP, review, submit. Any direct question from a human belongs here.
 2. important: a real person wrote to you and it is worth reading, but no response is required right now. Status updates from colleagues, personal notes, FYIs from known contacts, meeting notes. Do not use as a safe default.
-3. newsletter: bulk content sent to a mailing list — digests, promotional campaigns, product newsletters, weekly round-ups. Marketing tone + broadcast to many recipients = newsletter.
-4. informational: automated, transactional, or system-generated messages that are not marketing. Receipts, shipping/order updates, bank/card alerts, security alerts, password resets, calendar reminders, billing statements, service pings.
+3. promotions: bulk content sent to many recipients — marketing campaigns, sales emails, promotional announcements, brand newsletters, content digests, product round-ups. Marketing tone + broadcast to many recipients = promotions.
+4. updates: automated, transactional, or system-generated messages that are NOT marketing. Receipts, shipping/order updates, bank/card alerts, security alerts, password resets, calendar reminders, billing statements, service pings, app notifications.
 
-Tie-breakers: an unsubscribe link alone does not make something a newsletter (transactional mail has them too). A direct human question beats important and informational. When unsure between important and informational, prefer informational for automated content; only use important for human-to-human mail that matters.
+Tie-breakers: an unsubscribe link alone does not make something promotions (transactional mail has them too). A direct human question beats important and updates. When unsure between important and updates, prefer updates for automated content; only use important for human-to-human mail that matters.
 
 URGENCY (required field, pick exactly one):
 - critical: must act today (offer/deadline expires today, interview is tomorrow, active security breach)
 - high: time-sensitive within 1-3 days (job offer with deadline, interview request, legal notice, overdue payment, medical appointment soon, admission/scholarship deadline)
 - medium: reply or action helpful but not immediately urgent
-- low: purely informational, no action needed, no deadline, nothing personal
+- low: automated notification, no action needed, no deadline, nothing personal
 
 reasoning: ONE sentence — name the sender type, what they want, why you chose this category and urgency. Internal chain-of-thought only; not shown to the user.
 
-summary: clear, concise summary of what the email is about and what (if anything) is needed. Use 1-3 sentences.
+summary: Lead with the single most important fact — if there is a specific dollar amount, deadline, decision required, or named ask, state it first. Name the sender only if they are a real person. Use 1-3 sentences. Be concrete; skip filler like "This email informs you that...".
 
-actions: Suggest the actions that would actually help the user clear this email. Aim for 1-3 when urgency is medium or above OR when email is action-required/important. Return [] ONLY when urgency is low AND category is newsletter or informational with no personal ask.
+actions: Suggest the actions that would actually help the user clear this email. Aim for 1-3 when urgency is medium or above OR when email is action-required/important. Return [] ONLY when urgency is low AND category is promotions or updates with no personal ask.
 Rules for picking actions:
 - If a human asked a question or requested something, include a "reply" action. The "text" field must directly address the specific question or request using actual details from the email — not a generic acknowledgment like "Thanks, will review."
 - If the email implies a task the user should track (review document, prepare presentation, follow up, pay invoice, submit form, complete application, book appointment, sign agreement), include an "add_todo" action. The label must name the specific task, include the sender name when relevant, and include the deadline if one is stated.
@@ -158,7 +158,7 @@ Each card fields: email_id, bucket (one of crucial|replyNeeded|deadlines|nonEsse
 
 URGENCY FLOOR: if the stored urgency field is "critical" or "high", do not downgrade it — use it as a minimum floor for your output urgency. A stored-high email cannot be output as urgency medium.
 
-CAREER AND HIGH-STAKES OVERRIDE: emails about job offers, interview invitations, application status, medical appointments/results, legal notices/contracts, academic admissions, or financial decisions (mortgage, loan, account suspended) are NEVER nonEssential regardless of how the sender looks. If category was "informational" but subject/summary contains career/job/interview/offer/hiring/admitted/rejected/offer letter/medical/legal/financial signals, override to crucial or replyNeeded.
+CAREER AND HIGH-STAKES OVERRIDE: emails about job offers, interview invitations, application status, medical appointments/results, legal notices/contracts, academic admissions, or financial decisions (mortgage, loan, account suspended) are NEVER nonEssential regardless of how the sender looks. If category was "updates" but subject/summary contains career/job/interview/offer/hiring/admitted/rejected/offer letter/medical/legal/financial signals, override to crucial or replyNeeded.
 
 AUTO SENDERS EXCEPTION: the auto-sender rule (no-reply|noreply|notifications|donotreply) routes to nonEssential ONLY when the email is genuinely bulk/transactional. ATS and HR system emails about a specific candidate's job/interview are NOT bulk — they go to replyNeeded or crucial.
 
@@ -596,7 +596,7 @@ function buildSignalContext(signals: EmailSignals): {
 
   let definiteCategory: string | null = null;
   if (isDefiniteNewsletter) {
-    definiteCategory = "newsletter";
+    definiteCategory = "promotions";
   } else if (isDefiniteImportant) {
     // Starred = user explicitly marked it; still run AI to distinguish action-required vs important
     lines.push(
@@ -652,13 +652,13 @@ export async function processFullEmail(
   const raw = await gemini(prompt, textWithSignals, 0.2, 2048);
   const parsed = parseJson(raw) as any;
 
-  const valid = ["important", "action-required", "newsletter", "informational"];
+  const valid = ["important", "action-required", "promotions", "updates"];
   const cat = (parsed?.category || "")
     .toLowerCase()
     .trim()
     .replace(/[^a-z-]/g, "");
   const finalCategory =
-    definiteCategory ?? (valid.includes(cat) ? cat : "informational");
+    definiteCategory ?? (valid.includes(cat) ? cat : "updates");
 
   const validUrgency = ["critical", "high", "medium", "low"];
   const parsedUrgency = (parsed?.urgency || "").toLowerCase().trim();

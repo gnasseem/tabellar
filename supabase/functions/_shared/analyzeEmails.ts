@@ -48,7 +48,7 @@ export async function analyzeEmailsForUser(
   const processedIds = (alreadyProcessed || [])
     .filter((p) => {
       const hasActions = Array.isArray(p.quick_actions) && (p.quick_actions as unknown[]).length > 0;
-      const noActionsExpected = ["newsletter", "informational"].includes((p.category as string) || "");
+      const noActionsExpected = ["promotions", "updates"].includes((p.category as string) || "");
       return hasActions || noActionsExpected;
     })
     .map((p) => p.email_id as string);
@@ -118,7 +118,7 @@ export async function analyzeEmailsForUser(
     slug: t.slug as string,
     description: (t.description as string) || "",
   }));
-  const MAIN_CATEGORIES = new Set(["important", "action-required", "newsletter", "informational"]);
+  const MAIN_CATEGORIES = new Set(["important", "action-required", "promotions", "updates"]);
 
   const senderInteractionMap = new Map<string, number>();
   for (const row of memRows) {
@@ -248,8 +248,8 @@ export async function analyzeEmailsForUser(
         extra_labels: extraLabels.length > 0 ? extraLabels : null,
       });
 
-      // Only keep entities when it makes sense (skip newsletters).
-      if (finalCategory !== "newsletter") {
+      // Only keep entities when it makes sense (skip promotions/bulk).
+      if (finalCategory !== "promotions") {
         for (const entity of rawEntities) {
           kbBuffer.push({
             user_id: userId,

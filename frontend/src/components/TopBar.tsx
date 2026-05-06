@@ -38,15 +38,15 @@ const CATEGORY_CHIPS = [
       "border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800",
   },
   {
-    key: "newsletter",
-    label: "Newsletter",
+    key: "promotions",
+    label: "Promotions",
     dot: "#a855f7",
     activeClass:
       "border-violet-300 bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-400 dark:border-violet-800",
   },
   {
-    key: "informational",
-    label: "Informational",
+    key: "updates",
+    label: "Updates",
     dot: "#3b82f6",
     activeClass:
       "border-sky-300 bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400 dark:border-sky-800",

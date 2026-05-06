@@ -29,17 +29,17 @@ type EmailDetailProps = {
 const CATEGORIES = [
   "important",
   "action-required",
-  "newsletter",
-  "informational",
+  "promotions",
+  "updates",
 ];
 
 const categoryColorMap: Record<string, string> = {
   important: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
   "action-required":
     "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
-  newsletter:
+  promotions:
     "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
-  informational:
+  updates:
     "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
 };
 
@@ -1008,7 +1008,7 @@ export default function EmailDetail({
         },
       });
       const updated = {
-        category: result.category || proc?.category || "informational",
+        category: result.category || proc?.category || "updates",
         summary: result.summary || proc?.summary || null,
         quick_actions: result.quickActions || [],
       };

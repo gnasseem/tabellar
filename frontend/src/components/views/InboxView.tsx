@@ -37,9 +37,9 @@ const categoryColors: Record<string, string> = {
     "bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400 ring-1 ring-red-200 dark:ring-red-900/50",
   "action-required":
     "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 ring-1 ring-amber-200 dark:ring-amber-900/50",
-  newsletter:
+  promotions:
     "bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-400 ring-1 ring-violet-200 dark:ring-violet-900/50",
-  informational:
+  updates:
     "bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400 ring-1 ring-sky-200 dark:ring-sky-900/50",
 };
 
@@ -263,8 +263,8 @@ export default function InboxView() {
     const STANDARD = new Set([
       "important",
       "action-required",
-      "newsletter",
-      "informational",
+      "promotions",
+      "updates",
     ]);
     const custom = [
       ...new Set(
@@ -362,7 +362,7 @@ export default function InboxView() {
           {
             user_id: user.id,
             email_id: email.id,
-            category: result.category || "informational",
+            category: result.category || "updates",
             summary: result.summary || null,
             quick_actions: result.quickActions || [],
             extra_labels: extraLabels,
@@ -1067,8 +1067,8 @@ export default function InboxView() {
             const cat = p?.category;
             if (cat === "action-required") s += 30;
             else if (cat === "important") s += 20;
-            else if (cat === "informational") s += 5;
-            else if (cat === "newsletter") s += 1;
+            else if (cat === "updates") s += 5;
+            else if (cat === "promotions") s += 1;
           }
 
           if (e.is_starred) s += 10;

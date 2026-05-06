@@ -376,7 +376,7 @@ export const MOCK_EMAILS: MockEmail[] = [
     is_archived: false,
     has_attachments: true,
     email_processed: {
-      category: "informational",
+      category: "updates",
       summary: "Sprint 23 retrospective shared; Sprint 24 kickoff is Thursday 10am. Review and vote on sprint backlog in Notion by Wednesday EOD.",
       quick_actions: [
         { label: "Schedule Sprint 24 kickoff", action: "schedule_meeting" },
@@ -412,7 +412,7 @@ export const MOCK_EMAILS: MockEmail[] = [
     is_archived: false,
     has_attachments: true,
     email_processed: {
-      category: "informational",
+      category: "updates",
       summary: "Priya has completed v3.0 dashboard redesign (14 screens). Needs Figma review comments by end of week. Notable change: primary action moved to mobile bottom bar.",
       quick_actions: [
         { label: "Reply to Priya", action: "reply" },
@@ -442,7 +442,7 @@ export const MOCK_EMAILS: MockEmail[] = [
     is_archived: false,
     has_attachments: false,
     email_processed: {
-      category: "informational",
+      category: "updates",
       summary: "Performance review cycle opens Monday with 8 direct reports to review by April 18. New calibration step added on April 20 before feedback is shared.",
       quick_actions: [
         { label: "Add todo: Complete performance reviews", action: "add_todo" },
@@ -470,7 +470,7 @@ export const MOCK_EMAILS: MockEmail[] = [
     is_archived: false,
     has_attachments: true,
     email_processed: {
-      category: "informational",
+      category: "updates",
       summary: "Stripe March invoice for $4,320 (platform + usage fees for 12.4M API calls) due April 15.",
       quick_actions: [],
       extra_labels: ["ops"],
@@ -552,7 +552,7 @@ export const MOCK_EMAILS: MockEmail[] = [
     is_archived: false,
     has_attachments: false,
     email_processed: {
-      category: "newsletter",
+      category: "promotions",
       summary: "LinkedIn AI newsletter covering agentic workflows, GPT-4o real-time voice, Gemini 2.0 benchmarks, and enterprise memory management.",
       quick_actions: [
         { label: "Archive", action: "archive" },
@@ -583,7 +583,7 @@ export const MOCK_EMAILS: MockEmail[] = [
     is_archived: false,
     has_attachments: false,
     email_processed: {
-      category: "newsletter",
+      category: "promotions",
       summary: "Notion weekly digest: Sprint 24 Planning, Q2 OKR Review, and Design System v3.0 pages shared in your workspace.",
       quick_actions: [
         { label: "Archive", action: "archive" },

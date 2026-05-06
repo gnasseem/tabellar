@@ -345,7 +345,7 @@ function buildEmailSignalContext(email: EmailInput): { signalLines: string[]; de
 
   let definiteCategory: string | null = null;
   if (isDefiniteNewsletter) {
-    definiteCategory = "newsletter";
+    definiteCategory = "promotions";
   } else if (isDefiniteImportant) {
     lines.push("NOTE: User starred this — lean action-required or important.");
   }
@@ -372,8 +372,8 @@ const categorizeNode: NodeFn = async (state) => {
   const { signalLines, definiteCategory } = buildEmailSignalContext(email);
 
   // Short-circuit: definitive signals (Gmail categories, no-reply, unsubscribe)
-  if (definiteCategory === "newsletter") {
-    return { category: "newsletter", assignedTags: [] };
+  if (definiteCategory === "promotions") {
+    return { category: "promotions", assignedTags: [] };
   }
 
   const signalContext = signalLines.length > 0
@@ -388,37 +388,37 @@ const categorizeNode: NodeFn = async (state) => {
     : "";
 
   const outputShape = userTags.length > 0
-    ? `{"category":"<important|action-required|newsletter|informational>","tags":["slug",...]}`
-    : `{"category":"<important|action-required|newsletter|informational>"}`;
+    ? `{"category":"<important|action-required|promotions|updates>","tags":["slug",...]}`
+    : `{"category":"<important|action-required|promotions|updates>"}`;
 
   const raw = await localInference(
     `Classify this email. Return JSON only:
 ${outputShape}
 
 STEP 1 — HIGH-STAKES CHECK (run before standard rules):
-If this email concerns any of these life-event domains, it is NEVER "informational" or "newsletter":
+If this email concerns any of these life-event domains, it is NEVER "updates" or "promotions":
 - Career: job offer, offer letter, interview invitation, application update (hired/shortlisted/rejected/next steps), onboarding, background check, recruiter asking for a response, contract to sign
 - Academic: admission/acceptance/rejection, financial aid, scholarship, enrollment deadline
 - Legal: contract, agreement, legal notice, settlement, lease, terms requiring signature
 - Medical: appointment, lab results, prescription, diagnosis, referral
 - Financial decision: mortgage, loan, credit decision, account suspended, fraud alert requiring action
-ATS/HR senders (Greenhouse, Workday, Lever, Taleo, SmartRecruiters, iCIMS, Jobvite) writing about a job or interview are NOT informational.
+ATS/HR senders (Greenhouse, Workday, Lever, Taleo, SmartRecruiters, iCIMS, Jobvite) writing about a job or interview are NOT updates.
 If STEP 1 triggers: use action-required when a reply/action is expected; use important when status-only FYI.
 
 STEP 2 — STANDARD RULES (first that fits):
 1. action-required: a real person is waiting on YOU to do something concrete — reply, approve, sign, pay, schedule, RSVP, review, submit. A direct human question always belongs here.
 2. important: a real person wrote to you and it is worth reading, no response required right now (status update, personal note, FYI from a known contact). Do NOT use as a safe default.
-3. newsletter: bulk content sent to a mailing list — digests, promotional campaigns, brand newsletters, weekly round-ups, sales. Marketing tone + broadcast.
-4. informational: automated/transactional/system messages that are NOT marketing — receipts, shipping, bank/card alerts, security alerts, password resets, calendar reminders, billing.
+3. promotions: bulk content sent to many recipients — marketing campaigns, sales emails, brand newsletters, content digests, product round-ups, weekly round-ups. Marketing tone + broadcast to many.
+4. updates: automated/transactional/system messages that are NOT marketing — receipts, shipping, bank/card alerts, security alerts, password resets, calendar reminders, billing, app notifications.
 
-Tie-breakers: unsubscribe link alone does NOT make something a newsletter (transactional mail has them). When unsure between important and informational, prefer informational for automated content; use important only for real human-to-human mail. Use the SIGNALS above to guide your classification.${tagsSection}`,
+Tie-breakers: unsubscribe link alone does NOT make something promotions (transactional mail has them). When unsure between important and updates, prefer updates for automated content; use important only for real human-to-human mail. Use the SIGNALS above to guide your classification.${tagsSection}`,
     `${signalContext}${emailText}`,
     { temperature: 0.1, maxTokens: 256 },
   );
 
   const parsed = extractJSON<{ category?: string; tags?: string[] }>(raw, {});
-  const valid = ["important", "action-required", "newsletter", "informational"];
-  let category = valid.includes(parsed.category || "") ? parsed.category! : "informational";
+  const valid = ["important", "action-required", "promotions", "updates"];
+  let category = valid.includes(parsed.category || "") ? parsed.category! : "updates";
 
   const validTagSlugs = new Set(userTags.map((t) => t.slug));
   const assignedTags = Array.isArray(parsed.tags)
@@ -437,7 +437,7 @@ Tie-breakers: unsubscribe link alone does NOT make something a newsletter (trans
   ];
   const hasHighStakesSignal = highStakesKeywords.some((k) => fullText.includes(k));
 
-  if (hasHighStakesSignal && ["informational", "newsletter"].includes(category)) {
+  if (hasHighStakesSignal && ["updates", "promotions"].includes(category)) {
     category = "important";
   }
 
@@ -504,9 +504,9 @@ const qaReplyAnalysisNode: NodeFn = async (state) => {
   const email = state.currentEmail;
   if (!email) return { _replyOptions: [] };
 
-  // Heuristics: no-reply senders and newsletters don't need replies
+  // Heuristics: no-reply senders and bulk/automated mail don't need replies
   if (senderIsNoReply(email.sender)) return { _replyOptions: [] };
-  if (["newsletter", "informational"].includes(state.category || "")) return { _replyOptions: [] };
+  if (["promotions", "updates"].includes(state.category || "")) return { _replyOptions: [] };
 
   const body = (email.body_text || email.snippet || "").slice(0, 1000);
 
@@ -522,7 +522,7 @@ WHEN TO REPLY (include at least one suggestion):
 
 WHEN NOT TO REPLY:
 - Pure notifications, receipts, or FYI broadcasts where no one is waiting.
-- Newsletters and informational emails (already filtered above).
+- Promotions and automated updates (already filtered above).
 - Vague side-notes that should be Todos ("check the doc", "read this") — those are NOT replies.
 
 STYLE OF SUGGESTIONS:
@@ -653,8 +653,8 @@ const qaArchiveAnalysisNode: NodeFn = async (state) => {
 
   if (hasAnyActions) return { _archiveOption: "" };
 
-  // Newsletter/no-reply → always archive
-  if (senderIsNoReply(email.sender) || ["newsletter", "informational"].includes(state.category || "")) {
+  // Promotions/updates/no-reply → always archive
+  if (senderIsNoReply(email.sender) || ["promotions", "updates"].includes(state.category || "")) {
     return { _archiveOption: "Archive: No action needed" };
   }
 
@@ -1266,7 +1266,7 @@ function buildEmailGraph(): CompiledGraph {
 
   // ── After categorize: deep-analyze important/action-required only ────────────
   // This is the conditional branching that makes the graph non-linear:
-  // newsletter/informational → done immediately
+  // promotions/updates → done immediately
   // important/action-required OR rethink/process_email → full analysis
   graph.addConditionalEdges(
     "categorize",

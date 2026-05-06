@@ -32,8 +32,8 @@ type Tag = {
 const MAIN_CATEGORIES = [
   { slug: "important", display_name: "Important", color: "#ef4444" },
   { slug: "action-required", display_name: "Action Required", color: "#f97316" },
-  { slug: "newsletter", display_name: "Newsletter", color: "#a855f7" },
-  { slug: "informational", display_name: "Informational", color: "#3b82f6" },
+  { slug: "promotions", display_name: "Promotions", color: "#a855f7" },
+  { slug: "updates", display_name: "Updates", color: "#3b82f6" },
 ];
 
 const PRESET_COLORS = [

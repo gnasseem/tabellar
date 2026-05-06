@@ -111,7 +111,7 @@ create table public.email_processed (
   id uuid default uuid_generate_v4() primary key,
   user_id uuid references public.profiles(id) on delete cascade not null,
   email_id uuid references public.emails(id) on delete cascade not null unique,
-  category text not null default 'informational',
+  category text not null default 'updates',
   extra_labels text[],
   summary text,
   quick_actions jsonb default '[]'::jsonb,
