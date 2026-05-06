@@ -545,6 +545,10 @@ export default function EmailDetail({
   const [extractingTodos, setExtractingTodos] = useState(false);
   const [addedTodos, setAddedTodos] = useState<Set<string>>(new Set());
   const [analyzingEmail, setAnalyzingEmail] = useState(false);
+  const [activeInputAction, setActiveInputAction] = useState<{
+    qa: any;
+    answers: Record<string, string>;
+  } | null>(null);
   type ThreadAtt = {
     filename: string;
     mime_type: string;
@@ -1041,6 +1045,17 @@ export default function EmailDetail({
         _autoGenerate: !!action.text,
       });
     }
+  };
+
+  const submitInputAction = () => {
+    if (!activeInputAction) return;
+    const { qa, answers } = activeInputAction;
+    let text = qa.text || qa.label;
+    for (const [k, v] of Object.entries(answers)) {
+      text = text.replace(new RegExp(`\\{\\{${k}\\}\\}`, "g"), (v as string) || `[${k}]`);
+    }
+    openCompose({ ...email, _prefillBody: text, _autoGenerate: true });
+    setActiveInputAction(null);
   };
 
   const senderEmailLc = (email.sender_email || "").toLowerCase();
@@ -1593,7 +1608,8 @@ export default function EmailDetail({
               )}
 
             {showSuggestionsPanel && (
-              <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex flex-col gap-2">
+              <div className={`flex items-center gap-1.5 flex-wrap transition-opacity ${activeInputAction ? "opacity-50" : "opacity-100"}`}>
                 <span
                   className="material-symbols-outlined text-[var(--muted)] shrink-0"
                   style={{ fontSize: "13px" }}
@@ -1603,17 +1619,27 @@ export default function EmailDetail({
                 {replyActions.map((qa: any, i: number) => {
                   const label = (qa.label || "").replace(/^Reply:\s*/i, "");
                   const prefill = qa.text || label;
+                  const hasQuestions = qa.questions?.length > 0;
+                  const isActive = activeInputAction?.qa === qa;
                   return (
                     <button
                       key={`reply-${i}`}
-                      onClick={() =>
-                        openCompose({
-                          ...email,
-                          _prefillBody: prefill,
-                          _autoGenerate: true,
-                        })
-                      }
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-[11px] font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                      onClick={() => {
+                        if (hasQuestions) {
+                          setActiveInputAction({ qa, answers: {} });
+                        } else {
+                          openCompose({
+                            ...email,
+                            _prefillBody: prefill,
+                            _autoGenerate: true,
+                          });
+                        }
+                      }}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-[11px] font-medium transition-colors ${
+                        isActive
+                          ? "border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200"
+                          : "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50"
+                      }`}
                       title={label}
                     >
                       <span
@@ -1623,6 +1649,14 @@ export default function EmailDetail({
                         chat_bubble
                       </span>
                       <span>{label}</span>
+                      {hasQuestions && (
+                        <span
+                          className="material-symbols-outlined text-blue-400 opacity-70"
+                          style={{ fontSize: "11px" }}
+                        >
+                          edit
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -1675,6 +1709,75 @@ export default function EmailDetail({
                     </button>
                   );
                 })}
+              </div>
+
+              {/* Inline input card — shown when a reply action with questions is clicked */}
+              {activeInputAction && (
+                <div className="rounded-xl border border-blue-200 dark:border-blue-700 bg-blue-50/70 dark:bg-blue-950/30 p-3 flex flex-col gap-2.5 shadow-sm">
+                  {/* Header */}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span
+                        className="material-symbols-outlined text-blue-400 shrink-0"
+                        style={{ fontSize: "12px" }}
+                      >
+                        auto_awesome
+                      </span>
+                      <span className="text-[11px] font-medium text-blue-700 dark:text-blue-300 truncate">
+                        {(activeInputAction.qa.label || "").replace(/^Reply:\s*/i, "")}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setActiveInputAction(null)}
+                      className="shrink-0 p-0.5 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
+                      title="Dismiss"
+                    >
+                      <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>close</span>
+                    </button>
+                  </div>
+
+                  {/* Question fields */}
+                  {(activeInputAction.qa.questions || []).map((q: any, qi: number) => {
+                    const isLast = qi === (activeInputAction.qa.questions || []).length - 1;
+                    return (
+                      <div key={q.key} className="flex flex-col gap-1">
+                        <label className="text-[10px] font-medium text-[var(--muted)]">{q.label}</label>
+                        <input
+                          type="text"
+                          autoFocus={qi === 0}
+                          placeholder={q.placeholder || ""}
+                          value={activeInputAction.answers[q.key] || ""}
+                          onChange={(e) =>
+                            setActiveInputAction((prev) =>
+                              prev ? { ...prev, answers: { ...prev.answers, [q.key]: e.target.value } } : null
+                            )
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && isLast) submitInputAction();
+                          }}
+                          className="text-[11px] rounded-lg border border-blue-200 dark:border-blue-700 bg-white dark:bg-blue-950/40 text-[var(--foreground)] px-2 py-1.5 w-full outline-none focus:ring-1 focus:ring-blue-400 dark:focus:ring-blue-500 placeholder:text-[var(--muted)] transition-shadow"
+                        />
+                      </div>
+                    );
+                  })}
+
+                  {/* Submit row */}
+                  <div className="flex justify-end">
+                    <button
+                      onClick={submitInputAction}
+                      disabled={
+                        (activeInputAction.qa.questions || []).some(
+                          (q: any) => !(activeInputAction.answers[q.key] || "").trim()
+                        )
+                      }
+                      className="flex items-center gap-1 px-3 py-1 text-[11px] font-medium rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <span>Write Reply</span>
+                      <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>arrow_forward</span>
+                    </button>
+                  </div>
+                </div>
+              )}
               </div>
             )}
           </div>

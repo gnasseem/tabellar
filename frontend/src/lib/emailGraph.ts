@@ -70,9 +70,17 @@ export interface EmailInput {
   sender_interaction_count?: number;
 }
 
+export interface QuickActionQuestion {
+  key: string;
+  label: string;
+  placeholder?: string;
+}
+
 export interface QuickAction {
   label: string;
   action: string;
+  text?: string;
+  questions?: QuickActionQuestion[];
 }
 
 export interface TodoSuggestion {
@@ -166,6 +174,7 @@ export interface EmailGraphState {
 
   // Quick-actions subgraph intermediate state (mirrors original Python nodes)
   _replyOptions?: string[];
+  _replyQuestionsMap?: Record<string, QuickActionQuestion[]>; // keyed by _replyOptions label
   _todoOptions?: string[];
   _meetingOptions?: string[];
   _archiveOption?: string;
@@ -540,7 +549,20 @@ Return [] ONLY if truly no reply is warranted.`,
   const replies = Array.isArray(options)
     ? options.map((o) => `Reply: ${String(o).trim()}`).filter((o) => o.length > 8).slice(0, 2)
     : [];
-  return { _replyOptions: replies };
+
+  // Heuristic: detect vague third-party references the user would need to name
+  const questionsMap: Record<string, QuickActionQuestion[]> = {};
+  const vaguePhrases = /\b(your friend|your colleague|your teammate|your contact|your partner|your associate)\b/i;
+  if (replies.length > 0 && vaguePhrases.test(body)) {
+    const match = body.match(vaguePhrases);
+    const relationship = match ? match[1].replace(/^your /i, "") : "contact";
+    for (const r of replies) {
+      questionsMap[r] = [{ key: "their_name", label: `Their name (${relationship})`, placeholder: "e.g. Alex" }];
+    }
+    // Insert {{their_name}} placeholder into the label text for later template fill
+  }
+
+  return { _replyOptions: replies, _replyQuestionsMap: questionsMap };
 };
 
 /**
@@ -670,18 +692,21 @@ const qaArchiveAnalysisNode: NodeFn = async (state) => {
 const qaMergeActionsNode: NodeFn = async (state) => {
   const final: QuickAction[] = [];
   const seen = new Set<string>();
+  const questionsMap = state._replyQuestionsMap || {};
 
-  const add = (label: string, action: string) => {
+  const add = (label: string, action: string, questions?: QuickActionQuestion[]) => {
     const key = label.toLowerCase();
     if (!seen.has(key)) {
       seen.add(key);
-      final.push({ label, action });
+      const qa: QuickAction = { label, action };
+      if (questions && questions.length > 0) qa.questions = questions;
+      final.push(qa);
     }
   };
 
   // Reply options
   for (const r of state._replyOptions || []) {
-    add(r, "reply");
+    add(r, "reply", questionsMap[r]);
   }
 
   // Schedule options
