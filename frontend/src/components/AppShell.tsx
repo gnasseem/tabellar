@@ -546,7 +546,7 @@ export default function AppShell({
       try {
         localStorage.setItem(
           `runemail_briefing_cache_${user.id}`,
-          JSON.stringify({ data: briefingData, ts }),
+          JSON.stringify({ data: briefingData, ts, scope: scopeToUse ?? profileRef.current?.briefing_scope ?? null }),
         );
       } catch {
         /* ignore */

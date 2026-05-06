@@ -565,26 +565,40 @@ export default function BriefingView() {
     return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
   };
 
+  const briefingIsEmpty = (data: any) => {
+    const total = (data?.crucial?.length ?? 0) + (data?.replyNeeded?.length ?? 0) +
+      (data?.deadlines?.length ?? 0) + (data?.nonEssential?.length ?? 0);
+    return total === 0;
+  };
+
   const loadCachedBriefing = useCallback(async () => {
+    const currentScope = profile?.briefing_scope ?? "today_new";
+
     const memCached = getViewCache("briefing");
     if (memCached) {
-      setBriefing(memCached.data);
-      setBriefingAt(memCached.at);
-      setLoading(false);
-      const cachedTs = memCached.at ? new Date(memCached.at).getTime() : null;
-      if (!isFromToday(cachedTs)) generateBriefingOnDemandRef.current?.();
-      return;
+      const memScope = (memCached as any).scope ?? null;
+      const scopeMismatch = memScope && memScope !== currentScope;
+      if (!scopeMismatch && !briefingIsEmpty(memCached.data)) {
+        setBriefing(memCached.data);
+        setBriefingAt(memCached.at);
+        setLoading(false);
+        const cachedTs = memCached.at ? new Date(memCached.at).getTime() : null;
+        if (!isFromToday(cachedTs)) generateBriefingOnDemandRef.current?.();
+        return;
+      }
+      // Scope changed or empty - fall through to get fresh data
     }
 
     try {
       const cached = localStorage.getItem(`runemail_briefing_cache_${user.id}`);
       if (cached) {
-        const { data, ts } = JSON.parse(cached);
-        if (data?.executiveSummary !== undefined) {
+        const { data, ts, scope: cachedScope } = JSON.parse(cached);
+        const scopeMismatch = cachedScope && cachedScope !== currentScope;
+        if (data?.executiveSummary !== undefined && !scopeMismatch && !briefingIsEmpty(data)) {
           const at = ts ? new Date(ts).toISOString() : null;
           setBriefing(data);
           if (at) setBriefingAt(at);
-          setViewCache("briefing", { data, at });
+          setViewCache("briefing", { data, at, scope: cachedScope } as any);
           setLoading(false);
           if (!isFromToday(ts)) generateBriefingOnDemandRef.current?.();
           return;
@@ -601,18 +615,18 @@ export default function BriefingView() {
       if (row?.last_briefing) {
         setBriefing(row.last_briefing as unknown as BriefingResult);
         setBriefingAt(row.last_briefing_at ?? null);
-        setViewCache("briefing", { data: row.last_briefing, at: row.last_briefing_at ?? null });
+        setViewCache("briefing", { data: row.last_briefing, at: row.last_briefing_at ?? null, scope: currentScope } as any);
         const dbTs = row.last_briefing_at ? new Date(row.last_briefing_at).getTime() : null;
         localStorage.setItem(
           `runemail_briefing_cache_${user.id}`,
-          JSON.stringify({ data: row.last_briefing, ts: dbTs ?? Date.now() }),
+          JSON.stringify({ data: row.last_briefing, ts: dbTs ?? Date.now(), scope: currentScope }),
         );
         if (!isFromToday(dbTs)) generateBriefingOnDemandRef.current?.();
       }
     } catch { /* ignore */ }
 
     setLoading(false);
-  }, [user.id, supabase, getViewCache, setViewCache]);
+  }, [user.id, profile?.briefing_scope, supabase, getViewCache, setViewCache]);
 
   const loadMeetings = useCallback(async () => {
     const startOfDay = new Date();
