@@ -76,11 +76,21 @@ export interface QuickActionQuestion {
   placeholder?: string;
 }
 
+export interface QuickActionMeetingDetails {
+  title?: string;
+  dateTime?: string;   // local ISO "YYYY-MM-DDTHH:mm"
+  duration?: number;   // minutes
+  location?: string;
+  attendees?: string[];
+  description?: string;
+}
+
 export interface QuickAction {
   label: string;
   action: string;
   text?: string;
   questions?: QuickActionQuestion[];
+  meetingDetails?: QuickActionMeetingDetails;
 }
 
 export interface TodoSuggestion {
@@ -177,6 +187,7 @@ export interface EmailGraphState {
   _replyQuestionsMap?: Record<string, QuickActionQuestion[]>; // keyed by _replyOptions label
   _todoOptions?: string[];
   _meetingOptions?: string[];
+  _meetingDetails?: QuickActionMeetingDetails;
   _archiveOption?: string;
 
   todoSuggestions?: TodoSuggestion[];
@@ -635,29 +646,56 @@ const qaMeetingAnalysisNode: NodeFn = async (state) => {
     "let's meet", "let's chat", "workshop", "webinar",
     "coffee chat", "phone call", "video call", "check-in",
     "interview", "office hours", "hop on", "quick chat",
+    // Events to attend
+    "recital", "performance", "concert", "ceremony", "event",
+    "presentation", "lecture", "seminar", "orientation",
+    "graduation", "show", "coming up", "join us", "session",
+    "rehearsal", "class", "at 3pm", "at 2pm", "at 1pm",
+    "friday", "saturday", "sunday", "monday", "tuesday", "wednesday", "thursday",
   ];
 
   // Keyword fast-check before LLM (mirrors original optimization)
   if (!meetingSignals.some((sig) => fullText.includes(sig))) {
-    return { _meetingOptions: [] };
+    return { _meetingOptions: [], _meetingDetails: undefined };
   }
 
-  const body = (email.body_text || email.snippet || "").slice(0, 800);
+  const body = (email.body_text || email.snippet || "").slice(0, 1000);
+  const today = new Date().toISOString().split("T")[0];
 
   const raw = await localInference(
-    `Does this email request or mention any form of meeting, call, sync, catch-up, coffee chat, phone call, video call, interview, check-in, or scheduling?
-If yes, describe WHAT to schedule in 1 short phrase (e.g. "30-min sync with Alice about project", "coffee chat with recruiter from Acme", "interview with hiring team").
-Output JSON array with at most 1 item (no "Schedule:" prefix). Return [] only if there is truly no meeting or scheduling intent.
-Example: ["catch-up call with Sarah to discuss Q3 budget"]`,
+    `Today is ${today}. Does this email mention or invite you to any meeting, event, performance, recital, call, class, or scheduled activity you should attend or add to your calendar?
+If yes, extract details. Output JSON: {"desc":"brief label (max 8 words)","title":"event title","dateTime":"YYYY-MM-DDTHH:mm or null","duration":minutes_or_null,"location":"zoom URL or physical address or null","isVirtual":true_or_false}
+If a date like "Friday 8 May" is mentioned, compute the ISO date using today's date.
+Return {"desc":null} if there is truly nothing to schedule or attend.`,
     `Subject: ${email.subject}\nContent: ${body}`,
-    { temperature: 0.15, maxTokens: 100 },
+    { temperature: 0.1, maxTokens: 200 },
   );
 
-  const options = extractJSON<string[]>(raw, []);
-  if (!Array.isArray(options) || !options.length) return { _meetingOptions: [] };
+  const parsed = extractJSON<{
+    desc?: string | null;
+    title?: string;
+    dateTime?: string | null;
+    duration?: number | null;
+    location?: string | null;
+    isVirtual?: boolean;
+  }>(raw, { desc: null });
 
-  const desc = String(options[0]).trim();
-  return { _meetingOptions: desc ? [`Schedule: ${desc}`] : [] };
+  if (!parsed?.desc) return { _meetingOptions: [], _meetingDetails: undefined };
+
+  const desc = String(parsed.desc).trim();
+  const details: QuickActionMeetingDetails = {
+    title: parsed.title || desc,
+    attendees: email.sender_email ? [email.sender_email] : [],
+    description: email.subject,
+  };
+  if (parsed.dateTime) details.dateTime = parsed.dateTime;
+  if (parsed.duration) details.duration = parsed.duration;
+  if (parsed.location) details.location = parsed.location;
+
+  return {
+    _meetingOptions: desc ? [`Schedule: ${desc}`] : [],
+    _meetingDetails: details,
+  };
 };
 
 /**
@@ -711,7 +749,13 @@ const qaMergeActionsNode: NodeFn = async (state) => {
 
   // Schedule options
   for (const m of state._meetingOptions || []) {
-    add(m, "schedule_meeting");
+    const key = m.toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      const qa: QuickAction = { label: m, action: "schedule_meeting" };
+      if (state._meetingDetails) qa.meetingDetails = state._meetingDetails;
+      final.push(qa);
+    }
   }
 
   // Todo options

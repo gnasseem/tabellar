@@ -418,7 +418,7 @@ export default function EmailDetail({
   onRethink,
   showBack = false,
 }: EmailDetailProps) {
-  const { user, profile, openCompose, addToast, theme, setView, setSearch } =
+  const { user, profile, openCompose, addToast, theme, setView, setSearch, setPendingMeetingSchedule } =
     useApp() as any;
   const supabase = createClient();
 
@@ -1689,11 +1689,22 @@ export default function EmailDetail({
                   );
                 })}
                 {meetingActions.map((qa: any, i: number) => {
-                  const label = (qa.label || "").replace(/^Schedule:\s*/i, "");
+                  const label = (qa.label || "").replace(/^Schedule:\s*/i, "").replace(/^Add to Calendar:\s*/i, "");
+                  const details = qa.meetingDetails;
                   return (
                     <button
                       key={`meeting-${i}`}
-                      onClick={() => setView("meetings")}
+                      onClick={() => {
+                        setPendingMeetingSchedule({
+                          title: details?.title || (qa.text?.trim()) || label,
+                          dateTime: details?.dateTime || undefined,
+                          duration: details?.duration || undefined,
+                          location: details?.location || undefined,
+                          attendees: details?.attendees || (email.sender_email ? [email.sender_email] : []),
+                          description: details?.description || email.subject,
+                        });
+                        setView("meetings");
+                      }}
                       className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
                       title={label}
                     >

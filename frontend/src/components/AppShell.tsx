@@ -180,6 +180,16 @@ export type AppContextType = {
   pauseTts: (kind: string, key: string) => void;
   resumeTts: (kind: string, key: string) => void;
   stopTts: (kind: string, key: string) => void;
+  // Pending meeting schedule (set when user clicks schedule_meeting quick action)
+  pendingMeetingSchedule: {
+    title?: string;
+    dateTime?: string;
+    duration?: number;
+    location?: string;
+    attendees?: string[];
+    description?: string;
+  } | null;
+  setPendingMeetingSchedule: (v: AppContextType["pendingMeetingSchedule"]) => void;
 };
 
 export const AppContext = createContext<AppContextType | null>(null);
@@ -963,6 +973,7 @@ export default function AppShell({
   }, [agentSession?.id, agentSession?.status, loadAgentTurns]);
 
   // ── Background TTS jobs ────────────────────────────────────────────────
+  const [pendingMeetingSchedule, setPendingMeetingSchedule] = useState<AppContextType["pendingMeetingSchedule"]>(null);
   const [ttsJobs, setTtsJobs] = useState<Record<string, TtsJob>>({});
   const ttsJobsRef = useRef<Record<string, TtsJob>>({});
   useEffect(() => {
@@ -1223,6 +1234,8 @@ export default function AppShell({
         pauseTts,
         resumeTts,
         stopTts,
+        pendingMeetingSchedule,
+        setPendingMeetingSchedule,
       }}
     >
       <div className={`${theme} h-screen flex flex-col overflow-hidden`}>

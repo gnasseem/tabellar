@@ -25,6 +25,9 @@ type SuggestedMeeting = {
   title: string;
   attendees: string[];
   suggested_time?: string;
+  location?: string;
+  dateTime?: string;
+  duration?: number;
 };
 
 type FreeSlot = { start: string; end: string };
@@ -123,7 +126,7 @@ function getNextWorkingSlot(wh: WorkingHours): string {
 }
 
 export default function MeetingsView() {
-  const { user, profile, addToast, getViewCache, setViewCache, liveChanges } = useApp();
+  const { user, profile, addToast, getViewCache, setViewCache, liveChanges, pendingMeetingSchedule, setPendingMeetingSchedule } = useApp();
   const { contacts, primaryAccountId } = useContacts(user?.id ?? "");
   const supabase = createClient();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -157,6 +160,7 @@ export default function MeetingsView() {
   const [newTitle, setNewTitle] = useState("");
   const [newDuration, setNewDuration] = useState("30");
   const [newAttendees, setNewAttendees] = useState("");
+  const [newLocation, setNewLocation] = useState("");
   const [createZoomLink, setCreateZoomLink] = useState(false);
 
   const loadMeetings = useCallback(async () => {
@@ -217,13 +221,21 @@ export default function MeetingsView() {
           const actions = Array.isArray(p.quick_actions) ? p.quick_actions : [];
           const meetingAction = actions.find((a: any) => a.action === "schedule_meeting");
           if (meetingAction) {
-            const rawTitle = meetingAction.text?.trim() || meetingAction.label?.replace(/^Schedule:\s*/i, "") || `Meeting re: ${email?.subject?.slice(0, 40) || ""}`;
+            const details = meetingAction.meetingDetails;
+            const rawTitle = details?.title
+              || meetingAction.text?.trim()
+              || meetingAction.label?.replace(/^Schedule:\s*/i, "").replace(/^Add to Calendar:\s*/i, "")
+              || `Meeting re: ${email?.subject?.slice(0, 40) || ""}`;
             suggestions.push({
               email_id: p.email_id,
               email_subject: email?.subject || "(no subject)",
               email_sender: email?.sender || email?.sender_email || "",
               title: rawTitle,
-              attendees: email?.sender_email ? [email.sender_email] : [],
+              attendees: details?.attendees || (email?.sender_email ? [email.sender_email] : []),
+              suggested_time: details?.dateTime || undefined,
+              dateTime: details?.dateTime || undefined,
+              location: details?.location || undefined,
+              duration: details?.duration || undefined,
             });
           }
         }
@@ -236,6 +248,31 @@ export default function MeetingsView() {
   }, [user.id, supabase]);
 
   useEffect(() => { loadSuggestedMeetings(); }, [loadSuggestedMeetings]);
+
+  // Open scheduler pre-filled when navigating from a quick action
+  useEffect(() => {
+    if (!pendingMeetingSchedule) return;
+    const p = pendingMeetingSchedule;
+    setNewTitle(p.title || "");
+    setNewAttendees((p.attendees || []).join(", "));
+    setNewDuration(p.duration ? String(p.duration) : "30");
+    setNewLocation(p.location || "");
+    setSchedulerStep("form");
+    dayCacheRef.current = {};
+    setDayCache({});
+    setSelectedSlot(null);
+    if (p.dateTime) {
+      setSchedulingMode("specific");
+      setSpecificDateTime(p.dateTime);
+    } else {
+      setSchedulingMode("find");
+    }
+    setShowScheduler(true);
+    setSelectedMeeting(null);
+    setSchedulingFromSuggestion(null);
+    setPendingMeetingSchedule(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingMeetingSchedule]);
 
   // Live updates: re-fetch suggestions when new emails are processed
   const prevProcessedChange = useRef(liveChanges.email_processed);
@@ -304,6 +341,7 @@ export default function MeetingsView() {
       end_time: endTime.toISOString(),
       attendees,
       status: "proposed",
+      ...(newLocation ? { location: newLocation } : {}),
     };
 
     if (createZoomLink) {
@@ -333,7 +371,7 @@ export default function MeetingsView() {
           start_time: startTime.toISOString(),
           end_time: endTime.toISOString(),
           attendees,
-          location: (meetingData.zoom_link as string) || "",
+          location: (meetingData.zoom_link as string) || newLocation || "",
           description: "Scheduled from RuneMail",
           sendUpdates: "all",
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -370,6 +408,7 @@ export default function MeetingsView() {
     setNewTitle("");
     setNewAttendees("");
     setNewDuration("30");
+    setNewLocation("");
     setCreateZoomLink(false);
     dayCacheRef.current = {};
     setDayCache({});
@@ -386,11 +425,18 @@ export default function MeetingsView() {
   const openSchedulerFromSuggestion = (s: SuggestedMeeting) => {
     setNewTitle(s.title);
     setNewAttendees(s.attendees.join(", "));
-    setNewDuration("30");
+    setNewDuration(s.duration ? String(s.duration) : "30");
+    setNewLocation(s.location || "");
     setSchedulerStep("form");
     dayCacheRef.current = {};
     setDayCache({});
     setSelectedSlot(null);
+    if (s.dateTime) {
+      setSchedulingMode("specific");
+      setSpecificDateTime(s.dateTime);
+    } else {
+      setSchedulingMode("find");
+    }
     setShowScheduler(true);
     setSelectedMeeting(null);
     setSchedulingFromSuggestion(s);
@@ -576,10 +622,22 @@ export default function MeetingsView() {
                       <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>close</span>
                     </button>
                   </div>
-                  {s.suggested_time && (
+                  {s.dateTime && (
+                    <p className="text-xs text-[var(--accent)] mt-0.5 flex items-center gap-1">
+                      <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>schedule</span>
+                      {new Date(s.dateTime).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                    </p>
+                  )}
+                  {!s.dateTime && s.suggested_time && (
                     <p className="text-xs text-[var(--accent)] mt-0.5 flex items-center gap-1">
                       <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>schedule</span>
                       {s.suggested_time}
+                    </p>
+                  )}
+                  {s.location && (
+                    <p className="text-xs text-[var(--muted)] mt-0.5 flex items-center gap-1 truncate">
+                      <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>location_on</span>
+                      <span className="truncate">{s.location}</span>
                     </p>
                   )}
                   <button
@@ -587,7 +645,7 @@ export default function MeetingsView() {
                     className="mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90"
                   >
                     <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>calendar_add_on</span>
-                    Schedule
+                    {s.dateTime ? "Add to Calendar" : "Schedule"}
                   </button>
                 </div>
               ))
@@ -745,6 +803,18 @@ export default function MeetingsView() {
                     accountId={primaryAccountId}
                     placeholder="alex@example.com, sarah@example.com"
                     multi={true}
+                  />
+                </div>
+
+                {/* Location */}
+                <div>
+                  <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">Location (optional)</label>
+                  <input
+                    type="text"
+                    value={newLocation}
+                    onChange={(e) => setNewLocation(e.target.value)}
+                    placeholder="Zoom link, room number, or address"
+                    className="w-full px-3 py-2 text-sm border border-[var(--border)] rounded-lg bg-[var(--background)] text-[var(--foreground)] placeholder-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50"
                   />
                 </div>
 
