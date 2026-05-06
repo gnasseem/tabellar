@@ -775,11 +775,20 @@ export default function BriefingView() {
       source: "runemail" as const,
       meetingLink: m.zoom_join_url ?? m.calendar_event_id ? null : null,
     }));
-    // Deduplicate: skip calendar events whose title matches a DB meeting at the same time
-    const dbKeys = new Set(dbItems.map((m) => `${m.title?.toLowerCase()}_${m.start?.slice(0, 16)}`));
+    // Deduplicate: skip GCal events that RuneMail already tracks via calendar_event_id,
+    // or whose title+minute match a DB meeting (fallback for meetings without a GCal ID).
+    const dbCalIds = new Set(meetings.map((m: any) => m.calendar_event_id).filter(Boolean));
+    const dbKeys = new Set(
+      dbItems.map((m) => {
+        const t = m.start ? new Date(m.start).getTime() : 0;
+        return `${m.title?.toLowerCase()}_${t}`;
+      }),
+    );
     const calItems = calendarEvents
       .filter((ev: any) => {
-        const key = `${(ev.title ?? "").toLowerCase()}_${(ev.start ?? "").slice(0, 16)}`;
+        if (dbCalIds.has(ev.id)) return false;
+        const t = ev.start ? new Date(ev.start).getTime() : 0;
+        const key = `${(ev.title ?? "").toLowerCase()}_${t}`;
         return !dbKeys.has(key);
       })
       .map((ev: any) => ({ ...ev, id: `cal_${ev.id}`, source: "google_calendar" as const }));
