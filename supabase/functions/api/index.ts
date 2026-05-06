@@ -1174,12 +1174,14 @@ Deno.serve(async (req) => {
             );
           }
 
-          // On initial fetch, import recent sent emails into DB for persistent storage
-          if (isInitialFetch) {
+          // Import recent sent emails on every fetch (20 on initial, 5 on subsequent)
+          // so SentView stays up to date for both RuneMail and Gmail-client sends.
+          {
+            const sentLimit = isInitialFetch ? 20 : 5;
             try {
               const sentEmails = await fetchSentEmails(
                 account.tokens_encrypted as string,
-                20,
+                sentLimit,
               );
               const sentGmailIds = sentEmails.map((e) => e.id);
               if (sentGmailIds.length > 0) {
@@ -1191,7 +1193,7 @@ Deno.serve(async (req) => {
                 const existingSentIds = new Set(
                   (existingSent || []).map((e) => e.gmail_id as string),
                 );
-                const newSentRows = sentEmails
+                const sentRows = sentEmails
                   .filter((sent) => !existingSentIds.has(sent.id))
                   .map((sent) => {
                     const sentDate = new Date(sent.date);
@@ -1213,8 +1215,10 @@ Deno.serve(async (req) => {
                       attachments: sent.attachments ?? [],
                     };
                   });
-                if (newSentRows.length > 0) {
-                  await supabase.from("emails").insert(newSentRows);
+                if (sentRows.length > 0) {
+                  await supabase
+                    .from("emails")
+                    .upsert(sentRows, { onConflict: "user_id,gmail_id", ignoreDuplicates: true });
                 }
               }
             } catch (e) {
@@ -1437,20 +1441,25 @@ Deno.serve(async (req) => {
       );
 
       // Persist sent email to DB so SentView reads from local storage
-      try {
-        await supabase.from("emails").insert({
-          user_id: userId,
-          gmail_id: result.id,
-          gmail_account_id: account.id,
-          subject: body.subject ?? "",
-          recipients: (body.to as string[]).join(", "),
-          body_html: body.body_html ?? "",
-          received_at: new Date().toISOString(),
-          is_read: true,
-          label_ids: ["SENT"],
-        });
-      } catch (e) {
-        console.warn("[send-email] failed to save to emails table:", e);
+      {
+        const { error: insertErr } = await supabase
+          .from("emails")
+          .upsert(
+            {
+              user_id: userId,
+              gmail_id: result.id,
+              gmail_account_id: account.id,
+              subject: body.subject ?? "",
+              recipients: (body.to as string[]).join(", "),
+              body_html: body.body_html ?? "",
+              received_at: new Date().toISOString(),
+              is_read: true,
+              label_ids: ["SENT"],
+            },
+            { onConflict: "user_id,gmail_id", ignoreDuplicates: false },
+          );
+        if (insertErr)
+          console.error("[send-email] failed to save to emails table:", insertErr.message);
       }
 
       return json(
