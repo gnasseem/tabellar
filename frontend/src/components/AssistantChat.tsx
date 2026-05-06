@@ -40,28 +40,37 @@ const GREETING = "Hi! I'm your email assistant. I can search emails, send messag
 function buildLocalSystemPrompt(displayName: string, timezone: string): string {
   const today = new Date().toISOString().split("T")[0];
 
-  return `You are RuneMail Assistant for ${displayName}. Today: ${today}. Timezone: ${timezone}.
+  return `You are RuneMail Assistant, an executive personal assistant for ${displayName}. Today: ${today}. Timezone: ${timezone}.
 
 CRITICAL OUTPUT RULE: Respond with valid JSON only. No text outside JSON.
 Format 1 - Call tools (you can call multiple at once): {"type":"tool_calls","calls":[{"name":"TOOL","args":{...}}, ...]}
 Format 2 - Single tool call: {"type":"tool_call","name":"TOOL_NAME","args":{...}}
 Format 3 - Reply to user: {"type":"reply","reply":"your message","actions":[]}
 
-GATHER FIRST — BATCH ALL INFORMATION CALLS:
+## SEARCH-FIRST RULE
+When user refers to an email by person or topic (without ID), ALWAYS search first. NEVER ask "which email do you mean?" before searching.
+1. search_emails_by_sender or search_emails first
+2. If one result: get_email(id) and proceed
+3. If multiple: use suggest_reply_options to let user pick
+
+## GATHER FIRST — BATCH ALL INFORMATION CALLS
 In your FIRST response, call ALL information-gathering tools you need SIMULTANEOUSLY.
 Include: lookup_contact, search_emails_by_sender, search_emails, get_email, list_todos, list_meetings, search_knowledge_base, get_recent_emails.
 NEVER call information tools one per round. Batch all reads, then take all actions.
 Pattern: Round 1 = gather everything. Round 2 = take all actions. Round 3 = confirm.
 
-CONTACT RESEARCH: When any person is mentioned, ALWAYS call lookup_contact(name) AND search_emails_by_sender(name) in the same round before acting. EXCEPTION: if lookup_contact returns nothing, ask the user for their email address.
+## CONTACT RESEARCH
+When any person is mentioned, ALWAYS call lookup_contact(name) AND search_emails_by_sender(name) in the same round before acting. EXCEPTION: if lookup_contact returns nothing AND search_emails_by_sender returns nothing, ask the user for their email address.
 
-BEHAVIOR:
+## BEHAVIOR
 - NEVER list options in "reply" field; use suggest_reply_options tool instead
-- Confirm completed actions in past tense: "I sent", "I created"
+- Confirm completed actions in past tense: "I sent", "I created", "I scheduled"
 - For unclear email references: search first, then act
 - COMPLETE every task. If asked to do multiple things, do ALL of them.
+- When user says "Execute:" at the start of a message, immediately run the action without asking
+- NEVER announce actions in future tense ("I'll send..."). Call the tool first, then confirm.
 
-TOOLS:
+## TOOLS
 get_recent_emails(limit?) - Recent inbox emails
 search_emails(query) - Search by keyword/topic/sender
 search_emails_by_sender(sender) - All emails from a person
@@ -69,7 +78,7 @@ search_emails_by_date(start_date, end_date?) - Emails in date range YYYY-MM-DD
 search_emails_by_sender_and_date(sender, start_date, end_date?) - Combined
 get_email(id) - Full email content
 get_email_thread(thread_id) - Full thread
-send_email(to, subject, body) - Send email
+send_email(to, subject, body, track_opens?) - Send email; set track_opens:true to track if recipient reads it
 reply_to_email(email_id, body) - Reply to an email
 list_todos - List open todos
 create_todo(text) - Create todo
@@ -85,11 +94,20 @@ delete_draft(id) - Delete draft
 lookup_contact(name) - Get email address and history for a person
 search_knowledge_base(query) - Search saved knowledge
 add_knowledge(entity, entity_type, info) - Save info (entity_type: person/company/topic)
-get_read_receipts - Emails sent but not opened
+get_read_receipts - See which sent emails were opened
 archive_email(email_id) - Archive email
 list_tags - List tags
 create_tag(display_name, slug, color?) - Create tag
 suggest_reply_options(options, recommended, context?) - Show clickable option cards. options=[{label,description}], recommended=index
+set_follow_up(recipient_email, subject, remind_at, email_id?) - Set a follow-up reminder (remind_at: ISO datetime)
+list_follow_ups - List pending follow-up reminders
+
+## TOOL MAPPING
+- "send with tracking" / "track opens" -> send_email with track_opens:true
+- "follow up in X days" / "remind me to check on this" -> set_follow_up
+- "show follow-ups" -> list_follow_ups
+- "sent emails" / "what did I send" -> get_read_receipts or search_emails
+- "read receipts" -> get_read_receipts
 
 Sign all emails as: Best regards,\n${displayName}`;
 }
@@ -285,14 +303,20 @@ async function executeLocalTool(
         return JSON.stringify({ success: true });
       }
       case "send_email": {
+        const trackOpens = args.track_opens === true;
         const res = await fetch(`${apiUrl}/send-email`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-          body: JSON.stringify({ to: [args.to], subject: args.subject, body_html: (args.body as string).replace(/\n/g, "<br>") }),
+          body: JSON.stringify({
+            to: [args.to],
+            subject: args.subject,
+            body_html: (args.body as string).replace(/\n/g, "<br>"),
+            track: trackOpens,
+          }),
         });
         const sendData = await res.json();
         if (res.ok) {
-          pendingActions.push({ type: "send_email", data: { to: args.to as string, subject: args.subject as string, message_id: sendData.id } });
+          pendingActions.push({ type: "send_email", data: { to: args.to as string, subject: args.subject as string, message_id: sendData.id, tracked: trackOpens } });
           return JSON.stringify({ success: true });
         }
         pendingActions.push({ type: "send_email_failed", data: { error: sendData.error } });
@@ -397,6 +421,55 @@ async function executeLocalTool(
           .single();
         if (data) pendingActions.push({ type: "create_tag", data: { display_name: args.display_name as string, slug: args.slug as string, color: (args.color as string) ?? "#6b7280", id: (data as { id: string }).id } });
         return JSON.stringify({ success: true });
+      }
+      case "set_follow_up": {
+        let threadId: string | null = null;
+        if (args.email_id) {
+          const { data: emailRow } = await supabase
+            .from("emails")
+            .select("thread_id")
+            .eq("id", args.email_id as string)
+            .eq("user_id", userId)
+            .maybeSingle();
+          threadId = (emailRow as { thread_id?: string } | null)?.thread_id ?? null;
+        }
+        if (!threadId) threadId = crypto.randomUUID();
+        const { data: followUp } = await supabase
+          .from("follow_up_reminders")
+          .upsert(
+            {
+              user_id: userId,
+              email_id: (args.email_id as string | undefined) ?? null,
+              thread_id: threadId,
+              recipient_email: args.recipient_email as string,
+              subject: args.subject as string,
+              remind_at: args.remind_at as string,
+              status: "waiting",
+            },
+            { onConflict: "user_id,thread_id" },
+          )
+          .select("id")
+          .single();
+        pendingActions.push({
+          type: "set_follow_up",
+          data: {
+            subject: args.subject as string,
+            recipient_email: args.recipient_email as string,
+            remind_at: args.remind_at as string,
+            id: (followUp as { id?: string } | null)?.id,
+          },
+        });
+        return JSON.stringify({ success: true });
+      }
+      case "list_follow_ups": {
+        const { data } = await supabase
+          .from("follow_up_reminders")
+          .select("id, recipient_email, subject, remind_at, status")
+          .eq("user_id", userId)
+          .in("status", ["waiting", "pending"])
+          .order("remind_at", { ascending: true })
+          .limit(20);
+        return JSON.stringify(data ?? []);
       }
       case "apply_tag": {
         const emailId = args.email_id as string;
@@ -739,6 +812,7 @@ export default function AssistantChat({ className, visible }: { className?: stri
                   onViewTodos={() => setView("todos")}
                   onViewInbox={() => setView("inbox")}
                   onViewCategories={() => setView("categories")}
+                  onViewFollowups={() => setView("followups")}
                   onSelectOption={(text) => sendMessage(text)}
                 />
               ))}
@@ -877,6 +951,7 @@ function ActionChip({
   onViewTodos,
   onViewInbox,
   onViewCategories,
+  onViewFollowups,
   onSelectOption,
 }: {
   action: Action;
@@ -886,6 +961,7 @@ function ActionChip({
   onViewTodos: () => void;
   onViewInbox: () => void;
   onViewCategories: () => void;
+  onViewFollowups: () => void;
   onSelectOption: (text: string) => void;
 }) {
   if (action.type === "suggest_options") {
@@ -941,7 +1017,8 @@ function ActionChip({
     return <ActionCard color="blue" icon="draft" title="Draft saved" subtitle={`To: ${action.data.to as string}`} onClick={onViewDrafts} />;
   }
   if (action.type === "send_email") {
-    return <ActionCard color="green" icon="send" title={`Email sent to ${action.data.to as string}`} subtitle={action.data.subject as string | undefined} onClick={onViewSent} />;
+    const tracked = action.data.tracked === true;
+    return <ActionCard color="green" icon="send" title={`Email sent to ${action.data.to as string}`} subtitle={tracked ? `${action.data.subject as string ?? ""} (tracking on)` : action.data.subject as string | undefined} onClick={onViewSent} />;
   }
   if (action.type === "send_email_failed") {
     return <ActionCard color="red" icon="error" title="Failed to send email" subtitle={action.data.error as string | undefined} />;
@@ -976,6 +1053,12 @@ function ActionChip({
   }
   if (action.type === "create_tag") {
     return <ActionCard color="slate" icon="label" title={`Tag created: ${action.data.display_name as string}`} onClick={onViewCategories} />;
+  }
+  if (action.type === "set_follow_up") {
+    const remindDate = action.data.remind_at
+      ? new Date(action.data.remind_at as string).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+      : undefined;
+    return <ActionCard color="blue" icon="schedule_send" title={`Follow-up set: ${action.data.subject as string}`} subtitle={remindDate ? `Remind: ${remindDate}` : undefined} onClick={onViewFollowups} />;
   }
   return null;
 }

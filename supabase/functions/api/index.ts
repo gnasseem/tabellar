@@ -3357,12 +3357,15 @@ Deno.serve(async (req) => {
             to: string;
             subject: string;
             body: string;
+            track_opens?: boolean;
           };
           console.log(
             "[chat/send_email] attempting to send to:",
             args.to,
             "subject:",
             args.subject,
+            "track:",
+            args.track_opens,
           );
           const toCheck = validateRecipients(
             typeof args.to === "string" ? [args.to] : args.to,
@@ -3382,7 +3385,6 @@ Deno.serve(async (req) => {
             continue;
           }
           try {
-            // Get Gmail account for sending
             const { data: accounts, error: accountErr } = await supabase
               .from("gmail_accounts")
               .select("*")
@@ -3394,25 +3396,58 @@ Deno.serve(async (req) => {
                 "[chat/send_email] account lookup error:",
                 accountErr,
               );
-            console.log(
-              "[chat/send_email] accounts found:",
-              accounts?.length ?? 0,
-            );
             const account = accounts?.[0];
             if (account) {
+              // Set up tracking pixel if requested
+              let trackingId: string | null = null;
+              let trackingUrl: string | null = null;
+              if (args.track_opens === true) {
+                trackingId = crypto.randomUUID();
+                trackingUrl = `${getEnv("SUPABASE_URL")}/functions/v1/api/track/pixel/${trackingId}.gif`;
+                await supabase.from("read_receipts").insert({
+                  user_id: userId,
+                  tracking_id: trackingId,
+                  recipient_email: toCheck.emails![0] ?? "",
+                  subject: args.subject,
+                });
+              }
+
+              const bodyHtml = (args.body ?? "").replace(/\n/g, "<br>");
               const result = await sendEmail(
                 account.tokens_encrypted as string,
                 toCheck.emails!,
                 args.subject,
-                (args.body ?? "").replace(/\n/g, "<br>"),
+                bodyHtml,
+                undefined,
+                undefined,
+                trackingUrl ?? undefined,
               );
               console.log("[chat/send_email] sent OK, message_id:", result.id);
+
+              // Save to emails table so SentView can display it
+              try {
+                await supabase.from("emails").insert({
+                  user_id: userId,
+                  gmail_id: result.id,
+                  gmail_account_id: account.id,
+                  subject: args.subject,
+                  recipients: toCheck.emails!.join(", "),
+                  body_html: bodyHtml,
+                  received_at: new Date().toISOString(),
+                  is_read: true,
+                  label_ids: ["SENT"],
+                });
+              } catch (e) {
+                console.warn("[chat/send_email] failed to save to emails:", e);
+              }
+
               actions.push({
                 type: "send_email",
                 data: {
                   to: args.to,
                   subject: args.subject,
                   message_id: result.id,
+                  tracked: args.track_opens === true,
                 },
               });
             } else {
@@ -3571,6 +3606,55 @@ Deno.serve(async (req) => {
               context: args.context ?? "",
             },
           });
+        } else if (tc.name === "set_follow_up") {
+          const args = tc.arguments as {
+            email_id?: string;
+            recipient_email: string;
+            subject: string;
+            remind_at: string;
+          };
+          try {
+            let threadId: string | null = null;
+            if (args.email_id) {
+              const { data: emailRow } = await supabase
+                .from("emails")
+                .select("thread_id")
+                .eq("id", args.email_id)
+                .eq("user_id", userId)
+                .maybeSingle();
+              threadId = (emailRow as any)?.thread_id ?? null;
+            }
+            // Use a synthetic thread_id if none found
+            if (!threadId) threadId = crypto.randomUUID();
+
+            const { data: followUp } = await supabase
+              .from("follow_up_reminders")
+              .upsert(
+                {
+                  user_id: userId,
+                  email_id: args.email_id ?? null,
+                  thread_id: threadId,
+                  recipient_email: args.recipient_email,
+                  subject: args.subject,
+                  remind_at: args.remind_at,
+                  status: "waiting",
+                },
+                { onConflict: "user_id,thread_id" },
+              )
+              .select("id, remind_at")
+              .single();
+            actions.push({
+              type: "set_follow_up",
+              data: {
+                subject: args.subject,
+                recipient_email: args.recipient_email,
+                remind_at: args.remind_at,
+                id: (followUp as any)?.id,
+              },
+            });
+          } catch (err) {
+            console.error("[chat/set_follow_up] error:", err);
+          }
         } else if (tc.name === "create_meeting") {
           const args = tc.arguments as {
             title: string;

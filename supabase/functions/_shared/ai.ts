@@ -1076,7 +1076,9 @@ export interface ChatToolCall {
     | "list_tags"
     | "create_tag"
     | "apply_tag"
-    | "remove_tag";
+    | "remove_tag"
+    | "set_follow_up"
+    | "list_follow_ups";
   arguments: Record<string, unknown>;
 }
 
@@ -1186,7 +1188,10 @@ Exception: if you discover a new ID from a search result and need to fetch the f
 - "list tags" / "show my tags" -> list_tags
 - "create tag [name]" -> create_tag(display_name, slug, color)
 - "tag email with [tag]" / "apply tag" -> apply_tag(email_id, tag_slug)
-- "remove tag from email" -> remove_tag(email_id, tag_slug)`,
+- "remove tag from email" -> remove_tag(email_id, tag_slug)
+- "send with tracking" / "track if they open" -> send_email with track_opens: true
+- "follow up in X days" / "remind me to check on this" -> set_follow_up(email_id?, recipient_email, subject, remind_at)
+- "show follow-ups" / "my follow-up reminders" -> list_follow_ups`,
   ];
 
   if (context.styleProfile) {
@@ -1342,7 +1347,7 @@ const CHAT_TOOLS = [
     function: {
       name: "send_email",
       description:
-        "Send an email on behalf of the user. Compose a professional email body. You MUST have the recipient's email address (use lookup_contact first if needed).",
+        "Send an email on behalf of the user. Compose a professional email body. You MUST have the recipient's email address (use lookup_contact first if needed). Set track_opens to true when the user asks to track opens or wants to know if the recipient read the email.",
       parameters: {
         type: "object",
         properties: {
@@ -1351,6 +1356,10 @@ const CHAT_TOOLS = [
           body: {
             type: "string",
             description: "Email body (plain text, newlines for formatting)",
+          },
+          track_opens: {
+            type: "boolean",
+            description: "Whether to track if the recipient opens the email. Only set true when user explicitly asks.",
           },
         },
         required: ["to", "subject", "body"],
@@ -1677,6 +1686,48 @@ const CHAT_TOOLS = [
             description: "Number of receipts to return. Default 10.",
           },
         },
+        required: [],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_follow_up",
+      description:
+        "Set a follow-up reminder to check back on an email or contact. Use when the user says 'follow up in X days', 'remind me to check on this', or 'set a follow-up'. The remind_at date is when the assistant will remind the user.",
+      parameters: {
+        type: "object",
+        properties: {
+          email_id: {
+            type: "string",
+            description: "ID of the email to follow up on (optional if using recipient_email + subject directly).",
+          },
+          recipient_email: {
+            type: "string",
+            description: "Email address of the person to follow up with.",
+          },
+          subject: {
+            type: "string",
+            description: "Subject or topic of the follow-up.",
+          },
+          remind_at: {
+            type: "string",
+            description: "ISO 8601 date-time for when to send the reminder (e.g. '2026-05-10T09:00:00').",
+          },
+        },
+        required: ["recipient_email", "subject", "remind_at"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_follow_ups",
+      description: "List pending follow-up reminders.",
+      parameters: {
+        type: "object",
+        properties: {},
         required: [],
       },
     },
@@ -2415,6 +2466,29 @@ export async function chatWithAssistant(
                 )
                 .join("\n")
             : "No read receipts found.";
+      } else if (
+        tc.function?.name === "list_follow_ups" &&
+        supabase &&
+        userId
+      ) {
+        const { data: followUps } = await supabase
+          .from("follow_up_reminders")
+          .select("id, recipient_email, subject, remind_at, status")
+          .eq("user_id", userId)
+          .in("status", ["waiting", "pending"])
+          .order("remind_at", { ascending: true })
+          .limit(20);
+        const items = followUps ?? [];
+        toolResult =
+          items.length > 0
+            ? `${items.length} follow-up reminders:\n` +
+              items
+                .map(
+                  (f: any) =>
+                    `[${f.id}] "${f.subject}" → ${f.recipient_email} | Remind: ${f.remind_at?.split("T")[0]} | Status: ${f.status}`,
+                )
+                .join("\n")
+            : "No pending follow-up reminders.";
       } else if (tc.function?.name === "archive_email" && supabase && userId) {
         const id = (args.id as string) ?? "";
         const { error } = await supabase
