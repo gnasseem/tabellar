@@ -22,7 +22,7 @@ interface ProgressStep {
   detail?: string;
   status: StepStatus;
   icon: string;
-  /** For read tools — a short string gleaned from arguments (e.g. sender name). */
+  /** For read tools  -  a short string gleaned from arguments (e.g. sender name). */
   suffix?: string;
   bucket?: AgentBucket;
   /** Attached to assistant turns: MiniMax reasoning for the planning round. */
@@ -727,7 +727,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
             </div>
           )}
 
-          {/* Question area — batched grid when multiple */}
+          {/* Question area  -  batched grid when multiple */}
           {status === "asking" && pendingQuestions.length > 0 && (
             <div className="my-5">
               {pendingQuestions.length === 1 ? (
@@ -1041,7 +1041,7 @@ function StepRow({
   );
 }
 
-// Kept in case we ever want to render raw turns — unused by default.
+// Kept in case we ever want to render raw turns  -  unused by default.
 export function _TurnRowDebug({ turn }: { turn: AgentTurnRow }) {
   return <div>{turn.role}</div>;
 }

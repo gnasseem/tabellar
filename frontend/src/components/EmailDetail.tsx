@@ -51,7 +51,7 @@ const SNOOZE_OPTIONS = [
 ];
 
 function fixMojibake(str: string): string {
-  // No high bytes — nothing to fix
+  // No high bytes  -  nothing to fix
   if (!/[\x80-\xFF]/.test(str)) return str;
 
   // If all chars are in byte range (≤0xFF), convert the whole string at once
@@ -479,7 +479,7 @@ export default function EmailDetail({
   }, [email.id, email.body_html]);
 
   // Preload attachments into the module-level cache so preview opens instantly.
-  // Fires after mount; errors are silently swallowed — this is best-effort only.
+  // Fires after mount; errors are silently swallowed  -  this is best-effort only.
   useEffect(() => {
     const atts = Array.isArray(email.attachments) ? email.attachments : [];
     if (atts.length === 0) return;
@@ -1077,7 +1077,7 @@ export default function EmailDetail({
     !!(email.cc_recipients) ||
     (email.recipients || "").split(",").filter(Boolean).length > 1;
   // Only show the panel when there are actual actions to render.
-  // If the AI ran and returned [] it made a deliberate decision — hide the panel.
+  // If the AI ran and returned [] it made a deliberate decision  -  hide the panel.
   const hasActions =
     replyActions.length > 0 ||
     meetingActions.length > 0 ||
@@ -1113,7 +1113,7 @@ export default function EmailDetail({
               {showBack && <span className="text-xs font-medium">Back</span>}
             </button>
             <div className="min-w-0 flex-1">
-              {/* Sender + subject + time + badges — first line */}
+              {/* Sender + subject + time + badges  -  first line */}
               <div className="flex items-center gap-2 min-w-0">
                 <p className="text-[12px] font-semibold text-[var(--foreground)] shrink-0 max-w-[35%] truncate">
                   {(email.sender ?? "").replace(/<.*>/, "").trim() ||
@@ -1516,7 +1516,7 @@ export default function EmailDetail({
           !isMultiMessageThread) ||
           showSuggestionsPanel) && (
           <div className="px-3 pt-2 pb-2 flex-shrink-0 bg-[var(--accent)]/5 flex flex-col gap-1.5">
-            {/* Attachments row — only for single-message view (thread messages show their own) */}
+            {/* Attachments row  -  only for single-message view (thread messages show their own) */}
             {!isMultiMessageThread &&
               Array.isArray(email.attachments) &&
               email.attachments.length > 0 && (
@@ -1739,7 +1739,7 @@ export default function EmailDetail({
                 })}
               </div>
 
-              {/* Inline input card — shown when a reply action with questions is clicked */}
+              {/* Inline input card  -  shown when a reply action with questions is clicked */}
               {activeInputAction && (
                 <div className="rounded-xl border border-blue-200 dark:border-blue-700 bg-blue-50/70 dark:bg-blue-950/30 p-3 flex flex-col gap-2.5 shadow-sm">
                   {/* Header */}
@@ -1827,7 +1827,7 @@ export default function EmailDetail({
 
         {/* ── Action bar ── */}
         <div className="px-3 py-1.5 border-t border-[var(--border)] flex-shrink-0 flex items-center gap-1.5 flex-wrap">
-          {/* Reply button — always visible */}
+          {/* Reply button  -  always visible */}
           <button
             onClick={() => onReply()}
             className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--border)] text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
@@ -1841,7 +1841,7 @@ export default function EmailDetail({
             Reply
           </button>
 
-          {/* Reply All — show when there are CC recipients or multiple TO recipients */}
+          {/* Reply All  -  show when there are CC recipients or multiple TO recipients */}
           {hasReplyAll && (
             <button
               onClick={() => openCompose({ ...email, _replyAll: true })}
@@ -1917,7 +1917,7 @@ export default function EmailDetail({
               </div>
             )}
           </div>
-          {/* Track follow-up — shown for sent/outbound emails with a thread_id */}
+          {/* Track follow-up  -  shown for sent/outbound emails with a thread_id */}
           {email.thread_id && (
             <div className="relative">
               <button

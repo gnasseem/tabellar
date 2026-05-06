@@ -1,4 +1,4 @@
-// VAPID public key (not secret — safe to hardcode in frontend)
+// VAPID public key (not secret  -  safe to hardcode in frontend)
 const VAPID_PUBLIC_KEY =
   "BFl6Y_jtxeT6LyEYx0m5V_y2TBnqZ36Q5TMLi3zpTilk9xDuk_Xhvt4Vin5x2zCoygTETXsturwYmNq78HJGams";
 

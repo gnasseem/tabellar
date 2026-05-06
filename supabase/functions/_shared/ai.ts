@@ -1,5 +1,5 @@
 /**
- * AI helpers — primary provider is OpenRouter (MiniMax M2.5 by default).
+ * AI helpers  -  primary provider is OpenRouter (MiniMax M2.5 by default).
  * Cerebras code is kept for reference but is inactive unless explicitly re-enabled
  * by setting AI_PROVIDER=cerebras in the edge function environment.
  *
@@ -65,7 +65,7 @@ function activeExtraBody(): Record<string, unknown> {
 const PROMPTS = {
   categorize: `You are an expert email categorizer. Classify the email into exactly one category.
 
-STEP 1 — HIGH-STAKES CHECK (run this before anything else):
+STEP 1  -  HIGH-STAKES CHECK (run this before anything else):
 If this email concerns any of these life-event domains, it is NEVER "updates" or "promotions":
 - Career: job offer, offer letter, interview invitation, application update (hired/shortlisted/rejected/next steps/offer extended), onboarding, background check, recruiter asking for a reply, contract to sign
 - Academic: admission/acceptance/rejection, financial aid, scholarship offer, enrollment deadline
@@ -75,7 +75,7 @@ If this email concerns any of these life-event domains, it is NEVER "updates" or
 ATS or HR system emails (Greenhouse, Workday, Lever, Taleo, SmartRecruiters, iCIMS, Jobvite, Breezy, BambooHR) about a job or interview are NOT updates.
 If STEP 1 triggers: use action-required when the email expects a reply/action from you; use important when it is status-only FYI.
 
-STEP 2 — STANDARD PRIORITY ORDER (first rule that fits wins):
+STEP 2  -  STANDARD PRIORITY ORDER (first rule that fits wins):
 
 1. action-required
    The sender is a real human (or a human acting on behalf of an org) and is waiting on YOU to do something concrete with a clear "finish line": reply with an answer, approve, sign, pay, schedule, RSVP, review a doc, submit a form. If a human asked you a direct question, it is action-required.
@@ -84,7 +84,7 @@ STEP 2 — STANDARD PRIORITY ORDER (first rule that fits wins):
    A real human wrote to you and the message is genuinely worth reading, but no response/action is required right now. Examples: status update from a colleague, personal note from a friend, intro/announcement from a known contact, meeting notes you were CC'd on, FYI from your boss. Do NOT use "important" as a safe default; only use it for person-to-person mail that matters.
 
 3. promotions
-   Bulk content sent to many recipients: marketing campaigns, sales emails, promotional announcements, brand newsletters, weekly content digests, product round-ups, sponsored content. If the writing pattern is marketing/editorial and the same email went to many people, it is promotions — even from a company you like.
+   Bulk content sent to many recipients: marketing campaigns, sales emails, promotional announcements, brand newsletters, weekly content digests, product round-ups, sponsored content. If the writing pattern is marketing/editorial and the same email went to many people, it is promotions  -  even from a company you like.
 
 4. updates
    Automated, transactional, or system-generated messages that are NOT marketing. Receipts, order confirmations, shipping updates, bank/card alerts, security alerts, password resets, calendar reminders, billing statements, service status pings, app notifications, no-reply automation.
@@ -96,13 +96,13 @@ Tie-breakers:
 
 Respond with ONLY the category slug, nothing else.`,
   summarize:
-    "Summarize this email in 1-3 sentences. Lead with the single most important fact — if there is a specific dollar amount, deadline, decision, or named ask, state it first. Name the sender only if they are a real person (skip for no-reply/automated). Capture what is needed from the reader, if anything. Be direct and concrete; no vague filler like 'This email contains information about...'",
+    "Summarize this email in 1-3 sentences. Lead with the single most important fact  -  if there is a specific dollar amount, deadline, decision, or named ask, state it first. Name the sender only if they are a real person (skip for no-reply/automated). Capture what is needed from the reader, if anything. Be direct and concrete; no vague filler like 'This email contains information about...'",
   quick_actions:
-    'Look at this email and suggest 1-3 actions that would actually help the user clear it. Most real emails from people have at least one action (reply or todo). Return a JSON array of objects with "label" (descriptive phrase up to 12 words — for add_todo, include specific context: topic, sender name, deadline; for reply, state what the reply achieves; for schedule_meeting, name who and what to schedule), "action" (one of: "reply", "add_todo", "schedule_meeting"), and optionally "text" (the reply body for reply; meeting details for schedule_meeting). Rules: include a reply action whenever a human asked a question or expects a response — the "text" must directly address the specific ask using actual details from the email, not a generic acknowledgment; include an add_todo whenever the email implies a task to track — label must be self-explanatory without re-reading; include schedule_meeting when the email mentions meeting, call, zoom, teams, phone/video call, coffee chat, catch-up, sync, check-in, interview, or asks about availability. IMPORTANT: emails about jobs, interviews, medical appointments, legal matters, academic admissions, or financial decisions ALWAYS get at least one action even if the sender looks automated. Return [] only if the email is a promotions/marketing blast, shipping receipt, or automated notification with absolutely no personal ask from the user. For reply actions: if the reply text requires information the email does not contain — such as the recipient\'s name when the email says "my friend" or uses only pronouns, a specific preference, or a choice between options — include a "questions" array on that action. Each question entry: {"key":"snake_case_var","label":"Human-readable label","placeholder":"example value"}. Use {{key}} inside "text" wherever that answer should go. Only add questions when the info is truly absent from the email. Maximum 2 questions per action. Omit "questions" entirely when the email provides enough context. Example: [{"label":"Confirm availability for Thursday interview with Acme","action":"reply","text":"Hi, Thursday works for me. I am available from 2-5pm EST. Please send a calendar invite."},{"label":"Prepare portfolio samples for Acme interview by Wed","action":"add_todo"},{"label":"Schedule 45-min interview with Acme recruiter","action":"schedule_meeting","text":"45-min technical interview with Acme"},{"label":"Reply to friend asking about weekend plans","action":"reply","text":"Hey {{friend_name}}, sounds great! I am free Saturday afternoon.","questions":[{"key":"friend_name","label":"Your friend\'s name","placeholder":"e.g. Alex"}]}]',
+    'Look at this email and suggest 1-3 actions that would actually help the user clear it. Most real emails from people have at least one action (reply or todo). Return a JSON array of objects with "label" (descriptive phrase up to 12 words  -  for add_todo, include specific context: topic, sender name, deadline; for reply, state what the reply achieves; for schedule_meeting, name who and what to schedule), "action" (one of: "reply", "add_todo", "schedule_meeting"), and optionally "text" (the reply body for reply; meeting details for schedule_meeting). Rules: include a reply action whenever a human asked a question or expects a response  -  the "text" must directly address the specific ask using actual details from the email, not a generic acknowledgment; include an add_todo whenever the email implies a task to track  -  label must be self-explanatory without re-reading; include schedule_meeting when the email mentions meeting, call, zoom, teams, phone/video call, coffee chat, catch-up, sync, check-in, interview, or asks about availability. IMPORTANT: emails about jobs, interviews, medical appointments, legal matters, academic admissions, or financial decisions ALWAYS get at least one action even if the sender looks automated. Return [] only if the email is a promotions/marketing blast, shipping receipt, or automated notification with absolutely no personal ask from the user. For reply actions: if the reply text requires information the email does not contain  -  such as the recipient\'s name when the email says "my friend" or uses only pronouns, a specific preference, or a choice between options  -  include a "questions" array on that action. Each question entry: {"key":"snake_case_var","label":"Human-readable label","placeholder":"example value"}. Use {{key}} inside "text" wherever that answer should go. Only add questions when the info is truly absent from the email. Maximum 2 questions per action. Omit "questions" entirely when the email provides enough context. Example: [{"label":"Confirm availability for Thursday interview with Acme","action":"reply","text":"Hi, Thursday works for me. I am available from 2-5pm EST. Please send a calendar invite."},{"label":"Prepare portfolio samples for Acme interview by Wed","action":"add_todo"},{"label":"Schedule 45-min interview with Acme recruiter","action":"schedule_meeting","text":"45-min technical interview with Acme"},{"label":"Reply to friend asking about weekend plans","action":"reply","text":"Hey {{friend_name}}, sounds great! I am free Saturday afternoon.","questions":[{"key":"friend_name","label":"Your friend\'s name","placeholder":"e.g. Alex"}]}]',
   process_email: `You are an email assistant. Analyze this email and return ONLY valid JSON with no markdown:
 {"reasoning":"...","category":"...","urgency":"...","summary":"...","actions":[...]}
 
-STEP 1 — HIGH-STAKES CHECK (run before picking a category):
+STEP 1  -  HIGH-STAKES CHECK (run before picking a category):
 If this email concerns any of these life-event domains, it is NEVER "updates" or "promotions":
 - Career: job offer, offer letter, interview invitation, application update (hired/shortlisted/rejected/next steps/offer extended), onboarding, background check, recruiter asking for a response, contract to sign
 - Academic: admission/acceptance/rejection, financial aid, scholarship offer, enrollment deadline
@@ -113,9 +113,9 @@ ATS or HR system senders (Greenhouse, Workday, Lever, Taleo, SmartRecruiters, iC
 If STEP 1 triggers: action-required when a reply/action is expected; important when status-only FYI.
 
 CATEGORIES (pick exactly one; STEP 1 overrides if triggered):
-1. action-required: a real person is waiting on YOU to do something concrete with a clear finish line — reply with an answer, approve, sign, pay, schedule, RSVP, review, submit. Any direct question from a human belongs here.
+1. action-required: a real person is waiting on YOU to do something concrete with a clear finish line  -  reply with an answer, approve, sign, pay, schedule, RSVP, review, submit. Any direct question from a human belongs here.
 2. important: a real person wrote to you and it is worth reading, but no response is required right now. Status updates from colleagues, personal notes, FYIs from known contacts, meeting notes. Do not use as a safe default.
-3. promotions: bulk content sent to many recipients — marketing campaigns, sales emails, promotional announcements, brand newsletters, content digests, product round-ups. Marketing tone + broadcast to many recipients = promotions.
+3. promotions: bulk content sent to many recipients  -  marketing campaigns, sales emails, promotional announcements, brand newsletters, content digests, product round-ups. Marketing tone + broadcast to many recipients = promotions.
 4. updates: automated, transactional, or system-generated messages that are NOT marketing. Receipts, shipping/order updates, bank/card alerts, security alerts, password resets, calendar reminders, billing statements, service pings, app notifications.
 
 Tie-breakers: an unsubscribe link alone does not make something promotions (transactional mail has them too). A direct human question beats important and updates. When unsure between important and updates, prefer updates for automated content; only use important for human-to-human mail that matters.
@@ -126,13 +126,13 @@ URGENCY (required field, pick exactly one):
 - medium: reply or action helpful but not immediately urgent
 - low: automated notification, no action needed, no deadline, nothing personal
 
-reasoning: ONE sentence — name the sender type, what they want, why you chose this category and urgency. Internal chain-of-thought only; not shown to the user.
+reasoning: ONE sentence  -  name the sender type, what they want, why you chose this category and urgency. Internal chain-of-thought only; not shown to the user.
 
-summary: Lead with the single most important fact — if there is a specific dollar amount, deadline, decision required, or named ask, state it first. Name the sender only if they are a real person. Use 1-3 sentences. Be concrete; skip filler like "This email informs you that...".
+summary: Lead with the single most important fact  -  if there is a specific dollar amount, deadline, decision required, or named ask, state it first. Name the sender only if they are a real person. Use 1-3 sentences. Be concrete; skip filler like "This email informs you that...".
 
 actions: Suggest the actions that would actually help the user clear this email. Aim for 1-3 when urgency is medium or above OR when email is action-required/important. Return [] ONLY when urgency is low AND category is promotions or updates with no personal ask.
 Rules for picking actions:
-- If a human asked a question or requested something, include a "reply" action. The "text" field must directly address the specific question or request using actual details from the email — not a generic acknowledgment like "Thanks, will review."
+- If a human asked a question or requested something, include a "reply" action. The "text" field must directly address the specific question or request using actual details from the email  -  not a generic acknowledgment like "Thanks, will review."
 - If the email implies a task the user should track (review document, prepare presentation, follow up, pay invoice, submit form, complete application, book appointment, sign agreement), include an "add_todo" action. The label must name the specific task, include the sender name when relevant, and include the deadline if one is stated.
 - If the email mentions meeting, call, zoom, teams, phone/video call, coffee chat, catch-up, sync, check-in, interview, office hours, or asks about availability or scheduling, include a "schedule_meeting" action. Put what to schedule and any duration/format in "text".
 - High-stakes emails (career/medical/legal/academic/financial) always get at least one action even if the sender looks automated.
@@ -141,7 +141,7 @@ Rules for picking actions:
 
 Each action MUST be an object:
   {"label": "short descriptive phrase", "action": "reply"|"add_todo"|"schedule_meeting", "text": "optional content for reply or meeting", "questions": [optional array, reply only]}
-For reply actions: if the reply text requires information the email does not contain — such as the recipient's name when the email uses only "my friend" or pronouns, a specific preference, or a choice between options — include a "questions" array on that action. Each question: {"key":"snake_case_var","label":"Human-readable label","placeholder":"example value"}. Use {{key}} inside "text" wherever that answer should go. Only add questions when the info is truly absent from the email. Max 2 questions per action. Omit "questions" entirely when the email provides enough context.
+For reply actions: if the reply text requires information the email does not contain  -  such as the recipient's name when the email uses only "my friend" or pronouns, a specific preference, or a choice between options  -  include a "questions" array on that action. Each question: {"key":"snake_case_var","label":"Human-readable label","placeholder":"example value"}. Use {{key}} inside "text" wherever that answer should go. Only add questions when the info is truly absent from the email. Max 2 questions per action. Omit "questions" entirely when the email provides enough context.
 Examples:
   {"label": "Reply to John confirming Q3 budget review by Friday", "action": "reply", "text": "Hi John, I can have the Q3 budget review done by Friday. I will send over my comments then."}
   {"label": "Submit reimbursement form by Dec 15 (Finance team request)", "action": "add_todo"}
@@ -151,18 +151,18 @@ Return raw JSON only. No explanation, no markdown.`,
   draft:
     "You are an email drafting assistant. Write a professional, clear reply to the email below. Match the tone of the original. Keep it concise.",
   briefing:
-    'You are an executive email intelligence system. Analyze ALL emails below and return ONLY valid JSON with this exact structure: {"executiveSummary":"detailed summary, see rules","crucial":[{"subject":"...","senderName":"...","sender":"...","summary":"what this specific email is about, what it asks, and any key detail (amount, name, date, deadline) in 1-2 sentences","signal":"one clause: what the sender actually wants from the user","evidence":"the 1-2 literal phrases from the email that justify the classification","relationshipHint":"first-party|known-contact|stranger|auto","suggestedAction":"reply|todo|meeting|archive|ignore","urgency":"critical|high|medium","deadline":null,"waitingForReply":false,"tags":[]}],"replyNeeded":[/* same fields */],"deadlines":[/* same fields, set deadline to YYYY-MM-DD */],"nonEssential":[/* same fields */],"stats":{"total":N,"crucial":N,"replyNeeded":N,"deadlines":N,"nonEssential":N}}.\n\nEXECUTIVE SUMMARY RULES: 4-6 sentences walking through what actually happened in the inbox. Name specific senders, specific topics, specific amounts/dates where present. Do NOT cluster into vague themes ("several project updates"); list concrete items one after another. FORBIDDEN: never mention any email count number in the executive summary (no "40 emails", no "several", no "five messages"). The UI shows counts separately; your job is to narrate content, not tally. Example: "Bob pinged you about the Q3 budget review due Friday. Sarah shared revised design mocks and is waiting on your feedback. Stripe flagged a failed payment of $249. LinkedIn and a marketing digest were the only filler. Two meeting invites need RSVP (kickoff Thu 10am, review Fri 2pm)."\n\nPER-EMAIL ENRICHMENT RULES (hard contract — downstream agent relies on these):\n- signal: ONE short clause describing what the sender wants from the user. Examples: "confirm receipt of API key", "RSVP to kickoff Thu 10am", "review Q3 budget doc", "no action, informational FYI", "promotional, no action".\n- evidence: copy 1-2 short phrases (under ~90 chars total) verbatim from the email that justify your classification. Never paraphrase, never fabricate. If nothing concrete stands out, use the subject line.\n- relationshipHint: "first-party" if the sender looks like the user themselves (self-email), "known-contact" for real named humans, "stranger" for unknown humans/cold outreach, "auto" for no-reply/notifications/bulk senders.\n- suggestedAction: the SINGLE most sensible next move. Rules: senders with no-reply@/notifications@/donotreply@ or relationshipHint=auto MUST use "archive" or "ignore" — NEVER "todo", NEVER "reply". "ignore" means truly no action (pure FYI bulk). Use "todo" only for a concrete task the user must track (pay invoice, read doc, prepare slides); otherwise prefer "reply", "meeting", or "archive".\n\nCLASSIFICATION RULES — assign each email to exactly ONE category using this strict priority. The first rule that fits wins:\n(1) replyNeeded: a real human is explicitly waiting on a response from the user. Direct questions, requested input, open conversational threads. If someone asked something that expects an answer, it goes here even if there is also a deadline (surface the deadline as a tag like "DUE 2026-04-25" in the deadline field, but the card lives in replyNeeded).\n(2) deadlines: the email carries a concrete future date/time by which the user must complete an action, and no reply is expected. Pay by X, submit by Y, RSVP by Z, expires on W. Set the deadline field to YYYY-MM-DD.\n(3) crucial: high-impact or time-sensitive FYI that needs user attention but is neither a reply request nor a dated action item. Financial holds, account/security alerts, significant updates from named individuals, urgent personal matters, important announcements. Real-human updates worth reading live here.\n(4) nonEssential: ONLY newsletters, promotional emails, automated marketing, shipping/order receipts, no-reply senders, social digests, system notifications without user action. An email from a real named person is almost never nonEssential. Any sender matching /no.?reply|noreply|notifications?|donotreply|mailer-daemon/ IS nonEssential.\n\nINBOX REALITY: Real inboxes mix valuable threads with shipping pings, digests, receipts, and cold outreach. Do NOT upgrade vague or low-signal mail to replyNeeded or crucial just because it arrived. Use nonEssential for bulk, automated, or mail where no real person expects a personal reply. Use suggestedAction ignore when nothing matters. Cold outreach belongs in crucial only when it has a concrete time-sensitive ask; otherwise prefer nonEssential or crucial as FYI with suggestedAction archive or ignore.\n\nEvery input email must appear in exactly one array. Do not skip any email. If unsure between crucial and nonEssential, choose crucial. If unsure between replyNeeded and deadlines, choose replyNeeded. Stats must satisfy: crucial + replyNeeded + deadlines + nonEssential = total (= number of input emails).',
+    'You are an executive email intelligence system. Analyze ALL emails below and return ONLY valid JSON with this exact structure: {"executiveSummary":"detailed summary, see rules","crucial":[{"subject":"...","senderName":"...","sender":"...","summary":"what this specific email is about, what it asks, and any key detail (amount, name, date, deadline) in 1-2 sentences","signal":"one clause: what the sender actually wants from the user","evidence":"the 1-2 literal phrases from the email that justify the classification","relationshipHint":"first-party|known-contact|stranger|auto","suggestedAction":"reply|todo|meeting|archive|ignore","urgency":"critical|high|medium","deadline":null,"waitingForReply":false,"tags":[]}],"replyNeeded":[/* same fields */],"deadlines":[/* same fields, set deadline to YYYY-MM-DD */],"nonEssential":[/* same fields */],"stats":{"total":N,"crucial":N,"replyNeeded":N,"deadlines":N,"nonEssential":N}}.\n\nEXECUTIVE SUMMARY RULES: 4-6 sentences walking through what actually happened in the inbox. Name specific senders, specific topics, specific amounts/dates where present. Do NOT cluster into vague themes ("several project updates"); list concrete items one after another. FORBIDDEN: never mention any email count number in the executive summary (no "40 emails", no "several", no "five messages"). The UI shows counts separately; your job is to narrate content, not tally. Example: "Bob pinged you about the Q3 budget review due Friday. Sarah shared revised design mocks and is waiting on your feedback. Stripe flagged a failed payment of $249. LinkedIn and a marketing digest were the only filler. Two meeting invites need RSVP (kickoff Thu 10am, review Fri 2pm)."\n\nPER-EMAIL ENRICHMENT RULES (hard contract  -  downstream agent relies on these):\n- signal: ONE short clause describing what the sender wants from the user. Examples: "confirm receipt of API key", "RSVP to kickoff Thu 10am", "review Q3 budget doc", "no action, informational FYI", "promotional, no action".\n- evidence: copy 1-2 short phrases (under ~90 chars total) verbatim from the email that justify your classification. Never paraphrase, never fabricate. If nothing concrete stands out, use the subject line.\n- relationshipHint: "first-party" if the sender looks like the user themselves (self-email), "known-contact" for real named humans, "stranger" for unknown humans/cold outreach, "auto" for no-reply/notifications/bulk senders.\n- suggestedAction: the SINGLE most sensible next move. Rules: senders with no-reply@/notifications@/donotreply@ or relationshipHint=auto MUST use "archive" or "ignore"  -  NEVER "todo", NEVER "reply". "ignore" means truly no action (pure FYI bulk). Use "todo" only for a concrete task the user must track (pay invoice, read doc, prepare slides); otherwise prefer "reply", "meeting", or "archive".\n\nCLASSIFICATION RULES  -  assign each email to exactly ONE category using this strict priority. The first rule that fits wins:\n(1) replyNeeded: a real human is explicitly waiting on a response from the user. Direct questions, requested input, open conversational threads. If someone asked something that expects an answer, it goes here even if there is also a deadline (surface the deadline as a tag like "DUE 2026-04-25" in the deadline field, but the card lives in replyNeeded).\n(2) deadlines: the email carries a concrete future date/time by which the user must complete an action, and no reply is expected. Pay by X, submit by Y, RSVP by Z, expires on W. Set the deadline field to YYYY-MM-DD.\n(3) crucial: high-impact or time-sensitive FYI that needs user attention but is neither a reply request nor a dated action item. Financial holds, account/security alerts, significant updates from named individuals, urgent personal matters, important announcements. Real-human updates worth reading live here.\n(4) nonEssential: ONLY newsletters, promotional emails, automated marketing, shipping/order receipts, no-reply senders, social digests, system notifications without user action. An email from a real named person is almost never nonEssential. Any sender matching /no.?reply|noreply|notifications?|donotreply|mailer-daemon/ IS nonEssential.\n\nINBOX REALITY: Real inboxes mix valuable threads with shipping pings, digests, receipts, and cold outreach. Do NOT upgrade vague or low-signal mail to replyNeeded or crucial just because it arrived. Use nonEssential for bulk, automated, or mail where no real person expects a personal reply. Use suggestedAction ignore when nothing matters. Cold outreach belongs in crucial only when it has a concrete time-sensitive ask; otherwise prefer nonEssential or crucial as FYI with suggestedAction archive or ignore.\n\nEvery input email must appear in exactly one array. Do not skip any email. If unsure between crucial and nonEssential, choose crucial. If unsure between replyNeeded and deadlines, choose replyNeeded. Stats must satisfy: crucial + replyNeeded + deadlines + nonEssential = total (= number of input emails).',
   briefing_batch_cards: `You refine a capped batch of inbox rows for RuneMail. Input is NDJSON: one JSON object per line. Each line has email_id, subject, sender, category (from prior classifier), urgency (stored urgency: critical|high|medium|low, may be null), summary (may be truncated).
 
 Return ONLY valid JSON: {"cards":[...]} with one object per input line you could judge (same count as input lines). Each card MUST include email_id (exactly as given).
 
 Each card fields: email_id, bucket (one of crucial|replyNeeded|deadlines|nonEssential), subject, senderName, sender, summary (1-2 sentences), signal (one short clause: what the sender wants), evidence (under 90 chars, verbatim from subject or summary; if none, repeat subject slice), relationshipHint (first-party|known-contact|stranger|auto), suggestedAction (reply|todo|meeting|archive|ignore), urgency (critical|high|medium), deadline (null or YYYY-MM-DD), waitingForReply (boolean), tags (string array, can be empty).
 
-URGENCY FLOOR: if the stored urgency field is "critical" or "high", do not downgrade it — use it as a minimum floor for your output urgency. A stored-high email cannot be output as urgency medium.
+URGENCY FLOOR: if the stored urgency field is "critical" or "high", do not downgrade it  -  use it as a minimum floor for your output urgency. A stored-high email cannot be output as urgency medium.
 
 CAREER AND HIGH-STAKES OVERRIDE: emails about job offers, interview invitations, application status, medical appointments/results, legal notices/contracts, academic admissions, or financial decisions (mortgage, loan, account suspended) are NEVER nonEssential regardless of how the sender looks. If category was "updates" but subject/summary contains career/job/interview/offer/hiring/admitted/rejected/offer letter/medical/legal/financial signals, override to crucial or replyNeeded.
 
-AUTO SENDERS EXCEPTION: the auto-sender rule (no-reply|noreply|notifications|donotreply) routes to nonEssential ONLY when the email is genuinely bulk/transactional. ATS and HR system emails about a specific candidate's job/interview are NOT bulk — they go to replyNeeded or crucial.
+AUTO SENDERS EXCEPTION: the auto-sender rule (no-reply|noreply|notifications|donotreply) routes to nonEssential ONLY when the email is genuinely bulk/transactional. ATS and HR system emails about a specific candidate's job/interview are NOT bulk  -  they go to replyNeeded or crucial.
 
 BROADCAST AND LOW-STAKE CIVIC MAIL: mass voting requests, petitions, generic "cast your vote", campus-wide surveys, LinkedIn-style blasts without a personal obligation belong in nonEssential with suggestedAction archive or ignore and urgency medium, waitingForReply false, unless the body clearly shows a direct one-to-one obligation to this user.
 
@@ -179,9 +179,9 @@ FORBIDDEN in the prose: any tally of how many emails or messages (no digits with
 
 If the digest is thin, still write a calm overview of what the day looks like based on what is given.`,
   extract_entities:
-    'Extract entities from this email that would be useful to remember for future reference. Return a JSON array of objects with "entity" (proper name or specific identifier), "entity_type" (person|company|project|topic|location), and "info" (one concrete sentence about what was learned — must include a specific fact, role, or relationship, not just that they appeared in an email). Rules: only include named people with a clear role or relationship; only include companies/projects if a specific detail was learned (what they do, deal size, status); skip generic words like "meeting", "email", "deadline", "invoice", "document"; skip entities where info would be trivially vague. Confidence bar: only include if you would recommend storing this fact for future drafts or decisions. Return an empty array if nothing clearly useful was found.',
+    'Extract entities from this email that would be useful to remember for future reference. Return a JSON array of objects with "entity" (proper name or specific identifier), "entity_type" (person|company|project|topic|location), and "info" (one concrete sentence about what was learned  -  must include a specific fact, role, or relationship, not just that they appeared in an email). Rules: only include named people with a clear role or relationship; only include companies/projects if a specific detail was learned (what they do, deal size, status); skip generic words like "meeting", "email", "deadline", "invoice", "document"; skip entities where info would be trivially vague. Confidence bar: only include if you would recommend storing this fact for future drafts or decisions. Return an empty array if nothing clearly useful was found.',
   style_analysis:
-    'Analyze the writing style of these sent emails (written BY the user). Return ONLY valid JSON with EXACTLY these four string keys and no extras: {"greeting_style":"<short>","closing_style":"<short>","tone":"formal|casual|mixed","avg_length":"short|medium|long"}. FIELD RULES — greeting_style: the exact most common opening word or phrase the user writes (e.g. "Hi", "Hey", "Hi {name}", "Hello", "Dear", "Good morning"). closing_style: the exact most common sign-off the user writes (e.g. "Best", "Thanks", "Cheers", "Best regards", "Talk soon", "Thanks,\\nGeorge"). NEVER return empty strings — if there is truly no greeting or closing, use "Hi" and "Thanks" as sensible defaults. tone: single word from formal/casual/mixed. avg_length: single word from short/medium/long. Do NOT wrap in markdown. Do NOT add commentary. Return JSON only.',
+    'Analyze the writing style of these sent emails (written BY the user). Return ONLY valid JSON with EXACTLY these four string keys and no extras: {"greeting_style":"<short>","closing_style":"<short>","tone":"formal|casual|mixed","avg_length":"short|medium|long"}. FIELD RULES  -  greeting_style: the exact most common opening word or phrase the user writes (e.g. "Hi", "Hey", "Hi {name}", "Hello", "Dear", "Good morning"). closing_style: the exact most common sign-off the user writes (e.g. "Best", "Thanks", "Cheers", "Best regards", "Talk soon", "Thanks,\\nGeorge"). NEVER return empty strings  -  if there is truly no greeting or closing, use "Hi" and "Thanks" as sensible defaults. tone: single word from formal/casual/mixed. avg_length: single word from short/medium/long. Do NOT wrap in markdown. Do NOT add commentary. Return JSON only.',
   meeting_detect:
     'Determine if this email contains or requests a meeting. Return JSON: {"has_meeting": boolean, "title": string, "suggested_duration": number (minutes), "attendees": string[], "suggested_date": string or null}.',
   agent_system: `You are RuneMail's Auto-Resolve executive agent. Your job is to completely clear the user's current briefing by producing a fully confirmed action plan: drafted replies, todos, calendar events, and a single bulk archive. At the end, the user reviews and executes approved actions with one click.
@@ -190,17 +190,17 @@ You have tools. You MUST use them. You never speak in plain prose to the user. E
 
 ## HARD RULES (non-negotiable)
 
-1. THINK LIKE THE USER. Every propose_action MUST include a reasoning field — one first-person-style sentence that explains why THIS action is right for THIS user given their style profile, past replies with this sender, and the specific ask in this email. If you cannot write that sentence truthfully, you do not yet have enough context — call more read tools first.
+1. THINK LIKE THE USER. Every propose_action MUST include a reasoning field  -  one first-person-style sentence that explains why THIS action is right for THIS user given their style profile, past replies with this sender, and the specific ask in this email. If you cannot write that sentence truthfully, you do not yet have enough context  -  call more read tools first.
 
 2. GATHER BEFORE ACTING. Before proposing any non-trivial action you MUST call the relevant read tools:
    - Always begin with get_briefing_context so you know what emails exist in your scope.
-   - For ANY email in "crucial" or "replyNeeded" you WILL touch: call get_thread(email_id) AND past_replies_by_me(sender) AND user_style_profile — no shortcut. Use search_emails to find related historical threads when relevant.
+   - For ANY email in "crucial" or "replyNeeded" you WILL touch: call get_thread(email_id) AND past_replies_by_me(sender) AND user_style_profile  -  no shortcut. Use search_emails to find related historical threads when relevant.
    - For any meeting you will propose: call calendar_freebusy first, then surface 2-3 concrete open slots via ask_user.
    - Batch read-tool calls together in one assistant turn whenever possible (parallel tool calls are supported).
 
 3. NEVER ASSUME. If any decision depends on information you were not given (which date/time, which tone, whether to reply or archive, whom to include, whether to send now or save as draft, what exactly to say), you MUST call ask_user with 2-4 concrete options plus allow_custom=true.
 
-4. BATCH INDEPENDENT QUESTIONS. ask_user accepts a "questions" array. When you have multiple independent decisions, emit them in ONE ask_user call so the user can answer them together — the UI renders them as a grid. Only use a single question when decisions chain (answer to Q1 changes what Q2 should be).
+4. BATCH INDEPENDENT QUESTIONS. ask_user accepts a "questions" array. When you have multiple independent decisions, emit them in ONE ask_user call so the user can answer them together  -  the UI renders them as a grid. Only use a single question when decisions chain (answer to Q1 changes what Q2 should be).
 
 5. REPLIES DEFAULT TO SENDING. Set send_now=true by default. Only set send_now=false if the user explicitly said "save as draft" or the reply is risky/incomplete (placeholder content, legal/contract wording needing personal review). The review UI lets the user flip between Send, Draft, or Resolve-without-reply per-action.
 
@@ -208,7 +208,7 @@ You have tools. You MUST use them. You never speak in plain prose to the user. E
 
 7. NO TODOS FOR NOISE. If the source email is in the nonEssential bucket, or its suggestedAction is "archive"/"ignore", or the sender matches no-reply/notifications/donotreply/mailer-daemon, you MAY NOT propose a todo or a reply for it. The server will reject such calls. Only "archive" applies.
 
-8. DO NOT DUPLICATE. One reply + one todo is the maximum per email. If a reply covers the ask, do not also add a todo. Never propose two actions with the same (type, linked_email_id) — the server will reject the second.
+8. DO NOT DUPLICATE. One reply + one todo is the maximum per email. If a reply covers the ask, do not also add a todo. Never propose two actions with the same (type, linked_email_id)  -  the server will reject the second.
 
 9. BE CONCRETE. Todo titles must make sense without reopening the email ("Sign last page of NYU employment agreement by Apr 28", not "sign agreement"). Reply bodies must reference the specific ask with specific details from the thread.
 
@@ -221,13 +221,13 @@ You have tools. You MUST use them. You never speak in plain prose to the user. E
 ## ACTION BUDGET
 
 - 0-3 replies per run. Only reply when the user has clearly said what to say, or you have asked and gotten an answer.
-- 0-6 todos per run. Each todo MUST link to an email that is in crucial/replyNeeded/deadlines — never in nonEssential.
+- 0-6 todos per run. Each todo MUST link to an email that is in crucial/replyNeeded/deadlines  -  never in nonEssential.
 - 0-3 meetings per run. Each meeting MUST have a time the user explicitly picked from a freebusy-aware ask_user.
 - Exactly 0 or 1 archive batch per run.
 
 ## STYLE
 
-Your status text (when you rarely emit content) should be like "Reading Hanan's thread." or "Checking calendar for Friday." — tight, present-tense, under 12 words, no emoji, no options.
+Your status text (when you rarely emit content) should be like "Reading Hanan's thread." or "Checking calendar for Friday."  -  tight, present-tense, under 12 words, no emoji, no options.
 
 ## TIMEZONE
 
@@ -241,7 +241,7 @@ You follow every rule in the full Auto-Resolve agent system (think-like-user rea
 - todos: 0-6 todo actions. Each links to an email in crucial/replyNeeded/deadlines only.
 - noise: exactly 1 archive action bundling ALL nonEssential email_ids in your scope. No reads, no questions.
 
-Finalize as soon as your bucket is resolved. Do NOT propose actions outside your bucket — the parent merges our outputs.
+Finalize as soon as your bucket is resolved. Do NOT propose actions outside your bucket  -  the parent merges our outputs.
 
 Today is {TODAY}. User timezone: {TIMEZONE}.`,
   draft_reply_in_context: `You are drafting one email reply on behalf of the user. Rules:
@@ -253,7 +253,7 @@ Today is {TODAY}. User timezone: {TIMEZONE}.`,
 };
 
 /**
- * Generic LLM call — routes through the active provider (OpenRouter or Cerebras).
+ * Generic LLM call  -  routes through the active provider (OpenRouter or Cerebras).
  * OpenAI-compatible chat/completions schema is used by both providers.
  */
 async function llm(
@@ -602,7 +602,7 @@ function buildSignalContext(signals: EmailSignals): {
   } else if (isDefiniteImportant) {
     // Starred = user explicitly marked it; still run AI to distinguish action-required vs important
     lines.push(
-      "NOTE: User starred this email — lean towards action-required or important.",
+      "NOTE: User starred this email  -  lean towards action-required or important.",
     );
   }
 
@@ -728,7 +728,7 @@ export async function composeDraft(opts: {
   }
 
   const systemPrompt = `You are an email drafting assistant writing on behalf of the sender. Rules:
-1. Write ONLY the email body — no subject line.
+1. Write ONLY the email body  -  no subject line.
 2. Start with exactly this greeting: "${greeting}"
 3. Write 2-4 concise paragraphs covering the intent.
 4. End with exactly: "${closing}"
@@ -754,7 +754,7 @@ export async function refineDraft(opts: {
   if (styleContext) context += `\n\nWrite in this style: ${styleContext}`;
 
   const systemPrompt = `You are an email drafting assistant. The user reviewed an AI-generated draft and wants changes. Revise the draft according to their feedback exactly. Rules:
-1. Write ONLY the email body — no subject line.
+1. Write ONLY the email body  -  no subject line.
 2. Keep the existing greeting and closing unless the feedback asks to change them.
 3. Apply the requested changes faithfully and completely.
 4. Do NOT use placeholder text like [Your Name] or [Company].
@@ -1095,18 +1095,18 @@ function buildChatSystemPrompt(context: ChatContext): string {
   const sections: string[] = [
     `You are RuneMail Assistant, a highly capable executive secretary for ${context.userDisplayName}. Today is ${now}.
 User's timezone: ${context.timezone || "UTC"}. All times the user mentions are in their local timezone.
-You are proactive, thorough, and decisive — you gather context, think it through, and either act or present the user with a clear choice. Do NOT use <think> tags. Be direct and concise.
+You are proactive, thorough, and decisive  -  you gather context, think it through, and either act or present the user with a clear choice. Do NOT use <think> tags. Be direct and concise.
 
-## CRITICAL RULE — OPTIONS FORMAT (overrides everything)
+## CRITICAL RULE  -  OPTIONS FORMAT (overrides everything)
 You are STRICTLY FORBIDDEN from writing numbered or bulleted options in your text reply.
 NEVER write things like "1. Accept  2. Decline  3. Ask for agenda" or "Option A: ..." in your message.
 When you need to present ANY choices to the user, you MUST call the suggest_reply_options tool instead.
-If you catch yourself about to write a list of choices — STOP immediately and call suggest_reply_options.
+If you catch yourself about to write a list of choices  -  STOP immediately and call suggest_reply_options.
 This rule has no exceptions. Options always appear as clickable cards, never as text.
 
-## SEARCH-FIRST RULE — NEVER ASK BEFORE SEARCHING
+## SEARCH-FIRST RULE  -  NEVER ASK BEFORE SEARCHING
 When user refers to "email from [Person]", "email about [Topic]", or any email without an explicit ID:
-1. IMMEDIATELY call search_emails_by_sender([Person]) and/or search_emails([Topic]) — do not ask first.
+1. IMMEDIATELY call search_emails_by_sender([Person]) and/or search_emails([Topic])  -  do not ask first.
 2. If ONE email matches: read it with get_email(id), then proceed.
 3. If MULTIPLE emails match: call suggest_reply_options with the emails as options (label = subject, description = snippet + date). Let the user pick.
 4. If ZERO found: try a shorter keyword or search_emails as fallback. Only say "not found" after 2 attempts.
@@ -1127,10 +1127,10 @@ You act like a skilled executive secretary:
 - For CLEAR explicit instructions ("decline", "accept", "send this", "cancel"): execute immediately, no confirmation.
 - For UNCLEAR intent (how to reply, what to say): call suggest_reply_options with 2-4 distinct approaches.
 - For UNCLEAR target (which email, which meeting): search first; if multiple results, use suggest_reply_options to let user pick.
-- When suggesting alternative meeting times: ALWAYS call list_meetings first, find real free slots, suggest SPECIFIC times (e.g. "Monday Apr 7 at 2 PM") — never vague ranges like "morning or afternoon".
-- When the user picks an option card, immediately execute it — no further confirmation.
+- When suggesting alternative meeting times: ALWAYS call list_meetings first, find real free slots, suggest SPECIFIC times (e.g. "Monday Apr 7 at 2 PM")  -  never vague ranges like "morning or afternoon".
+- When the user picks an option card, immediately execute it  -  no further confirmation.
 
-## GATHER FIRST — BATCH ALL INFORMATION CALLS
+## GATHER FIRST  -  BATCH ALL INFORMATION CALLS
 In your FIRST response, call ALL information-gathering tools you need SIMULTANEOUSLY (you can call multiple tools in one response). This includes: lookup_contact, search_emails_by_sender, search_emails, search_emails_by_date, get_email, get_email_thread, list_todos, list_meetings, get_read_receipts, search_knowledge_base, get_recent_emails.
 
 NEVER call information tools one per round. Batch all reads in a single response, then take all actions in the next response.
@@ -1141,7 +1141,7 @@ Exception: if you discover a new ID from a search result and need to fetch the f
 ## RULES
 1. SEARCH BEFORE ACTING: Any person, company, project, or topic mentioned -> call lookup_contact and/or search_knowledge_base FIRST. EXCEPTION: if lookup_contact returns no results, the person has never emailed you. In this case ONLY, ask the user for their email address.
 2. For ALL email content: use email search tools. Never answer from memory about email contents.
-3. Batch tools freely in one round: lookup + search emails + read email + check calendar — all at once.
+3. Batch tools freely in one round: lookup + search emails + read email + check calendar  -  all at once.
 4. WHEN TO ACT vs. SHOW OPTIONS:
    - Clear intent + clear target -> execute immediately (no confirmation)
    - Unclear intent -> suggest_reply_options with 2-4 reply approaches
@@ -1150,10 +1150,10 @@ Exception: if you discover a new ID from a search result and need to fetch the f
 5. When creating a meeting: use proper ISO datetime + attendee emails. Times are in user's timezone (${context.timezone || "UTC"}).
 6. Do NOT include Zoom in meetings unless explicitly asked.
 7. COMPLETE every task. If asked to do multiple things, do ALL of them.
-8. Confirm completed actions in PAST TENSE: "I sent", "I created" — never "I will send".
+8. Confirm completed actions in PAST TENSE: "I sent", "I created"  -  never "I will send".
 9. If first email search returns no results, retry with a shorter keyword before giving up.
 10. EMAIL FORMAT: greeting line, blank line, body paragraphs, blank line, closing phrase, then "${context.userDisplayName}" on a new line. No extra punctuation on greeting.
-11. EXECUTE PREFIX: When the user's message begins with "Execute:", treat it as an immediate confirmed instruction. Call the relevant tool right away — no re-confirmation, no more option cards.
+11. EXECUTE PREFIX: When the user's message begins with "Execute:", treat it as an immediate confirmed instruction. Call the relevant tool right away  -  no re-confirmation, no more option cards.
 12. NEVER announce actions in future tense. Do NOT write "I'll now reach out to...", "I will send...", or "I'm going to..." for any action you intend to take. CALL THE TOOL FIRST. Your final reply must only confirm what already happened: "I sent the email to...", "I created the meeting...", "I archived...". If you catch yourself writing a future-tense action description, stop and make the tool call instead.
 
 ## TOOL SELECTION
@@ -1753,7 +1753,7 @@ const CHAT_TOOLS = [
     function: {
       name: "suggest_reply_options",
       description:
-        "Use this tool ANY time the user needs to choose between options — this is the ONLY allowed way to present choices. Use cases: (1) reply approach is unclear — present 2-4 reply stances; (2) multiple emails match the user's description — present them so user can pick which one to act on; (3) alternative meeting times — present specific free time slots; (4) any other ambiguity. NEVER present options in your text reply. Labels should be short (e.g. subject line or action). Descriptions should be one sentence. Do NOT call send_email, reply_to_email, or save_draft until the user picks.",
+        "Use this tool ANY time the user needs to choose between options  -  this is the ONLY allowed way to present choices. Use cases: (1) reply approach is unclear  -  present 2-4 reply stances; (2) multiple emails match the user's description  -  present them so user can pick which one to act on; (3) alternative meeting times  -  present specific free time slots; (4) any other ambiguity. NEVER present options in your text reply. Labels should be short (e.g. subject line or action). Descriptions should be one sentence. Do NOT call send_email, reply_to_email, or save_draft until the user picks.",
       parameters: {
         type: "object",
         properties: {
@@ -1983,7 +1983,7 @@ export async function chatWithAssistant(
     throw new Error("Chat API: max retries exceeded");
   };
 
-  // Tool-calling loop — up to 8 rounds for complex multi-step tasks.
+  // Tool-calling loop  -  up to 8 rounds for complex multi-step tasks.
   for (let round = 0; round < 8; round++) {
     const data = await callAPI();
     const choice = data.choices?.[0];
@@ -1995,14 +1995,14 @@ export async function chatWithAssistant(
     ) {
       const reply = stripThinkTags(assistantMsg?.content ?? "");
       if (!reply.trim()) {
-        // Empty content from a non-tool-call response — treat as transient, retry via callAPI
+        // Empty content from a non-tool-call response  -  treat as transient, retry via callAPI
         messages.push({ role: "user", content: "Please respond." });
         continue;
       }
       return { reply, tool_calls: allToolCalls };
     }
 
-    // Model wants to call tools — add assistant message and process each tool
+    // Model wants to call tools  -  add assistant message and process each tool
     messages.push(assistantMsg);
 
     for (const tc of assistantMsg.tool_calls as {

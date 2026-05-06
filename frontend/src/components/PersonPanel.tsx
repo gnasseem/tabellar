@@ -341,7 +341,7 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
                 </p>
                 <p className="text-[10px] text-[var(--muted)] mt-0.5">
                   {new Date(e.received_at).toLocaleDateString([], { month: "short", day: "numeric" })}
-                  {e.snippet ? ` — ${e.snippet.slice(0, 50)}${e.snippet.length > 50 ? "…" : ""}` : ""}
+                  {e.snippet ? ` - ${e.snippet.slice(0, 50)}${e.snippet.length > 50 ? "…" : ""}` : ""}
                 </p>
               </div>
             ))}

@@ -115,7 +115,7 @@ export async function GET(request: Request) {
       return NextResponse.redirect(`${base}/?error=gmail_register_failed`);
     }
   } else if (!addAccount) {
-    // No provider_token — Supabase reused an existing session. If no Gmail
+    // No provider_token  -  Supabase reused an existing session. If no Gmail
     // accounts are connected, sign out and force fresh OAuth.
     const { count } = await supabase
       .from("gmail_accounts")

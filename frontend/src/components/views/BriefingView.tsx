@@ -57,7 +57,7 @@ function briefingExecutiveSummaryDisplay(raw: string): string {
       .replace(/&amp;/gi, "&");
     s = s.replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim();
   }
-  return s;
+  return s.replace(/—/g, " - ");
 }
 
 function formatDeadlineDate(iso: string) {
@@ -395,11 +395,11 @@ function EmailCard({
       </p>
       {email.signal?.trim() && (
         <p className="text-[11px] text-sky-700/90 dark:text-sky-400/80 mt-1 line-clamp-1 italic">
-          {email.signal}
+          {email.signal.replace(/—/g, " - ")}
         </p>
       )}
       <p className="text-[12px] text-slate-700 dark:text-slate-200 mt-1 leading-snug line-clamp-2 font-['DM_Sans',ui-sans-serif,sans-serif]">
-        {email.summary}
+        {(email.summary || "").replace(/—/g, " - ")}
       </p>
     </div>
   );
@@ -1101,7 +1101,7 @@ export default function BriefingView() {
               </div>
             ) : (
               <div className="space-y-5">
-                {/* Compact inline meta chips — muted, calm, dashboard aesthetic */}
+                {/* Compact inline meta chips  -  muted, calm, dashboard aesthetic */}
                 {displayStats && (
                   <div className="flex flex-wrap items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-2)]/60 px-2 py-1.5">
                     <button

@@ -29,11 +29,11 @@
  *                                    → merge_actions → END
  *
  * ── Key LangGraph principles ─────────────────────────────────────────────────
- *  1. State accumulates as it flows — each node reads and returns partial state
+ *  1. State accumulates as it flows  -  each node reads and returns partial state
  *  2. Conditional edges route dynamically based on runtime state values
  *  3. Router node dispatches to different subgraphs based on task type
  *  4. Nodes are pure async functions (no side effects beyond state updates)
- *  5. Single compiled graph singleton — build once, invoke many times
+ *  5. Single compiled graph singleton  -  build once, invoke many times
  */
 
 import { localInference, initWebLLM, isWebLLMReady, extractJSON } from "./webllm";
@@ -300,7 +300,7 @@ async function ensureModel(): Promise<void> {
 }
 
 /**
- * Fuzzy dedup check — mirrors Python _fuzzy_match from quick_actions_graph.py.
+ * Fuzzy dedup check  -  mirrors Python _fuzzy_match from quick_actions_graph.py.
  * Returns true if a and b share >= 60% of meaningful words.
  */
 function fuzzyMatch(a: string, b: string): boolean {
@@ -334,7 +334,7 @@ function buildEmailSignalContext(email: EmailInput): { signalLines: string[]; de
   if (labels.includes("IMPORTANT")) lines.push("Gmail marked IMPORTANT: yes");
   if (labels.includes("STARRED")) lines.push("Starred by user: yes");
 
-  if (email.has_list_unsubscribe) lines.push("Has List-Unsubscribe header: yes (possible newsletter/bulk — but transactional services also include this)");
+  if (email.has_list_unsubscribe) lines.push("Has List-Unsubscribe header: yes (possible newsletter/bulk  -  but transactional services also include this)");
   const prec = email.precedence_header?.toLowerCase();
   if (prec && ["bulk", "list", "junk"].includes(prec)) lines.push(`Precedence: ${prec} (bulk mail)`);
   if (email.reply_to_email) lines.push("Reply-To differs from sender (common in marketing)");
@@ -356,7 +356,7 @@ function buildEmailSignalContext(email: EmailInput): { signalLines: string[]; de
   if (isDefiniteNewsletter) {
     definiteCategory = "promotions";
   } else if (isDefiniteImportant) {
-    lines.push("NOTE: User starred this — lean action-required or important.");
+    lines.push("NOTE: User starred this  -  lean action-required or important.");
   }
 
   return { signalLines: lines, definiteCategory };
@@ -366,7 +366,7 @@ function buildEmailSignalContext(email: EmailInput): { signalLines: string[]; de
 
 // ─ Main graph nodes ───────────────────────────────────────────────────────────
 
-/** Entry point — pure pass-through; routing done via conditional edges */
+/** Entry point  -  pure pass-through; routing done via conditional edges */
 const routerNode: NodeFn = async () => ({});
 
 /**
@@ -404,7 +404,7 @@ const categorizeNode: NodeFn = async (state) => {
     `Classify this email. Return JSON only:
 ${outputShape}
 
-STEP 1 — HIGH-STAKES CHECK (run before standard rules):
+STEP 1  -  HIGH-STAKES CHECK (run before standard rules):
 If this email concerns any of these life-event domains, it is NEVER "updates" or "promotions":
 - Career: job offer, offer letter, interview invitation, application update (hired/shortlisted/rejected/next steps), onboarding, background check, recruiter asking for a response, contract to sign
 - Academic: admission/acceptance/rejection, financial aid, scholarship, enrollment deadline
@@ -414,11 +414,11 @@ If this email concerns any of these life-event domains, it is NEVER "updates" or
 ATS/HR senders (Greenhouse, Workday, Lever, Taleo, SmartRecruiters, iCIMS, Jobvite) writing about a job or interview are NOT updates.
 If STEP 1 triggers: use action-required when a reply/action is expected; use important when status-only FYI.
 
-STEP 2 — STANDARD RULES (first that fits):
-1. action-required: a real person is waiting on YOU to do something concrete — reply, approve, sign, pay, schedule, RSVP, review, submit. A direct human question always belongs here.
+STEP 2  -  STANDARD RULES (first that fits):
+1. action-required: a real person is waiting on YOU to do something concrete  -  reply, approve, sign, pay, schedule, RSVP, review, submit. A direct human question always belongs here.
 2. important: a real person wrote to you and it is worth reading, no response required right now (status update, personal note, FYI from a known contact). Do NOT use as a safe default.
-3. promotions: bulk content sent to many recipients — marketing campaigns, sales emails, brand newsletters, content digests, product round-ups, weekly round-ups. Marketing tone + broadcast to many.
-4. updates: automated/transactional/system messages that are NOT marketing — receipts, shipping, bank/card alerts, security alerts, password resets, calendar reminders, billing, app notifications.
+3. promotions: bulk content sent to many recipients  -  marketing campaigns, sales emails, brand newsletters, content digests, product round-ups, weekly round-ups. Marketing tone + broadcast to many.
+4. updates: automated/transactional/system messages that are NOT marketing  -  receipts, shipping, bank/card alerts, security alerts, password resets, calendar reminders, billing, app notifications.
 
 Tie-breakers: unsubscribe link alone does NOT make something promotions (transactional mail has them). When unsure between important and updates, prefer updates for automated content; use important only for real human-to-human mail. Use the SIGNALS above to guide your classification.${tagsSection}`,
     `${signalContext}${emailText}`,
@@ -463,7 +463,7 @@ const summarizeNode: NodeFn = async (state) => {
 
   const body = email.body_text || email.snippet || "";
   const raw = await localInference(
-    "Summarize this email clearly and concisely. Capture the key point, any action required, and relevant context. Write 1-3 sentences as needed — use more if the email is complex or has multiple points.",
+    "Summarize this email clearly and concisely. Capture the key point, any action required, and relevant context. Write 1-3 sentences as needed  -  use more if the email is complex or has multiple points.",
     `Subject: ${email.subject}\nFrom: ${email.sender}\n\n${body}`,
     { temperature: 0.15, maxTokens: 300 },
   );
@@ -497,10 +497,10 @@ const extractActionsNode: NodeFn = async (state) => {
 
 /**
  * qa_gather_context: gather any additional context before analysis.
- * (In browser context, no DB memory — uses email fields directly.)
+ * (In browser context, no DB memory  -  uses email fields directly.)
  */
 const qaGatherContextNode: NodeFn = async (state) => {
-  // No external memory in browser mode — pass through
+  // No external memory in browser mode  -  pass through
   return {};
 };
 
@@ -520,7 +520,7 @@ const qaReplyAnalysisNode: NodeFn = async (state) => {
   const body = (email.body_text || email.snippet || "").slice(0, 1000);
 
   const raw = await localInference(
-    `Decide whether this email warrants a reply. Most real human emails do — lean toward suggesting one.
+    `Decide whether this email warrants a reply. Most real human emails do  -  lean toward suggesting one.
 
 WHEN TO REPLY (include at least one suggestion):
 - A human asked you a direct question.
@@ -532,7 +532,7 @@ WHEN TO REPLY (include at least one suggestion):
 WHEN NOT TO REPLY:
 - Pure notifications, receipts, or FYI broadcasts where no one is waiting.
 - Promotions and automated updates (already filtered above).
-- Vague side-notes that should be Todos ("check the doc", "read this") — those are NOT replies.
+- Vague side-notes that should be Todos ("check the doc", "read this")  -  those are NOT replies.
 
 STYLE OF SUGGESTIONS:
 - 1 suggestion is best; at most 2 if a clear fork exists (e.g. accept vs ask for details).
@@ -582,7 +582,7 @@ const qaTodoAnalysisNode: NodeFn = async (state) => {
     : "";
 
   const raw = await localInference(
-    `Extract concrete tasks FOR THE RECIPIENT from this email. Be generous — most work emails imply at least one task.
+    `Extract concrete tasks FOR THE RECIPIENT from this email. Be generous  -  most work emails imply at least one task.
 
 WHEN TO ADD A TODO:
 - The email asks the recipient to do something that isn't just "send a reply" (review, read, submit, sign, pay, update, prepare, book, follow up, send an attachment, look into X).
@@ -1135,10 +1135,10 @@ const draftNode: NodeFn = async (state) => {
     `You are a writing assistant composing an email FOR the user (the sender). Follow every rule:
 1. Write ONLY the email body text. NEVER write "Subject:" anywhere in the output.
 2. You are writing FROM the user TO the recipient. Start with a greeting addressed to the RECIPIENT, not the user.
-3. Use first person (I, my, we) — you are the sender.
-4. NEVER use placeholder text like [Your Name], [Your Email], [Company], [Position], [Contact Information], [Signature]. End the email with exactly: "${closingLine}" — nothing after it.
+3. Use first person (I, my, we)  -  you are the sender.
+4. NEVER use placeholder text like [Your Name], [Your Email], [Company], [Position], [Contact Information], [Signature]. End the email with exactly: "${closingLine}"  -  nothing after it.
 5. Be concise: 2-4 short paragraphs maximum. Stay focused on the topic.
-6. Write the actual content — do not refer to the email or instructions in the output.${styleBlock}${knowledgeBlock}`,
+6. Write the actual content  -  do not refer to the email or instructions in the output.${styleBlock}${knowledgeBlock}`,
     userContent,
     { temperature: 0.5, maxTokens: 512 },
   );

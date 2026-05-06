@@ -136,7 +136,7 @@ export type AppContextType = {
   liveChanges: LiveChangeCounters;
   // Processing banner (how many emails are being AI-processed)
   processingCount: number;
-  // Briefing version — increments whenever a new briefing is saved
+  // Briefing version  -  increments whenever a new briefing is saved
   briefingVersion: number;
   notifyBriefingUpdated: () => void;
   briefingRegenerating: boolean;
@@ -219,7 +219,11 @@ export default function AppShell({
   const syncFnRef = useRef<(() => void) | null>(null);
   const analyzeLocallyFnRef = useRef<(() => Promise<void>) | null>(null);
   const [inboxFilters, setInboxFilters] = useState<Set<string>>(new Set());
-  const [inboxSort, setInboxSort] = useState<"newest" | "smart">("smart");
+  const [inboxSort, setInboxSort] = useState<"newest" | "smart">(() => {
+    if (typeof window === "undefined") return "newest";
+    const saved = localStorage.getItem("runemail_inbox_sort");
+    return saved === "smart" ? "smart" : "newest";
+  });
   const [inboxCustomCategories, setInboxCustomCategories] = useState<string[]>(
     [],
   );
@@ -247,6 +251,9 @@ export default function AppShell({
   useEffect(() => {
     profileRef.current = profileState;
   }, [profileState]);
+  useEffect(() => {
+    localStorage.setItem("runemail_inbox_sort", inboxSort);
+  }, [inboxSort]);
 
   const [briefingAudioAutoplay, setBriefingAudioAutoplayState] = useState(() =>
     getBriefingAudioAutoplay(),

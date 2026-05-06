@@ -194,7 +194,7 @@ export default function AgentActionCard({
           )}
           {action.type === "todo" && (action.payload.title ?? "Untitled todo")}
           {action.type === "meeting" &&
-            `${action.payload.meeting_title ?? "Meeting"} — ${fmtIso(action.payload.start_iso)}`}
+            `${action.payload.meeting_title ?? "Meeting"} - ${fmtIso(action.payload.start_iso)}`}
           {action.type === "archive" &&
             `Archive ${(action.payload.email_ids ?? []).length} email${
               (action.payload.email_ids ?? []).length === 1 ? "" : "s"

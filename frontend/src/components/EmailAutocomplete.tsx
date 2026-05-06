@@ -107,14 +107,14 @@ export function useContacts(userId: string): {
       const accountIds = (accountsRes.data ?? []).map((a: { id: string }) => a.id);
       if (accountIds.length > 0) setPrimaryAccountId(accountIds[0]);
 
-      // Cached Google Contacts + directory (highest priority — good display names)
+      // Cached Google Contacts + directory (highest priority  -  good display names)
       for (const row of cachedRes.data ?? []) {
         if (row.email && !seen.has(row.email) && !isMarketingEmail(row.email)) {
           seen.set(row.email, { email: row.email, name: row.name ?? "", source: row.source });
         }
       }
 
-      // email_memory: ranked contacts with frequency data — best display names
+      // email_memory: ranked contacts with frequency data  -  best display names
       // sender_name is stored as RFC 2822 format e.g. "Name <email@x.com>", parse it
       for (const row of memoryRes.data ?? []) {
         const email = row.sender_email?.toLowerCase?.();
@@ -126,7 +126,7 @@ export function useContacts(userId: string): {
         seen.set(email, { email, name: parsedName || existing?.name || "", source: existing?.source });
       }
 
-      // Senders from received emails — use `sender` field (RFC 2822) to extract name
+      // Senders from received emails  -  use `sender` field (RFC 2822) to extract name
       if (accountIds.length > 0) {
         const [emailsRes, recipientsRes] = await Promise.all([
           supabase.from("emails").select("sender_email, sender").in("gmail_account_id", accountIds).not("sender_email", "is", null).limit(1000),
@@ -261,7 +261,7 @@ function useEmailAutocomplete(contacts: Contact[], accountId: string, multi = tr
 
   const applySuggestion = useCallback(
     (value: string, contact: Contact) => {
-      // Insert only the email address — name is shown in the dropdown for identification only
+      // Insert only the email address  -  name is shown in the dropdown for identification only
       const formatted = contact.email;
       if (multi) {
         const parts = value.split(",");

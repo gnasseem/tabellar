@@ -503,7 +503,7 @@ export default function TutorialSolveWorkspace({
             </ol>
             {userAnswer && (
               <p className="mt-3 pl-8 text-[12px] italic leading-snug text-[var(--muted)]">
-                &ldquo;Got it — using {userAnswer.toLowerCase()}.&rdquo;
+                &ldquo;Got it, using {userAnswer.toLowerCase()}.&rdquo;
               </p>
             )}
           </div>

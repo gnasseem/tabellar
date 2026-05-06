@@ -25,7 +25,7 @@ type TableName =
   | "read_receipts";
 
 
-// Background sync interval (ms) — Gmail push notifications are the primary delivery
+// Background sync interval (ms)  -  Gmail push notifications are the primary delivery
 // mechanism; this is just a safety fallback for missed Pub/Sub deliveries.
 const SYNC_INTERVAL = 5 * 60 * 1000;
 // Minimum time between briefing updates (ms)
@@ -308,7 +308,7 @@ export function useLiveUpdates(
       const hadNewEmails = newEmailCount > 0;
       if (hadNewEmails) setProcessingCount(newEmailCount);
 
-      // Phase 2: Analyze new emails — cloud or local depending on aiMode
+      // Phase 2: Analyze new emails  -  cloud or local depending on aiMode
       try {
         if (aiMode === "local" || aiMode === "hybrid") {
           // Use locally registered analyzeInboxLocally from InboxView
@@ -337,7 +337,7 @@ export function useLiveUpdates(
         );
       }
 
-      // Phase 3: Smart briefing — auto-create first, refresh on new day, or update incrementally.
+      // Phase 3: Smart briefing  -  auto-create first, refresh on new day, or update incrementally.
       const briefingCooldownKey = `runemail_briefing_ts_${userId}`;
       const lastBriefingUpdate = parseInt(
         localStorage.getItem(briefingCooldownKey) || "0",
@@ -346,7 +346,7 @@ export function useLiveUpdates(
         Date.now() - lastBriefingUpdate >= BRIEFING_COOLDOWN_MS;
 
       // Resolve the current cached briefing and its timestamp.
-      // Skip empty localStorage briefings — they may be stale scope-mismatch artifacts.
+      // Skip empty localStorage briefings  -  they may be stale scope-mismatch artifacts.
       // Fall back to DB which always has the authoritative version.
       let previousBriefing: unknown = null;
       let briefingTimestamp: string | null = lastBriefingAt;
@@ -476,7 +476,7 @@ export function useLiveUpdates(
         }
       };
 
-      // Generate a fresh full briefing — used for first-ever creation and new-day refresh.
+      // Generate a fresh full briefing  -  used for first-ever creation and new-day refresh.
       const generateFreshBriefing = async () => {
         if (aiMode === "local") {
           await runLocalFreshBriefing();
@@ -489,19 +489,19 @@ export function useLiveUpdates(
       };
 
       if (noBriefing) {
-        // First-ever briefing — generate immediately regardless of working hours or cooldown.
+        // First-ever briefing  -  generate immediately regardless of working hours or cooldown.
         await generateFreshBriefing();
       } else if (
         briefingIsStale &&
         isWithinWorkingHours(workingHoursRef.current)
       ) {
-        // New day and within working hours — generate a fresh full briefing.
+        // New day and within working hours  -  generate a fresh full briefing.
         await generateFreshBriefing();
       } else if (
         cooldownElapsed &&
         isWithinWorkingHours(workingHoursRef.current)
       ) {
-        // Existing briefing from today — do a smart incremental update.
+        // Existing briefing from today  -  do a smart incremental update.
         const runLocalIncrementalUpdate = async (): Promise<boolean> => {
           try {
             const { data: newEmails } = await supabase

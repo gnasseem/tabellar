@@ -56,7 +56,7 @@ export interface QuestionOption {
   /** When true, the agent is suggesting this as the best default choice. */
   recommended?: boolean;
   /**
-   * When true, picking this option should NOT produce a reply — the thread is
+   * When true, picking this option should NOT produce a reply  -  the thread is
    * just marked resolved (receipt confirmed). Populated by the server for
    * yes/no reply questions.
    */
@@ -82,7 +82,7 @@ export interface AgentSessionState {
   draft_actions: AgentAction[];
   /** Legacy single-question field. Still populated for back-compat. */
   pending_question: AgentQuestion | null;
-  /** Batched questions — when non-empty, render as a grid. */
+  /** Batched questions  -  when non-empty, render as a grid. */
   pending_questions?: AgentQuestion[];
   plan: {
     actions: AgentAction[];
@@ -135,10 +135,10 @@ export interface AgentBatchAnswer {
   answers: AgentAnswer[];
 }
 
-/** TTS job state — stored in AppShell so audio keeps loading across navigation. */
+/** TTS job state  -  stored in AppShell so audio keeps loading across navigation. */
 export interface TtsJob {
   id: string;
-  /** What we're reading — "briefing" | "email:<id>" etc. */
+  /** What we're reading  -  "briefing" | "email:<id>" etc. */
   kind: string;
   key: string;
   status:

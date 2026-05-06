@@ -1,6 +1,6 @@
 /**
  * WebLLM integration for local on-device AI processing.
- * This runs entirely in the browser — no data leaves the device.
+ * This runs entirely in the browser  -  no data leaves the device.
  */
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

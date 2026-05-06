@@ -258,7 +258,7 @@ export default function InboxView() {
     fetchEmails(0);
   }, [fetchEmails]);
 
-  // Derive custom categories + tags from emails in state — no extra DB query needed
+  // Derive custom categories + tags from emails in state  -  no extra DB query needed
   useEffect(() => {
     const STANDARD = new Set([
       "important",
@@ -872,18 +872,19 @@ export default function InboxView() {
         ? []
         : [email.id];
 
+    setSelectedEmail({ ...email, is_read: true });
+
     if (unreadIds.length > 0) {
-      await supabase
-        .from("emails")
-        .update({ is_read: true })
-        .in("id", unreadIds);
       const unreadSet = new Set(unreadIds);
       setEmails((prev) =>
         prev.map((e) => (unreadSet.has(e.id) ? { ...e, is_read: true } : e)),
       );
+      await supabase
+        .from("emails")
+        .update({ is_read: true })
+        .in("id", unreadIds);
     }
-    setSelectedEmail({ ...email, is_read: true });
-  }, []);
+  }, [supabase]);
 
   const toggleStar = async (email: Email, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1168,7 +1169,7 @@ export default function InboxView() {
       if (bi === undefined) return 1;
       return ai - bi;
     });
-    // frozenOrderRef.current is intentionally not a dep — it's a ref
+    // frozenOrderRef.current is intentionally not a dep  -  it's a ref
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groupedEmails, inboxSort, selectedEmail]);
 

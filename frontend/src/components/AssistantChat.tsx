@@ -53,7 +53,7 @@ When user refers to an email by person or topic (without ID), ALWAYS search firs
 2. If one result: get_email(id) and proceed
 3. If multiple: use suggest_reply_options to let user pick
 
-## GATHER FIRST — BATCH ALL INFORMATION CALLS
+## GATHER FIRST  -  BATCH ALL INFORMATION CALLS
 In your FIRST response, call ALL information-gathering tools you need SIMULTANEOUSLY.
 Include: lookup_contact, search_emails_by_sender, search_emails, get_email, list_todos, list_meetings, search_knowledge_base, get_recent_emails.
 NEVER call information tools one per round. Batch all reads, then take all actions.
@@ -728,7 +728,7 @@ export default function AssistantChat({ className, visible }: { className?: stri
         }
       }
 
-      // Cloud path — 100s timeout to handle multi-step tasks.
+      // Cloud path  -  100s timeout to handle multi-step tasks.
       // The controller is also stored on a ref so the Stop button can abort.
       const chatController = new AbortController();
       abortControllerRef.current = chatController;
@@ -800,7 +800,7 @@ export default function AssistantChat({ className, visible }: { className?: stri
                     : "text-[var(--foreground)] py-0.5"
                 }`}
               >
-                {msg.content}
+                {msg.content.replace(/ - /g, " - ")}
               </div>
               {msg.actions?.map((action, j) => (
                 <ActionChip

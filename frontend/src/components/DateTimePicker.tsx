@@ -192,7 +192,7 @@ export default function DateTimePicker({ value, onChange, placeholder = "Select 
             ))}
           </div>
 
-          {/* Calendar grid — compact circles */}
+          {/* Calendar grid  -  compact circles */}
           <div className="grid grid-cols-7 gap-0.5 mb-3">
             {cells.map((cell, i) => {
               const isSel = selDay && cell.year === selDay.year && cell.month === selDay.month && cell.day === selDay.day;
@@ -214,7 +214,7 @@ export default function DateTimePicker({ value, onChange, placeholder = "Select 
             })}
           </div>
 
-          {/* Time row — compact single horizontal line */}
+          {/* Time row  -  compact single horizontal line */}
           <div className="border-t border-[var(--border)] pt-2.5 flex items-center gap-1.5">
             <span className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-wider mr-auto">Time</span>
 

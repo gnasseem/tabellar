@@ -547,7 +547,7 @@ export default function ComposeModal({
     setRefining(false);
   };
 
-  // Auto-generate when opened via quick reply — body stays empty so the user
+  // Auto-generate when opened via quick reply  -  body stays empty so the user
   // never sees the raw prompt; intent is passed directly to generateDraft.
   const hasAutoTriggered = useRef(false);
   useEffect(() => {
@@ -1200,7 +1200,7 @@ export default function ComposeModal({
                 className="w-full px-2 py-2 bg-transparent text-sm focus:outline-none resize-none"
               />
 
-              {/* AI refine bar — shown after AI generation */}
+              {/* AI refine bar  -  shown after AI generation */}
               {aiGenerated && (
                 <div className="mx-2 rounded-lg border border-[var(--border)] bg-slate-50 dark:bg-slate-800/60 overflow-hidden">
                   {!showRefinePanel ? (
@@ -1413,7 +1413,7 @@ export default function ComposeModal({
                   Templates
                 </button>
 
-                {/* Schedule meeting — disabled until To + Subject filled */}
+                {/* Schedule meeting  -  disabled until To + Subject filled */}
                 <button
                   onClick={() => togglePanel("meeting")}
                   disabled={!to || !subject}
@@ -1563,7 +1563,7 @@ export default function ComposeModal({
             </div>
           </div>
 
-          {/* Right side panel — Meeting */}
+          {/* Right side panel  -  Meeting */}
           {rightPanel === "meeting" && (
             <div className="w-60 border-l border-[var(--border)] overflow-auto p-3 space-y-2.5 bg-slate-50 dark:bg-slate-800/50 shrink-0">
               <div className="flex items-center justify-between mb-1">
@@ -1584,10 +1584,10 @@ export default function ComposeModal({
               </div>
               <div className="text-xs text-[var(--muted)] bg-[var(--background)] rounded px-2 py-1.5 border border-[var(--border)] space-y-0.5">
                 <div className="truncate">
-                  <span className="font-medium">To:</span> {to || "—"}
+                  <span className="font-medium">To:</span> {to || "-"}
                 </div>
                 <div className="truncate">
-                  <span className="font-medium">Title:</span> {subject || "—"}
+                  <span className="font-medium">Title:</span> {subject || "-"}
                 </div>
               </div>
               <DateTimePicker
@@ -1637,7 +1637,7 @@ export default function ComposeModal({
             </div>
           )}
 
-          {/* Right side panel — Templates */}
+          {/* Right side panel  -  Templates */}
           {rightPanel === "templates" && (
             <div className="w-64 border-l border-[var(--border)] overflow-auto flex flex-col bg-slate-50 dark:bg-slate-800/50 shrink-0">
               <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)]">

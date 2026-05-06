@@ -200,7 +200,7 @@ export default function MeetingsView() {
   const loadSuggestedMeetings = useCallback(async () => {
     setLoadingSuggestions(true);
     try {
-      // Use pre-computed quick_actions from email_processed — no on-demand AI
+      // Use pre-computed quick_actions from email_processed  -  no on-demand AI
       const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
       const { data: processed } = await supabase
         .from("email_processed")

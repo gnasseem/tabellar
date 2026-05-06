@@ -514,7 +514,7 @@ export default function TopBar() {
               }`}
               title={
                 agentSession.status === "asking"
-                  ? "Auto-Resolve needs your input — click to answer"
+                  ? "Auto-Resolve needs your input - click to answer"
                   : "Auto-Resolve is running"
               }
             >
