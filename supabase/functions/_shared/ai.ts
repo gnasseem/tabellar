@@ -685,7 +685,7 @@ export async function composeDraft(opts: {
   subject: string;
   recipientName: string;
   senderName: string;
-  replyTo?: { subject: string; body: string };
+  replyTo?: { subject: string; body?: string };
   styleContext?: string;
   knowledgeContext?: string;
 }): Promise<string> {
@@ -706,7 +706,7 @@ export async function composeDraft(opts: {
     context = [
       `Original email subject: "${replyTo.subject}"`,
       `Original email content:`,
-      replyTo.body.slice(0, 800),
+      (replyTo.body ?? "").slice(0, 800),
       ``,
       `What to say in reply: ${intent || "Write a professional reply."}`,
     ].join("\n");
