@@ -64,7 +64,6 @@ Global state lives in **`AppShell.tsx`** via React Context (`useApp()` hook). Ke
 - `user` / `profile` — Supabase auth user + profile row (contains `ai_mode`, `theme`)
 - `view` — current sidebar view
 - `syncing` — global sync status
-- `registerSyncFn` / `triggerSync` — TopBar's reload button calls whatever the active view registers
 
 Access with `const { user, profile, addToast, ... } = useApp()` inside any component.
 

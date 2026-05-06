@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useApp } from "../AppShell";
 
 export default function DraftsView() {
-  const { user, registerSyncFn, openCompose, draftVersion, search, liveChanges } = useApp();
+  const { user, openCompose, draftVersion, search, liveChanges } = useApp();
   const supabase = createClient();
   const [localDrafts, setLocalDrafts] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -22,10 +22,6 @@ export default function DraftsView() {
   useEffect(() => {
     loadLocalDrafts().finally(() => setLoading(false));
   }, [loadLocalDrafts]);
-
-  useEffect(() => {
-    registerSyncFn(() => loadLocalDrafts());
-  }, [registerSyncFn, loadLocalDrafts]);
 
   // Reload when ComposeModal creates or deletes a draft
   useEffect(() => {

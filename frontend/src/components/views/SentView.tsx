@@ -91,7 +91,7 @@ function isoToDatetimeLocal(iso: string) {
 }
 
 export default function SentView() {
-  const { user, registerSyncFn, pendingSentEmail, search, liveChanges, theme } =
+  const { user, pendingSentEmail, search, liveChanges, theme } =
     useApp();
   const supabase = createClient();
   const [tab, setTab] = useState<"sent" | "scheduled">("sent");
@@ -147,13 +147,6 @@ export default function SentView() {
     loadSent();
     loadScheduled();
   }, [loadSent, loadScheduled]);
-
-  useEffect(() => {
-    registerSyncFn(() => {
-      loadSent();
-      loadScheduled();
-    });
-  }, [registerSyncFn, loadSent, loadScheduled]);
 
   const tabMountedRef = useRef(false);
   useEffect(() => {

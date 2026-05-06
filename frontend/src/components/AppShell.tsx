@@ -87,7 +87,6 @@ export type AppContextType = {
   // Global sync (used by InboxView for initial fetch overlay)
   syncing: boolean;
   setSyncing: (v: boolean) => void;
-  registerSyncFn: (fn: () => void) => void;
   registerAnalyzeLocallyFn: (fn: () => Promise<void>) => void;
   // Inbox filter/sort (shared between TopBar and InboxView)
   inboxFilters: Set<string>;
@@ -216,7 +215,6 @@ export default function AppShell({
   }, []);
   const view = viewRaw;
   const [syncing, setSyncing] = useState(false);
-  const syncFnRef = useRef<(() => void) | null>(null);
   const analyzeLocallyFnRef = useRef<(() => Promise<void>) | null>(null);
   const [inboxFilters, setInboxFilters] = useState<Set<string>>(new Set());
   const [inboxSort, setInboxSort] = useState<"newest" | "smart">(() => {
@@ -297,10 +295,6 @@ export default function AppShell({
     },
     [],
   );
-
-  const registerSyncFn = useCallback((fn: () => void) => {
-    syncFnRef.current = fn;
-  }, []);
 
   const registerAnalyzeLocallyFn = useCallback((fn: () => Promise<void>) => {
     analyzeLocallyFnRef.current = fn;
@@ -1183,7 +1177,6 @@ export default function AppShell({
         setSearch,
         syncing,
         setSyncing,
-        registerSyncFn,
         registerAnalyzeLocallyFn,
         inboxFilters,
         setInboxFilters,

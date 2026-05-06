@@ -63,7 +63,6 @@ export default function InboxView() {
     addToast,
     search,
     setSyncing,
-    registerSyncFn,
     registerAnalyzeLocallyFn,
     inboxFilters,
     inboxSort,
@@ -815,11 +814,6 @@ export default function InboxView() {
     analyzeWritingStyleLocally,
     notifyBriefingUpdated,
   ]);
-
-  // Register sync function in global context so TopBar can trigger it
-  useEffect(() => {
-    registerSyncFn(syncInbox);
-  }, [registerSyncFn, syncInbox]);
 
   // Register local analysis function for background sync (used by useLiveUpdates in local/hybrid mode)
   useEffect(() => {
