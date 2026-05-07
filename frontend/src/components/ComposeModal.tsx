@@ -1085,7 +1085,7 @@ export default function ComposeModal({
         </div>
 
         {/* Compose form */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <div className="flex-1 flex flex-col min-h-0">
           {/* Scrollable content area */}
           <div className="flex-1 overflow-auto">
             {/* Header fields */}
@@ -1331,7 +1331,7 @@ export default function ComposeModal({
             <div className="w-px h-5 bg-[var(--border)] mx-0.5 shrink-0" />
 
             {/* Secondary actions */}
-            <div className="flex items-center gap-0.5 flex-1 overflow-x-auto">
+            <div className="flex items-center gap-0.5 flex-1">
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 ${attachments.length > 0 ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
