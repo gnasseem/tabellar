@@ -158,7 +158,6 @@ export default function ComposeModal({
   const [trackOpens, setTrackOpens] = useState(false);
 
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [showSaveTemplate, setShowSaveTemplate] = useState(false);
   const [saveTemplateName, setSaveTemplateName] = useState("");
 
   const [showMeetingPanel, setShowMeetingPanel] = useState(false);
@@ -365,10 +364,10 @@ export default function ComposeModal({
   }, [selectedAccountId, allSignatures, gmailAccounts]);
 
   const applyTemplate = (t: Template) => {
-    if (t.subject && !replyTo) setSubject(t.subject);
+    const newSubject = t.subject || t.name;
+    if (newSubject) setSubject(newSubject);
     setBody(t.body_html);
     setShowTemplatesPopover(false);
-    setShowSaveTemplate(false);
   };
 
   const saveAsTemplate = async () => {
@@ -380,7 +379,6 @@ export default function ComposeModal({
       .select("id, name, subject, body_html");
     if (data?.[0]) setTemplates((prev) => [data[0], ...prev]);
     setSaveTemplateName("");
-    setShowSaveTemplate(false);
   };
 
   const deleteTemplate = async (id: string) => {
@@ -1357,7 +1355,11 @@ export default function ComposeModal({
               {/* Templates popover */}
               <div className="relative">
                 <button
-                  onClick={() => { setShowTemplatesPopover((p) => !p); setShowSaveTemplate(false); }}
+                  onClick={() => {
+                    const opening = !showTemplatesPopover;
+                    setShowTemplatesPopover(opening);
+                    if (opening) setSaveTemplateName(subject || "");
+                  }}
                   className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 ${showTemplatesPopover ? "text-[var(--accent)] bg-[var(--accent-light)]" : "text-[var(--muted)]"}`}
                   title="Templates"
                 >
@@ -1372,7 +1374,7 @@ export default function ComposeModal({
                     <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--border)] shrink-0">
                       <span className="text-xs font-semibold text-[var(--foreground)]">Templates</span>
                       <button
-                        onClick={() => { setShowTemplatesPopover(false); setShowSaveTemplate(false); }}
+                        onClick={() => setShowTemplatesPopover(false)}
                         className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
                       >
                         <span className="material-symbols-outlined" style={{ fontSize: "15px" }}>close</span>
@@ -1405,34 +1407,24 @@ export default function ComposeModal({
                       )}
                     </div>
                     <div className="border-t border-[var(--border)] p-2.5 shrink-0">
-                      {showSaveTemplate ? (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            value={saveTemplateName}
-                            onChange={(e) => setSaveTemplateName(e.target.value)}
-                            placeholder="Template name"
-                            onKeyDown={(e) => { if (e.key === "Enter") saveAsTemplate(); if (e.key === "Escape") setShowSaveTemplate(false); }}
-                            className="flex-1 px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs focus:outline-none focus:border-[var(--accent)] transition-colors"
-                            autoFocus
-                          />
-                          <button
-                            onClick={saveAsTemplate}
-                            disabled={!saveTemplateName.trim() || !body}
-                            className="px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
-                          >
-                            Save
-                          </button>
-                        </div>
-                      ) : (
+                      <p className="text-[10px] text-[var(--muted)] mb-1.5">Save current draft as template</p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={saveTemplateName}
+                          onChange={(e) => setSaveTemplateName(e.target.value)}
+                          placeholder="Template name"
+                          onKeyDown={(e) => { if (e.key === "Enter") saveAsTemplate(); }}
+                          className="flex-1 px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs focus:outline-none focus:border-[var(--accent)] transition-colors"
+                        />
                         <button
-                          onClick={() => setShowSaveTemplate(true)}
-                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-[var(--muted)] hover:text-[var(--accent)] hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors cursor-pointer"
+                          onClick={saveAsTemplate}
+                          disabled={!saveTemplateName.trim() || !body}
+                          className="px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer shrink-0"
                         >
-                          <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>add</span>
-                          Save current as template
+                          Save
                         </button>
-                      )}
+                      </div>
                     </div>
                   </div>
                 )}
