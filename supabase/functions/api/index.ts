@@ -1656,6 +1656,10 @@ Deno.serve(async (req) => {
       const currentDraft: string = body.currentDraft ?? "";
       const feedback: string = body.feedback ?? "";
       const senderName: string = body.senderName ?? "";
+      // Tone rephrasing reuses this route but is a one-off transformation, not
+      // a statement of preference. Without this it would write a knowledge_base
+      // row on every click and skew all later drafts toward the last tone tried.
+      const skipLearning: boolean = body.skip_learning === true;
 
       if (!currentDraft || !feedback) {
         return json(
@@ -1706,24 +1710,26 @@ Deno.serve(async (req) => {
         : undefined;
 
       // Save feedback as a knowledge-base learning entry so future drafts improve
-      supabase
-        .from("knowledge_base")
-        .insert({
-          user_id: userId,
-          entity: `draft_feedback_${Date.now()}`,
-          entity_type: "style_preference",
-          info: `Writing preference: ${feedback}`,
-          source: "draft_refinement",
-          importance: "normal",
-          use_count: 1,
-        })
-        .then(({ error }) => {
-          if (error)
-            console.error(
-              "[refine-draft] knowledge insert error:",
-              error.message,
-            );
-        });
+      if (!skipLearning) {
+        supabase
+          .from("knowledge_base")
+          .insert({
+            user_id: userId,
+            entity: `draft_feedback_${Date.now()}`,
+            entity_type: "style_preference",
+            info: `Writing preference: ${feedback}`,
+            source: "draft_refinement",
+            importance: "normal",
+            use_count: 1,
+          })
+          .then(({ error }) => {
+            if (error)
+              console.error(
+                "[refine-draft] knowledge insert error:",
+                error.message,
+              );
+          });
+      }
 
       const refined = await refineDraft({
         currentDraft,

@@ -13,6 +13,46 @@ import DateTimePicker from "./DateTimePicker";
 // leave room for the encoding overhead, headers, and the body itself.
 const MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024;
 
+// Registers offered by the Tone control. The prompt fragment completes the
+// sentence "Rewrite this so it reads ...".
+const TONES = [
+  {
+    id: "formal",
+    label: "Formal",
+    icon: "account_balance",
+    prompt:
+      "more formal and professional: complete sentences, no contractions, no slang, a courteous opening and closing",
+  },
+  {
+    id: "friendly",
+    label: "Friendly",
+    icon: "sentiment_satisfied",
+    prompt:
+      "warmer and more personable, as if writing to a colleague you like, while staying professional",
+  },
+  {
+    id: "direct",
+    label: "Direct",
+    icon: "bolt",
+    prompt:
+      "more direct and concise: lead with the ask, cut hedging and filler, keep it brief",
+  },
+  {
+    id: "apologetic",
+    label: "Apologetic",
+    icon: "front_hand",
+    prompt:
+      "apologetic and accommodating, acknowledging the inconvenience without grovelling or over-explaining",
+  },
+  {
+    id: "firm",
+    label: "Firm",
+    icon: "gavel",
+    prompt:
+      "firmer and more assertive: state the position plainly and hold it, while staying polite and professional",
+  },
+] as const;
+
 type ComposeProps = {
   onClose: () => void;
   onMinimize: () => void;
@@ -195,6 +235,9 @@ export default function ComposeModal({
   const [showRefinePanel, setShowRefinePanel] = useState(false);
   const [refineFeedback, setRefineFeedback] = useState("");
   const [refining, setRefining] = useState(false);
+  const [showToneMenu, setShowToneMenu] = useState(false);
+  const [rephrasingTone, setRephrasingTone] = useState<string | null>(null);
+  const toneMenuRef = useRef<HTMLDivElement>(null);
 
   // Context-aware knowledge entries for current recipient
   const [recipientKnowledge, setRecipientKnowledge] = useState<
@@ -570,6 +613,94 @@ export default function ComposeModal({
       addToast("error", "Network error");
     }
     setRefining(false);
+  };
+
+  // Close the tone menu on outside click
+  useEffect(() => {
+    if (!showToneMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (toneMenuRef.current && !toneMenuRef.current.contains(e.target as Node))
+        setShowToneMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showToneMenu]);
+
+  // Rewrite the current body in a different register. Unlike refineWithFeedback
+  // this is a one-off transformation, not a stated preference, so it asks the
+  // backend not to record it as a style learning.
+  const rephraseInTone = async (tone: (typeof TONES)[number]) => {
+    const current = body.trim();
+    if (!current || rephrasingTone) return;
+    setShowToneMenu(false);
+    setRephrasingTone(tone.id);
+    const previousBody = body;
+    const aiMode = profile?.ai_mode || "cloud";
+
+    const restore = () => {
+      setBody(previousBody);
+      addToast("info", "Reverted to the previous wording");
+    };
+
+    try {
+      let rewritten: string | null = null;
+
+      if (aiMode === "local" || aiMode === "hybrid") {
+        try {
+          const result = await emailGraph.invoke({
+            task: "draft",
+            draftIntent: `Rewrite the message below so it reads ${tone.prompt}. Keep every fact, name, date, question and commitment exactly as written, and keep roughly the same length. Return only the rewritten message, with no preamble.\n\n${current}`,
+          });
+          if (result.draft?.trim()) rewritten = result.draft.trim();
+        } catch (err) {
+          console.error("[ComposeModal] local rephrase:", err);
+        }
+        if (!rewritten && aiMode === "local") {
+          addToast("error", "Local model could not rephrase this");
+          setRephrasingTone(null);
+          return;
+        }
+      }
+
+      if (!rewritten) {
+        const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const res = await fetch(`${apiUrl}/refine-draft`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session?.access_token}`,
+          },
+          body: JSON.stringify({
+            currentDraft: current,
+            feedback: `Rewrite this so it reads ${tone.prompt}. Preserve every fact, name, date, question and commitment exactly, and keep roughly the same length. Return only the rewritten message.`,
+            senderName: profile?.display_name || "",
+            skip_learning: true,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.draft?.trim()) rewritten = data.draft.trim();
+        }
+      }
+
+      if (!rewritten) {
+        addToast("error", "Could not rephrase this draft");
+        setRephrasingTone(null);
+        return;
+      }
+
+      setBody(rewritten);
+      setAiGenerated(true);
+      addToast("success", `Rewritten to sound ${tone.label.toLowerCase()}`, {
+        action: { label: "Undo", onClick: restore },
+      });
+    } catch {
+      addToast("error", "Network error");
+    }
+    setRephrasingTone(null);
   };
 
   // Auto-generate when opened via quick reply  -  body stays empty so the user
@@ -1364,6 +1495,47 @@ export default function ComposeModal({
 
             {/* Secondary actions */}
             <div className="flex items-center gap-0.5 flex-1">
+              {/* Tone rephrase */}
+              <div className="relative shrink-0" ref={toneMenuRef}>
+                <button
+                  onClick={() => setShowToneMenu((v) => !v)}
+                  disabled={!body.trim() || rephrasingTone !== null}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed ${showToneMenu ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
+                  title={
+                    body.trim()
+                      ? "Rewrite this message in a different tone"
+                      : "Write or generate a message first"
+                  }
+                >
+                  <span
+                    className={`material-symbols-outlined ${rephrasingTone ? "animate-spin" : ""}`}
+                    style={{ fontSize: "16px" }}
+                  >
+                    {rephrasingTone ? "progress_activity" : "tune"}
+                  </span>
+                  {rephrasingTone ? "Rewriting..." : "Tone"}
+                </button>
+                {showToneMenu && (
+                  <div className="absolute bottom-full left-0 mb-2 z-30 w-52 rounded-xl border border-[var(--border)] bg-[var(--background)] shadow-xl overflow-hidden py-1">
+                    {TONES.map((tone) => (
+                      <button
+                        key={tone.id}
+                        onClick={() => rephraseInTone(tone)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs text-[var(--foreground)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                      >
+                        <span
+                          className="material-symbols-outlined text-[var(--muted)]"
+                          style={{ fontSize: "15px" }}
+                        >
+                          {tone.icon}
+                        </span>
+                        {tone.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 ${attachments.length > 0 ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
