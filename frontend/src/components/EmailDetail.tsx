@@ -57,6 +57,7 @@ function touchAttachment(key: string): CachedAttachment | undefined {
 }
 
 import { createClient } from "@/lib/supabase/client";
+import { assessSuspicion, type SuspicionVerdict } from "@/lib/suspicion";
 import { useApp } from "./AppShell";
 import { initWebLLM, isWebLLMReady } from "@/lib/webllm";
 import { emailGraph } from "@/lib/emailGraph";
@@ -435,6 +436,61 @@ function adaptTextForDarkMode(html: string): string {
   }
 }
 
+function SuspicionBanner({ verdict }: { verdict: SuspicionVerdict }) {
+  if (verdict.level === "none") return null;
+  const danger = verdict.level === "danger";
+  return (
+    <div
+      className={`mb-4 rounded-xl border px-4 py-3 ${
+        danger
+          ? "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40"
+          : "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40"
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        <span
+          className={`material-symbols-outlined shrink-0 ${
+            danger
+              ? "text-red-600 dark:text-red-400"
+              : "text-amber-600 dark:text-amber-400"
+          }`}
+          style={{ fontSize: "18px" }}
+        >
+          {danger ? "gpp_maybe" : "warning"}
+        </span>
+        <div className="min-w-0">
+          <div
+            className={`text-xs font-semibold ${
+              danger
+                ? "text-red-700 dark:text-red-300"
+                : "text-amber-800 dark:text-amber-300"
+            }`}
+          >
+            {danger
+              ? "This message looks like a phishing attempt"
+              : "Something about this message looks off"}
+          </div>
+          <ul className="mt-1.5 space-y-1">
+            {verdict.signals.map((s) => (
+              <li
+                key={s.id}
+                className="text-[11px] leading-relaxed text-[var(--foreground)]/80"
+              >
+                <span className="font-medium">{s.label}.</span> {s.detail}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-1.5 text-[11px] text-[var(--muted)]">
+            Do not enter passwords or payment details from a link in this
+            email. If it claims to be from a service you use, open that service
+            directly instead.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EmailBody({ html, isDark }: { html: string; isDark: boolean }) {
   const processed = useMemo(() => {
     const content = fixMojibake(html);
@@ -492,6 +548,7 @@ export default function EmailDetail({
   );
   const tagRef = useRef<HTMLDivElement>(null);
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
+  const suspicion = useMemo(() => assessSuspicion(email), [email]);
   const [resolvedAt, setResolvedAt] = useState<string | null>(
     email.resolved_at ?? null,
   );
@@ -1487,6 +1544,9 @@ export default function EmailDetail({
                           </span>
                         </header>
                         <div className="px-3 py-3 sm:px-4 sm:py-4">
+                          {!isMe && (
+                            <SuspicionBanner verdict={assessSuspicion(msg)} />
+                          )}
                           {bodyDisplay.kind === "html" && (
                             <EmailBody
                               html={bodyDisplay.html}
@@ -1603,6 +1663,7 @@ export default function EmailDetail({
         ) : (
           <div className="flex-1 min-h-0 overflow-auto email-reader-pane bg-[var(--background)] px-3 py-4 sm:px-5">
             <div className="mx-auto w-full max-w-3xl min-w-0">
+              <SuspicionBanner verdict={suspicion} />
               {singleMessageBody.kind === "html" && (
                 <EmailBody
                   html={singleMessageBody.html}
