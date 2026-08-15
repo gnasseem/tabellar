@@ -7,6 +7,7 @@ import EmailDetail from "../EmailDetail";
 import InitialFetchOverlay from "../InitialFetchOverlay";
 import { initWebLLM, isWebLLMReady } from "@/lib/webllm";
 import { emailGraph, type BriefingResult } from "@/lib/emailGraph";
+import { parseSearch } from "@/lib/searchQuery";
 
 type Email = {
   id: string;
@@ -214,10 +215,32 @@ export default function InboxView() {
         .range(from, to + 1);
 
       if (search) {
-        query = query.textSearch("search_vector", search, {
-          type: "websearch",
-          config: "english",
-        });
+        // Gmail-style operators become real column filters; whatever is left
+        // over still goes through full-text search exactly as before.
+        const q = parseSearch(search);
+        if (q.text) {
+          query = query.textSearch("search_vector", q.text, {
+            type: "websearch",
+            config: "english",
+          });
+        }
+        if (q.from) {
+          const term = `%${q.from}%`;
+          query = query.or(`sender.ilike.${term},sender_email.ilike.${term}`);
+        }
+        if (q.to) query = query.ilike("recipients", `%${q.to}%`);
+        if (q.subject) query = query.ilike("subject", `%${q.subject}%`);
+        if (q.category)
+          query = query.eq("email_processed.category", q.category);
+        if (q.after) query = query.gte("received_at", `${q.after}T00:00:00Z`);
+        // Exclusive of the named day, so before:2026-08-15 excludes the 15th.
+        if (q.before) query = query.lt("received_at", `${q.before}T00:00:00Z`);
+        if (q.isUnread) query = query.eq("is_read", false);
+        if (q.isRead) query = query.eq("is_read", true);
+        if (q.isStarred) query = query.eq("is_starred", true);
+        if (q.isResolved) query = query.not("resolved_at", "is", null);
+        if (q.isUnresolved) query = query.is("resolved_at", null);
+        if (q.hasAttachment) query = query.eq("has_attachments", true);
       }
 
       const { data } = await query;

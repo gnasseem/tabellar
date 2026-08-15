@@ -4,6 +4,7 @@ import { useRef, useEffect, useState } from "react";
 import { useApp } from "./AppShell";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import { SEARCH_OPERATORS } from "@/lib/searchQuery";
 
 const STATUS_CHIPS = [
   {
@@ -77,6 +78,7 @@ export default function TopBar() {
   const supabase = createClient();
   const router = useRouter();
 
+  const [searchFocused, setSearchFocused] = useState(false);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showSortMenu, setShowSortMenu] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
@@ -226,6 +228,8 @@ export default function TopBar() {
               data-search-input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setSearchFocused(false)}
               placeholder={
                 view === "inbox"
                   ? "Search inbox…"
@@ -251,6 +255,34 @@ export default function TopBar() {
                   close
                 </span>
               </button>
+            )}
+            {/* Operator hints. Shown while the box is focused and empty, so
+                they are discoverable without getting in the way of typing. */}
+            {view === "inbox" && searchFocused && !search && (
+              <div className="absolute top-full left-0 mt-1.5 z-30 w-72 rounded-xl border border-[var(--border)] bg-[var(--background)] shadow-xl py-2">
+                <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  Search operators
+                </div>
+                {SEARCH_OPERATORS.map((op) => (
+                  <button
+                    key={op.syntax}
+                    onMouseDown={(e) => {
+                      // mousedown, not click: the input blurs first otherwise
+                      // and this menu unmounts before the click lands.
+                      e.preventDefault();
+                      setSearch(op.syntax.split(":")[0] + ":");
+                    }}
+                    className="w-full flex items-center justify-between gap-2 px-3 py-1 text-left hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                  >
+                    <code className="text-[11px] font-mono text-[var(--accent)] shrink-0">
+                      {op.syntax}
+                    </code>
+                    <span className="text-[10px] text-[var(--muted)] text-right truncate">
+                      {op.description}
+                    </span>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
 
