@@ -4016,12 +4016,16 @@ Deno.serve(async (req) => {
         return json({ error: "Name is required" }, 400, corsHeaders);
       // If setting as default, clear existing default for this account scope first
       if (is_default) {
-        await supabase
+        const clear = supabase
           .from("email_signatures")
           .update({ is_default: false })
           .eq("user_id", userId)
-          .eq("is_default", true)
-          .eq("gmail_account_id", gmail_account_id ?? null);
+          .eq("is_default", true);
+        // A global signature has a null account scope, and eq never matches
+        // NULL in PostgREST, so it must be matched with is().
+        await (gmail_account_id
+          ? clear.eq("gmail_account_id", gmail_account_id)
+          : clear.is("gmail_account_id", null));
       }
       const { data, error } = await supabase
         .from("email_signatures")
@@ -4055,13 +4059,17 @@ Deno.serve(async (req) => {
       if (is_default) {
         const accountScope =
           gmail_account_id ?? existing.gmail_account_id ?? null;
-        await supabase
+        const clear = supabase
           .from("email_signatures")
           .update({ is_default: false })
           .eq("user_id", userId)
           .eq("is_default", true)
-          .eq("gmail_account_id", accountScope)
           .neq("id", sigId);
+        // See the POST handler: eq never matches NULL, so a global signature's
+        // scope has to be matched with is().
+        await (accountScope
+          ? clear.eq("gmail_account_id", accountScope)
+          : clear.is("gmail_account_id", null));
       }
       const patch: Record<string, unknown> = {};
       if (name !== undefined) patch.name = name.trim();
