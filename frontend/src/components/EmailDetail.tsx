@@ -70,6 +70,7 @@ type EmailDetailProps = {
   onMarkUnread?: () => void;
   onSnooze?: () => void;
   onRethink?: (updated: any) => void;
+  onResolvedChange?: (emailId: string, resolvedAt: string | null) => void;
   showBack?: boolean;
 };
 
@@ -463,6 +464,7 @@ export default function EmailDetail({
   onMarkUnread,
   onSnooze,
   onRethink,
+  onResolvedChange,
   showBack = false,
 }: EmailDetailProps) {
   const { user, profile, openCompose, addToast, theme, setView, setSearch, setPendingMeetingSchedule } =
@@ -490,6 +492,13 @@ export default function EmailDetail({
   );
   const tagRef = useRef<HTMLDivElement>(null);
   const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
+  const [resolvedAt, setResolvedAt] = useState<string | null>(
+    email.resolved_at ?? null,
+  );
+  const [resolvingEmail, setResolvingEmail] = useState(false);
+  useEffect(() => {
+    setResolvedAt(email.resolved_at ?? null);
+  }, [email.id, email.resolved_at]);
   // Follow-up tracking
   const [isTracked, setIsTracked] = useState(false);
   const [showTrackPopup, setShowTrackPopup] = useState(false);
@@ -875,6 +884,45 @@ export default function EmailDetail({
     await supabase.from("emails").update({ is_read: false }).eq("id", email.id);
     addToast("info", "Marked as unread");
     onMarkUnread?.();
+  };
+
+  // Resolving marks an email as dealt with while leaving it in the inbox.
+  // The Solve agent already sets resolved_at when it clears something; this
+  // is the manual equivalent, for the times you handled a mail yourself.
+  const toggleResolved = async () => {
+    if (resolvingEmail) return;
+    setResolvingEmail(true);
+    const previous = resolvedAt;
+    const next = previous ? null : new Date().toISOString();
+    setResolvedAt(next);
+    const { error } = await supabase
+      .from("emails")
+      .update({ resolved_at: next })
+      .eq("id", email.id);
+    setResolvingEmail(false);
+    if (error) {
+      setResolvedAt(previous);
+      addToast("error", "Could not update this email");
+      return;
+    }
+    onResolvedChange?.(email.id, next);
+    if (next) {
+      addToast("success", "Marked resolved", {
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            setResolvedAt(null);
+            await supabase
+              .from("emails")
+              .update({ resolved_at: null })
+              .eq("id", email.id);
+            onResolvedChange?.(email.id, null);
+          },
+        },
+      });
+    } else {
+      addToast("info", "Marked unresolved");
+    }
   };
 
   const handleSnooze = async (hours: number, label: string) => {
@@ -2071,6 +2119,28 @@ export default function EmailDetail({
               )}
             </div>
           )}
+          <button
+            onClick={toggleResolved}
+            disabled={resolvingEmail}
+            title={
+              resolvedAt
+                ? "Mark this email as still needing attention"
+                : "Mark this email as dealt with, without archiving it"
+            }
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors disabled:opacity-60 ${
+              resolvedAt
+                ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20"
+                : "text-[var(--muted)] hover:bg-[var(--border)]"
+            }`}
+          >
+            <span
+              className="material-symbols-outlined"
+              style={{ fontSize: "13px" }}
+            >
+              {resolvedAt ? "task_alt" : "check_circle"}
+            </span>
+            {resolvedAt ? "Resolved" : "Resolve"}
+          </button>
           <button
             onClick={onArchive}
             className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"

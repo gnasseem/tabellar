@@ -1535,6 +1535,18 @@ export default function InboxView() {
                   prev ? { ...prev, email_processed: updated } : prev,
                 );
               }}
+              onResolvedChange={(emailId, resolvedAt) => {
+                setEmails((prev) =>
+                  prev.map((e) =>
+                    e.id === emailId ? { ...e, resolved_at: resolvedAt } : e,
+                  ),
+                );
+                setSelectedEmail((prev) =>
+                  prev && prev.id === emailId
+                    ? { ...prev, resolved_at: resolvedAt }
+                    : prev,
+                );
+              }}
             />
           ) : (
             <div className="flex-1 flex flex-col overflow-y-auto">
