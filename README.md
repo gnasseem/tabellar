@@ -1,6 +1,6 @@
 # RuneMail
 
-**AI-powered email client built on top of Gmail.** RuneMail connects to your Gmail account and uses AI to triage your inbox, surface action items, draft replies in your writing style, and deliver a daily briefing. Available at [runemail.org](https://runemail.org).
+**AI-powered email client built on top of Gmail.** RuneMail connects to your Gmail account and uses AI to triage your inbox, surface action items, draft replies in your writing style, and deliver a daily briefing.
 
 ---
 
@@ -66,7 +66,9 @@ RuneMail/
 │   │   ├── api/index.ts        # Main Edge Function (all backend routes)
 │   │   ├── scheduled-emails/   # Cron function for scheduled email delivery
 │   │   ├── process-emails/     # Cron function that renews Gmail Pub/Sub watches
-│   │   └── _shared/            # ai.ts, gmail.ts, cors.ts, fernet.ts
+│   │   └── _shared/            # ai.ts, gmail.ts, cors.ts, fernet.ts,
+│   │                           # agentLoop.ts, agentTools.ts, agentExecute.ts,
+│   │                           # buildBriefing.ts
 │   ├── migrations/             # SQL migrations
 │   └── schema.sql              # Full database schema with RLS policies
 └── vercel.json                 # Points Vercel build at frontend/
@@ -84,14 +86,11 @@ RuneMail/
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/georgenasseem/runemail.git
-cd RuneMail
+git clone https://github.com/smartlab-nyu/runemail.git
+cd runemail
 
-# Install root dependencies (Supabase CLI)
+# npm workspace: this installs both the root tooling and the frontend
 npm install
-
-# Install frontend dependencies
-cd frontend && npm install
 ```
 
 ### 2. Configure environment variables
@@ -163,7 +162,7 @@ npx supabase functions deploy process-emails --project-ref your-project-id --no-
 ### 6. Run locally
 
 ```bash
-cd frontend
+# From the repo root
 npm run dev
 # Open http://localhost:3000
 ```
@@ -200,7 +199,7 @@ This pipeline runs via `emailGraph.ts`, a custom LangGraph-style state machine t
 
 - All database tables use Row Level Security (RLS); users only access their own rows
 - Gmail OAuth tokens are encrypted at rest using [Fernet symmetric encryption](https://cryptography.io/en/latest/fernet/)
-- The read-receipt pixel endpoint is the only unauthenticated route; all other API routes verify the Supabase JWT
+- Three routes are reachable without a Supabase JWT, each gated a different way: `GET /health` (returns only a status string), `GET /track/pixel/:id.gif` (read-receipt pixel, looked up by unguessable UUID), and `POST /gmail/webhook` (Pub/Sub push, requires a matching `PUBSUB_VERIFICATION_TOKEN`). Every other route calls `getUserId()` and scopes its queries by that user id
 
 ## License
 
