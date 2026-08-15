@@ -69,9 +69,13 @@ optgroup {
   color: var(--foreground);
 }
 
-/* Dark mode: neon accent bg needs dark text */
-.dark [class~="bg-[var(--accent)]"],
-.dark [class*="bg-[var(--accent)]"] {
+/* Dark mode: neon accent bg needs dark text.
+   Matched with ~= so only a solid accent background gets dark text. A *=
+   substring match also caught the translucent variants (bg-[var(--accent)]/10
+   and friends) and the hover: prefixed ones, painting near-black text onto
+   dark surfaces - which is what made the Cancel action on the undo-send toast
+   invisible in dark mode. */
+.dark [class~="bg-[var(--accent)]"] {
   color: #202124;
 }
 
