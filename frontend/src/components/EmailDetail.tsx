@@ -3,11 +3,58 @@
 import { useState, useRef, useEffect, useMemo, Fragment } from "react";
 import DOMPurify from "dompurify";
 
-// Module-level attachment blob cache -- survives across email navigations
-const attachmentBlobCache = new Map<
-  string,
-  { blobUrl: string; blob: Blob; text: string | null; sheetHtml: string | null }
->();
+// Module-level attachment blob cache -- survives across email navigations.
+//
+// Bounded on purpose: entries hold both the decoded Blob and an object URL,
+// and an object URL keeps its Blob alive until it is explicitly revoked. An
+// unbounded cache meant every attachment opened or prefetched in a session
+// stayed in memory for the lifetime of the tab.
+type CachedAttachment = {
+  blobUrl: string;
+  blob: Blob;
+  text: string | null;
+  sheetHtml: string | null;
+};
+
+const ATTACHMENT_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+const ATTACHMENT_CACHE_MAX_ENTRIES = 24;
+
+// Map preserves insertion order, so the first key is the least recently added.
+const attachmentBlobCache = new Map<string, CachedAttachment>();
+let attachmentCacheBytes = 0;
+
+function evictAttachment(key: string): void {
+  const entry = attachmentBlobCache.get(key);
+  if (!entry) return;
+  URL.revokeObjectURL(entry.blobUrl);
+  attachmentCacheBytes -= entry.blob.size;
+  attachmentBlobCache.delete(key);
+}
+
+function cacheAttachment(key: string, entry: CachedAttachment): void {
+  if (attachmentBlobCache.has(key)) evictAttachment(key);
+  attachmentBlobCache.set(key, entry);
+  attachmentCacheBytes += entry.blob.size;
+  while (
+    attachmentBlobCache.size > 1 &&
+    (attachmentCacheBytes > ATTACHMENT_CACHE_MAX_BYTES ||
+      attachmentBlobCache.size > ATTACHMENT_CACHE_MAX_ENTRIES)
+  ) {
+    const oldest = attachmentBlobCache.keys().next().value;
+    if (oldest === undefined || oldest === key) break;
+    evictAttachment(oldest);
+  }
+}
+
+// Re-inserting on read keeps the eviction order least-recently-used rather
+// than least-recently-added, so the attachment being viewed is not dropped.
+function touchAttachment(key: string): CachedAttachment | undefined {
+  const entry = attachmentBlobCache.get(key);
+  if (!entry) return undefined;
+  attachmentBlobCache.delete(key);
+  attachmentBlobCache.set(key, entry);
+  return entry;
+}
 
 import { createClient } from "@/lib/supabase/client";
 import { useApp } from "./AppShell";
@@ -480,28 +527,51 @@ export default function EmailDetail({
 
   // Preload attachments into the module-level cache so preview opens instantly.
   // Fires after mount; errors are silently swallowed  -  this is best-effort only.
+  //
+  // Speculative work, so it stays deliberately small: a few of the smaller
+  // files, fetched one at a time, and abandoned when the user navigates away.
+  // Previously this fired every attachment up to 10 MB in parallel, so a mail
+  // with a dozen big files pulled hundreds of MB nobody had asked to see.
   useEffect(() => {
     const atts = Array.isArray(email.attachments) ? email.attachments : [];
     if (atts.length === 0) return;
+    let cancelled = false;
+    const PREFETCH_MAX_FILE_BYTES = 5 * 1024 * 1024;
+    const PREFETCH_MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+    const PREFETCH_MAX_FILES = 5;
+
     const run = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      if (!session) return;
+      if (!session || cancelled) return;
+      let budget = PREFETCH_MAX_TOTAL_BYTES;
+      let fetched = 0;
       for (const att of atts as {
         filename: string;
         mime_type: string;
         size: number;
         attachment_id: string;
       }[]) {
+        if (cancelled || fetched >= PREFETCH_MAX_FILES) return;
         const cacheKey = `${email.gmail_id}::${att.attachment_id}`;
         if (attachmentBlobCache.has(cacheKey)) continue;
-        // Skip large files (>10 MB) to avoid wasting bandwidth on preload.
-        if (att.size > 10 * 1024 * 1024) continue;
-        fetchAttachmentBlob(att).catch(() => {});
+        if (att.size > PREFETCH_MAX_FILE_BYTES || att.size > budget) continue;
+        try {
+          // Sequential: a parallel burst competes with the request that
+          // actually matters when the user opens a preview.
+          await fetchAttachmentBlob(att);
+        } catch {
+          /* best effort */
+        }
+        budget -= att.size;
+        fetched++;
       }
     };
     run();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [email.id]);
 
@@ -704,7 +774,7 @@ export default function EmailDetail({
   ) => {
     const gid = gmailIdOverride || email.gmail_id;
     const cacheKey = `${gid}::${att.attachment_id}`;
-    const cached = attachmentBlobCache.get(cacheKey);
+    const cached = touchAttachment(cacheKey);
     if (cached) return cached;
     const headers = await getAuthHeaders();
     const res = await fetch(
@@ -745,7 +815,7 @@ export default function EmailDetail({
       }
     }
     const result = { blobUrl, blob, text, sheetHtml };
-    attachmentBlobCache.set(cacheKey, result);
+    cacheAttachment(cacheKey, result);
     return result;
   };
 

@@ -8,6 +8,11 @@ import { emailGraph } from "@/lib/emailGraph";
 import { EmailField, useContacts } from "./EmailAutocomplete";
 import DateTimePicker from "./DateTimePicker";
 
+// Gmail rejects messages over 25 MB once encoded. Attachments go out base64
+// encoded (~4 bytes per 3 bytes of input), so cap the raw total below that to
+// leave room for the encoding overhead, headers, and the body itself.
+const MAX_ATTACHMENT_BYTES = 18 * 1024 * 1024;
+
 type ComposeProps = {
   onClose: () => void;
   onMinimize: () => void;
@@ -227,8 +232,34 @@ export default function ComposeModal({
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    setAttachments((prev) => [...prev, ...files]);
     e.target.value = "";
+    if (files.length === 0) return;
+
+    // Gmail caps a message at 25 MB after encoding, and attachments are sent
+    // base64 encoded, which inflates them by roughly a third. Check the raw
+    // total against that budget here: without this the whole message is
+    // encoded and uploaded before Gmail rejects it, which reads as a hang.
+    const used = attachments.reduce((sum, f) => sum + f.size, 0);
+    const accepted: File[] = [];
+    const rejected: string[] = [];
+    let total = used;
+    for (const file of files) {
+      if (total + file.size > MAX_ATTACHMENT_BYTES) {
+        rejected.push(file.name);
+        continue;
+      }
+      total += file.size;
+      accepted.push(file);
+    }
+    if (rejected.length > 0) {
+      addToast(
+        "error",
+        rejected.length === 1
+          ? `"${rejected[0]}" would push this email past the ${formatFileSize(MAX_ATTACHMENT_BYTES)} attachment limit`
+          : `${rejected.length} files would push this email past the ${formatFileSize(MAX_ATTACHMENT_BYTES)} attachment limit`,
+      );
+    }
+    if (accepted.length > 0) setAttachments((prev) => [...prev, ...accepted]);
   };
 
   const removeAttachment = (idx: number) => {
