@@ -351,7 +351,7 @@ export default function MeetingsView() {
         const res = await fetch(`${apiUrl}/zoom/create-meeting`, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-          body: JSON.stringify({ topic: newTitle, start_time: startTime.toISOString(), duration: durationMin }),
+          body: JSON.stringify({ topic: newTitle, start_time: startTime.toISOString(), duration: durationMin, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
         });
         if (res.ok) {
           const zoom = await res.json();

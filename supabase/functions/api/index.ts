@@ -234,6 +234,30 @@ if (VAPID_PRIVATE_KEY && VAPID_PUBLIC_KEY) {
   );
 }
 
+// Render a UTC instant as wall-clock time in an IANA zone, formatted as
+// "YYYY-MM-DDTHH:mm:ss" with no offset suffix. Zoom only honours its
+// `timezone` field when `start_time` is given in this local, offset-free
+// form; an instant ending in "Z" is read as GMT and the zone is ignored.
+function utcToZonedWallClock(instant: Date, tz: string): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+      .formatToParts(instant)
+      .map((p) => [p.type, p.value]),
+  );
+  // en-US renders midnight as hour 24; normalise it back to 00.
+  const hour = parts.hour === "24" ? "00" : parts.hour;
+  return `${parts.year}-${parts.month}-${parts.day}T${hour}:${parts.minute}:${parts.second}`;
+}
+
 function isWithinWorkingHours(
   wh: {
     start?: string;
@@ -2472,6 +2496,17 @@ Deno.serve(async (req) => {
 
       const tokenData = await tokenRes.json();
 
+      // Callers send start_time as a UTC instant. Zoom ignores its `timezone`
+      // field when start_time carries a "Z" suffix and silently falls back to
+      // the Zoom account's default zone, so convert to offset-free local time
+      // in the user's zone and send the zone alongside it.
+      const zoomTimezone = (body.timezone as string) || "UTC";
+      const startInstant = new Date(body.start_time as string);
+      if (Number.isNaN(startInstant.getTime())) {
+        return json({ error: "Invalid start_time" }, 400, corsHeaders);
+      }
+      const zoomStartTime = utcToZonedWallClock(startInstant, zoomTimezone);
+
       // Create meeting
       const meetingRes = await fetch(
         "https://api.zoom.us/v2/users/me/meetings",
@@ -2484,7 +2519,8 @@ Deno.serve(async (req) => {
           body: JSON.stringify({
             topic: body.topic || "Meeting",
             type: 2,
-            start_time: body.start_time,
+            start_time: zoomStartTime,
+            timezone: zoomTimezone,
             duration: body.duration || 30,
             settings: {
               join_before_host: true,

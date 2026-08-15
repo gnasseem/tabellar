@@ -618,6 +618,7 @@ export default function ComposeModal({
             topic: title,
             start_time: startTime.toISOString(),
             duration: durationMin,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           }),
         });
         if (res.ok) {
