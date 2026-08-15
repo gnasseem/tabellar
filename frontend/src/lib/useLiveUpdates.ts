@@ -609,15 +609,27 @@ export function useLiveUpdates(
     }
   }, [userId, supabase, aiMode, lastBriefingAt]);
 
-  // ── Background sync timer (every 30s, only when visible) ──
+  // Keep the timer pointed at the current sync closure without making the
+  // timer effect depend on its identity.
+  const backgroundSyncRef = useRef(backgroundSync);
+  useEffect(() => {
+    backgroundSyncRef.current = backgroundSync;
+  }, [backgroundSync]);
+
+  // ── Background sync timer (every SYNC_INTERVAL) ──
+  // Mount-only: depending on backgroundSync would restart the interval and
+  // fire an extra immediate sync every time aiMode or lastBriefingAt changed.
   useEffect(() => {
     // Fire once immediately so new emails appear without waiting for the first interval
-    backgroundSync();
-    autoSyncTimer.current = setInterval(backgroundSync, SYNC_INTERVAL);
+    backgroundSyncRef.current();
+    autoSyncTimer.current = setInterval(
+      () => backgroundSyncRef.current(),
+      SYNC_INTERVAL,
+    );
     return () => {
       if (autoSyncTimer.current) clearInterval(autoSyncTimer.current);
     };
-  }, [backgroundSync]);
+  }, []);
 
   // ── Visibility-based refresh: trigger sync when user returns (sync triggers Realtime events) ──
   useEffect(() => {
@@ -628,12 +640,12 @@ export function useLiveUpdates(
       lastVisibilityRefresh.current = now;
 
       // Only trigger sync; Realtime events from the sync will bump counters naturally
-      backgroundSync();
+      backgroundSyncRef.current();
     };
 
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [backgroundSync]);
+  }, []);
 
   return { changeCounters, processingCount };
 }
