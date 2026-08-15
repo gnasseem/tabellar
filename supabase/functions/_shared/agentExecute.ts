@@ -33,6 +33,66 @@ interface ApprovedAction {
   linked_email_id?: string;
 }
 
+// ── Wall-clock time helpers ──────────────────────────────────────────────
+// A "wall clock" here is a calendar reading with no zone attached, carried as
+// the epoch ms it would have if it were UTC. That keeps date arithmetic exact
+// and independent of the runtime's own zone, which for edge functions is UTC
+// and so silently hid the distinction.
+
+function parseWallClock(iso: string): number | null {
+  const m = iso.match(
+    /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/,
+  );
+  if (!m) return null;
+  const ms = Date.UTC(
+    Number(m[1]),
+    Number(m[2]) - 1,
+    Number(m[3]),
+    Number(m[4]),
+    Number(m[5]),
+    Number(m[6] ?? 0),
+  );
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function formatWallClock(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 19);
+}
+
+// Resolve a wall clock in a named zone to the instant it refers to. Computes
+// the zone's offset at a first guess, then corrects; the second pass settles
+// readings near a DST transition, where the offset before and after differs.
+function wallClockToUtc(wallMs: number, tz: string): Date {
+  const offsetAt = (instantMs: number): number => {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: tz,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      })
+        .formatToParts(new Date(instantMs))
+        .map((p) => [p.type, p.value]),
+    );
+    const asUtc = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour) % 24,
+      Number(parts.minute),
+      Number(parts.second),
+    );
+    return asUtc - instantMs;
+  };
+  let instant = wallMs - offsetAt(wallMs);
+  instant = wallMs - offsetAt(instant);
+  return new Date(instant);
+}
+
 async function getCalendarAccessToken(
   supabase: SupabaseClient,
   userId: string,
@@ -231,9 +291,21 @@ export async function executeAgentPlan(
         if (!title || !startIso) {
           throw new Error("Meeting missing title or start_iso");
         }
-        const startMs = new Date(startIso).getTime();
-        if (Number.isNaN(startMs)) throw new Error("Invalid start time");
-        const endIso = new Date(startMs + durationMins * 60_000).toISOString();
+        // start_iso is wall-clock time in the user's zone with no offset (the
+        // agent tool is specified that way). Keep the two representations
+        // apart: Calendar wants the wall clock plus a timeZone, while the
+        // meetings row is a timestamptz and needs the true instant.
+        const wallStartMs = parseWallClock(startIso);
+        if (wallStartMs === null) throw new Error("Invalid start time");
+        const wallEndMs = wallStartMs + durationMins * 60_000;
+        const startLocal = formatWallClock(wallStartMs);
+        const endLocal = formatWallClock(wallEndMs);
+
+        // Previously the row stored the wall clock as though it were UTC, so a
+        // 3pm meeting for a UTC-4 user was written as 15:00Z and RuneMail's own
+        // Meetings view showed it at 11am while Google Calendar showed 3pm.
+        const startInstant = wallClockToUtc(wallStartMs, userTimezone);
+        const endInstant = wallClockToUtc(wallEndMs, userTimezone);
 
         // Insert local row so it appears immediately.
         const { data: meetingRow } = await supabase
@@ -241,8 +313,8 @@ export async function executeAgentPlan(
           .insert({
             user_id: userId,
             title,
-            start_time: new Date(startMs).toISOString(),
-            end_time: endIso,
+            start_time: startInstant.toISOString(),
+            end_time: endInstant.toISOString(),
             attendees,
             status: "confirmed",
           })
@@ -271,13 +343,8 @@ export async function executeAgentPlan(
                 body: JSON.stringify({
                   summary: title,
                   description: (action.reasoning as string) ?? "",
-                  start: { dateTime: startIso, timeZone: userTimezone },
-                  end: {
-                    dateTime: new Date(startMs + durationMins * 60_000)
-                      .toISOString()
-                      .replace("Z", ""),
-                    timeZone: userTimezone,
-                  },
+                  start: { dateTime: startLocal, timeZone: userTimezone },
+                  end: { dateTime: endLocal, timeZone: userTimezone },
                   attendees: attendees.map((email) => ({ email })),
                 }),
               },
