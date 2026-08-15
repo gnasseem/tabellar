@@ -223,6 +223,7 @@ export default function TopBar() {
             </span>
             <input
               type="text"
+              data-search-input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={

@@ -92,7 +92,6 @@ export default function InboxView() {
   const [customTagColors, setCustomTagColors] = useState<
     Record<string, { displayName: string; color: string }>
   >({});
-  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   // Tracks whether this user has ever synced emails (DB count, not React state)
   const [isFirstEver, setIsFirstEver] = useState<boolean | null>(null);
 
@@ -880,23 +879,62 @@ export default function InboxView() {
     }
   }, [supabase]);
 
-  const toggleStar = async (email: Email, e: React.MouseEvent) => {
-    e.stopPropagation();
-    const newVal = !email.is_starred;
-    await supabase
-      .from("emails")
-      .update({ is_starred: newVal })
-      .eq("id", email.id);
-    setEmails((prev) =>
-      prev.map((em) =>
-        em.id === email.id ? { ...em, is_starred: newVal } : em,
-      ),
-    );
-    if (selectedEmail?.id === email.id)
-      setSelectedEmail((prev) =>
-        prev ? { ...prev, is_starred: newVal } : prev,
+  // Event is optional so the keyboard shortcut can call this too.
+  const toggleStar = useCallback(
+    async (email: Email, e?: React.MouseEvent) => {
+      e?.stopPropagation();
+      const newVal = !email.is_starred;
+      await supabase
+        .from("emails")
+        .update({ is_starred: newVal })
+        .eq("id", email.id);
+      setEmails((prev) =>
+        prev.map((em) =>
+          em.id === email.id ? { ...em, is_starred: newVal } : em,
+        ),
       );
-  };
+      setSelectedEmail((prev) =>
+        prev && prev.id === email.id ? { ...prev, is_starred: newVal } : prev,
+      );
+    },
+    [supabase],
+  );
+
+  const toggleResolvedFromList = useCallback(
+    async (email: Email) => {
+      const next = email.resolved_at ? null : new Date().toISOString();
+      await supabase
+        .from("emails")
+        .update({ resolved_at: next })
+        .eq("id", email.id);
+      setEmails((prev) =>
+        prev.map((em) => (em.id === email.id ? { ...em, resolved_at: next } : em)),
+      );
+      setSelectedEmail((prev) =>
+        prev && prev.id === email.id ? { ...prev, resolved_at: next } : prev,
+      );
+      addToast(
+        next ? "success" : "info",
+        next ? "Marked resolved" : "Marked unresolved",
+      );
+    },
+    [supabase, addToast],
+  );
+
+  const markUnreadFromList = useCallback(
+    async (email: Email) => {
+      await supabase
+        .from("emails")
+        .update({ is_read: false })
+        .eq("id", email.id);
+      setEmails((prev) =>
+        prev.map((em) => (em.id === email.id ? { ...em, is_read: false } : em)),
+      );
+      setSelectedEmail(null);
+      addToast("info", "Marked as unread");
+    },
+    [supabase, addToast],
+  );
 
   const archiveEmail = useCallback(
     async (email: Email) => {
@@ -930,17 +968,29 @@ export default function InboxView() {
       if (target.isContentEditable) return;
       if (document.querySelector("[data-compose-modal]")) return;
 
-      if (e.key === "n" || e.key === "N") {
-        e.preventDefault();
-        openCompose();
-      }
+      // Compose, search, navigation and the help overlay are global and live
+      // in AppShell; this handler only covers actions on the inbox list.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === "Escape") {
         setSelectedEmail(null);
-        setShowShortcutsHelp(false);
       }
-      if (e.key === "?") {
-        e.preventDefault();
-        setShowShortcutsHelp((v) => !v);
+      if (e.key === "s" || e.key === "S") {
+        if (selectedEmail) {
+          e.preventDefault();
+          toggleStar(selectedEmail);
+        }
+      }
+      if (e.key === "y" || e.key === "Y") {
+        if (selectedEmail) {
+          e.preventDefault();
+          toggleResolvedFromList(selectedEmail);
+        }
+      }
+      if (e.key === "u" || e.key === "U") {
+        if (selectedEmail) {
+          e.preventDefault();
+          markUnreadFromList(selectedEmail);
+        }
       }
       if (e.key === "e" || e.key === "E") {
         if (selectedEmail) {
@@ -1003,7 +1053,16 @@ export default function InboxView() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [emails, selectedEmail, openCompose, archiveEmail, markRead]);
+  }, [
+    emails,
+    selectedEmail,
+    archiveEmail,
+    markRead,
+    openCompose,
+    toggleStar,
+    toggleResolvedFromList,
+    markUnreadFromList,
+  ]);
 
   const formatTime = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -1170,52 +1229,6 @@ export default function InboxView() {
   return (
     <>
       {/* Keyboard shortcuts help overlay */}
-      {showShortcutsHelp && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-          onClick={() => setShowShortcutsHelp(false)}
-        >
-          <div
-            className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl p-6 w-80"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-semibold text-[var(--foreground)]">
-                Keyboard Shortcuts
-              </h3>
-              <button
-                onClick={() => setShowShortcutsHelp(false)}
-                className="text-[var(--muted)] hover:text-[var(--foreground)]"
-              >
-                <span
-                  className="material-symbols-outlined"
-                  style={{ fontSize: "18px" }}
-                >
-                  close
-                </span>
-              </button>
-            </div>
-            <div className="space-y-2 text-xs">
-              {[
-                ["j", "Next email"],
-                ["k", "Previous email"],
-                ["r", "Reply to selected"],
-                ["e", "Archive selected"],
-                ["n", "Compose new email"],
-                ["Esc", "Close email / overlay"],
-                ["?", "Toggle this help"],
-              ].map(([key, desc]) => (
-                <div key={key} className="flex items-center justify-between">
-                  <kbd className="px-2 py-0.5 bg-[var(--surface-2)] border border-[var(--border)] rounded text-[var(--foreground)] font-mono">
-                    {key}
-                  </kbd>
-                  <span className="text-[var(--muted)]">{desc}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
       {initialPhase >= 0 && (
         <InitialFetchOverlay
           phaseIndex={initialPhase}

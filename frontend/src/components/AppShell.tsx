@@ -14,7 +14,9 @@ import ComposeModal from "./ComposeModal";
 import AssistantPanel from "./AssistantPanel";
 import { ToastContainer, type ToastItem } from "./Toast";
 import AgentWorkspace from "./solve/AgentWorkspace";
+import ShortcutsHelp from "./ShortcutsHelp";
 import TutorialShell from "./tutorial/TutorialShell";
+import { GO_TO_VIEWS, isTypingTarget } from "@/lib/shortcuts";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { useLiveUpdates, type LiveChangeCounters } from "@/lib/useLiveUpdates";
@@ -452,12 +454,14 @@ export default function AppShell({
     };
   }, []);
 
-  const openCompose = (replyTo?: any, draft?: any) => {
+  // Memoised: it goes into the context value and into the global shortcut
+  // effect's dependencies, both of which would otherwise churn every render.
+  const openCompose = useCallback((replyTo?: any, draft?: any) => {
     setComposeReplyTo(replyTo || null);
     setComposeDraft(draft || null);
     setComposeOpen(true);
     setComposeMinimized(false);
-  };
+  }, []);
 
   const addToast = useCallback(
     (
@@ -954,6 +958,83 @@ export default function AppShell({
     [],
   );
 
+  // ── Global keyboard shortcuts ────────────────────────────────────────────
+  // View-scoped shortcuts (j/k and the like) stay in their own views; this
+  // layer owns navigation and the actions that make sense from anywhere.
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const goToPending = useRef(false);
+  const goToTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Never steal a key from a text field, and never from a modifier combo,
+      // which belongs to the browser or the OS.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (isTypingTarget(e.target)) {
+        // Escape should still get you out of the search box.
+        if (e.key === "Escape") (e.target as HTMLElement).blur();
+        return;
+      }
+      if (document.querySelector("[data-compose-modal]")) return;
+
+      if (e.key === "Escape") {
+        setShowShortcutsHelp(false);
+        goToPending.current = false;
+        return;
+      }
+
+      // Second key of a "g" sequence
+      if (goToPending.current) {
+        goToPending.current = false;
+        if (goToTimer.current) clearTimeout(goToTimer.current);
+        const target = GO_TO_VIEWS[e.key.toLowerCase()];
+        if (target) {
+          e.preventDefault();
+          setView(target);
+        }
+        return;
+      }
+
+      if (e.key === "g" || e.key === "G") {
+        e.preventDefault();
+        goToPending.current = true;
+        // Abandon the sequence if the second key never comes, so a stray g
+        // does not swallow the next real shortcut.
+        if (goToTimer.current) clearTimeout(goToTimer.current);
+        goToTimer.current = setTimeout(() => {
+          goToPending.current = false;
+        }, 1500);
+        return;
+      }
+
+      if (e.key === "?") {
+        e.preventDefault();
+        setShowShortcutsHelp((v) => !v);
+        return;
+      }
+
+      if (e.key === "/") {
+        e.preventDefault();
+        const input = document.querySelector<HTMLInputElement>(
+          "[data-search-input]",
+        );
+        input?.focus();
+        input?.select();
+        return;
+      }
+
+      if (e.key === "c" || e.key === "C") {
+        e.preventDefault();
+        openCompose();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => {
+      window.removeEventListener("keydown", handler);
+      if (goToTimer.current) clearTimeout(goToTimer.current);
+    };
+  }, [setView, openCompose]);
+
   // Polling fallback: re-sync session every 5s while active, in case a
   // Realtime UPDATE event was missed (requires REPLICA IDENTITY FULL which is
   // now set, but belt-and-suspenders keeps the UI from getting stuck).
@@ -1332,6 +1413,10 @@ export default function AppShell({
           />
         )}
         <ToastContainer toasts={toasts} removeToast={removeToast} />
+        <ShortcutsHelp
+          open={showShortcutsHelp}
+          onClose={() => setShowShortcutsHelp(false)}
+        />
         <AgentWorkspace
           open={agentWorkspaceOpen}
           onClose={closeAgentWorkspace}
