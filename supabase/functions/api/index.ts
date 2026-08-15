@@ -2688,10 +2688,20 @@ Deno.serve(async (req) => {
       }
 
       const email = emails[0];
+      const { data: rethinkProfile } = await supabase
+        .from("profiles")
+        .select("working_hours")
+        .eq("id", userId)
+        .maybeSingle();
       const result = await processFullEmail(
         (email.subject as string) || "",
         (email.sender as string) || "",
         (email.body_text as string) || (email.snippet as string) || "",
+        undefined,
+        undefined,
+        undefined,
+        ((rethinkProfile?.working_hours as { timezone?: string } | null)
+          ?.timezone) || "UTC",
       );
 
       await supabase.from("email_processed").upsert(

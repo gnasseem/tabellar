@@ -613,6 +613,26 @@ function buildSignalContext(signals: EmailSignals): {
   return { context, definiteCategory };
 }
 
+// Today's date in a given IANA zone, with the weekday spelled out.
+// Edge functions run in UTC, so deriving "today" from the runtime clock puts
+// the model on the wrong day for any user whose local date differs - and a
+// meeting extracted for the wrong day is worse than none at all.
+export function dateContextFor(timezone: string): string {
+  const now = new Date();
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      weekday: "long",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+      .formatToParts(now)
+      .map((p) => [p.type, p.value]),
+  );
+  return `${parts.weekday}, ${parts.year}-${parts.month}-${parts.day}`;
+}
+
 export async function processFullEmail(
   subject: string,
   sender: string,
@@ -620,6 +640,7 @@ export async function processFullEmail(
   signals?: EmailSignals,
   userTags?: { slug: string; description: string }[],
   categoryHints?: { category_slug: string; description: string }[],
+  timezone = "UTC",
 ): Promise<{
   category: string;
   urgency: string;
@@ -633,7 +654,11 @@ export async function processFullEmail(
     ? buildSignalContext(signals)
     : { context: "", definiteCategory: null };
 
-  let prompt = PROMPTS.process_email;
+  // The quick-actions section of this prompt asks the model to emit an ISO
+  // dateTime for any meeting it finds, but nothing was telling it what today
+  // is, so every relative date ("Friday", "tomorrow", "next week") was
+  // unresolvable and came back null or guessed against the training cutoff.
+  let prompt = `Today is ${dateContextFor(timezone)} in the user's timezone (${timezone}). Resolve every relative date against it, and resolve a named weekday with no date to the next such day that is today or later.\n\n${PROMPTS.process_email}`;
   if (categoryHints && categoryHints.length > 0) {
     const hintLines = categoryHints
       .map((h) => `- If ${h.description}, classify as "${h.category_slug}"`)

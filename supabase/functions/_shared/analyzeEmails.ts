@@ -82,6 +82,7 @@ export async function analyzeEmailsForUser(
     allCategoryRulesRes,
     userTagRowsRes,
     memRowsRes,
+    profileRes,
   ] = await Promise.all([
     supabase
       .from("delegation_rules")
@@ -103,7 +104,18 @@ export async function analyzeEmailsForUser(
           .eq("user_id", userId)
           .in("sender_email", senderEmails)
       : Promise.resolve({ data: [] as { sender_email: string; interaction_count: number }[] }),
+    supabase
+      .from("profiles")
+      .select("working_hours")
+      .eq("id", userId)
+      .maybeSingle(),
   ]);
+
+  // Meeting extraction has to resolve relative dates ("Friday", "tomorrow")
+  // against the user's day, not the edge runtime's UTC day.
+  const userTimezone =
+    ((profileRes.data?.working_hours as { timezone?: string } | null)
+      ?.timezone) || "UTC";
 
   const delegationRules = delegationRulesRes.data ?? [];
   const allCategoryRules = allCategoryRulesRes.data ?? [];
@@ -194,6 +206,7 @@ export async function analyzeEmailsForUser(
           signals,
           userTags.length > 0 ? userTags : undefined,
           categoryHints.length > 0 ? categoryHints : undefined,
+          userTimezone,
         ),
         extractEntities(subject, sender, body).catch((err) => {
           console.error("[analyzeEmailsForUser] entity extraction:", err);

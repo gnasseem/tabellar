@@ -314,6 +314,20 @@ async function ensureModel(): Promise<void> {
  * Fuzzy dedup check  -  mirrors Python _fuzzy_match from quick_actions_graph.py.
  * Returns true if a and b share >= 60% of meaningful words.
  */
+// The model resolves relative dates ("Friday", "tomorrow") against whatever
+// date we hand it, so it has to be the user's local date. toISOString()
+// converts to UTC first, which lands on the wrong day for anyone whose local
+// date differs from UTC at the time of the call - the evening in the Americas,
+// the early morning across Asia and Oceania. Include the weekday so the model
+// does not have to derive it to resolve a named day.
+function localDateContext(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const iso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const weekday = now.toLocaleDateString("en-US", { weekday: "long" });
+  return `${weekday}, ${iso}`;
+}
+
 function fuzzyMatch(a: string, b: string): boolean {
   const stop = new Set(["the", "a", "an", "to", "and", "or", "of", "in", "on", "for", "is", "it", "this", "that"]);
   const words = (s: string) =>
@@ -638,7 +652,10 @@ const qaMeetingAnalysisNode: NodeFn = async (state) => {
   const email = state.currentEmail;
   if (!email) return { _meetingOptions: [] };
 
-  const fullText = `${email.subject} ${email.snippet || ""} ${(email.body_text || "").slice(0, 400)}`.toLowerCase();
+  // Scan further into the body than the snippet: an invitation is very often
+  // below the greeting and pleasantries, past the first few hundred
+  // characters, and anything missed here never reaches the model at all.
+  const fullText = `${email.subject} ${email.snippet || ""} ${(email.body_text || "").slice(0, 2000)}`.toLowerCase();
   const meetingSignals = [
     "meeting", "call", "zoom", "teams", "meet", "conference",
     "catch up", "catch-up", "sync", "1-on-1", "schedule",
@@ -646,26 +663,41 @@ const qaMeetingAnalysisNode: NodeFn = async (state) => {
     "let's meet", "let's chat", "workshop", "webinar",
     "coffee chat", "phone call", "video call", "check-in",
     "interview", "office hours", "hop on", "quick chat",
+    "rsvp", "invite", "invitation", "google meet", "hangout",
+    "webex", "when are you free", "does that work", "reschedule",
     // Events to attend
     "recital", "performance", "concert", "ceremony", "event",
     "presentation", "lecture", "seminar", "orientation",
     "graduation", "show", "coming up", "join us", "session",
-    "rehearsal", "class", "at 3pm", "at 2pm", "at 1pm",
-    "friday", "saturday", "sunday", "monday", "tuesday", "wednesday", "thursday",
+    "rehearsal", "class", "deadline", "due date",
+    "today", "tomorrow", "tonight", "next week", "this week",
+    "monday", "tuesday", "wednesday", "thursday",
+    "friday", "saturday", "sunday",
   ];
 
+  // A bare time or date is as strong a signal as any keyword, and covers the
+  // phrasings no fixed list can ("the 8th at 4:30", "Mar 12", "09/14").
+  // Replaces a hardcoded "at 1pm"/"at 2pm"/"at 3pm" that missed every other hour.
+  const timeOrDatePattern =
+    /\b(?:\d{1,2}[:.]\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm)|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}|\d{1,2}(?:st|nd|rd|th)\s+(?:of\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|\d{4}-\d{2}-\d{2})\b/;
+
   // Keyword fast-check before LLM (mirrors original optimization)
-  if (!meetingSignals.some((sig) => fullText.includes(sig))) {
+  if (
+    !meetingSignals.some((sig) => fullText.includes(sig)) &&
+    !timeOrDatePattern.test(fullText)
+  ) {
     return { _meetingOptions: [], _meetingDetails: undefined };
   }
 
   const body = (email.body_text || email.snippet || "").slice(0, 1000);
-  const today = new Date().toISOString().split("T")[0];
+  const today = localDateContext();
 
   const raw = await localInference(
     `Today is ${today}. Does this email mention or invite you to any meeting, event, performance, recital, call, class, or scheduled activity you should attend or add to your calendar?
 If yes, extract details. Output JSON: {"desc":"brief label (max 8 words)","title":"event title","dateTime":"YYYY-MM-DDTHH:mm or null","duration":minutes_or_null,"location":"zoom URL or physical address or null","isVirtual":true_or_false}
 If a date like "Friday 8 May" is mentioned, compute the ISO date using today's date.
+Resolve a named weekday with no date to the next such day that is today or later, never a past one.
+Use a 24-hour clock in dateTime, so 3pm is 15:00.
 Return {"desc":null} if there is truly nothing to schedule or attend.`,
     `Subject: ${email.subject}\nContent: ${body}`,
     { temperature: 0.1, maxTokens: 200 },
