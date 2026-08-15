@@ -22,16 +22,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-All commands run from the **repo root** unless noted.
+All commands run from the **repo root**. This is an npm workspace, so a single
+`npm install` at the root installs everything and hoists `node_modules` there;
+`frontend/node_modules` never exists.
 
 ```bash
 # Development
 npm run dev           # Start Next.js dev server (port 3000)
 npm run build         # Production build
-npm run lint          # ESLint (from frontend/)
 
-# TypeScript check (from frontend/)
-cd frontend && node_modules/.bin/tsc --noEmit
+# Lint and typecheck (workspace scripts)
+npm run lint --workspace runemail-frontend
+npm run typecheck --workspace runemail-frontend
 
 # Deploy frontend
 npx vercel --prod

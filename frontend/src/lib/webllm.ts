@@ -3,7 +3,6 @@
  * This runs entirely in the browser  -  no data leaves the device.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let engine: any = null;
 let loadProgress = 0;
 // Single shared promise so concurrent callers wait instead of bailing
