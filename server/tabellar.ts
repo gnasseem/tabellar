@@ -12,6 +12,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync, renameSync } from "node:fs";
 import { homedir, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig, saveConfig, keychainGet, keychainSet, accessToken, HOME, type Config, type ModelConfig } from "./config.ts";
 
 const [command = "help", ...args] = process.argv.slice(2);
@@ -80,10 +81,13 @@ async function choose(question: string, options: string[], fallback = 0): Promis
 
 // ── Google sign-in client ───────────────────────────────────────────────────
 
-// Google Cloud's "Download JSON" saves client_secret_<id>.json; look where it usually lands.
+// Google Cloud's "Download JSON" saves client_secret_<id>.json. Look wherever
+// it is likely to be: here, the Tabellar folder, Downloads, Desktop, Documents.
+const INSTALL_DIR = fileURLToPath(new URL("..", import.meta.url));
 function findClientFiles(): string[] {
   const found = new Set<string>();
-  for (const dir of [process.cwd(), join(homedir(), "Downloads"), join(homedir(), "Desktop")]) {
+  const home = homedir();
+  for (const dir of [process.cwd(), INSTALL_DIR, join(home, "Downloads"), join(home, "Desktop"), join(home, "Documents")]) {
     try {
       for (const f of readdirSync(dir)) if (/^client_secret.*\.json$/i.test(f)) found.add(join(dir, f));
     } catch {
@@ -101,18 +105,25 @@ function cleanPath(input: string): string {
 }
 
 async function setupGoogle(config: Config) {
-  console.log("1. Google sign-in");
-  let path = "";
-  const files = findClientFiles();
-  if (files.length) {
-    console.log(`   Found ${basename(files[0])}`);
-    console.log(`   in ${dirname(files[0])}.`);
-    if (await yes("   Use it?")) path = files[0];
+  const redo = args.includes("google");
+  if (!redo && config.googleClientId && keychainGet("google-client-secret")) {
+    console.log("1. Google sign-in: already set up. (`tabellar setup google` replaces it.)");
+    return;
   }
-  if (!path) {
-    if (config.googleClientId && keychainGet("google-client-secret") && (await yes("   Keep the Google client that is already set up?"))) return;
-    path = cleanPath(await ask("   Drag the downloaded client_secret file into this window (or type its path) and press Enter:"));
-    if (!existsSync(path)) throw new Error(`No file at ${path}`);
+  console.log("1. Google sign-in");
+  let path = findClientFiles()[0] ?? "";
+  if (path) {
+    console.log(`   Using ${basename(path)}`);
+    console.log(`   from ${dirname(path)}.`);
+  } else {
+    console.log("   No client_secret file found in Downloads, Desktop, Documents or the Tabellar folder.");
+    const typed = cleanPath(await ask("   Drag the file into this window and press Enter, or just press Enter to skip for now:"));
+    if (!typed) {
+      console.log("   Skipped. Run `tabellar setup` again once the file is downloaded.");
+      return;
+    }
+    if (!existsSync(typed)) throw new Error(`No file at ${typed}`);
+    path = typed;
   }
   const json = JSON.parse(readFileSync(path, "utf8"));
   const client = json.installed ?? json.web;

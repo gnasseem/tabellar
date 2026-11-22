@@ -47,7 +47,7 @@ Tabellar signs in to Google with your own OAuth client, so your mail never passe
 tabellar setup
 ```
 
-It finds the client file from step 1 in Downloads, Desktop or the current folder (or you can drag it into the Terminal window), saves it to the Keychain and offers to move the file to the Trash. Then it asks where the AI should run:
+It finds the client file from step 1 in Downloads, Desktop, Documents or the Tabellar folder (or you can drag it into the Terminal window), saves it to the Keychain and offers to move the file to the Trash. Once saved, later runs skip this step; `tabellar setup google` replaces the client. Then it asks where the AI should run:
 
 - **On this Mac**: uses Ollama. Setup lists the models you have and can download one sized for your Mac. No API key.
 - **In the cloud**: pick a provider, paste your API key, and choose a model from the provider's list.
