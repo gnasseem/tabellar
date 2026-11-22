@@ -4,6 +4,7 @@ import DOMPurify from "dompurify";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import { EmailField, useContacts } from "../EmailAutocomplete";
+import { ModelSettings } from "../ModelSetup";
 
 // Sanitize user-authored signature HTML before rendering via
 // dangerouslySetInnerHTML or saving back to the DB. Keeps inline styles
@@ -1041,6 +1042,13 @@ export default function SettingsView() {
           {/* ---- AI & WRITING ---- */}
           {activeTab === "ai" && (
             <>
+              <SectionLabel>Model</SectionLabel>
+              <SectionCard allowOverflow>
+                <div className="p-4">
+                  <ModelSettings />
+                </div>
+              </SectionCard>
+
               <SectionLabel>Writing Style</SectionLabel>
               <SectionCard>
                 <div className="p-4 border-b border-[var(--border)]">

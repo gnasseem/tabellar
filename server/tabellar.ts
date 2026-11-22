@@ -2,18 +2,22 @@
 // The `tabellar` command. The terminal is only for setting up, starting and
 // opening Tabellar; everything else happens in the app window.
 //
-//   tabellar setup    Google sign-in client and the AI model (local or cloud)
+//   tabellar setup    Google sign-in client and the AI model, in the terminal
+//                     (the window walks through the same steps on first start)
 //   tabellar start    Run Tabellar and open its window (Ctrl-C stops it)
 //   tabellar open     Open the window of a running Tabellar
 //   tabellar status   Is it running, which accounts and model it uses
 
 import { createInterface } from "node:readline/promises";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync, renameSync } from "node:fs";
-import { homedir, totalmem } from "node:os";
-import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, keychainGet, keychainSet, accessToken, HOME, type Config, type ModelConfig } from "./config.ts";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname } from "node:path";
+import { loadConfig, saveConfig, keychainSet, accessToken, HOME, type Config, type ModelConfig } from "./config.ts";
+import {
+  findClientFiles, googleConfigured, saveGoogleClient, moveToTrash, OLLAMA_URL, LOCAL_CHOICES, recommendedLocalModel,
+  ollamaInstalled, ollamaModels, startOllama, installOllama, pullOllamaModel, PROVIDERS, listModels, savedKeyFor, type Progress,
+} from "./setup.ts";
 
 const [command = "help", ...args] = process.argv.slice(2);
 
@@ -79,24 +83,6 @@ async function choose(question: string, options: string[], fallback = 0): Promis
   }
 }
 
-// ── Google sign-in client ───────────────────────────────────────────────────
-
-// Google Cloud's "Download JSON" saves client_secret_<id>.json. Look wherever
-// it is likely to be: here, the Tabellar folder, Downloads, Desktop, Documents.
-const INSTALL_DIR = fileURLToPath(new URL("..", import.meta.url));
-function findClientFiles(): string[] {
-  const found = new Set<string>();
-  const home = homedir();
-  for (const dir of [process.cwd(), INSTALL_DIR, join(home, "Downloads"), join(home, "Desktop"), join(home, "Documents")]) {
-    try {
-      for (const f of readdirSync(dir)) if (/^client_secret.*\.json$/i.test(f)) found.add(join(dir, f));
-    } catch {
-      /* folder missing or not readable */
-    }
-  }
-  return [...found].sort((x, y) => statSync(y).mtimeMs - statSync(x).mtimeMs);
-}
-
 // A path dragged into Terminal arrives quoted or with escaped spaces.
 function cleanPath(input: string): string {
   let p = input.trim().replace(/^['"]|['"]$/g, "").replace(/\\(.)/g, "$1");
@@ -104,14 +90,26 @@ function cleanPath(input: string): string {
   return p;
 }
 
+const gb = (bytes: number) => `${(bytes / 1e9).toFixed(1)} GB`;
+
+// One progress line, rewritten in place.
+async function showProgress(steps: AsyncGenerator<Progress>) {
+  for await (const e of steps) {
+    const pct = e.total && e.completed ? ` ${Math.floor((e.completed / e.total) * 100)}%` : "";
+    process.stdout.write(`\r   ${e.status}${pct}`.padEnd(60));
+  }
+  process.stdout.write("\n");
+}
+
+// ── Google sign-in client ───────────────────────────────────────────────────
+
 async function setupGoogle(config: Config) {
-  const redo = args.includes("google");
-  if (!redo && config.googleClientId && keychainGet("google-client-secret")) {
+  if (!args.includes("google") && googleConfigured()) {
     console.log("1. Google sign-in: already set up. (`tabellar setup google` replaces it.)");
     return;
   }
   console.log("1. Google sign-in");
-  let path = findClientFiles()[0] ?? "";
+  let path = (await findClientFiles())[0] ?? "";
   if (path) {
     console.log(`   Using ${basename(path)}`);
     console.log(`   from ${dirname(path)}.`);
@@ -125,134 +123,50 @@ async function setupGoogle(config: Config) {
     if (!existsSync(typed)) throw new Error(`No file at ${typed}`);
     path = typed;
   }
-  const json = JSON.parse(readFileSync(path, "utf8"));
-  const client = json.installed ?? json.web;
-  if (!client?.client_id || !client?.client_secret) throw new Error(`${basename(path)} is not a Google OAuth client file.`);
-  if (!json.installed) console.log("   This is a Web application client. Tabellar needs a Desktop app client, so sign-in may fail.");
-  config.googleClientId = client.client_id;
-  keychainSet("google-client-secret", client.client_secret);
-  saveConfig(config);
+  const { clientId, warning } = saveGoogleClient(readFileSync(path, "utf8"));
+  config.googleClientId = clientId;
+  if (warning) console.log(`   ${warning}`);
   console.log("   Saved. The client secret is now in the Keychain.");
   if (await yes(`   Move ${basename(path)} to the Trash? Tabellar no longer needs it.`)) {
-    try {
-      renameSync(path, join(homedir(), ".Trash", `${Date.now()}-${basename(path)}`));
-      console.log("   Moved to the Trash.");
-    } catch {
-      console.log(`   Could not move it. Delete it yourself: ${path}`);
-    }
+    console.log(moveToTrash(path) ? "   Moved to the Trash." : `   Could not move it. Delete it yourself: ${path}`);
   }
 }
 
 // ── AI model ────────────────────────────────────────────────────────────────
 
-const OLLAMA_URL = "http://127.0.0.1:11434";
-
-type Provider = { id: string; name: string; format: ModelConfig["format"]; baseUrl: string; suggested?: string };
-const PROVIDERS: Provider[] = [
-  { id: "openrouter", name: "OpenRouter (most models, one key)", format: "openai", baseUrl: "https://openrouter.ai/api/v1" },
-  { id: "anthropic", name: "Anthropic (Claude)", format: "anthropic", baseUrl: "https://api.anthropic.com/v1", suggested: "claude-opus-5-5" },
-  { id: "openai", name: "OpenAI", format: "openai", baseUrl: "https://api.openai.com/v1" },
-  { id: "gemini", name: "Google Gemini", format: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
-  { id: "groq", name: "Groq", format: "openai", baseUrl: "https://api.groq.com/openai/v1" },
-  { id: "mistral", name: "Mistral", format: "openai", baseUrl: "https://api.mistral.ai/v1" },
-  { id: "deepseek", name: "DeepSeek", format: "openai", baseUrl: "https://api.deepseek.com/v1" },
-  { id: "xai", name: "xAI (Grok)", format: "openai", baseUrl: "https://api.x.ai/v1" },
-  { id: "together", name: "Together AI", format: "openai", baseUrl: "https://api.together.xyz/v1" },
-  { id: "cerebras", name: "Cerebras", format: "openai", baseUrl: "https://api.cerebras.ai/v1" },
-  { id: "custom", name: "Another OpenAI-compatible endpoint", format: "openai", baseUrl: "" },
-];
-
-async function ollamaModels(): Promise<string[] | null> {
-  try {
-    const r = await fetch(`${OLLAMA_URL}/api/tags`);
-    if (!r.ok) return null;
-    return (((await r.json()) as { models?: { name: string }[] }).models ?? []).map((m) => m.name);
-  } catch {
-    return null;
-  }
-}
-
-// Download a model through Ollama, printing progress on one line.
-async function ollamaPull(model: string): Promise<boolean> {
-  const r = await fetch(`${OLLAMA_URL}/api/pull`, { method: "POST", body: JSON.stringify({ model, stream: true }) });
-  if (!r.ok || !r.body) return false;
-  let buffer = "";
-  let ok = false;
-  for await (const chunk of r.body as unknown as AsyncIterable<Uint8Array>) {
-    buffer += Buffer.from(chunk).toString("utf8");
-    let nl;
-    while ((nl = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, nl);
-      buffer = buffer.slice(nl + 1);
-      if (!line.trim()) continue;
-      const e = JSON.parse(line) as { status?: string; total?: number; completed?: number; error?: string };
-      if (e.error) {
-        console.log(`\n   Ollama: ${e.error}`);
-        return false;
-      }
-      const pct = e.total && e.completed ? ` ${Math.floor((e.completed / e.total) * 100)}%` : "";
-      process.stdout.write(`\r   ${e.status ?? ""}${pct}`.padEnd(60));
-      if (e.status === "success") ok = true;
-    }
-  }
-  process.stdout.write("\n");
-  return ok;
-}
-
 async function setupLocal(current?: ModelConfig): Promise<ModelConfig | undefined> {
-  const models = await ollamaModels();
+  let models = await ollamaModels();
   if (models === null) {
-    const installed = existsSync("/Applications/Ollama.app") || spawnSync("which", ["ollama"]).status === 0;
-    console.log(
-      installed
-        ? "   Ollama is installed but not running. Open the Ollama app, then run `tabellar setup` again."
-        : "   Local models run through Ollama, which is not installed yet. Get it from https://ollama.com/download,\n   open it once, then run `tabellar setup` again.",
-    );
-    return current;
+    if (ollamaInstalled()) {
+      console.log("   Starting Ollama...");
+      if (!(await startOllama())) throw new Error("Ollama did not start. Open it from Applications, then run `tabellar setup` again.");
+    } else {
+      console.log("   Local models run through Ollama, which is not installed yet.");
+      if (!(await yes("   Download and install Ollama now (about 230 MB)?"))) return current;
+      await showProgress(installOllama());
+    }
+    models = (await ollamaModels()) ?? [];
   }
-  const gb = totalmem() / 2 ** 30;
-  const suggested = gb >= 48 ? "qwen3:14b" : gb >= 12 ? "qwen3:8b" : "qwen3:4b";
-  const sizes: Record<string, string> = { "qwen3:14b": "about 9 GB", "qwen3:8b": "about 5 GB", "qwen3:4b": "about 2.5 GB" };
+  const names = models.map((m) => m.name);
+  const suggested = recommendedLocalModel();
+  const size = gb(LOCAL_CHOICES.find((c) => c.name === suggested)!.size);
   let model: string;
-  if (models.length) {
-    const options = [...models];
-    if (!models.includes(suggested)) options.push(`Download ${suggested}, recommended for this Mac (${sizes[suggested]})`);
-    const fallback = current?.format === "ollama" && models.includes(current.model) ? models.indexOf(current.model) : Math.max(0, options.findIndex((o) => o === suggested || o.startsWith("Download")));
+  if (names.length) {
+    const options = [...names];
+    if (!names.includes(suggested)) options.push(`Download ${suggested}, recommended for this Mac (${size})`);
+    const fallback = current?.format === "ollama" && names.includes(current.model) ? names.indexOf(current.model) : Math.max(0, options.findIndex((o) => o === suggested || o.startsWith("Download")));
     const i = await choose("   Model:", options, fallback);
-    model = i < models.length ? models[i] : suggested;
+    model = i < names.length ? names[i] : suggested;
   } else {
-    console.log(`   No local models yet. The recommended one for this Mac is ${suggested} (${sizes[suggested]}).`);
+    console.log(`   No local models yet. The recommended one for this Mac is ${suggested} (${size}).`);
     if (!(await yes(`   Download ${suggested} now?`))) return current;
     model = suggested;
   }
-  if (!models.includes(model) && !(await ollamaPull(model))) throw new Error(`Could not download ${model}.`);
+  if (!names.includes(model)) await showProgress(pullOllamaModel(model));
   return { provider: "ollama", format: "ollama", baseUrl: OLLAMA_URL, model };
 }
 
-// The provider's model list, which also checks the key. Listing models is free.
-async function listModels(p: Provider, base: string, key: string): Promise<string[] | "unauthorized" | null> {
-  const headers: Record<string, string> = p.format === "anthropic" ? { "x-api-key": key, "anthropic-version": "2026-10-21" } : { Authorization: `Bearer ${key}` };
-  try {
-    // OpenRouter lists models without a key, so check the key on its own.
-    if (p.id === "openrouter") {
-      const k = await fetch(`${base}/key`, { headers });
-      if (k.status === 401 || k.status === 403) return "unauthorized";
-    }
-    const r = await fetch(`${base}/models${p.format === "anthropic" ? "?limit=100" : ""}`, { headers });
-    if (r.status === 401 || r.status === 403) return "unauthorized";
-    if (!r.ok) return null;
-    const data = (await r.json()) as { data?: { id?: string; name?: string }[]; models?: { id?: string; name?: string }[] };
-    return (data.data ?? data.models ?? []).map((m) => m.id ?? m.name ?? "").filter(Boolean);
-  } catch {
-    return null;
-  }
-}
-
-// Models that are not for chat, left out of the menu.
-const NOT_CHAT = /embed|whisper|tts|dall-e|moderation|audio|realtime|transcri|image|rerank|guard|babbage|davinci/i;
-
-async function chooseModel(all: string[], suggested: string): Promise<string> {
-  const ids = all.filter((id) => !NOT_CHAT.test(id));
+async function chooseModel(ids: string[], suggested: string): Promise<string> {
   if (!ids.length) {
     const typed = await ask("   Model name:", suggested);
     if (!typed) throw new Error("A model name is needed.");
@@ -275,7 +189,8 @@ async function setupCloud(current?: ModelConfig): Promise<ModelConfig> {
   let base = p.baseUrl;
   if (p.id === "custom") base = await ask("   Base URL (usually ends in /v1):", same ? current!.baseUrl : "");
   base = base.replace(/\/+$/, "");
-  const saved = same ? keychainGet("model-api-key") : null;
+  const saved = savedKeyFor(p.id);
+  if (!saved && p.keyUrl) console.log(`   Get a key at ${p.keyUrl}`);
   const key = (await askSecret(`   API key${saved ? " (Enter to keep the saved one)" : ""}:`)) || saved || "";
   if (!key) throw new Error("A cloud model needs an API key.");
   const listed = await listModels(p, base, key);

@@ -19,8 +19,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 All commands run from the repo root. This is an npm workspace; `npm install` at the root installs everything.
 
 ```bash
-npm run setup      # Google sign-in client and AI model, local (Ollama) or cloud (writes ~/.tabellar/config.json and the Keychain)
-npm start          # build the interface, run the server, open the window
+npm start          # build the interface, run the server, open the window (first run: in-window setup)
+npm run setup      # the same setup in the terminal: Google client and AI model (writes ~/.tabellar/config.json and the Keychain)
 npm run dev        # Vite dev server for the interface, proxying to a running server on :4848
 npm run build      # build the interface to frontend/dist
 npm run typecheck  # tsc for server/ and frontend/
@@ -49,11 +49,12 @@ frontend/    React + Tailwind, built with Vite to frontend/dist, served by the s
 - `google.ts`: installed-app OAuth with PKCE on the loopback address. Refresh tokens live in the Keychain; `gmail_accounts.token_ref` holds only the Keychain item name. Access tokens are kept in memory (`freshAccessToken`).
 - `llm.ts`: `chatCompletion` takes OpenAI chat-completions requests and sends them in the configured `model.format`: `ollama` (Ollama's native `/api/chat`, so `num_ctx` can be set; no API key), `openai` (forwarded to any OpenAI-compatible endpoint, retrying once without `temperature` or with `max_completion_tokens` when a model rejects them), or `anthropic` (translated to the Messages API and back). Local models get longer timeouts and lower analysis concurrency (`isLocalModel`, `modelTimeoutMs`). Anthropic content blocks come back on the message as `_anthropic` and are replayed verbatim on later turns so thinking blocks stay intact; the agent persists them in `agent_turns.content.raw`.
 - `ai.ts` (prompts and AI helpers), `gmail.ts` (Gmail, Calendar, People API client), `agentLoop.ts` / `agentTools.ts` / `agentExecute.ts` (the agent), `analyzeEmails.ts`, `buildBriefing.ts`.
+- `setup.ts`: first-run setup shared by the window (`/api/setup/*`, routed in `server.ts` before `handleApi`) and `tabellar setup`: finding and saving the Google client file, installing and starting Ollama (its bundled `ollama serve`, not the menu bar app, whose first launch asks for an admin password), pulling models (with a direct registry download when Ollama can't reach it), and cloud provider key checks. Progress streams as NDJSON.
 - `config.ts`: paths, `config.json` (port, Google client id, model provider/format/base URL/model), Keychain helpers (`keychainGet/Set/Delete`), and `getEnv` for the few settings the backend reads.
 
 ### Interface (`frontend/`)
 
-- `src/main.tsx` loads `/session`, then renders `AppShell` + `EmailDashboard` when a Google account is connected, otherwise `Welcome`.
+- `src/main.tsx` loads `/session`, then renders `AppShell` + `EmailDashboard` when a Google account is connected, otherwise `Welcome` (the three-step onboarding). `ModelSetup.tsx` is the model picker shared by onboarding and Settings > AI.
 - `src/lib/db.ts`: `createClient()` returns an object shaped like the supabase-js client the views were written against: `from()` posts the query to `/db`, `auth.getSession()` returns the local user and access token, `channel().on("postgres_changes", ...)` listens on `/events`. Views keep calling `supabase.from(...)`.
 - Global state lives in `AppShell.tsx` via React context (`useApp()`): `user`, `profile`, `view`, `addToast`, compose, agent state.
 - API calls are `fetch("/api/...")` with `Authorization: Bearer ${session.access_token}`.

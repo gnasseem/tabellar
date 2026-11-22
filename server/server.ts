@@ -18,6 +18,7 @@ import { loadConfig, accessToken } from "./config.ts";
 import { db, execute, callRpc, changes, type Change } from "./db.ts";
 import type { QuerySpec } from "./query.ts";
 import { handleApi } from "./api.ts";
+import { handleSetup, startOllama } from "./setup.ts";
 import { signInUrl, finishSignIn, forgetTokens } from "./google.ts";
 import { sendEmail } from "./gmail.ts";
 import { modelConfigured } from "./llm.ts";
@@ -207,11 +208,14 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
           for (const [k, v] of Object.entries(req.headers)) {
             if (typeof v === "string" && !["host", "connection", "content-length", "transfer-encoding", "keep-alive"].includes(k)) headers.set(k, v);
           }
-          const response = await handleApi(new Request(url, { method, headers, body: body ? new Uint8Array(body) : undefined }), path.slice(4));
+          const request = new Request(url, { method, headers, body: body ? new Uint8Array(body) : undefined });
+          const response = path.startsWith("/api/setup/") ? await handleSetup(request, path.slice(10)) : await handleApi(request, path.slice(4));
           const out: Record<string, string> = {};
           response.headers.forEach((v, k) => (out[k] = v));
           res.writeHead(response.status, out);
-          return res.end(Buffer.from(await response.arrayBuffer()));
+          // Streamed, so progress (model downloads) reaches the window as it happens.
+          if (response.body) for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) res.write(chunk);
+          return res.end();
         }
         return sendJson(res, 404, { error: "Not found" });
       }
@@ -233,7 +237,7 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
       if (path === "/oauth/start") {
         if (!hasCookie) return send(res, 401, page("Not signed in", "<p>Open Tabellar from the terminal with <code>tabellar open</code>.</p>"), "text/html; charset=utf-8");
         if (!loadConfig().googleClientId) {
-          return send(res, 400, page("Google sign-in is not set up", "<p>Run <code>tabellar setup</code> in the terminal first.</p>"), "text/html; charset=utf-8");
+          return send(res, 400, page("Google sign-in is not set up", "<p>Add your Google client first. <a href=\"/\">Back to Tabellar</a></p>"), "text/html; charset=utf-8");
         }
         res.writeHead(302, { Location: signInUrl(redirectUri) });
         return res.end();
@@ -291,6 +295,8 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
   return new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => {
+      // A local model needs Ollama running; start it if it is not.
+      if (loadConfig().model?.format === "ollama") startOllama().catch(() => {});
       resolve({
         port,
         close: () => {

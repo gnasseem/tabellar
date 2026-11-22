@@ -50,15 +50,15 @@ export function modelTimeoutMs(): number {
 
 // Fail at once, with a message the interface can show, instead of retrying.
 export function requireModel(): void {
-  if (!modelConfigured()) throw new Error("No model is set up. Run `tabellar setup` in the terminal.");
+  if (!modelConfigured()) throw new Error("No AI model is set up. Choose one in Settings, under AI.");
 }
 
 export async function chatCompletion(req: ChatRequest, signal?: AbortSignal): Promise<Response> {
   const m = loadConfig().model;
-  if (!m) throw new Error("No model is set up. Run `tabellar setup`.");
+  if (!m) throw new Error("No AI model is set up. Choose one in Settings, under AI.");
   if (m.format === "ollama") return ollama(m.baseUrl, m.model, req, signal);
   const key = keychainGet("model-api-key");
-  if (!key) throw new Error("No API key is saved for the model. Run `tabellar setup`.");
+  if (!key) throw new Error("No API key is saved for the model. Add one in Settings, under AI.");
   return m.format === "anthropic" ? anthropic(m.baseUrl, m.model, key, req, signal) : openai(m.baseUrl, m.model, key, req, signal);
 }
 

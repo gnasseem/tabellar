@@ -20,7 +20,7 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 - macOS
 - Node.js 24 or newer
 - A Google account (Gmail)
-- For local AI: [Ollama](https://ollama.com/download). For cloud AI: an API key from OpenRouter, Anthropic, OpenAI, Google Gemini, Groq, Mistral, DeepSeek, xAI, Together, Cerebras, or any OpenAI-compatible endpoint
+- For cloud AI, an API key from OpenRouter, Anthropic, OpenAI, Google Gemini, Groq, Mistral, DeepSeek, xAI, Together, Cerebras, or any OpenAI-compatible endpoint. Local AI needs nothing extra: Tabellar installs [Ollama](https://ollama.com) for you.
 
 ## Install
 
@@ -28,39 +28,19 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 git clone https://github.com/gnasseem/tabellar.git
 cd tabellar
 npm install
-npm run build
 npm link        # puts the `tabellar` command on your PATH
+npm start
 ```
 
-### 1. Create a Google sign-in client
+`npm start` builds the interface, starts Tabellar and opens its window, which walks you through three steps:
 
-Tabellar signs in to Google with your own OAuth client, so your mail never passes through anyone else's app.
+1. **Google client.** Tabellar signs in to Google with an OAuth client you create in your own Google Cloud project, so your mail never passes through anyone else's app. The window links to each page you need: create a project, enable the Gmail, Calendar and People APIs, set up the consent screen (External with yourself as a test user, or Internal on a Workspace account), and create a **Desktop app** client. When you download its JSON file, the window finds it in Downloads, Desktop or Documents (or drop it in), saves the secret to the Keychain and can move the file to the Trash.
+2. **AI model.** On this Mac: Tabellar downloads Ollama from ollama.com, checks its signature, installs it and downloads a model sized for your Mac's memory. In the cloud: pick a provider, paste your API key and choose from its models. You can skip this and choose later in Settings, under AI.
+3. **Gmail.** Click **Continue with Google**. Google warns that it hasn't verified the app, which is expected for your own client: choose Advanced, then Go to Tabellar. The first sign-in fetches and analyzes your recent mail.
 
-1. Open [Google Cloud Console](https://console.cloud.google.com/) and create a project.
-2. Under **APIs & Services > Library**, enable **Gmail API**, **Google Calendar API** and **People API**.
-3. Under **Google Auth Platform**, set up branding (app name "Tabellar", your email). For **Audience**, choose **Internal** if your account belongs to a Google Workspace organization; otherwise choose **External** and add yourself as a test user.
-4. Under **Clients**, create a client of type **Desktop app** and download its JSON file.
-
-### 2. Set up Tabellar
-
-```bash
-tabellar setup
-```
-
-It finds the client file from step 1 in Downloads, Desktop, Documents or the Tabellar folder (or you can drag it into the Terminal window), saves it to the Keychain and offers to move the file to the Trash. Once saved, later runs skip this step; `tabellar setup google` replaces the client. Then it asks where the AI should run:
-
-- **On this Mac**: uses Ollama. Setup lists the models you have and can download one sized for your Mac. No API key.
-- **In the cloud**: pick a provider, paste your API key, and choose a model from the provider's list.
+After that, `tabellar start` runs Tabellar (Ctrl-C stops it), `tabellar open` opens the window again, and `tabellar status` shows what it is connected to. `tabellar setup` does the first two steps in the terminal instead.
 
 Settings go to `~/.tabellar/config.json`; the client secret, API key and Google tokens go to the macOS Keychain.
-
-### 3. Start it
-
-```bash
-tabellar start
-```
-
-Tabellar opens its window in your browser. Click **Sign in with Google**; the first sign-in fetches and analyzes your recent mail. `tabellar start` keeps running in that terminal (Ctrl-C stops it); `tabellar open` opens the window again, and `tabellar status` shows what Tabellar is connected to.
 
 ## How it works
 
@@ -75,6 +55,7 @@ The interface (`frontend/`) is React and Tailwind, built to static files with Vi
 ```
 server/
   tabellar.ts   the `tabellar` command: setup, start, open, status
+  setup.ts      first-run setup: Google client, Ollama install and models, cloud providers
   server.ts     HTTP server: interface, access checks, /db bridge, live events, Google sign-in
   api.ts        the API routes under /api
   db.ts         SQLite schema and the query executor

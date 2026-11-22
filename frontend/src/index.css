@@ -207,3 +207,77 @@ input[type="datetime-local"] {
 .dark .solve-panel-bg {
   background: var(--background);
 }
+
+/* ── First-run onboarding ── */
+.ob {
+  --ob-rail: #0f3a26;
+  --ob-rail-glow: #1d6141;
+  --ob-rail-fg: #f0f7f2;
+  --ob-rail-muted: #a8c9b5;
+  --ob-rail-line: rgba(240, 247, 242, 0.16);
+  --ob-rail-accent: #8fe0b0;
+  caret-color: var(--accent);
+}
+.dark .ob {
+  --ob-rail: #0b1d14;
+  --ob-rail-glow: #143a27;
+  --ob-rail-fg: #e8f2ec;
+  --ob-rail-muted: #8fb19d;
+  --ob-rail-line: rgba(232, 242, 236, 0.13);
+  --ob-rail-accent: #4ade80;
+}
+.ob-rail {
+  color: var(--ob-rail-fg);
+  background:
+    radial-gradient(120% 70% at 0% 0%, var(--ob-rail-glow) 0%, transparent 62%),
+    var(--ob-rail);
+}
+.ob ::selection {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.ob-rail ::selection {
+  background: color-mix(in srgb, var(--ob-rail-accent) 35%, transparent);
+}
+.ob :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+.ob-rail :focus-visible {
+  outline-color: var(--ob-rail-accent);
+}
+.ob input:focus-visible {
+  outline: none;
+}
+@keyframes ob-enter {
+  from {
+    opacity: 0.35;
+    transform: translateY(10px);
+    filter: blur(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+.ob-enter {
+  animation: ob-enter 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes ob-indeterminate {
+  from {
+    left: -40%;
+  }
+  to {
+    left: 100%;
+  }
+}
+.ob-indeterminate {
+  animation: ob-indeterminate 1.3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ob-enter,
+  .ob-indeterminate {
+    animation: none;
+  }
+}
