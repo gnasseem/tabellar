@@ -17,6 +17,7 @@
 
 import type { Db } from "./db.ts";
 import { llmWithTools, PROMPTS } from "./ai.ts";
+import { isLocalModel } from "./llm.ts";
 import {
   AGENT_TOOLS,
   type AgentToolContext,
@@ -1142,7 +1143,10 @@ async function _runAgentStepParallel(
   const hadBriefingWork = briefingCardsHaveEmails(snap.cards);
 
   // Parallel buckets share one session; allocTurnIdx serializes on the session row.
-  // 100s hard cap: if any bucket is somehow stuck, the outer catch marks session as error.
+  // A hard cap, so a stuck bucket ends as an error: 100s for a cloud model, 15
+  // minutes for a local one, which answers the lanes one after another, so a
+  // few lanes of several model turns each take minutes.
+  const capMs = isLocalModel("careful") ? 900_000 : 100_000;
   const results = await Promise.race([
     Promise.allSettled(
       bucketPlans.map((bp) =>
@@ -1155,8 +1159,8 @@ async function _runAgentStepParallel(
     ),
     new Promise<never>((_, reject) =>
       setTimeout(
-        () => reject(new Error("Parallel bucket orchestration timed out after 100s")),
-        100_000,
+        () => reject(new Error(`Parallel bucket orchestration timed out after ${capMs / 1000}s`)),
+        capMs,
       )
     ),
   ]);

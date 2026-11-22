@@ -298,7 +298,7 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => {
       // A local model needs Ollama running; start it if it is not.
-      if (loadConfig().model?.format === "ollama") startOllama().catch(() => {});
+      if ([loadConfig().model, loadConfig().fastModel].some((m) => m?.format === "ollama")) startOllama().catch(() => {});
       const stopEngine = startEngine();
       resolve({
         port,

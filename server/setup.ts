@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { homedir, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, keychainGet, keychainSet, HOME, type ModelConfig } from "./config.ts";
+import { loadConfig, saveConfig, keychainGet, keychainSet, modelKey, modelKeyName, HOME, type ModelConfig, type Slot } from "./config.ts";
 
 // ── Google sign-in client ───────────────────────────────────────────────────
 
@@ -91,19 +91,25 @@ const OLLAMA_ZIP = "https://ollama.com/download/Ollama-darwin.zip";
 export type LocalModel = { name: string; size: number };
 
 // Models offered for download, smallest first, with their download size.
+// Chosen by running sorting, drafting and the assistant on 50 real emails
+// (2026-11): qwen3.5:4b sorted as well as models twice its size in half the
+// time; the gemma4 models were the only ones that always drafted in the
+// user's voice. qwen3:8b, qwen3.5:9b and granite4.2:3b did worse on both.
 export const LOCAL_CHOICES: LocalModel[] = [
-  { name: "qwen3:4b", size: 2_497_293_444 },
-  { name: "qwen3:8b", size: 5_225_387_677 },
-  { name: "qwen3:14b", size: 9_276_198_077 },
+  { name: "qwen3.5:4b", size: 3_324_173_934 },
+  { name: "gemma4:12b", size: 8_021_618_941 },
+  { name: "gemma4:26b", size: 18_731_025_629 },
 ];
 
 export function memoryGb(): number {
   return Math.round(totalmem() / 2 ** 30);
 }
 
-export function recommendedLocalModel(): string {
+// Below 24 GB there is room for one model, so the small one does both jobs.
+export function recommendedLocalModel(slot: Slot = "careful"): string {
   const gb = memoryGb();
-  return gb >= 48 ? "qwen3:14b" : gb >= 12 ? "qwen3:8b" : "qwen3:4b";
+  if (slot === "fast" || gb < 24) return "qwen3.5:4b";
+  return gb >= 48 ? "gemma4:26b" : "gemma4:12b";
 }
 
 function ollamaApp(): string | null {
@@ -332,16 +338,26 @@ export async function listModels(p: Provider, base: string, key: string): Promis
   }
 }
 
-// The key saved in the Keychain, if it belongs to this provider.
+// The key saved in the Keychain for this provider.
 export function savedKeyFor(providerId: string): string | null {
-  return loadConfig().model?.provider === providerId ? keychainGet("model-api-key") : null;
+  return keychainGet(modelKeyName(providerId));
 }
 
-export function saveModel(model: ModelConfig, key?: string): void {
-  if (key) keychainSet("model-api-key", key);
+// Save a slot. The careful model is chosen first and the fast slot follows
+// it until it is set on its own; `sameAsCareful` puts it back to following.
+export function saveModel(slot: Slot, model: ModelConfig | null, key?: string): void {
+  if (key && model) keychainSet(modelKeyName(model.provider), key);
   const config = loadConfig();
-  config.model = model;
+  if (slot === "careful" && model) config.model = model;
+  else if (slot === "fast") {
+    if (!model || sameModel(model, config.model)) delete config.fastModel;
+    else config.fastModel = model;
+  }
   saveConfig(config);
+}
+
+function sameModel(a: ModelConfig, b?: ModelConfig): boolean {
+  return !!b && a.format === b.format && a.baseUrl === b.baseUrl && a.model === b.model;
 }
 
 // ── /api/setup/* for the window ─────────────────────────────────────────────
@@ -370,17 +386,18 @@ async function state() {
   const config = loadConfig();
   const file = (await findClientFiles())[0];
   const models = await ollamaModels();
-  const m = config.model;
-  const hasKey = !!keychainGet("model-api-key");
+  const withReady = (m?: ModelConfig) => (m ? { ...m, ready: m.format === "ollama" || !!modelKey(m) } : null);
   return {
     google: {
       clientId: googleConfigured() ? config.googleClientId : null,
       file: file ? { path: file, name: basename(file), folder: dirname(file).replace(homedir(), "~"), modified: statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? Date.now() } : null,
     },
-    model: m ? { ...m, ready: m.format === "ollama" || hasKey } : null,
+    model: withReady(config.model),
+    // null when the fast slot uses the careful model.
+    fastModel: withReady(config.fastModel),
     ollama: { installed: models !== null || ollamaInstalled(), running: models !== null, models: models ?? [] },
-    local: { choices: LOCAL_CHOICES, recommended: recommendedLocalModel(), memoryGb: memoryGb() },
-    providers: PROVIDERS.map(({ id, name, keyUrl, suggested }) => ({ id, name, keyUrl, suggested, hasKey: hasKey && m?.provider === id })),
+    local: { choices: LOCAL_CHOICES, recommended: recommendedLocalModel("careful"), recommendedFast: recommendedLocalModel("fast"), memoryGb: memoryGb() },
+    providers: PROVIDERS.map(({ id, name, keyUrl, suggested }) => ({ id, name, keyUrl, suggested, hasKey: !!savedKeyFor(id) })),
   };
 }
 
@@ -421,14 +438,21 @@ export async function handleSetup(req: Request, path: string): Promise<Response>
       if (!key) return json({ error: "Paste your API key." }, 400);
       const models = await listModels(p, base, key);
       if (models === "unauthorized") return json({ error: `${p.name} rejected that API key.` }, 400);
-      return json({ models: models ?? [], suggested: savedKeyFor(p.id) ? loadConfig().model?.model : p.suggested });
+      const config = loadConfig();
+      const current = [config.model, config.fastModel].find((m) => m?.provider === p.id)?.model;
+      return json({ models: models ?? [], suggested: current ?? p.suggested });
     }
 
     if (path === "/model" && req.method === "POST") {
+      const slot: Slot = body.slot === "fast" ? "fast" : "careful";
+      if (slot === "fast" && body.same) {
+        saveModel("fast", null);
+        return json({ ok: true });
+      }
       const model = String(body.model ?? "").trim();
       if (!model) return json({ error: "Choose a model." }, 400);
       if (body.provider === "ollama") {
-        saveModel({ provider: "ollama", format: "ollama", baseUrl: OLLAMA_URL, model });
+        saveModel(slot, { provider: "ollama", format: "ollama", baseUrl: OLLAMA_URL, model });
         return json({ ok: true });
       }
       const p = PROVIDERS.find((x) => x.id === body.provider);
@@ -436,7 +460,7 @@ export async function handleSetup(req: Request, path: string): Promise<Response>
       const base = String(p.id === "custom" ? body.baseUrl ?? "" : p.baseUrl).replace(/\/+$/, "");
       const key = String(body.key ?? "").trim() || savedKeyFor(p.id) || "";
       if (!key) return json({ error: "Paste your API key." }, 400);
-      saveModel({ provider: p.id, format: p.format, baseUrl: base, model }, key);
+      saveModel(slot, { provider: p.id, format: p.format, baseUrl: base, model }, key);
       return json({ ok: true });
     }
 

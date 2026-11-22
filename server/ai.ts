@@ -3,6 +3,7 @@
 
 import { act, engineSettings } from "./actions.ts";
 import { chatCompletion, requireModel, modelTimeoutMs } from "./llm.ts";
+import type { Slot } from "./config.ts";
 
 const PROMPTS = {
   categorize: `You are an expert email categorizer. Classify the email into exactly one category.
@@ -195,23 +196,25 @@ Today is {TODAY}. User timezone: {TIMEZONE}.`,
 };
 
 /**
- * Generic LLM call to the model chosen in setup.
+ * Generic LLM call. Reading one email (sorting, entities, todos, meetings)
+ * goes to the fast model; writing and summarising many goes to the careful one.
  */
 async function llm(
   systemPrompt: string,
   userText: string,
   temperature = 0.3,
   maxTokens = 512,
+  slot: Slot = "careful",
 ): Promise<string> {
-  requireModel();
+  requireModel(slot);
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const controller = new AbortController();
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(
-        () => reject(new Error(`LLM request timed out after ${modelTimeoutMs() / 1000}s`)),
-        modelTimeoutMs(),
+        () => reject(new Error(`LLM request timed out after ${modelTimeoutMs(slot) / 1000}s`)),
+        modelTimeoutMs(slot),
       );
     });
     let res: Response;
@@ -226,6 +229,7 @@ async function llm(
             temperature,
             max_tokens: maxTokens,
             effort: "low",
+            slot,
           },
           controller.signal,
         ),
@@ -581,7 +585,7 @@ export async function processFullEmail(
     ? `${signalContext}${emailText}`
     : emailText;
 
-  const raw = await llm(prompt, textWithSignals, 0.2, 2048);
+  const raw = await llm(prompt, textWithSignals, 0.2, 2048, "fast");
   const parsed = parseJson(raw) as any;
 
   const valid = ["important", "action-required", "promotions", "updates"];
@@ -664,7 +668,7 @@ export async function composeDraft(opts: {
 4. End with exactly: "${closing}"
 5. Do NOT use any placeholder text like [Your Name] or [Company].`;
 
-  return llm(systemPrompt, context, 0.45, 1024);
+  return draftBody(await llm(systemPrompt, context, 0.45, 1024));
 }
 
 export async function refineDraft(opts: {
@@ -690,7 +694,7 @@ export async function refineDraft(opts: {
 4. Do NOT use placeholder text like [Your Name] or [Company].
 5. End with: "${closing}"`;
 
-  return llm(systemPrompt, context, 0.4, 1024);
+  return draftBody(await llm(systemPrompt, context, 0.4, 1024));
 }
 
 export async function generateDraft(
@@ -704,7 +708,13 @@ export async function generateDraft(
   if (styleContext) {
     prompt = `${prompt}\n\nWrite in this style: ${styleContext}`;
   }
-  return llm(PROMPTS.draft, prompt, 0.45, 1024);
+  return draftBody(await llm(PROMPTS.draft, prompt, 0.45, 1024));
+}
+
+// Gemma models open a draft with a "Subject: Re: ..." line even when told to
+// write only the body; the subject comes from the thread, so drop it.
+function draftBody(text: string): string {
+  return text.replace(/^\s*\**subject:\**[^\n]*\n+/i, "").trim();
 }
 
 export async function generateBriefing(
@@ -850,7 +860,7 @@ export async function extractEntities(
   body: string,
 ): Promise<{ entity: string; entity_type: string; info: string }[]> {
   const text = `Subject: ${subject}\nFrom: ${sender}\n\n${body}`;
-  const raw = await llm(PROMPTS.extract_entities, text, 0.2, 1024);
+  const raw = await llm(PROMPTS.extract_entities, text, 0.2, 1024, "fast");
   const parsed = parseJson(raw);
   return Array.isArray(parsed) ? parsed : [];
 }
@@ -894,7 +904,7 @@ export async function detectMeeting(
   suggested_date: string | null;
 }> {
   const text = `Subject: ${subject}\nFrom: ${sender}\n\n${body}`;
-  const raw = await llm(PROMPTS.meeting_detect, text, 0.2, 512);
+  const raw = await llm(PROMPTS.meeting_detect, text, 0.2, 512, "fast");
   const parsed = parseJson(raw) as {
     has_meeting?: boolean;
     title?: string;
@@ -922,6 +932,7 @@ export async function extractTodos(
     text,
     0.2,
     512,
+    "fast",
   );
   const parsed = parseJson(raw);
   return Array.isArray(parsed)

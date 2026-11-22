@@ -393,7 +393,7 @@ function ModelStep({ state, refresh, onBack, onNext, onSkip }: { state: SetupSta
   return (
     <>
       <Heading title="Choose where the AI runs">
-        Tabellar uses a language model to sort your mail, write the daily briefing and draft replies. You can switch later in Settings.
+        Tabellar uses a language model to sort your mail, write the daily briefing and draft replies. Settings, under AI, can switch it later or give reading mail a smaller, faster model of its own.
       </Heading>
       <ModelSetup state={state} refresh={refresh} onSaved={onNext} />
       <Footer onBack={onBack}>

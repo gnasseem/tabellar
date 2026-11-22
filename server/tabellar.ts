@@ -16,7 +16,7 @@ import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "no
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, keychainSet, accessToken, HOME, type Config, type ModelConfig } from "./config.ts";
+import { loadConfig, saveConfig, keychainSet, modelKeyName, accessToken, HOME, type Config, type ModelConfig, type Slot } from "./config.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
 import {
   findClientFiles, googleConfigured, saveGoogleClient, moveToTrash, OLLAMA_URL, LOCAL_CHOICES, recommendedLocalModel,
@@ -138,7 +138,7 @@ async function setupGoogle(config: Config) {
 
 // ── AI model ────────────────────────────────────────────────────────────────
 
-async function setupLocal(current?: ModelConfig): Promise<ModelConfig | undefined> {
+async function setupLocal(current: ModelConfig | undefined, slot: Slot): Promise<ModelConfig | undefined> {
   let models = await ollamaModels();
   if (models === null) {
     if (ollamaInstalled()) {
@@ -152,7 +152,7 @@ async function setupLocal(current?: ModelConfig): Promise<ModelConfig | undefine
     models = (await ollamaModels()) ?? [];
   }
   const names = models.map((m) => m.name);
-  const suggested = recommendedLocalModel();
+  const suggested = recommendedLocalModel(slot);
   const size = gb(LOCAL_CHOICES.find((c) => c.name === suggested)!.size);
   let model: string;
   if (names.length) {
@@ -199,23 +199,40 @@ async function setupCloud(current?: ModelConfig): Promise<ModelConfig> {
   if (!key) throw new Error("A cloud model needs an API key.");
   const listed = await listModels(p, base, key);
   if (listed === "unauthorized") throw new Error("The provider rejected that API key, so it was not saved.");
-  keychainSet("model-api-key", key);
+  keychainSet(modelKeyName(p.id), key);
   const model = await chooseModel(listed ?? [], same ? current!.model : (p.suggested ?? ""));
   return { provider: p.id, format: p.format, baseUrl: base, model };
 }
 
-async function setupModel(config: Config) {
-  console.log("\n2. AI model");
+async function pickModel(current: ModelConfig | undefined, slot: Slot): Promise<ModelConfig | undefined> {
   const ollamaUp = (await ollamaModels()) !== null;
-  const fallback = config.model ? (config.model.format === "ollama" ? 0 : 1) : ollamaUp ? 0 : 1;
+  const fallback = current ? (current.format === "ollama" ? 0 : 1) : ollamaUp ? 0 : 1;
   const where = await choose(
-    "   Where should the AI run?",
+    "   Where should it run?",
     ["On this Mac, free and private (Ollama)", "In the cloud, with your own API key (billed by the provider)"],
     fallback,
   );
-  config.model = where === 0 ? await setupLocal(config.model) : await setupCloud(config.model);
+  return where === 0 ? await setupLocal(current, slot) : await setupCloud(current);
+}
+
+async function setupModel(config: Config) {
+  console.log("\n2. AI models");
+  console.log("   The careful model writes drafts and the briefing, and runs the assistant and the agent.");
+  config.model = await pickModel(config.model, "careful");
   saveConfig(config);
-  if (config.model) console.log(`   Using ${config.model.model}.`);
+  if (!config.model) return;
+  console.log(`   Using ${config.model.model}.`);
+  console.log("\n   The fast model reads each new email to sort it, summarise it and find todos and meetings.");
+  const suggestSmaller = !!config.fastModel || (config.model.format === "ollama" && recommendedLocalModel("fast") !== config.model.model);
+  const same = await choose("   Fast model:", [`The same model, ${config.model.model}`, "A different, usually smaller, model"], suggestSmaller ? 1 : 0);
+  if (same === 0) delete config.fastModel;
+  else {
+    const fast = await pickModel(config.fastModel, "fast");
+    if (fast && !(fast.format === config.model.format && fast.baseUrl === config.model.baseUrl && fast.model === config.model.model)) config.fastModel = fast;
+    else delete config.fastModel;
+  }
+  saveConfig(config);
+  if (config.fastModel) console.log(`   Reading mail with ${config.fastModel.model}.`);
 }
 
 async function setup() {
@@ -245,9 +262,10 @@ async function status() {
   const up = await running();
   console.log(`Running:  ${up ? `yes, http://127.0.0.1:${config.port}` : "no"}`);
   console.log(`Google:   ${config.googleClientId ? "sign-in client set" : "not set up (tabellar setup)"}`);
+  const where = (m: ModelConfig) => (m.format === "ollama" ? "on this Mac (Ollama)" : `via ${PROVIDERS.find((p) => p.id === m.provider)?.name ?? m.baseUrl}`);
   const m = config.model;
-  const where = m?.format === "ollama" ? "on this Mac (Ollama)" : `via ${PROVIDERS.find((p) => p.id === m?.provider)?.name ?? m?.baseUrl}`;
-  console.log(`Model:    ${m ? `${m.model} ${where}` : "not set up (tabellar setup)"}`);
+  console.log(`Model:    ${m ? `${m.model} ${where(m)}` : "not set up (tabellar setup)"}`);
+  if (m) console.log(`Fast:     ${config.fastModel ? `${config.fastModel.model} ${where(config.fastModel)}` : "the same model"}`);
   console.log(`At login: ${autostartInstalled() ? "starts automatically (tabellar autostart off to stop)" : "no (tabellar autostart on)"}`);
   if (up) {
     const headers = { Authorization: `Bearer ${accessToken()}` };

@@ -25,11 +25,30 @@ export type ModelConfig = {
   model: string;
 };
 
+// Two model slots. `model` is the careful one (drafts, briefing, assistant,
+// agent); `fastModel` reads each email (sorting, summaries, todos, meetings)
+// and, when unset, is the same model.
+export type Slot = "fast" | "careful";
+
 export type Config = {
   port: number;
   googleClientId?: string;
   model?: ModelConfig;
+  fastModel?: ModelConfig;
 };
+
+export function slotModel(slot: Slot, config = loadConfig()): ModelConfig | undefined {
+  return slot === "fast" ? (config.fastModel ?? config.model) : config.model;
+}
+
+// Cloud keys are kept per provider, so the two slots can use different ones.
+export function modelKeyName(provider: string | undefined): string {
+  return `model-api-key:${provider || "custom"}`;
+}
+
+export function modelKey(m: ModelConfig): string | null {
+  return m.format === "ollama" ? null : keychainGet(modelKeyName(m.provider));
+}
 
 export function loadConfig(): Config {
   if (!existsSync(CONFIG_PATH)) return { port: DEFAULT_PORT };

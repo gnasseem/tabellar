@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { formatBytes, getSetupState, setupPost, setupStream, type Progress, type SetupState } from "@/lib/setup";
+import { formatBytes, getSetupState, setupPost, setupStream, type ModelInfo, type Progress, type SetupState, type Slot } from "@/lib/setup";
 
-// Choosing the AI model: on this Mac through Ollama (installing Ollama and
+// Choosing an AI model: on this Mac through Ollama (installing Ollama and
 // downloading a model if needed) or a cloud provider with the user's own key.
-// Used by the first-run onboarding and by Settings > AI.
+// There are two slots: the careful model writes and plans, the fast model
+// reads each email. Onboarding sets the careful one, which the fast slot
+// follows until Settings > AI gives it its own.
 
 export function useSetupState() {
   const [state, setState] = useState<SetupState | null>(null);
@@ -22,7 +24,7 @@ export function useSetupState() {
   return { state, error, refresh };
 }
 
-export function modelLabel(m: SetupState["model"], providers: SetupState["providers"]): string {
+export function modelLabel(m: ModelInfo | null, providers: SetupState["providers"]): string {
   if (!m) return "";
   if (m.format === "ollama") return `${m.model} on this Mac`;
   const name = providers.find((p) => p.id === m.provider)?.name ?? "the cloud";
@@ -116,8 +118,11 @@ function pullLabel(model: string, status: string): string {
   return status;
 }
 
-export default function ModelSetup({ state, refresh, onSaved }: { state: SetupState; refresh: () => Promise<void>; onSaved?: () => void }) {
-  const [where, setWhere] = useState<"local" | "cloud">(state.model && state.model.format !== "ollama" ? "cloud" : "local");
+type PanelProps = { state: SetupState; slot: Slot; current: ModelInfo | null; refresh: () => Promise<void>; onSaved?: () => void };
+
+export default function ModelSetup({ state, refresh, onSaved, slot = "careful" }: { state: SetupState; refresh: () => Promise<void>; onSaved?: () => void; slot?: Slot }) {
+  const current = slot === "fast" ? (state.fastModel ?? state.model) : state.model;
+  const [where, setWhere] = useState<"local" | "cloud">(current && current.format !== "ollama" ? "cloud" : "local");
   const options = [
     { id: "local" as const, icon: "laptop_mac", title: "On this Mac", text: "Free and private. Runs with Ollama; slower on long threads." },
     { id: "cloud" as const, icon: "cloud", title: "Cloud provider", text: "Faster and sharper. Your own API key, billed by the provider." },
@@ -152,17 +157,22 @@ export default function ModelSetup({ state, refresh, onSaved }: { state: SetupSt
           );
         })}
       </div>
-      {where === "local" ? <LocalPanel state={state} refresh={refresh} onSaved={onSaved} /> : <CloudPanel state={state} refresh={refresh} onSaved={onSaved} />}
+      {where === "local" ? (
+        <LocalPanel state={state} slot={slot} current={current} refresh={refresh} onSaved={onSaved} />
+      ) : (
+        <CloudPanel state={state} slot={slot} current={current} refresh={refresh} onSaved={onSaved} />
+      )}
     </div>
   );
 }
 
 // ── On this Mac ─────────────────────────────────────────────────────────────
 
-function LocalPanel({ state, refresh, onSaved }: { state: SetupState; refresh: () => Promise<void>; onSaved?: () => void }) {
+function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProps) {
   const { ollama, local } = state;
-  const current = state.model?.format === "ollama" ? state.model.model : null;
-  const [selected, setSelected] = useState(current ?? local.recommended);
+  const current = model?.format === "ollama" ? model.model : null;
+  const recommendedName = slot === "fast" ? local.recommendedFast : local.recommended;
+  const [selected, setSelected] = useState(current ?? recommendedName);
   const [other, setOther] = useState("");
   const [busy, setBusy] = useState<{ label: string; p?: Progress } | null>(null);
   const [error, setError] = useState("");
@@ -173,6 +183,9 @@ function LocalPanel({ state, refresh, onSaved }: { state: SetupState; refresh: (
     return [...ollama.models.filter((m) => !curated.has(m.name)), ...local.choices];
   }, [ollama.models, local.choices]);
   const choice = selected === "__other" ? other.trim() : selected;
+  // Choosing the recommended careful model while the fast slot still follows
+  // it also sets up the recommended fast model, so mail is read quickly.
+  const pairFast = slot === "careful" && !state.fastModel && choice === local.recommended && local.recommendedFast !== choice ? local.recommendedFast : null;
 
   async function run(work: () => Promise<void>) {
     setError("");
@@ -203,12 +216,13 @@ function LocalPanel({ state, refresh, onSaved }: { state: SetupState; refresh: (
   const use = () =>
     run(async () => {
       if (!choice) throw new Error("Type the name of an Ollama model.");
-      if (!installed.has(choice)) {
-        setBusy({ label: `Preparing ${choice}` });
-        await setupStream("/ollama/pull", { model: choice }, (p) => setBusy({ label: pullLabel(choice, p.status), p: p.total ? p : undefined }));
+      for (const name of [choice, pairFast].filter((n): n is string => !!n && !installed.has(n))) {
+        setBusy({ label: `Preparing ${name}` });
+        await setupStream("/ollama/pull", { model: name }, (p) => setBusy({ label: pullLabel(name, p.status), p: p.total ? p : undefined }));
       }
       setBusy({ label: "Saving" });
-      await setupPost("/model", { provider: "ollama", model: choice });
+      await setupPost("/model", { slot, provider: "ollama", model: choice });
+      if (pairFast) await setupPost("/model", { slot: "fast", provider: "ollama", model: pairFast });
       await refresh();
       onSaved?.();
     });
@@ -243,23 +257,20 @@ function LocalPanel({ state, refresh, onSaved }: { state: SetupState; refresh: (
     );
   }
 
-  const inUse = current === choice && !!state.model?.ready;
+  const inUse = current === choice && !!model?.ready;
   return (
     <div className="space-y-4">
       <div role="radiogroup" aria-label="Local model" className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
         {rows.map((m, i) => {
           const on = selected === m.name;
-          const recommended = m.name === local.recommended;
+          const recommended = m.name === recommendedName;
           const has = installed.has(m.name);
-          const hint = recommended
-            ? `Recommended for this Mac's ${local.memoryGb} GB of memory`
-            : m.name === "qwen3:4b"
-              ? "Smallest and fastest; simpler drafts"
-              : m.name === "qwen3:8b"
-                ? "Balanced speed and quality"
-                : m.name === "qwen3:14b"
-                  ? "Best drafts; slower and wants plenty of memory"
-                  : "Already on this Mac";
+          const about: Record<string, string> = {
+            "qwen3.5:4b": "Small and quick; sorts mail well, simpler drafts",
+            "gemma4:12b": "Writes good drafts in your voice; wants 24 GB of memory",
+            "gemma4:26b": "Best drafts, and quick for its size; wants 48 GB of memory",
+          };
+          const hint = recommended ? `Recommended for this Mac's ${local.memoryGb} GB of memory` : (about[m.name] ?? "Already on this Mac");
           return (
             <button
               key={m.name}
@@ -283,7 +294,7 @@ function LocalPanel({ state, refresh, onSaved }: { state: SetupState; refresh: (
                 <span className="mt-0.5 block text-xs text-[var(--muted)]">{hint}</span>
               </span>
               <span className="shrink-0 text-xs tabular-nums text-[var(--muted)]">
-                {current === m.name && state.model?.ready ? "In use" : has ? "On this Mac" : formatBytes(m.size)}
+                {current === m.name && model?.ready ? "In use" : has ? "On this Mac" : formatBytes(m.size)}
               </span>
             </button>
           );
@@ -302,7 +313,7 @@ function LocalPanel({ state, refresh, onSaved }: { state: SetupState; refresh: (
             disabled={!!busy}
             onFocus={() => setSelected("__other")}
             onChange={(e) => setOther(e.target.value)}
-            placeholder="Another model from ollama.com/library, e.g. llama3.2:3b"
+            placeholder="Another model from ollama.com/library, e.g. qwen3.5:9b"
             className="h-8 min-w-0 flex-1 bg-transparent font-mono text-[13px] text-[var(--foreground)] placeholder:font-sans placeholder:text-[var(--muted)] focus:outline-none"
             aria-label="Another Ollama model"
           />
@@ -326,7 +337,12 @@ function LocalPanel({ state, refresh, onSaved }: { state: SetupState; refresh: (
               )}
             </button>
           )}
-          {!installed.has(choice) && choice && !inUse && <span className="text-xs text-[var(--muted)]">Downloads once, then runs offline.</span>}
+          {!inUse && pairFast && (
+            <span className="text-xs text-[var(--muted)]">
+              {installed.has(pairFast) ? "Also uses" : "Also downloads"} <span className="font-mono">{pairFast}</span> to read new mail quickly{installed.has(pairFast) && installed.has(choice) ? "." : "; downloads once, then runs offline."}
+            </span>
+          )}
+          {!installed.has(choice) && choice && !inUse && !pairFast && <span className="text-xs text-[var(--muted)]">Downloads once, then runs offline.</span>}
         </div>
       )}
       <ErrorLine text={error} />
@@ -336,8 +352,8 @@ function LocalPanel({ state, refresh, onSaved }: { state: SetupState; refresh: (
 
 // ── Cloud provider ──────────────────────────────────────────────────────────
 
-function CloudPanel({ state, refresh, onSaved }: { state: SetupState; refresh: () => Promise<void>; onSaved?: () => void }) {
-  const current = state.model && state.model.format !== "ollama" ? state.model : null;
+function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProps) {
+  const current = model && model.format !== "ollama" ? model : null;
   const [providerId, setProviderId] = useState(current?.provider ?? "openrouter");
   const provider = state.providers.find((p) => p.id === providerId) ?? state.providers[0];
   const [baseUrl, setBaseUrl] = useState(current?.provider === "custom" ? current.baseUrl : "");
@@ -388,7 +404,7 @@ function CloudPanel({ state, refresh, onSaved }: { state: SetupState; refresh: (
     setBusy("save");
     setError("");
     try {
-      await setupPost("/model", { provider: providerId, baseUrl, key, model: selected.trim() });
+      await setupPost("/model", { slot, provider: providerId, baseUrl, key, model: selected.trim() });
       setKey("");
       await refresh();
       onSaved?.();
@@ -527,24 +543,75 @@ function CloudPanel({ state, refresh, onSaved }: { state: SetupState; refresh: (
   );
 }
 
-// Settings > AI: the same picker, with its own state.
+// Settings > AI: the same picker for each slot, with its own state.
 export function ModelSettings() {
   const { state, error, refresh } = useSetupState();
-  const [saved, setSaved] = useState(false);
+  const [slot, setSlot] = useState<Slot>("careful");
+  const [saved, setSaved] = useState<Slot | null>(null);
   if (!state) return error ? <ErrorLine text={error} /> : <p className="flex items-center gap-2 text-sm text-[var(--muted)]"><Spinner /> Loading</p>;
+  const slots = [
+    { id: "careful" as const, title: "Careful model", text: "Writes drafts and the briefing, answers in the assistant, runs the agent." },
+    { id: "fast" as const, title: "Fast model", text: "Reads each new email to sort it, summarise it and find todos and meetings." },
+  ];
+  const sameAsCareful = !state.fastModel;
+  const shown = slot === "fast" ? (state.fastModel ?? state.model) : state.model;
+
+  const followCareful = async () => {
+    await setupPost("/model", { slot: "fast", same: true });
+    await refresh();
+    setSaved("fast");
+  };
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
+      <div role="tablist" aria-label="Model slot" className="grid gap-2 sm:grid-cols-2">
+        {slots.map((s) => {
+          const on = slot === s.id;
+          const m = s.id === "fast" ? (state.fastModel ?? state.model) : state.model;
+          return (
+            <button
+              key={s.id}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              onClick={() => {
+                setSlot(s.id);
+                setSaved(null);
+              }}
+              className={`rounded-xl border p-3.5 text-left transition-[border-color,background-color] ${
+                on ? "border-[var(--accent)] bg-[var(--accent-light)]" : "border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-2)]"
+              }`}
+            >
+              <span className="block text-sm font-semibold text-[var(--foreground)]">{s.title}</span>
+              <span className="mt-0.5 block text-xs leading-snug text-[var(--muted)]">{s.text}</span>
+              <span className="mt-2 block truncate font-mono text-[12px] text-[var(--foreground)]">
+                {m?.ready ? (s.id === "fast" && sameAsCareful ? `Same as careful, ${m.model}` : modelLabel(m, state.providers)) : "Not chosen yet"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
       <p className="text-sm text-[var(--muted)]">
-        {state.model?.ready ? (
+        {shown?.ready ? (
           <>
-            Using <span className="font-medium text-[var(--foreground)]">{modelLabel(state.model, state.providers)}</span>.
+            {slot === "fast" && sameAsCareful ? "Reading mail with the careful model, " : "Using "}
+            <span className="font-medium text-[var(--foreground)]">{modelLabel(shown, state.providers)}</span>.
           </>
         ) : (
           "No model yet. Mail still syncs, but sorting, the briefing and drafts wait until you choose one."
         )}
-        {saved && <span className="ml-2 font-medium text-[var(--success)]">Saved.</span>}
+        {saved === slot && <span className="ml-2 font-medium text-[var(--success)]">Saved.</span>}
       </p>
-      <ModelSetup state={state} refresh={refresh} onSaved={() => setSaved(true)} />
+
+      {slot === "fast" && state.model?.ready && !sameAsCareful && (
+        <button type="button" className={btnSecondary} onClick={followCareful}>
+          <Icon name="link" size={18} />
+          Use the careful model for this too
+        </button>
+      )}
+
+      <ModelSetup key={slot} slot={slot} state={state} refresh={refresh} onSaved={() => setSaved(slot)} />
     </div>
   );
 }

@@ -37,7 +37,7 @@ npm start
 `npm start` builds the interface, starts Tabellar and opens its window, which walks you through three steps:
 
 1. **Google client.** Tabellar signs in to Google with an OAuth client you create in your own Google Cloud project, so your mail never passes through anyone else's app. The window links to each page you need: create a project, enable the Gmail, Calendar and People APIs, set up the consent screen (External with yourself as a test user, or Internal on a Workspace account), and create a **Desktop app** client. When you download its JSON file, the window finds it in Downloads, Desktop or Documents (or drop it in), saves the secret to the Keychain and can move the file to the Trash.
-2. **AI model.** On this Mac: Tabellar downloads Ollama from ollama.com, checks its signature, installs it and downloads a model sized for your Mac's memory. In the cloud: pick a provider, paste your API key and choose from its models. You can skip this and choose later in Settings, under AI.
+2. **AI model.** On this Mac: Tabellar downloads Ollama from ollama.com, checks its signature, installs it and downloads a model sized for your Mac's memory. In the cloud: pick a provider, paste your API key and choose from its models. You can skip this and choose later in Settings, under AI. Tabellar has two model slots: the careful model writes drafts and the briefing and runs the assistant and agent, and the fast model reads each new email. Both start as the model you pick here; Settings, under AI, or `tabellar setup` can give the fast slot a smaller model, local or cloud, so new mail is sorted sooner.
 3. **Gmail.** Click **Continue with Google**. Google warns that it hasn't verified the app, which is expected for your own client: choose Advanced, then Go to Tabellar. The first sign-in fetches and analyzes your recent mail.
 
 After that, `tabellar start` runs Tabellar (Ctrl-C stops it), `tabellar open` opens the window again, and `tabellar status` shows what it is connected to and what the engine is doing. `tabellar setup` does the first two steps in the terminal instead.
@@ -77,7 +77,7 @@ server/
   query.ts      query builder shared by server and interface
   google.ts     Google sign-in and Keychain token storage
   gmail.ts      Gmail, Calendar and contacts client
-  llm.ts        model calls: Ollama, Anthropic, or OpenAI-compatible
+  llm.ts        model calls (fast and careful slots): Ollama, Anthropic, or OpenAI-compatible
   ai.ts         prompts and AI helpers
   agentLoop.ts, agentTools.ts, agentExecute.ts   the agent
   analyzeEmails.ts, buildBriefing.ts

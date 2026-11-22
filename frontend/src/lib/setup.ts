@@ -3,14 +3,21 @@
 
 export type LocalModel = { name: string; size: number };
 
+export type Slot = "careful" | "fast";
+
+export type ModelInfo = { provider?: string; format: "ollama" | "anthropic" | "openai"; baseUrl: string; model: string; ready: boolean };
+
 export type SetupState = {
   google: {
     clientId: string | null;
     file: { path: string; name: string; folder: string; modified: number } | null;
   };
-  model: { provider?: string; format: "ollama" | "anthropic" | "openai"; baseUrl: string; model: string; ready: boolean } | null;
+  // The careful model (drafts, briefing, assistant, agent).
+  model: ModelInfo | null;
+  // The fast model that reads each email; null when it is the careful one.
+  fastModel: ModelInfo | null;
   ollama: { installed: boolean; running: boolean; models: LocalModel[] };
-  local: { choices: LocalModel[]; recommended: string; memoryGb: number };
+  local: { choices: LocalModel[]; recommended: string; recommendedFast: string; memoryGb: number };
   providers: { id: string; name: string; keyUrl: string; suggested?: string; hasKey: boolean }[];
 };
 

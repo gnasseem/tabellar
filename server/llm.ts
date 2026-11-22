@@ -1,4 +1,5 @@
-// The model chosen in setup, behind one function.
+// The models chosen in setup, behind one function. A request names its slot:
+// fast (reading each email) or careful (everything that writes or plans).
 //
 // The prompts and tool definitions were written against the OpenAI chat
 // completions format, so that is what callers build. For any OpenAI-compatible
@@ -8,7 +9,7 @@
 // the callers' existing retry handling (429, 5xx, body parsing) keeps working.
 
 import { totalmem } from "node:os";
-import { loadConfig, keychainGet } from "./config.ts";
+import { slotModel, modelKey, type ModelConfig, type Slot } from "./config.ts";
 
 type ChatMessage = {
   role: string;
@@ -31,34 +32,40 @@ export type ChatRequest = {
   effort?: "low" | "medium" | "high";
   // Ask OpenRouter for the model's reasoning text alongside the answer.
   reasoning?: boolean;
+  // Which of the two models answers; careful when left out.
+  slot?: Slot;
 };
 
-export function modelConfigured(): boolean {
-  const m = loadConfig().model;
+function ready(m: ModelConfig | undefined): boolean {
   if (!m?.model || !m.baseUrl) return false;
-  return m.format === "ollama" || !!keychainGet("model-api-key");
+  return m.format === "ollama" || !!modelKey(m);
 }
 
-export function isLocalModel(): boolean {
-  return loadConfig().model?.format === "ollama";
+// Without a slot: both slots can run.
+export function modelConfigured(slot?: Slot): boolean {
+  return slot ? ready(slotModel(slot)) : ready(slotModel("careful")) && ready(slotModel("fast"));
+}
+
+export function isLocalModel(slot: Slot = "careful"): boolean {
+  return slotModel(slot)?.format === "ollama";
 }
 
 // Local models can take minutes on a long prompt, the first call also loads
 // the model into memory.
-export function modelTimeoutMs(): number {
-  return isLocalModel() ? 300_000 : 120_000;
+export function modelTimeoutMs(slot: Slot = "careful"): number {
+  return isLocalModel(slot) ? 300_000 : 120_000;
 }
 
 // Fail at once, with a message the interface can show, instead of retrying.
-export function requireModel(): void {
-  if (!modelConfigured()) throw new Error("No AI model is set up. Choose one in Settings, under AI.");
+export function requireModel(slot: Slot = "careful"): void {
+  if (!modelConfigured(slot)) throw new Error("No AI model is set up. Choose one in Settings, under AI.");
 }
 
 export async function chatCompletion(req: ChatRequest, signal?: AbortSignal): Promise<Response> {
-  const m = loadConfig().model;
+  const m = slotModel(req.slot ?? "careful");
   if (!m) throw new Error("No AI model is set up. Choose one in Settings, under AI.");
   if (m.format === "ollama") return ollama(m.baseUrl, m.model, req, signal);
-  const key = keychainGet("model-api-key");
+  const key = modelKey(m);
   if (!key) throw new Error("No API key is saved for the model. Add one in Settings, under AI.");
   return m.format === "anthropic" ? anthropic(m.baseUrl, m.model, key, req, signal) : openai(m.baseUrl, m.model, key, req, signal);
 }
