@@ -1,13 +1,11 @@
-"use client";
 
 import { useEffect, useRef, useCallback, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
-import { emailGraph } from "@/lib/emailGraph";
+import { createClient } from "@/lib/db";
 
 /**
  * Centralized live-update hook.
  *
- * - Single Supabase Realtime channel watching all key tables
+ * - Single live-update channel watching all key tables
  * - Background Gmail sync every 60s (only when tab is visible)
  * - Smart incremental briefing: only updates when meaningful emails arrive,
  *   reuses the old briefing so the LLM merges rather than rebuilds
@@ -21,8 +19,7 @@ type TableName =
   | "todos"
   | "meetings"
   | "draft_emails"
-  | "scheduled_emails"
-  | "read_receipts";
+  | "scheduled_emails";
 
 
 // Background sync interval (ms)  -  Gmail push notifications are the primary delivery
@@ -30,12 +27,6 @@ type TableName =
 const SYNC_INTERVAL = 5 * 60 * 1000;
 // Minimum time between briefing updates (ms)
 const BRIEFING_COOLDOWN_MS = 30 * 60 * 1000;
-// Categories that don't warrant a briefing update
-const SKIP_BRIEFING_CATS = new Set([
-  "newsletter",
-  "informational",
-  "promotional",
-]);
 
 function isToday(isoOrMs: string | number | null | undefined): boolean {
   if (!isoOrMs) return false;
@@ -65,12 +56,10 @@ function isWithinWorkingHours(wh: WorkingHours): boolean {
 
 export function useLiveUpdates(
   userId: string,
-  aiMode: "cloud" | "local" | "hybrid",
   lastBriefingAt: string | null,
   workingHours: WorkingHours,
   callbacks?: {
     addToast: (type: "success" | "error" | "info", msg: string) => void;
-    analyzeLocally: () => Promise<void>;
     onBriefingUpdated?: () => void;
   },
   briefingScope?: string | null,
@@ -99,10 +88,6 @@ export function useLiveUpdates(
   const analysisDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  // Stable ref to aiMode so the Realtime closure doesn't need it as a dep
-  const aiModeRef = useRef(aiMode);
-  aiModeRef.current = aiMode;
-
   // Per-table change counters; views useEffect on these to re-fetch
   const [changeCounters, setChangeCounters] = useState<LiveChangeCounters>({
     emails: 0,
@@ -111,14 +96,13 @@ export function useLiveUpdates(
     meetings: 0,
     draft_emails: 0,
     scheduled_emails: 0,
-    read_receipts: 0,
   });
 
   const bumpTable = useCallback((table: TableName) => {
     setChangeCounters((prev) => ({ ...prev, [table]: prev[table] + 1 }));
   }, []);
 
-  // ── Supabase Realtime subscriptions ──
+  // ── Live-update subscriptions ──
   useEffect(() => {
     const subscribe = () => {
       const channel = supabase.channel(`live-updates-${userId}`);
@@ -156,7 +140,7 @@ export function useLiveUpdates(
             const emailCount = pendingEmailsRef.current;
             try {
               const apiUrl =
-                process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+                "/api";
               let {
                 data: { session },
               } = await supabase.auth.getSession();
@@ -166,20 +150,13 @@ export function useLiveUpdates(
                 session = refreshed.session;
               }
               if (!session?.access_token) return;
-              if (
-                aiModeRef.current === "local" ||
-                aiModeRef.current === "hybrid"
-              ) {
-                await callbacksRef.current?.analyzeLocally?.();
-              } else {
-                await fetch(`${apiUrl}/analyze-inbox`, {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${session.access_token}`,
-                  },
-                });
-              }
+              await fetch(`${apiUrl}/analyze-inbox`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${session.access_token}`,
+                },
+              });
             } catch (err) {
               console.error("[useLiveUpdates] realtime analysis:", err);
             } finally {
@@ -276,7 +253,7 @@ export function useLiveUpdates(
 
     syncingRef.current = true;
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+      const apiUrl = "/api";
       let {
         data: { session },
       } = await supabase.auth.getSession();
@@ -308,19 +285,12 @@ export function useLiveUpdates(
       const hadNewEmails = newEmailCount > 0;
       if (hadNewEmails) setProcessingCount(newEmailCount);
 
-      // Phase 2: Analyze new emails  -  cloud or local depending on aiMode
+      // Phase 2: Analyze new emails
       try {
-        if (aiMode === "local" || aiMode === "hybrid") {
-          // Use locally registered analyzeInboxLocally from InboxView
-          if (callbacksRef.current?.analyzeLocally) {
-            await callbacksRef.current.analyzeLocally();
-          }
-        } else {
-          await fetch(`${apiUrl}/analyze-inbox`, {
-            method: "POST",
-            headers,
-          });
-        }
+        await fetch(`${apiUrl}/analyze-inbox`, {
+          method: "POST",
+          headers,
+        });
       } catch {
         // Will retry next interval
       }
@@ -338,7 +308,7 @@ export function useLiveUpdates(
       }
 
       // Phase 3: Smart briefing  -  auto-create first, refresh on new day, or update incrementally.
-      const briefingCooldownKey = `runemail_briefing_ts_${userId}`;
+      const briefingCooldownKey = `tabellar_briefing_ts_${userId}`;
       const lastBriefingUpdate = parseInt(
         localStorage.getItem(briefingCooldownKey) || "0",
       );
@@ -363,7 +333,7 @@ export function useLiveUpdates(
       };
 
       const localCached = localStorage.getItem(
-        `runemail_briefing_cache_${userId}`,
+        `tabellar_briefing_cache_${userId}`,
       );
       if (localCached) {
         try {
@@ -410,7 +380,7 @@ export function useLiveUpdates(
           if (freshData?.executiveSummary === undefined) return false;
           const ts = Date.now();
           localStorage.setItem(
-            `runemail_briefing_cache_${userId}`,
+            `tabellar_briefing_cache_${userId}`,
             JSON.stringify({ data: freshData, ts, scope }),
           );
           localStorage.setItem(briefingCooldownKey, String(ts));
@@ -429,63 +399,9 @@ export function useLiveUpdates(
         }
       };
 
-      const runLocalFreshBriefing = async (): Promise<boolean> => {
-        try {
-          const since = briefingIsStale
-            ? new Date(new Date().setHours(0, 0, 0, 0)).toISOString()
-            : new Date(0).toISOString();
-          const { data: allEmails } = await supabase
-            .from("emails")
-            .select(
-              "subject, sender, snippet, email_processed(category, summary)",
-            )
-            .eq("user_id", userId)
-            .gt("received_at", since)
-            .not("label_ids", "cs", '{"SENT"}')
-            .order("received_at", { ascending: false })
-            .limit(40);
-
-          if (!allEmails?.length) return true; // nothing to brief on; not a failure
-          const result = await emailGraph.invoke({
-            task: "brief",
-            emails: allEmails.map((e: any) => ({
-              subject: e.subject,
-              sender: e.sender,
-              snippet: e.snippet,
-            })),
-          });
-          if (!result.briefing) return false;
-          const ts = Date.now();
-          localStorage.setItem(
-            `runemail_briefing_cache_${userId}`,
-            JSON.stringify({ data: result.briefing, ts }),
-          );
-          localStorage.setItem(briefingCooldownKey, String(ts));
-          await supabase
-            .from("profiles")
-            .update({
-              last_briefing: result.briefing,
-              last_briefing_at: new Date(ts).toISOString(),
-            })
-            .eq("id", userId);
-          callbacksRef.current?.onBriefingUpdated?.();
-          return true;
-        } catch (err) {
-          console.error("[useLiveUpdates] local fresh briefing:", err);
-          return false;
-        }
-      };
-
       // Generate a fresh full briefing  -  used for first-ever creation and new-day refresh.
       const generateFreshBriefing = async () => {
-        if (aiMode === "local") {
-          await runLocalFreshBriefing();
-        } else if (aiMode === "hybrid") {
-          const ok = await runLocalFreshBriefing();
-          if (!ok) await runCloudFreshBriefing();
-        } else {
-          await runCloudFreshBriefing();
-        }
+        await runCloudFreshBriefing();
       };
 
       if (noBriefing) {
@@ -502,58 +418,6 @@ export function useLiveUpdates(
         isWithinWorkingHours(workingHoursRef.current)
       ) {
         // Existing briefing from today  -  do a smart incremental update.
-        const runLocalIncrementalUpdate = async (): Promise<boolean> => {
-          try {
-            const { data: newEmails } = await supabase
-              .from("emails")
-              .select(
-                "subject, sender, snippet, email_processed(category, summary)",
-              )
-              .eq("user_id", userId)
-              .gt("received_at", briefingTimestamp ?? new Date(0).toISOString())
-              .order("received_at", { ascending: false })
-              .limit(20);
-
-            if (!newEmails?.length) return true;
-            const relevant = newEmails.filter((e: any) => {
-              const p = Array.isArray(e.email_processed)
-                ? e.email_processed[0]
-                : e.email_processed;
-              return !p || !SKIP_BRIEFING_CATS.has(p.category);
-            });
-            if (relevant.length === 0) return true;
-
-            const result = await emailGraph.invoke({
-              task: "brief",
-              emails: newEmails.map((e: any) => ({
-                subject: e.subject,
-                sender: e.sender,
-                snippet: e.snippet,
-              })),
-            });
-            if (!result.briefing) return false;
-
-            const ts = Date.now();
-            localStorage.setItem(
-              `runemail_briefing_cache_${userId}`,
-              JSON.stringify({ data: result.briefing, ts }),
-            );
-            localStorage.setItem(briefingCooldownKey, String(ts));
-            await supabase
-              .from("profiles")
-              .update({
-                last_briefing: result.briefing,
-                last_briefing_at: new Date(ts).toISOString(),
-              })
-              .eq("id", userId);
-            callbacksRef.current?.onBriefingUpdated?.();
-            return true;
-          } catch (err) {
-            console.error("[useLiveUpdates] local briefing update:", err);
-            return false;
-          }
-        };
-
         const runCloudIncrementalUpdate = async (): Promise<boolean> => {
           try {
             if (!previousBriefing || !briefingTimestamp) return false;
@@ -572,7 +436,7 @@ export function useLiveUpdates(
 
             const ts = Date.now();
             localStorage.setItem(
-              `runemail_briefing_cache_${userId}`,
+              `tabellar_briefing_cache_${userId}`,
               JSON.stringify({ data: briefing, ts }),
             );
             localStorage.setItem(briefingCooldownKey, String(ts));
@@ -593,21 +457,14 @@ export function useLiveUpdates(
           }
         };
 
-        if (aiMode === "local") {
-          await runLocalIncrementalUpdate();
-        } else if (aiMode === "hybrid") {
-          const ok = await runLocalIncrementalUpdate();
-          if (!ok) await runCloudIncrementalUpdate();
-        } else {
-          await runCloudIncrementalUpdate();
-        }
+        await runCloudIncrementalUpdate();
       }
     } catch (err) {
       console.error("[useLiveUpdates] background sync:", err);
     } finally {
       syncingRef.current = false;
     }
-  }, [userId, supabase, aiMode, lastBriefingAt]);
+  }, [userId, supabase, lastBriefingAt]);
 
   // Keep the timer pointed at the current sync closure without making the
   // timer effect depend on its identity.
@@ -618,7 +475,7 @@ export function useLiveUpdates(
 
   // ── Background sync timer (every SYNC_INTERVAL) ──
   // Mount-only: depending on backgroundSync would restart the interval and
-  // fire an extra immediate sync every time aiMode or lastBriefingAt changed.
+  // fire an extra immediate sync every time lastBriefingAt changed.
   useEffect(() => {
     // Fire once immediately so new emails appear without waiting for the first interval
     backgroundSyncRef.current();

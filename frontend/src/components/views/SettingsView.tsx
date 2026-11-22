@@ -1,12 +1,9 @@
-"use client";
 
 import { useState, useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
-import WebLLMConsentModal from "../WebLLMConsentModal";
 import { EmailField, useContacts } from "../EmailAutocomplete";
-import { subscribeToPush, isPushSupported } from "@/lib/pushNotifications";
 
 // Sanitize user-authored signature HTML before rendering via
 // dangerouslySetInnerHTML or saving back to the DB. Keeps inline styles
@@ -248,30 +245,6 @@ function TimePickerAmPm({
   );
 }
 
-const aiModes = [
-  {
-    id: "cloud" as const,
-    label: "Cloud",
-    icon: "cloud",
-    desc: "Fast AI processing via secure server. Emails are processed server-side with no data stored beyond your session.",
-    badge: "Default",
-  },
-  {
-    id: "local" as const,
-    label: "Local",
-    icon: "computer",
-    desc: "Maximum privacy. AI runs entirely inside your browser via WebLLM. No data leaves your device.",
-    badge: "Private",
-  },
-  {
-    id: "hybrid" as const,
-    label: "Hybrid",
-    icon: "sync_alt",
-    desc: "Local processing when the app is open, cloud processing for background tasks when you're away.",
-    badge: "Best of Both",
-  },
-];
-
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: "account", label: "Account", icon: "manage_accounts" },
   { id: "ai", label: "AI", icon: "auto_awesome" },
@@ -366,68 +339,17 @@ export default function SettingsView() {
     profile,
     updateProfile,
     addToast,
-    startTutorial,
-    briefingAudioAutoplay,
-    setBriefingAudioAutoplay,
   } = useApp();
   const supabase = createClient();
   const { contacts } = useContacts(user.id);
 
   const [activeTab, setActiveTab] = useState<TabId>("account");
-  // OpenAI gpt-4o-mini-tts voices, proxied through OpenRouter.
-  const TTS_VOICES = [
-    { name: "cedar", label: "Cedar", description: "Warm, grounded" },
-    { name: "marin", label: "Marin", description: "Bright, conversational" },
-    { name: "alloy", label: "Alloy", description: "Balanced, neutral" },
-    { name: "ash", label: "Ash", description: "Calm, contemplative" },
-    { name: "ballad", label: "Ballad", description: "Expressive, storyteller" },
-    { name: "coral", label: "Coral", description: "Friendly, upbeat" },
-    { name: "echo", label: "Echo", description: "Steady, confident" },
-    { name: "fable", label: "Fable", description: "Soft, gentle" },
-    { name: "nova", label: "Nova", description: "Clear, professional" },
-    { name: "onyx", label: "Onyx", description: "Deep, resonant" },
-    { name: "sage", label: "Sage", description: "Measured, thoughtful" },
-    { name: "shimmer", label: "Shimmer", description: "Light, welcoming" },
-    { name: "verse", label: "Verse", description: "Lyrical, dynamic" },
-  ] as const;
-  const DEFAULT_VOICE = "cedar";
-  const LEGACY_VOICE_PREFIX = "en-US-";
-  const [selectedVoice, setSelectedVoice] = useState<string>(() => {
-    try {
-      const stored = localStorage.getItem("runemail_tts_voice");
-      if (!stored || stored.startsWith(LEGACY_VOICE_PREFIX)) {
-        return DEFAULT_VOICE;
-      }
-      return stored;
-    } catch {
-      return DEFAULT_VOICE;
-    }
-  });
-  // Clear any legacy Google voice preference once, so saved prefs don't
-  // silently keep using an unsupported name.
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem("runemail_tts_voice");
-      if (stored && stored.startsWith(LEGACY_VOICE_PREFIX)) {
-        localStorage.setItem("runemail_tts_voice", DEFAULT_VOICE);
-      }
-    } catch {
-      /* ignore */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
-  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Delegation rules
   const [delegations, setDelegations] = useState<DelegationRule[]>([]);
   const [delegationsLoaded, setDelegationsLoaded] = useState(false);
   const [newPattern, setNewPattern] = useState("");
   const [newTargetEmail, setNewTargetEmail] = useState("");
-  const [aiMode, setAiMode] = useState<"cloud" | "local" | "hybrid">(
-    profile?.ai_mode || "cloud",
-  );
-  const [showWebLLMConsent, setShowWebLLMConsent] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -478,28 +400,6 @@ export default function SettingsView() {
   const [styleLength, setStyleLength] = useState("");
   const [detectingStyle, setDetectingStyle] = useState(false);
 
-  // Notifications
-  const [notificationLevel, setNotificationLevel] = useState<
-    "all" | "important" | "none"
-  >((profile as any)?.notification_level || "important");
-  const [notificationPreview, setNotificationPreview] = useState<boolean>(
-    (profile as any)?.notification_preview !== false,
-  );
-  const [pushPermission, setPushPermission] = useState<
-    "default" | "granted" | "denied" | "unsupported"
-  >("default");
-  const [enablingPush, setEnablingPush] = useState(false);
-
-  useEffect(() => {
-    if (!isPushSupported()) {
-      setPushPermission("unsupported");
-      return;
-    }
-    setPushPermission(
-      Notification.permission as "default" | "granted" | "denied",
-    );
-  }, []);
-
   const handleDetectStyle = async () => {
     if (detectingStyle) return;
     setDetectingStyle(true);
@@ -512,7 +412,7 @@ export default function SettingsView() {
         return;
       }
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/api/learn-style`,
+        `/api/learn-style`,
         {
           method: "POST",
           headers: {
@@ -553,38 +453,6 @@ export default function SettingsView() {
     }
   };
 
-  const handleEnablePush = async () => {
-    setEnablingPush(true);
-    try {
-      const supabase = createClient();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        addToast("error", "Session expired, please sign in again.");
-        return;
-      }
-      const ok = await subscribeToPush(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        session.access_token,
-      );
-      const newPermission = Notification.permission as
-        | "default"
-        | "granted"
-        | "denied";
-      setPushPermission(newPermission);
-      if (ok) addToast("success", "Push notifications enabled.");
-      else if (newPermission === "denied")
-        addToast(
-          "error",
-          "Notifications blocked. Allow them in your browser settings.",
-        );
-      else addToast("error", "Could not enable notifications. Try again.");
-    } finally {
-      setEnablingPush(false);
-    }
-  };
-
   // Working hours
   const [workStart, setWorkStart] = useState("09:00");
   const [workEnd, setWorkEnd] = useState("17:00");
@@ -600,45 +468,6 @@ export default function SettingsView() {
   const [calendarSendInvites, setCalendarSendInvites] = useState(
     profile?.calendar_send_invites !== false,
   );
-
-  const previewVoice = async (voiceName: string, label: string) => {
-    previewAudioRef.current?.pause();
-    previewAudioRef.current = null;
-    if (previewingVoice === voiceName) {
-      setPreviewingVoice(null);
-      return;
-    }
-    setPreviewingVoice(voiceName);
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
-      const res = await fetch(
-        process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api/tts",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({
-            text: `Hi, I'm ${label} and I'll be your briefing voice.`,
-            voice: voiceName,
-          }),
-        },
-      );
-      if (!res.ok) throw new Error();
-      const { audioContent } = await res.json();
-      const audio = new Audio(`data:audio/mp3;base64,${audioContent}`);
-      previewAudioRef.current = audio;
-      audio.onended = () => setPreviewingVoice(null);
-      audio.onerror = () => setPreviewingVoice(null);
-      audio.play();
-    } catch {
-      setPreviewingVoice(null);
-    }
-  };
 
   const loadGmailAccounts = () => {
     supabase
@@ -754,7 +583,7 @@ export default function SettingsView() {
     if (!session) return;
     try {
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/api/signatures`,
+        `/api/signatures`,
         {
           headers: { Authorization: `Bearer ${session.access_token}` },
         },
@@ -811,8 +640,8 @@ export default function SettingsView() {
         gmail_account_id: sigForm.gmail_account_id || null,
       };
       const url = editingSignature
-        ? `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/api/signatures/${editingSignature.id}`
-        : `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/api/signatures`;
+        ? `/api/signatures/${editingSignature.id}`
+        : `/api/signatures`;
       const res = await fetch(url, {
         method: editingSignature ? "PATCH" : "POST",
         headers: {
@@ -861,7 +690,7 @@ export default function SettingsView() {
     } = await supabase.auth.getSession();
     if (!session) return;
     await fetch(
-      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/api/signatures/${id}`,
+      `/api/signatures/${id}`,
       {
         method: "DELETE",
         headers: { Authorization: `Bearer ${session.access_token}` },
@@ -904,7 +733,7 @@ export default function SettingsView() {
   const removeGmailAccount = async (accountId: string) => {
     setRemovingAccount(accountId);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+      const apiUrl = "/api";
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -969,30 +798,12 @@ export default function SettingsView() {
     loadSignatures();
   }, [user.id]);
 
-  const handleModeChange = (mode: "cloud" | "local" | "hybrid") => {
-    if ((mode === "local" || mode === "hybrid") && aiMode === "cloud") {
-      const hasConsented = localStorage.getItem("webllm_consent") === "true";
-      if (!hasConsented) {
-        setShowWebLLMConsent(true);
-        return;
-      }
-    }
-    setAiMode(mode);
-  };
-
-  const handleWebLLMConsent = () => {
-    localStorage.setItem("webllm_consent", "true");
-    setShowWebLLMConsent(false);
-    setAiMode("local");
-  };
-
   const autoSave = async () => {
     setSaving(true);
     const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const { error: profileErr } = await supabase
       .from("profiles")
       .update({
-        ai_mode: aiMode,
         style_notes: styleNotes || null,
         working_hours: {
           start: workStart,
@@ -1003,8 +814,6 @@ export default function SettingsView() {
         },
         briefing_scope: briefingScope,
         calendar_send_invites: calendarSendInvites,
-        notification_level: notificationLevel,
-        notification_preview: notificationPreview,
       })
       .eq("id", user.id);
     let styleErr: { message?: string } | null = null;
@@ -1036,7 +845,6 @@ export default function SettingsView() {
       return;
     }
     updateProfile({
-      ai_mode: aiMode,
       style_notes: styleNotes || null,
       working_hours: {
         start: workStart,
@@ -1065,7 +873,6 @@ export default function SettingsView() {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
   }, [
-    aiMode,
     styleNotes,
     workStart,
     workEnd,
@@ -1077,105 +884,13 @@ export default function SettingsView() {
     styleClosing,
     styleTone,
     styleLength,
-    notificationLevel,
-    notificationPreview,
   ]);
 
   const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-  const [deletingAccount, setDeletingAccount] = useState(false);
-  const [accountToDelete, setAccountToDelete] = useState<string>("");
-  const [confirmAccountDelete, setConfirmAccountDelete] = useState(false);
-
-  useEffect(() => {
-    if (gmailAccounts.length === 1) setAccountToDelete(gmailAccounts[0].id);
-    else setAccountToDelete("");
-    setConfirmAccountDelete(false);
-  }, [gmailAccounts]);
-
-  const deleteAccount = async () => {
-    if (!accountToDelete) return;
-    if (!confirmAccountDelete) {
-      setConfirmAccountDelete(true);
-      return;
-    }
-    setDeletingAccount(true);
-    setConfirmAccountDelete(false);
-    try {
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
-      let {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const deleteBody = JSON.stringify({ account_id: accountToDelete });
-      let res = await fetch(`${apiUrl}/delete-account`, {
-        method: "DELETE",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token}`,
-        },
-        body: deleteBody,
-      });
-      if (res.status === 401) {
-        const { data: refreshed } = await supabase.auth.refreshSession();
-        session = refreshed.session;
-        res = await fetch(`${apiUrl}/delete-account`, {
-          method: "DELETE",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session?.access_token}`,
-          },
-          body: deleteBody,
-        });
-      }
-      if (res.ok) {
-        [
-          "runemail_sent_cache",
-          "runemail_drafts_cache",
-          "runemail_briefing_cache",
-        ].forEach((key) => {
-          localStorage.removeItem(`${key}_${user.id}`);
-        });
-        const remaining = gmailAccounts.filter((a) => a.id !== accountToDelete);
-        if (remaining.length === 0) {
-          localStorage.removeItem(`runemail_tutorial_v2_${user.id}`);
-          await supabase.auth.signOut();
-          window.location.href = "/";
-        } else {
-          window.location.reload();
-        }
-      } else {
-        addToast("error", "Delete failed. Please try again.");
-      }
-    } catch {
-      addToast("error", "Could not reach the server.");
-    }
-    setDeletingAccount(false);
-  };
-
   const connectGmail = async (addAccount = false) => {
     if (addAccount) {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
-
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
-      const redirectUri = `${window.location.origin}/auth/google-add-account`;
-      try {
-        const res = await fetch(
-          `${apiUrl}/oauth/google-url?redirect_uri=${encodeURIComponent(redirectUri)}`,
-          { headers: { Authorization: `Bearer ${session.access_token}` } },
-        );
-        if (!res.ok) throw new Error("Failed to get OAuth URL");
-        const { url, state } = await res.json();
-        // Stash only the signed state so the callback can validate it came
-        // from us. The Supabase session stays in cookies; we no longer move
-        // the JWT through localStorage.
-        if (state) sessionStorage.setItem("runemail_add_account_state", state);
-        window.location.href = url;
-      } catch (err: any) {
-        addToast("error", err?.message ?? "Failed to start OAuth flow");
-      }
+      window.location.assign("/oauth/start");
     } else {
       await supabase.auth.signInWithOAuth({
         provider: "google",
@@ -1320,201 +1035,12 @@ export default function SettingsView() {
                   </button>
                 </div>
               </SectionCard>
-
-              <SectionLabel>Help</SectionLabel>
-              <SectionCard>
-                <SettingRow
-                  label="Getting started tutorial"
-                  description="Replay the onboarding walkthrough."
-                >
-                  <button
-                    onClick={() => {
-                      localStorage.removeItem(
-                        `runemail_tutorial_v2_${user.id}`,
-                      );
-                      startTutorial();
-                    }}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent-light)] text-[var(--accent)] text-xs font-semibold hover:opacity-80 transition-opacity"
-                  >
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "15px" }}
-                    >
-                      school
-                    </span>
-                    Replay
-                  </button>
-                </SettingRow>
-              </SectionCard>
-
-              <SectionLabel className="text-red-500">Danger Zone</SectionLabel>
-              <div className="rounded-xl border border-red-200 dark:border-red-900 overflow-hidden">
-                <div className="p-4 border-b border-red-200 dark:border-red-900 bg-red-50/50 dark:bg-red-900/10">
-                  <p className="text-sm text-[var(--muted)]">
-                    Permanently remove a connected Gmail account and all its
-                    associated emails, meetings, todos, and AI data from
-                    RuneMail. This cannot be undone.
-                  </p>
-                </div>
-
-                <div className="p-4 space-y-3">
-                  {gmailAccounts.length === 0 ? (
-                    <p className="text-sm text-[var(--muted)] italic">
-                      No connected accounts.
-                    </p>
-                  ) : gmailAccounts.length > 1 ? (
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium text-[var(--muted)] uppercase tracking-wide">
-                        Select account to delete
-                      </p>
-                      {gmailAccounts.map((acc) => (
-                        <label
-                          key={acc.id}
-                          className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                            accountToDelete === acc.id
-                              ? "border-red-400 bg-red-50 dark:bg-red-900/20"
-                              : "border-[var(--border)] hover:border-red-300 dark:hover:border-red-700"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="accountToDelete"
-                            value={acc.id}
-                            checked={accountToDelete === acc.id}
-                            onChange={() => {
-                              setAccountToDelete(acc.id);
-                              setConfirmAccountDelete(false);
-                            }}
-                            className="accent-red-500"
-                          />
-                          <span
-                            className="material-symbols-outlined text-[var(--muted)]"
-                            style={{ fontSize: "18px" }}
-                          >
-                            mail
-                          </span>
-                          <span className="text-sm font-medium text-[var(--foreground)] flex-1 truncate">
-                            {acc.gmail_address}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-[var(--border)]">
-                      <span
-                        className="material-symbols-outlined text-[var(--muted)]"
-                        style={{ fontSize: "18px" }}
-                      >
-                        mail
-                      </span>
-                      <span className="text-sm font-medium text-[var(--foreground)]">
-                        {gmailAccounts[0]?.gmail_address}
-                      </span>
-                    </div>
-                  )}
-
-                  {confirmAccountDelete && (
-                    <p className="text-sm font-medium text-red-600 dark:text-red-400">
-                      All emails, meetings, and todos from this account will be
-                      permanently deleted. Click again to confirm.
-                    </p>
-                  )}
-
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={deleteAccount}
-                      disabled={deletingAccount || !accountToDelete}
-                      className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-white text-sm font-medium disabled:opacity-40 transition-colors ${
-                        confirmAccountDelete
-                          ? "bg-red-600 hover:bg-red-700"
-                          : "bg-red-500 hover:bg-red-600"
-                      }`}
-                    >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{ fontSize: "18px" }}
-                      >
-                        {deletingAccount ? "hourglass_top" : "delete_forever"}
-                      </span>
-                      {deletingAccount
-                        ? "Deleting..."
-                        : confirmAccountDelete
-                          ? "Yes, Delete Account"
-                          : "Delete Account"}
-                    </button>
-                    {confirmAccountDelete && (
-                      <button
-                        onClick={() => setConfirmAccountDelete(false)}
-                        className="text-sm text-[var(--muted)] hover:underline"
-                      >
-                        Cancel
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
             </>
           )}
 
           {/* ---- AI & WRITING ---- */}
           {activeTab === "ai" && (
             <>
-              <SectionLabel>Processing Mode</SectionLabel>
-              <div className="space-y-2">
-                {aiModes.map((mode) => (
-                  <button
-                    key={mode.id}
-                    onClick={() => handleModeChange(mode.id)}
-                    className={`w-full text-left p-4 rounded-xl border-2 transition-all ${
-                      aiMode === mode.id
-                        ? "border-[var(--accent)] bg-[var(--accent-light)]"
-                        : "border-[var(--border)] hover:border-slate-300 dark:hover:border-slate-600"
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <span
-                        className={`material-symbols-outlined mt-0.5 ${aiMode === mode.id ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
-                        style={{ fontSize: "22px" }}
-                      >
-                        {mode.icon}
-                      </span>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`font-semibold text-sm ${aiMode === mode.id ? "text-[var(--accent)]" : "text-[var(--foreground)]"}`}
-                          >
-                            {mode.label}
-                          </span>
-                          <span
-                            className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                              aiMode === mode.id
-                                ? "bg-[var(--accent)] text-white"
-                                : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"
-                            }`}
-                          >
-                            {mode.badge}
-                          </span>
-                        </div>
-                        <p className="text-xs text-[var(--muted)] mt-1">
-                          {mode.desc}
-                        </p>
-                      </div>
-                      <div
-                        className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 ${
-                          aiMode === mode.id
-                            ? "border-[var(--accent)]"
-                            : "border-[var(--border)]"
-                        }`}
-                      >
-                        {aiMode === mode.id && (
-                          <div className="w-2 h-2 rounded-full bg-[var(--accent)]" />
-                        )}
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-
               <SectionLabel>Writing Style</SectionLabel>
               <SectionCard>
                 <div className="p-4 border-b border-[var(--border)]">
@@ -1676,165 +1202,6 @@ export default function SettingsView() {
                   </div>
                 </div>
               </SectionCard>
-
-              <SectionLabel>Notifications</SectionLabel>
-              <SectionCard>
-                <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
-                    {pushPermission === "granted" ? (
-                      <span
-                        className="material-symbols-outlined text-[var(--success)]"
-                        style={{ fontSize: "18px" }}
-                      >
-                        check_circle
-                      </span>
-                    ) : pushPermission === "denied" ? (
-                      <span
-                        className="material-symbols-outlined text-[var(--danger)]"
-                        style={{ fontSize: "18px" }}
-                      >
-                        block
-                      </span>
-                    ) : pushPermission === "unsupported" ? (
-                      <span
-                        className="material-symbols-outlined text-[var(--muted)]"
-                        style={{ fontSize: "18px" }}
-                      >
-                        notifications_off
-                      </span>
-                    ) : (
-                      <span
-                        className="material-symbols-outlined text-[var(--muted)]"
-                        style={{ fontSize: "18px" }}
-                      >
-                        notifications
-                      </span>
-                    )}
-                    <div>
-                      <p className="text-sm font-medium text-[var(--foreground)]">
-                        Browser notifications
-                      </p>
-                      <p className="text-xs text-[var(--muted)]">
-                        {pushPermission === "granted" &&
-                          "Enabled. Notifications will appear even when the tab is closed."}
-                        {pushPermission === "denied" &&
-                          "Blocked. Open your browser\u2019s site settings to allow notifications."}
-                        {pushPermission === "unsupported" &&
-                          "Not supported in this browser."}
-                        {pushPermission === "default" &&
-                          "Allow RuneMail to send you push notifications."}
-                      </p>
-                    </div>
-                  </div>
-                  {pushPermission === "default" && (
-                    <button
-                      onClick={handleEnablePush}
-                      disabled={enablingPush}
-                      className="shrink-0 px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
-                    >
-                      {enablingPush ? "Enabling..." : "Enable"}
-                    </button>
-                  )}
-                  {pushPermission === "granted" && (
-                    <button
-                      onClick={handleEnablePush}
-                      disabled={enablingPush}
-                      className="shrink-0 px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--foreground)] text-xs font-medium hover:bg-[var(--surface-2)] disabled:opacity-50 transition-colors"
-                      title="Re-register this browser for push notifications"
-                    >
-                      {enablingPush ? "Reconnecting..." : "Reconnect"}
-                    </button>
-                  )}
-                  {pushPermission === "denied" && (
-                    <button
-                      onClick={handleEnablePush}
-                      disabled={enablingPush}
-                      className="shrink-0 px-3 py-1.5 rounded-lg border border-[var(--danger)] text-[var(--danger)] text-xs font-medium hover:bg-[var(--danger)]/10 disabled:opacity-50 transition-colors"
-                      title="Ask the browser for notification permission again"
-                    >
-                      {enablingPush ? "Retrying..." : "Try again"}
-                    </button>
-                  )}
-                </div>
-                <div className="p-4 border-b border-[var(--border)]">
-                  <p className="text-xs font-medium text-[var(--muted)] mb-3">
-                    When should RuneMail notify you?
-                  </p>
-                  <div className="space-y-2">
-                    {(
-                      [
-                        {
-                          id: "all",
-                          icon: "notifications",
-                          label: "All emails",
-                          desc: "Get notified for every new email that arrives.",
-                        },
-                        {
-                          id: "important",
-                          icon: "priority_high",
-                          label: "Important only",
-                          desc: "Only notify for important or action-required emails. Requires Cloud or Hybrid AI mode.",
-                        },
-                        {
-                          id: "none",
-                          icon: "notifications_off",
-                          label: "None",
-                          desc: "Never send push notifications.",
-                        },
-                      ] as const
-                    ).map((opt) => (
-                      <button
-                        key={opt.id}
-                        onClick={() => setNotificationLevel(opt.id)}
-                        className={`w-full text-left flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
-                          notificationLevel === opt.id
-                            ? "border-[var(--accent)] bg-[var(--accent-light)]"
-                            : "border-[var(--border)] hover:border-slate-300 dark:hover:border-slate-600"
-                        }`}
-                      >
-                        <span
-                          className={`material-symbols-outlined ${notificationLevel === opt.id ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
-                          style={{ fontSize: "18px" }}
-                        >
-                          {opt.icon}
-                        </span>
-                        <div className="flex-1">
-                          <p
-                            className={`text-sm font-medium ${notificationLevel === opt.id ? "text-[var(--accent)]" : "text-[var(--foreground)]"}`}
-                          >
-                            {opt.label}
-                          </p>
-                          <p className="text-xs text-[var(--muted)] mt-0.5">
-                            {opt.desc}
-                          </p>
-                        </div>
-                        <div
-                          className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${notificationLevel === opt.id ? "border-[var(--accent)]" : "border-[var(--border)]"}`}
-                        >
-                          {notificationLevel === opt.id && (
-                            <div className="w-2 h-2 rounded-full bg-[var(--accent)]" />
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <SettingRow
-                  label="Show sender and subject"
-                  description="Display email preview in the notification. Turn off for more privacy."
-                >
-                  <Toggle
-                    value={notificationPreview}
-                    onChange={setNotificationPreview}
-                  />
-                </SettingRow>
-                <SettingRow
-                  label="Do Not Disturb"
-                  description="Silence push notifications outside your working hours."
-                >
-                  <Toggle value={workDnd} onChange={setWorkDnd} />
-                </SettingRow>
-              </SectionCard>
             </>
           )}
 
@@ -1911,98 +1278,6 @@ export default function SettingsView() {
                     </div>
                   </button>
                 ))}
-              </SectionCard>
-
-              <SectionLabel>Briefing audio</SectionLabel>
-              <SectionCard>
-                <SettingRow
-                  label="Auto process audio"
-                  description="Generate speech for your executive summary in the background and cache it so Listen starts instantly."
-                >
-                  <Toggle
-                    value={briefingAudioAutoplay}
-                    onChange={setBriefingAudioAutoplay}
-                  />
-                </SettingRow>
-              </SectionCard>
-
-              <SectionLabel>Briefing Audio Voice</SectionLabel>
-              <SectionCard>
-                <div className="px-4 pt-3 pb-2 border-b border-[var(--border)]">
-                  <p className="text-xs text-[var(--muted)]">
-                    Click a name to select, or press play to preview. Powered by
-                    gpt-4o-mini-tts.
-                  </p>
-                </div>
-                <div className="divide-y divide-[var(--border)]">
-                  {TTS_VOICES.map((voice) => {
-                    const isSelected = selectedVoice === voice.name;
-                    const isPreviewing = previewingVoice === voice.name;
-                    return (
-                      <div
-                        key={voice.name}
-                        className={`flex items-center gap-3 px-4 py-3 transition-colors ${
-                          isSelected
-                            ? "bg-[var(--accent-light)]"
-                            : "hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                        }`}
-                      >
-                        <button
-                          onClick={() => {
-                            setSelectedVoice(voice.name);
-                            try {
-                              localStorage.setItem(
-                                "runemail_tts_voice",
-                                voice.name,
-                              );
-                            } catch {
-                              /* ignore */
-                            }
-                          }}
-                          className="flex items-center gap-3 flex-1 min-w-0 text-left"
-                        >
-                          <span
-                            className={`material-symbols-outlined ${isSelected ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
-                            style={{ fontSize: "16px" }}
-                          >
-                            record_voice_over
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <p
-                              className={`text-sm font-medium ${isSelected ? "text-[var(--accent)]" : "text-[var(--foreground)]"}`}
-                            >
-                              {voice.label}
-                            </p>
-                            <p className="text-xs text-[var(--muted)]">
-                              {voice.description}
-                            </p>
-                          </div>
-                          {isSelected && (
-                            <div className="shrink-0 w-2 h-2 rounded-full bg-[var(--accent)]" />
-                          )}
-                        </button>
-                        <button
-                          onClick={() => previewVoice(voice.name, voice.label)}
-                          className={`shrink-0 flex items-center justify-center w-7 h-7 rounded-full transition-colors ${
-                            isPreviewing
-                              ? "bg-[var(--accent)] text-white"
-                              : "text-[var(--muted)] hover:text-[var(--accent)] hover:bg-[var(--accent-light)]"
-                          }`}
-                          title={
-                            isPreviewing ? "Stop preview" : "Preview voice"
-                          }
-                        >
-                          <span
-                            className="material-symbols-outlined"
-                            style={{ fontSize: "14px" }}
-                          >
-                            {isPreviewing ? "stop" : "play_arrow"}
-                          </span>
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
               </SectionCard>
 
               <SectionLabel>Calendar</SectionLabel>
@@ -2813,13 +2088,6 @@ export default function SettingsView() {
           )}
         </div>
       </div>
-
-      {showWebLLMConsent && (
-        <WebLLMConsentModal
-          onConsent={handleWebLLMConsent}
-          onCancel={() => setShowWebLLMConsent(false)}
-        />
-      )}
     </div>
   );
 }

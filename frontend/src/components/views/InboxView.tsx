@@ -1,12 +1,9 @@
-"use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import EmailDetail from "../EmailDetail";
 import InitialFetchOverlay from "../InitialFetchOverlay";
-import { initWebLLM, isWebLLMReady } from "@/lib/webllm";
-import { emailGraph, type BriefingResult } from "@/lib/emailGraph";
 import { parseSearch } from "@/lib/searchQuery";
 
 type Email = {
@@ -51,7 +48,7 @@ const SMART_SORT_WINDOW = 100;
 
 function getResolvedSortToEnd(userId: string): boolean {
   try {
-    const raw = localStorage.getItem(`runemail_resolved_sort_end_${userId}`);
+    const raw = localStorage.getItem(`tabellar_resolved_sort_end_${userId}`);
     return raw === null ? true : raw === "true";
   } catch { return true; }
 }
@@ -64,7 +61,6 @@ export default function InboxView() {
     addToast,
     search,
     setSyncing,
-    registerAnalyzeLocallyFn,
     inboxFilters,
     inboxSort,
     setInboxCustomCategories,
@@ -75,7 +71,6 @@ export default function InboxView() {
     liveChanges,
     processingCount,
     notifyBriefingUpdated,
-    startTutorial,
   } = useApp();
   const supabase = createClient();
   const [emails, setEmails] = useState<Email[]>([]);
@@ -83,7 +78,6 @@ export default function InboxView() {
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
   const [syncing, setSyncingLocal] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [localProcessingCount, setLocalProcessingCount] = useState(0);
   const [initialPhase, setInitialPhase] = useState(-1);
   const [syncMode, setSyncMode] = useState<"initial" | "refresh">("initial");
   const [page, setPage] = useState(0);
@@ -311,215 +305,16 @@ export default function InboxView() {
     setInboxCustomTags(tags);
   }, [emails, customTagColors, setInboxCustomCategories, setInboxCustomTags]);
 
-  /**
-   * Analyze unprocessed emails locally using the emailGraph.
-   * Runs categorize → summarize → extract_actions for each email
-   * and saves results to the email_processed table.
-   */
-  const analyzeInboxLocally = useCallback(async () => {
-    const ready = await initWebLLM();
-    if (!ready || !isWebLLMReady()) return;
-
-    // Fetch user-defined tags for auto-assignment
-    const { data: tagRows } = await supabase
-      .from("categories")
-      .select("slug, description")
-      .eq("user_id", user.id);
-    const userTags = (tagRows || []).map((t: any) => ({
-      slug: t.slug as string,
-      description: (t.description as string) || "",
-    }));
-
-    // Find emails without processed records
-    const { data: unprocessed } = await supabase
-      .from("emails")
-      .select("id, subject, sender, snippet, body_text")
-      .eq("user_id", user.id)
-      .eq("is_archived", false)
-      .order("received_at", { ascending: false })
-      .limit(20);
-
-    if (!unprocessed?.length) return;
-
-    // Check which ones already have email_processed records
-    const emailIds = unprocessed.map((e: any) => e.id);
-    const { data: existing } = await supabase
-      .from("email_processed")
-      .select("email_id")
-      .in("email_id", emailIds);
-
-    const existingIds = new Set((existing || []).map((e: any) => e.email_id));
-    const toProcess = unprocessed.filter((e: any) => !existingIds.has(e.id));
-
-    if (!toProcess.length) return;
-
-    // Process each email through the graph (up to 5 to avoid blocking)
-    const batch = toProcess.slice(0, 5);
-    const processedSummaries: {
-      subject: string;
-      sender: string;
-      summary: string;
-    }[] = [];
-    setLocalProcessingCount(batch.length);
-    for (const email of batch) {
-      try {
-        const result = await emailGraph.invoke({
-          task: "process_email",
-          currentEmail: {
-            id: email.id,
-            subject: email.subject || "",
-            sender: email.sender || "",
-            snippet: email.snippet || "",
-            body_text: email.body_text || "",
-          },
-          userTags: userTags.length > 0 ? userTags : undefined,
-        });
-
-        const extraLabels =
-          result.assignedTags && result.assignedTags.length > 0
-            ? result.assignedTags
-            : null;
-        await supabase.from("email_processed").upsert(
-          {
-            user_id: user.id,
-            email_id: email.id,
-            category: result.category || "updates",
-            summary: result.summary || null,
-            quick_actions: result.quickActions || [],
-            extra_labels: extraLabels,
-          },
-          { onConflict: "email_id" },
-        );
-
-        // Save extracted knowledge entities to knowledge_base
-        if (result.knowledgeEntities?.length) {
-          const rows = result.knowledgeEntities.map((e) => ({
-            user_id: user.id,
-            entity: e.entity,
-            entity_type: e.entity_type,
-            info: e.info,
-            source: email.subject || "email",
-            confidence: e.confidence,
-            importance: e.confidence >= 0.8 ? "high" : "normal",
-          }));
-          await supabase
-            .from("knowledge_base")
-            .upsert(rows, { onConflict: "user_id,entity,entity_type" });
-        }
-
-        if (result.summary) {
-          processedSummaries.push({
-            subject: email.subject || "",
-            sender: email.sender || "",
-            summary: result.summary,
-          });
-        }
-
-        // Roll this email into the list immediately and decrement banner count
-        await fetchEmails(0);
-        setLocalProcessingCount((prev) => Math.max(0, prev - 1));
-      } catch {
-        // Non-critical: skip individual email failures
-        setLocalProcessingCount((prev) => Math.max(0, prev - 1));
-      }
-    }
-    setLocalProcessingCount(0);
-
-    // Generate and cache briefing from all recently processed emails
-    try {
-      const { data: allProcessed } = await supabase
-        .from("email_processed")
-        .select("summary, emails!inner(subject, sender)")
-        .eq("user_id", user.id)
-        .not("summary", "is", null)
-        .order("processed_at", { ascending: false })
-        .limit(25);
-
-      const emailsForBriefing = (allProcessed || []).map((row: any) => ({
-        subject: row.emails?.subject || "",
-        sender: row.emails?.sender || "",
-        snippet: row.summary || "",
-      }));
-
-      if (emailsForBriefing.length > 0) {
-        const briefingResult = await emailGraph.invoke({
-          task: "brief",
-          emails: emailsForBriefing,
-        });
-        if (briefingResult.briefing) {
-          const ts = Date.now();
-          localStorage.setItem(
-            `runemail_briefing_cache_${user.id}`,
-            JSON.stringify({
-              data: briefingResult.briefing as BriefingResult,
-              ts,
-            }),
-          );
-          await supabase
-            .from("profiles")
-            .update({
-              last_briefing: briefingResult.briefing,
-              last_briefing_at: new Date(ts).toISOString(),
-            })
-            .eq("id", user.id);
-        }
-      }
-    } catch {
-      // Non-critical: briefing can be generated on demand
-    }
-  }, [user.id, supabase, fetchEmails]);
-
-  /**
-   * Learn writing style from cached sent emails using local AI (emailGraph analyze_style node).
-   * Only runs on first fetch for local/hybrid mode.
-   */
-  const analyzeWritingStyleLocally = useCallback(async () => {
-    const { data: sentEmails } = await supabase
-      .from("emails")
-      .select("subject, snippet, body_text")
-      .eq("user_id", user.id)
-      .contains("label_ids", ["SENT"])
-      .order("received_at", { ascending: false })
-      .limit(20);
-    if (!sentEmails || sentEmails.length < 3) return;
-
-    const result = await emailGraph.invoke({
-      task: "analyze_style",
-      emails: sentEmails.map((e: any) => ({
-        subject: e.subject || "",
-        sender: "me",
-        snippet: (e.body_text || e.snippet || "").slice(0, 500),
-      })),
-    });
-
-    if (result.styleProfile) {
-      await supabase.from("style_profiles").upsert(
-        {
-          user_id: user.id,
-          greeting_style: result.styleProfile.greeting_style,
-          closing_style: result.styleProfile.closing_style,
-          tone: result.styleProfile.tone,
-          avg_length: result.styleProfile.avg_length,
-          sample_count: result.styleProfile.sample_count,
-          last_learned_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id" },
-      );
-    }
-  }, [user.id, supabase]);
-
   const syncInbox = useCallback(async () => {
     if (syncing) return;
     setSyncingLocal(true);
     setSyncing(true);
     setSyncError(null);
     const isFirstFetch = isFirstEver === true;
-    const aiMode = profile?.ai_mode || "cloud";
-    const useLocalAI = aiMode === "local" || aiMode === "hybrid";
     setSyncMode(isFirstFetch ? "initial" : "refresh");
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+      const apiUrl = "/api";
       let {
         data: { session },
       } = await supabase.auth.getSession();
@@ -587,7 +382,6 @@ export default function InboxView() {
       }
       const fetchBody = JSON.stringify({
         initial: isFirstFetch,
-        ai_mode: aiMode,
       });
       let fetchRes = await fetch(`${apiUrl}/fetch-emails`, {
         method: "POST",
@@ -614,10 +408,8 @@ export default function InboxView() {
       const backgroundPipeline: boolean =
         fetchData.background_pipeline === true;
 
-      // Fast path: no new emails, not first fetch, and not local mode.
-      // Local mode skips this because the webhook may have already inserted
-      // unprocessed emails that need to be analyzed in the browser.
-      if (newEmailCount === 0 && !isFirstFetch && !useLocalAI) {
+      // Fast path: no new emails and not first fetch.
+      if (newEmailCount === 0 && !isFirstFetch) {
         invalidateViewCache("inbox", "inbox:smart");
         try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
         await fetchEmails(0);
@@ -628,31 +420,29 @@ export default function InboxView() {
       const shouldAnalyze = newEmailCount > 0 || isFirstFetch;
 
       // For initial fetch, learn writing style in parallel (fire and forget)
-      if (isFirstFetch && !useLocalAI) {
+      if (isFirstFetch) {
         fetch(`${apiUrl}/learn-style`, { method: "POST", headers }).catch(
           () => {},
         );
       }
 
-      // Cloud mode on the initial fetch: the backend has already kicked off
+      // On the initial fetch the backend has already kicked off
       // analysis + briefing in the background via EdgeRuntime.waitUntil, so
       // we don't hit /analyze-inbox at all; we just wait for email_processed
       // rows to show up via Realtime (see the overlay's poll/subscribe below).
-      const cloudBackgroundHandled = backgroundPipeline && !useLocalAI;
+      const cloudBackgroundHandled = backgroundPipeline;
       const analyzePromise: Promise<unknown> = shouldAnalyze
-        ? useLocalAI
-          ? analyzeInboxLocally()
-          : cloudBackgroundHandled
-            ? Promise.resolve()
-            : fetch(`${apiUrl}/analyze-inbox`, { method: "POST", headers })
-                .then((r) => r.ok)
-                .catch(() => false)
+        ? cloudBackgroundHandled
+          ? Promise.resolve()
+          : fetch(`${apiUrl}/analyze-inbox`, { method: "POST", headers })
+              .then((r) => r.ok)
+              .catch(() => false)
         : Promise.resolve();
 
       // Briefing is fire-and-forget from the frontend's perspective; it never
-      // blocks the overlay. On initial cloud fetch the backend also writes
+      // blocks the overlay. On the initial fetch the backend also writes
       // last_briefing itself, so we skip the HTTP call and rely on a profiles
-      // realtime/polling pickup. For non-initial or local mode we still fetch
+      // realtime/polling pickup. For non-initial fetches we still fetch
       // so the BriefingView gets a fresh snapshot.
       void (async () => {
         try {
@@ -675,7 +465,7 @@ export default function InboxView() {
               try {
                 const ts = new Date(p.last_briefing_at as string).getTime();
                 localStorage.setItem(
-                  `runemail_briefing_cache_${user.id}`,
+                  `tabellar_briefing_cache_${user.id}`,
                   JSON.stringify({ data: p.last_briefing, ts }),
                 );
               } catch {
@@ -689,8 +479,6 @@ export default function InboxView() {
           return;
         }
 
-        if (useLocalAI) return;
-
         try {
           const briefingRes = await fetch(
             `${apiUrl}/briefing?scope=all_recent`,
@@ -703,7 +491,7 @@ export default function InboxView() {
             const ts = Date.now();
             try {
               localStorage.setItem(
-                `runemail_briefing_cache_${user.id}`,
+                `tabellar_briefing_cache_${user.id}`,
                 JSON.stringify({ data: briefingData, ts }),
               );
             } catch {
@@ -722,11 +510,6 @@ export default function InboxView() {
           /* non-blocking */
         }
       })();
-
-      const localStylePromise =
-        isFirstFetch && useLocalAI
-          ? analyzeWritingStyleLocally()
-          : Promise.resolve();
 
       if (isFirstFetch) {
         // Keep the overlay visible until every fetched inbox email has an
@@ -784,7 +567,7 @@ export default function InboxView() {
           )
           .subscribe();
 
-        await Promise.allSettled([analyzePromise, localStylePromise]);
+        await Promise.allSettled([analyzePromise]);
 
         // Fast poll (500ms) after backend work completes, racing the realtime
         // notifier so whichever fires first dismisses the overlay.
@@ -813,7 +596,7 @@ export default function InboxView() {
         setInitialPhase(-1);
       } else {
         // Non-initial sync: run in background, no blocking overlay
-        await Promise.allSettled([analyzePromise, localStylePromise]);
+        await Promise.allSettled([analyzePromise]);
         invalidateViewCache("inbox", "inbox:smart");
         try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
         await fetchEmails(0);
@@ -831,16 +614,8 @@ export default function InboxView() {
     fetchEmails,
     addToast,
     setSyncing,
-    profile?.ai_mode,
-    analyzeInboxLocally,
-    analyzeWritingStyleLocally,
     notifyBriefingUpdated,
   ]);
-
-  // Register local analysis function for background sync (used by useLiveUpdates in local/hybrid mode)
-  useEffect(() => {
-    registerAnalyzeLocallyFn(analyzeInboxLocally);
-  }, [registerAnalyzeLocallyFn, analyzeInboxLocally]);
 
   // Live updates: re-fetch when emails or email_processed change (via centralized realtime)
   const prevEmailsChange = useRef(liveChanges.emails);
@@ -859,8 +634,7 @@ export default function InboxView() {
 
   // Auto-sync on every login for all modes.
   // Sets up the Gmail watch so push notifications work, catches emails
-  // missed since last session, and for local mode processes any
-  // unprocessed emails that arrived while the app was closed.
+  // missed since last session.
   useEffect(() => {
     if (isFirstEver === null) return; // wait for DB count check
     if (!profile) return; // wait for profile
@@ -879,7 +653,7 @@ export default function InboxView() {
 
     syncInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFirstEver, profile?.ai_mode]);
+  }, [isFirstEver]);
 
   const markRead = useCallback(async (email: Email, threadMsgs?: Email[]) => {
     const unreadIds = threadMsgs
@@ -1256,7 +1030,6 @@ export default function InboxView() {
         <InitialFetchOverlay
           phaseIndex={initialPhase}
           mode={syncMode}
-          onStartTutorial={syncMode === "initial" ? startTutorial : undefined}
         />
       )}
       <div className="h-full flex overflow-hidden">
@@ -1322,7 +1095,7 @@ export default function InboxView() {
           )}
 
           {/* Processing banner */}
-          {(processingCount > 0 || localProcessingCount > 0) && (
+          {processingCount > 0 && (
             <div className="px-4 py-2 bg-[var(--accent-light)] border-b border-[var(--border)] flex items-center gap-2 text-sm text-[var(--accent)]">
               <span
                 className="material-symbols-outlined animate-spin"
@@ -1330,8 +1103,8 @@ export default function InboxView() {
               >
                 progress_activity
               </span>
-              Processing {processingCount || localProcessingCount} new email
-              {(processingCount || localProcessingCount) !== 1 ? "s" : ""}...
+              Processing {processingCount} new email
+              {processingCount !== 1 ? "s" : ""}...
             </div>
           )}
 

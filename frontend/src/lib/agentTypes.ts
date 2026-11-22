@@ -39,7 +39,6 @@ export interface AgentAction {
     start_iso?: string;
     duration_mins?: number;
     attendees?: string[];
-    include_zoom?: boolean;
     email_ids?: string[];
     summary?: string;
   };
@@ -133,22 +132,4 @@ export interface AgentAnswer {
 
 export interface AgentBatchAnswer {
   answers: AgentAnswer[];
-}
-
-/** TTS job state  -  stored in AppShell so audio keeps loading across navigation. */
-export interface TtsJob {
-  id: string;
-  /** What we're reading  -  "briefing" | "email:<id>" etc. */
-  kind: string;
-  key: string;
-  status:
-    | "loading"
-    | "buffered"
-    | "playing"
-    | "paused"
-    | "error"
-    | "done";
-  audioBase64?: string;
-  error?: string;
-  startedAt: number;
 }

@@ -1,7 +1,6 @@
-"use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 
 type FollowUp = {
@@ -148,7 +147,7 @@ export default function FollowupsView() {
       .from("emails")
       .select("id, thread_id, recipients, subject, received_at, sender_email, sender")
       .eq("user_id", user.id)
-      .eq("folder", "SENT")
+      .contains("label_ids", ["SENT"])
       .gte("received_at", thirtyDaysAgo)
       .order("received_at", { ascending: false })
       .limit(50);
@@ -168,10 +167,10 @@ export default function FollowupsView() {
 
     const { data: replies } = await supabase
       .from("emails")
-      .select("thread_id, sender_email, folder")
+      .select("thread_id, sender_email")
       .eq("user_id", user.id)
       .in("thread_id", threadIds)
-      .eq("folder", "INBOX");
+      .not("label_ids", "cs", '{"SENT"}');
 
     const threadsWithReplies = new Set((replies || []).map((r: any) => r.thread_id));
 

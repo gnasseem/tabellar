@@ -1,7 +1,6 @@
-"use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import DateTimePicker from "../DateTimePicker";
 import { EmailField, useContacts } from "../EmailAutocomplete";
@@ -13,7 +12,6 @@ type Meeting = {
   end_time: string;
   attendees: string[];
   location: string | null;
-  zoom_link: string | null;
   calendar_event_id: string | null;
   status: "proposed" | "confirmed" | "cancelled";
 };
@@ -161,7 +159,6 @@ export default function MeetingsView() {
   const [newDuration, setNewDuration] = useState("30");
   const [newAttendees, setNewAttendees] = useState("");
   const [newLocation, setNewLocation] = useState("");
-  const [createZoomLink, setCreateZoomLink] = useState(false);
 
   const loadMeetings = useCallback(async () => {
     const cacheKey = `meetings_${filter}`;
@@ -289,7 +286,7 @@ export default function MeetingsView() {
     inflightRef.current.add(key);
     setLoadingDates(prev => new Set([...prev, key]));
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+      const apiUrl = "/api";
       const { data: { session } } = await supabase.auth.getSession();
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const res = await fetch(
@@ -344,24 +341,8 @@ export default function MeetingsView() {
       ...(newLocation ? { location: newLocation } : {}),
     };
 
-    if (createZoomLink) {
-      try {
-        const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
-        const { data: { session } } = await supabase.auth.getSession();
-        const res = await fetch(`${apiUrl}/zoom/create-meeting`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-          body: JSON.stringify({ topic: newTitle, start_time: startTime.toISOString(), duration: durationMin, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
-        });
-        if (res.ok) {
-          const zoom = await res.json();
-          meetingData.zoom_link = zoom.join_url;
-        }
-      } catch (err) { console.error("[MeetingsView] Zoom creation:", err); addToast("info", "Could not create Zoom link"); }
-    }
-
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+      const apiUrl = "/api";
       const { data: { session } } = await supabase.auth.getSession();
       const calRes = await fetch(`${apiUrl}/calendar/create-event`, {
         method: "POST",
@@ -371,8 +352,8 @@ export default function MeetingsView() {
           start_time: startTime.toISOString(),
           end_time: endTime.toISOString(),
           attendees,
-          location: (meetingData.zoom_link as string) || newLocation || "",
-          description: "Scheduled from RuneMail",
+          location: newLocation || "",
+          description: "Scheduled from Tabellar",
           sendUpdates: "all",
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
@@ -409,7 +390,6 @@ export default function MeetingsView() {
     setNewAttendees("");
     setNewDuration("30");
     setNewLocation("");
-    setCreateZoomLink(false);
     dayCacheRef.current = {};
     setDayCache({});
     inflightRef.current.clear();
@@ -493,7 +473,7 @@ export default function MeetingsView() {
 
     if (selectedMeeting.calendar_event_id) {
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+        const apiUrl = "/api";
         const { data: { session } } = await supabase.auth.getSession();
         const res = await fetch(`${apiUrl}/calendar/update-event`, {
           method: "POST",
@@ -813,26 +793,9 @@ export default function MeetingsView() {
                     type="text"
                     value={newLocation}
                     onChange={(e) => setNewLocation(e.target.value)}
-                    placeholder="Zoom link, room number, or address"
+                    placeholder="Meeting link, room number, or address"
                     className="w-full px-3 py-2 text-sm border border-[var(--border)] rounded-lg bg-[var(--background)] text-[var(--foreground)] placeholder-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50"
                   />
-                </div>
-
-                {/* Zoom toggle */}
-                <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border)] bg-slate-50 dark:bg-slate-800/50">
-                  <div className="flex items-center gap-2.5">
-                    <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "20px" }}>videocam</span>
-                    <div>
-                      <p className="text-sm font-medium text-slate-900 dark:text-white">Add Zoom link</p>
-                      <p className="text-xs text-[var(--muted)]">Auto-generates a meeting link</p>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setCreateZoomLink(!createZoomLink)}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${createZoomLink ? "bg-[var(--accent)]" : "bg-slate-300 dark:bg-slate-600"}`}
-                  >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${createZoomLink ? "translate-x-6" : "translate-x-1"}`} />
-                  </button>
                 </div>
 
                 {/* Time selection mode */}
@@ -898,7 +861,6 @@ export default function MeetingsView() {
                           <>
                             <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>event_available</span>
                             Schedule Meeting
-                            {createZoomLink && " + Zoom"}
                           </>
                         )}
                       </button>
@@ -1010,7 +972,6 @@ export default function MeetingsView() {
                     <>
                       <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>event_available</span>
                       Schedule Meeting
-                      {createZoomLink && " + Zoom"}
                     </>
                   )}
                 </button>
@@ -1151,12 +1112,6 @@ export default function MeetingsView() {
                       <span className="material-symbols-outlined text-[var(--muted)] mt-0.5" style={{ fontSize: "18px" }}>group</span>
                       <span>{selectedMeeting.attendees.join(", ")}</span>
                     </div>
-                  )}
-                  {selectedMeeting.zoom_link && (
-                    <a href={selectedMeeting.zoom_link} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-sm text-[var(--accent)] hover:underline">
-                      <span className="material-symbols-outlined" style={{ fontSize: "18px" }}>videocam</span>
-                      Join Zoom Meeting
-                    </a>
                   )}
                   {selectedMeeting.calendar_event_id && (
                     <div className="flex items-center gap-2 text-xs text-[var(--muted)]">

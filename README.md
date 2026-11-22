@@ -1,206 +1,95 @@
-# RuneMail
+# Tabellar
 
-**AI-powered email client built on top of Gmail.** RuneMail connects to your Gmail account and uses AI to triage your inbox, surface action items, draft replies in your writing style, and deliver a daily briefing.
+A personal email agent that runs on your Mac. Tabellar keeps a local copy of your Gmail, sorts it, writes a daily briefing, drafts replies in your style, pulls out todos and meetings, tracks mail that got no answer, answers questions about your inbox, and can plan and carry out a whole inbox cleanup that you approve.
 
----
+There is no hosted service and no sign-up. Your mail is stored in one SQLite file on your Mac. The only outside calls are to Google for your mail and calendar, and to the AI model you choose, billed to your own key.
 
-## Features
+## What it does
 
-- **Smart Inbox** - AI categorizes every email and extracts todos, meetings, and suggested replies automatically
-- **Three AI Modes** - Choose between fully local (on-device, private), cloud, or hybrid processing
-- **Daily Briefing** - Morning summary of your most important emails, strictly bucketed into Reply Needed, Deadlines, Crucial, and Non-essential
-- **Solve Everything** - Conversational AI agent that clears your whole briefing: proposes replies, todos, meetings, and bulk archives, asks you for any ambiguous decisions via interactive cards, and executes the approved plan in one click. Runs in the background so you can keep working
-- **AI Assistant** - Conversational assistant with full access to your inbox context
-- **Smart Drafts** - AI-generated replies that learn and match your personal writing style
-- **Read Receipts** - Invisible tracking pixel embedded in outgoing emails so you know when they are opened
-- **Scheduled Send** - Queue emails to deliver at a specific time
-- **Calendar and Zoom Integration** - Create Google Calendar events and Zoom meetings directly from emails
-- **Web Push Notifications** - Real-time browser notifications for new emails via Gmail webhooks
-- **Multi-Account Gmail** - Connect and switch between multiple Gmail accounts
-- **Interactive Tutorial** - Guided demo using a fake inbox so new users can explore every feature before connecting their real account
+- **Inbox**: every new email gets a category, a summary and suggested actions (reply, todo, meeting).
+- **Briefing**: a daily summary sorted into Reply needed, Deadlines, Crucial and Non-essential.
+- **Drafts**: replies and new emails written in your style, plus tone rephrasing in the compose window.
+- **Todos and meetings**: pulled from mail, with Google Calendar free slots and event creation.
+- **Follow-ups**: mail you sent that got no reply, with reminders and suggested nudges.
+- **Assistant**: ask about your inbox ("what did the registrar say about fees?") or tell it to act.
+- **Agent**: give it your briefing and it proposes replies, todos, meetings and a bulk archive, asks when unsure, and runs only what you approve.
+- **Also**: search operators, keyboard shortcuts, phishing warnings, signatures, templates, scheduled send and undo send, several Gmail accounts.
 
-## AI Modes
+## Requirements
 
-| Mode | Description | Privacy |
-|------|-------------|---------|
-| **Local** | Runs Qwen2.5-3B entirely in your browser via WebLLM. No data leaves your device. | Maximum |
-| **Cloud** | Uses OpenRouter (or Cerebras) via Supabase Edge Functions. Fast and always available. | Standard |
-| **Hybrid** | Tries local inference first; falls back to cloud on failure. | High |
+- macOS
+- Node.js 24 or newer
+- A Google account (Gmail)
+- An API key for a cloud model: Anthropic, or any OpenAI-compatible endpoint (OpenAI, OpenRouter, and others)
 
-The local model (~4 GB) is downloaded once and cached in the browser.
-
-## Tech Stack
-
-**Frontend**
-- [Next.js](https://nextjs.org/) (App Router) + TypeScript
-- [Tailwind CSS](https://tailwindcss.com/) for styling
-- [@mlc-ai/web-llm](https://github.com/mlc-ai/web-llm) for in-browser LLM inference (local mode)
-- [Supabase JS](https://supabase.com/docs/reference/javascript) for auth and database access
-
-**Backend**
-- [Supabase](https://supabase.com/) for PostgreSQL database, Row Level Security, auth, and Edge Functions (Deno)
-- [OpenRouter](https://openrouter.ai/) or [Cerebras](https://cerebras.ai/) for cloud AI processing
-- Gmail API and Google Calendar API for email and calendar access
-- Web Push API for real-time browser notifications
-
-**Infrastructure**
-- [Vercel](https://vercel.com/) for frontend deployment
-- Supabase for backend and database hosting
-
-## Repository Structure
-
-```
-RuneMail/
-├── frontend/                   # Next.js application
-│   └── src/
-│       ├── app/                # App Router: landing, /app, /auth, /privacy, /terms
-│       ├── components/         # UI components
-│       │   ├── views/          # InboxView, BriefingView, TodosView, MeetingsView, etc.
-│       │   └── tutorial/       # Interactive tutorial with fake demo inbox
-│       └── lib/
-│           ├── emailGraph.ts   # LangGraph-style AI state machine
-│           ├── webllm.ts       # Browser-side LLM inference wrapper
-│           └── supabase/       # Supabase client helpers and middleware
-├── supabase/
-│   ├── functions/
-│   │   ├── api/index.ts        # Main Edge Function (all backend routes)
-│   │   ├── scheduled-emails/   # Cron function for scheduled email delivery
-│   │   ├── process-emails/     # Cron function that renews Gmail Pub/Sub watches
-│   │   └── _shared/            # ai.ts, gmail.ts, cors.ts, fernet.ts,
-│   │                           # agentLoop.ts, agentTools.ts, agentExecute.ts,
-│   │                           # buildBriefing.ts
-│   ├── migrations/             # SQL migrations
-│   └── schema.sql              # Full database schema with RLS policies
-└── vercel.json                 # Points Vercel build at frontend/
-```
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 20.18.0 (see `.nvmrc`)
-- A [Supabase](https://supabase.com/) project
-- A Google Cloud project with the Gmail API and Google Calendar API enabled
-- An [OpenRouter API key](https://openrouter.ai/) for cloud/hybrid AI mode (or a Cerebras key)
-
-### 1. Clone and install
+## Install
 
 ```bash
-git clone https://github.com/smartlab-nyu/runemail.git
-cd runemail
-
-# npm workspace: this installs both the root tooling and the frontend
+git clone https://github.com/gnasseem/tabellar.git
+cd tabellar
 npm install
+npm run build
+npm link        # puts the `tabellar` command on your PATH
 ```
 
-### 2. Configure environment variables
+### 1. Create a Google sign-in client
 
-Copy `.env.example` to `.env` and fill in your values:
+Tabellar signs in to Google with your own OAuth client, so your mail never passes through anyone else's app.
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) and create a project.
+2. Under **APIs & Services > Library**, enable **Gmail API**, **Google Calendar API** and **People API**.
+3. Under **Google Auth Platform**, set up branding (app name "Tabellar", your email). For **Audience**, choose **Internal** if your account belongs to a Google Workspace organization; otherwise choose **External** and add yourself as a test user.
+4. Under **Clients**, create a client of type **Desktop app** and download its JSON file.
+
+### 2. Set up Tabellar
 
 ```bash
-cp .env.example .env
+tabellar setup
 ```
 
-Copy `frontend/.env.example` to `frontend/.env.local`:
+It asks for the JSON file from step 1 and for your model: the API format (`anthropic` or `openai`), base URL, model name and API key. Settings go to `~/.tabellar/config.json`; the client secret, API key and Google tokens go to the macOS Keychain.
+
+### 3. Start it
 
 ```bash
-cp frontend/.env.example frontend/.env.local
+tabellar start
 ```
 
-**Edge function secrets** (set via `supabase secrets set`):
+Tabellar opens its window in your browser. Click **Sign in with Google**; the first sign-in fetches and analyzes your recent mail. `tabellar start` keeps running in that terminal (Ctrl-C stops it); `tabellar open` opens the window again, and `tabellar status` shows what Tabellar is connected to.
 
-| Variable | Description |
-|----------|-------------|
-| `OPENROUTER_API_KEY` | [OpenRouter](https://openrouter.ai/) key for cloud AI (or use `CEREBRAS_API_KEY` with `AI_PROVIDER=cerebras`) |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google Cloud Console OAuth 2.0 credentials |
-| `TOKEN_ENCRYPTION_KEY` | Fernet key for encrypting Gmail tokens. Generate: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` |
-| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | VAPID keys for Web Push. Generate: `npx web-push generate-vapid-keys` |
-| `PUBSUB_TOPIC` | Google Cloud Pub/Sub topic for Gmail webhook notifications |
+## How it works
 
-**Frontend variables** (Vercel project settings or `frontend/.env.local`):
+One Node process (`server/`) does everything: it serves the interface, runs the API the interface calls, talks to Gmail, Calendar and the model, and stores data in `~/.tabellar/tabellar.db` using Node's built-in SQLite. It has no runtime dependencies.
 
-| Variable | Description |
-|----------|-------------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
-| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | Same VAPID public key as above |
+The server listens on `127.0.0.1` only. Every request must carry a per-install access token, and requests from other web origins are refused. The browser receives the token through a one-time link opened by the `tabellar` command.
 
-### 3. Set up the database
+The interface (`frontend/`) is React and Tailwind, built to static files with Vite.
 
-Apply `supabase/schema.sql` first, then apply the migrations in `supabase/migrations/` in order using the Supabase SQL editor or CLI.
+## Project layout
 
-### 4. Configure Google OAuth
+```
+server/
+  tabellar.ts   the `tabellar` command: setup, start, open, status
+  server.ts     HTTP server: interface, access checks, /db bridge, live events, Google sign-in
+  api.ts        the API routes under /api
+  db.ts         SQLite schema and the query executor
+  query.ts      query builder shared by server and interface
+  google.ts     Google sign-in and Keychain token storage
+  gmail.ts      Gmail, Calendar and contacts client
+  llm.ts        model calls in Anthropic or OpenAI-compatible format
+  ai.ts         prompts and AI helpers
+  agentLoop.ts, agentTools.ts, agentExecute.ts   the agent
+  analyzeEmails.ts, buildBriefing.ts
+  config.ts     paths, config.json and the Keychain
+frontend/
+  src/components/   views and UI components
+  src/lib/          the database client, live updates, helpers
+```
 
-In Google Cloud Console:
-1. Create an OAuth 2.0 Web Application client
-2. Add your Supabase auth callback as an authorized redirect URI: `https://your-project-id.supabase.co/auth/v1/callback`
-3. Enable the **Gmail API** and **Google Calendar API**
-4. Add these OAuth scopes: `https://www.googleapis.com/auth/gmail.modify` and `https://www.googleapis.com/auth/calendar`
-
-In Supabase, enable Google as an OAuth provider under Authentication > Providers.
-
-### 5. Deploy Edge Functions
+## Development
 
 ```bash
-# Set secrets on your Supabase project
-npx supabase secrets set \
-  OPENROUTER_API_KEY=... \
-  GOOGLE_CLIENT_ID=... \
-  GOOGLE_CLIENT_SECRET=... \
-  TOKEN_ENCRYPTION_KEY=... \
-  NEXT_PUBLIC_VAPID_PUBLIC_KEY=... \
-  VAPID_PRIVATE_KEY=... \
-  PUBSUB_TOPIC=... \
-  --project-ref your-project-id
-
-# Deploy functions
-npx supabase functions deploy api --project-ref your-project-id --no-verify-jwt
-npx supabase functions deploy scheduled-emails --project-ref your-project-id
-npx supabase functions deploy process-emails --project-ref your-project-id --no-verify-jwt
+npm start          # rebuild the interface and run the server
+npm run dev        # interface with hot reload, against a running server
+npm run typecheck  # server and interface
 ```
-
-### 6. Run locally
-
-```bash
-# From the repo root
-npm run dev
-# Open http://localhost:3000
-```
-
-### 7. Deploy to Vercel
-
-```bash
-# From the repo root
-npx vercel --prod
-```
-
-Set these environment variables in your Vercel project settings:
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `NEXT_PUBLIC_VAPID_PUBLIC_KEY`
-
-## Architecture Notes
-
-### State Management
-
-Global app state lives in `AppShell.tsx` via React Context. Access it with `useApp()` inside any component. Key fields: `user`, `profile`, `view`, `syncing`, `addToast`.
-
-### Email Processing Pipeline
-
-When emails are fetched, each one goes through a multi-step AI pipeline:
-
-1. **Categorize** - assigns a category label
-2. **Summarize** - generates a one-sentence summary
-3. **Extract actions** - identifies todos, meetings, and suggested replies
-
-This pipeline runs via `emailGraph.ts`, a custom LangGraph-style state machine that dispatches to the correct AI backend (local WebLLM or cloud) based on the user's selected AI mode.
-
-### Security
-
-- All database tables use Row Level Security (RLS); users only access their own rows
-- Gmail OAuth tokens are encrypted at rest using [Fernet symmetric encryption](https://cryptography.io/en/latest/fernet/)
-- Three routes are reachable without a Supabase JWT, each gated a different way: `GET /health` (returns only a status string), `GET /track/pixel/:id.gif` (read-receipt pixel, looked up by unguessable UUID), and `POST /gmail/webhook` (Pub/Sub push, requires a matching `PUBSUB_VERIFICATION_TOKEN`). Every other route calls `getUserId()` and scopes its queries by that user id
-
-## License
-
-MIT

@@ -223,7 +223,7 @@ export function analyzeEmailPatterns(
 }
 
 // ── localStorage helpers ──────────────────────────────────────────────────────
-const DISMISSED_PREFIX = "runemail:dismissed-tag-suggestions:";
+const DISMISSED_PREFIX = "tabellar:dismissed-tag-suggestions:";
 
 export function getDismissedSlugs(userId: string): string[] {
   try {

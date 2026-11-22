@@ -2,7 +2,7 @@
  * Client helpers for the Solve-Everything agent.
  */
 
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { DbClient as SupabaseClient } from "@/lib/db";
 import type {
   AgentSessionState,
   AgentAnswer,
@@ -12,7 +12,7 @@ import type {
 } from "./agentTypes";
 
 function apiUrl(): string {
-  return process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+  return "/api";
 }
 
 async function authHeaders(
@@ -208,7 +208,7 @@ export async function fetchTurns(
   return (data ?? []) as AgentTurnRow[];
 }
 
-/** Subscribe to session + turn updates via Supabase Realtime. */
+/** Subscribe to session + turn updates via the live event stream. */
 export function subscribeAgent(
   supabase: SupabaseClient,
   sessionId: string,

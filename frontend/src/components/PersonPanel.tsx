@@ -1,7 +1,6 @@
-"use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
 
 type ContactInsights = {
@@ -13,7 +12,6 @@ type ContactInsights = {
   relationship_notes: string | null;
   last_interaction_at: string | null;
   last_subject: string | null;
-  peak_hour: number | null;
   relationship_health: "active" | "recent" | "fading" | "dormant" | "new";
 };
 
@@ -46,13 +44,6 @@ function healthLabel(health: ContactInsights["relationship_health"]): { label: s
     case "dormant": return { label: "Dormant",  color: "text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800",    icon: "bedtime" };
     default:        return { label: "New",      color: "text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30", icon: "star" };
   }
-}
-
-function formatHour(h: number): string {
-  if (h === 0) return "12am";
-  if (h < 12) return `${h}am`;
-  if (h === 12) return "12pm";
-  return `${h - 12}pm`;
 }
 
 function timeAgo(iso: string): string {
@@ -117,20 +108,14 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
     try {
       const domain = email.includes("@") ? email.split("@")[1] : null;
 
-      // Parallel fetches from Supabase directly
-      const [memRes, receiptsRes, emailsRes, meetingsRes] = await Promise.all([
+      // Parallel fetches from the local database
+      const [memRes, emailsRes, meetingsRes] = await Promise.all([
         supabase
           .from("email_memory")
           .select("interaction_count, avg_response_time, relationship_notes, last_interaction_at, last_subject")
           .eq("user_id", user.id)
           .eq("sender_email", email)
           .maybeSingle(),
-        supabase
-          .from("read_receipts")
-          .select("opens")
-          .eq("user_id", user.id)
-          .eq("recipient_email", email)
-          .limit(30),
         supabase
           .from("emails")
           .select("id, subject, received_at, snippet")
@@ -169,21 +154,6 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
           .then(({ data }) => setRecentTodos((data as RecentTodo[]) ?? []));
       }
 
-      // Compute peak hour from read receipt open timestamps
-      let peakHour: number | null = null;
-      if (receiptsRes.data?.length) {
-        const hourCounts: Record<number, number> = {};
-        for (const r of receiptsRes.data as any[]) {
-          const opens: string[] = Array.isArray(r.opens) ? r.opens : [];
-          for (const ts of opens) {
-            const h = new Date(ts).getHours();
-            hourCounts[h] = (hourCounts[h] || 0) + 1;
-          }
-        }
-        const sorted = Object.entries(hourCounts).sort((a, b) => Number(b[1]) - Number(a[1]));
-        if (sorted.length > 0) peakHour = Number(sorted[0][0]);
-      }
-
       // Relationship health based on last interaction
       let health: ContactInsights["relationship_health"] = "new";
       if (mem?.last_interaction_at) {
@@ -207,7 +177,6 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
         relationship_notes: mem?.relationship_notes ?? null,
         last_interaction_at: mem?.last_interaction_at ?? null,
         last_subject: mem?.last_subject ?? null,
-        peak_hour: peakHour,
         relationship_health: health,
       };
 
@@ -309,22 +278,6 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
                 <p className="text-[10px] text-[var(--muted)]">avg reply</p>
               </div>
             )}
-          </div>
-        </div>
-      )}
-
-      {/* ── Best time to reach ── */}
-      {insights.peak_hour !== null && (
-        <div className="px-4 py-3 border-b border-[var(--border)]">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-[var(--muted)] mb-2">Best time to reach</p>
-          <div className="flex items-center gap-2">
-            <span className="material-symbols-outlined text-[var(--accent)]" style={{ fontSize: "16px", fontVariationSettings: "'FILL' 1" }}>schedule</span>
-            <span className="text-sm font-semibold text-[var(--foreground)]">
-              {formatHour(insights.peak_hour)}
-              {" - "}
-              {formatHour((insights.peak_hour + 2) % 24)}
-            </span>
-            <span className="text-[10px] text-[var(--muted)]">based on opens</span>
           </div>
         </div>
       )}

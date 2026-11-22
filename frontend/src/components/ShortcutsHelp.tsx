@@ -1,4 +1,3 @@
-"use client";
 
 import { SHORTCUT_GROUPS } from "@/lib/shortcuts";
 

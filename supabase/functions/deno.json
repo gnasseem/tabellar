@@ -1,9 +1,0 @@
-{
-  "compilerOptions": {
-    "lib": ["deno.window"],
-    "noImplicitAny": false
-  },
-  "imports": {
-    "@supabase/supabase-js": "npm:@supabase/supabase-js@2"
-  }
-}

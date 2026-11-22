@@ -1,10 +1,7 @@
-"use client";
 
 import { useState, useEffect, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
-import { initWebLLM } from "@/lib/webllm";
-import { emailGraph } from "@/lib/emailGraph";
 import { EmailField, useContacts } from "./EmailAutocomplete";
 import DateTimePicker from "./DateTimePicker";
 
@@ -117,7 +114,6 @@ export default function ComposeModal({
     addToast,
     notifyDraftChange,
     notifySent,
-    notifyReceipt,
     assistantOpen,
   } = useApp();
   const supabase = createClient();
@@ -200,7 +196,6 @@ export default function ComposeModal({
   );
   const [sending, setSending] = useState(false);
   const [scheduleAt, setScheduleAt] = useState(draft?.send_at || "");
-  const [trackOpens, setTrackOpens] = useState(false);
 
   const [templates, setTemplates] = useState<Template[]>([]);
   const [saveTemplateName, setSaveTemplateName] = useState("");
@@ -325,7 +320,6 @@ export default function ComposeModal({
   const meetingTime = meetingDatetime.split("T")[1] || nowTime;
   const [meetingDuration, setMeetingDuration] = useState("");
   const [meetingLocation, setMeetingLocation] = useState("");
-  const [createZoomLink, setCreateZoomLink] = useState(false);
 
   const [gmailAccounts, setGmailAccounts] = useState<
     { id: string; gmail_address: string }[]
@@ -349,7 +343,7 @@ export default function ComposeModal({
     null,
   );
   const SIGNATURE_SEPARATOR =
-    '<div data-runemail-sig="1" style="margin-top:16px;padding-top:12px;border-top:1px solid #e5e7eb;">';
+    '<div data-tabellar-sig="1" style="margin-top:16px;padding-top:12px;border-top:1px solid #e5e7eb;">';
 
   const getDefaultSignatureForAccount = (
     accountId: string,
@@ -405,7 +399,7 @@ export default function ComposeModal({
         if (!session) return;
         try {
           const res = await fetch(
-            `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/api/signatures`,
+            `/api/signatures`,
             {
               headers: { Authorization: `Bearer ${session.access_token}` },
             },
@@ -468,69 +462,8 @@ export default function ComposeModal({
     }
     setGeneratingDraft(true);
 
-    const aiMode = profile?.ai_mode || "cloud";
-
-    // ── Local / Hybrid ──────────────────────────────────────────────────────
-    if (aiMode === "local" || aiMode === "hybrid") {
-      try {
-        const ready = await initWebLLM();
-        if (!ready) {
-          if (aiMode === "local") {
-            addToast(
-              "error",
-              "WebLLM not loaded. Make sure local AI is initialized.",
-            );
-            setGeneratingDraft(false);
-            return;
-          }
-          // hybrid: fall through to cloud
-        } else {
-          const result = await emailGraph.invoke({
-            task: "draft",
-            userId: user.id,
-            draftIntent: intent,
-            draftContext: {
-              to,
-              subject,
-              senderName: profile?.display_name || "",
-              replyTo: replyTo
-                ? {
-                    subject: replyTo.subject,
-                    body: replyTo.body_text?.slice(0, 800) || "",
-                  }
-                : undefined,
-            },
-          });
-
-          if (result.draft) {
-            setBody(result.draft);
-            setAiGenerated(true);
-            setShowRefinePanel(false);
-            setRefineFeedback("");
-            setGeneratingDraft(false);
-            return;
-          }
-
-          if (aiMode === "local") {
-            addToast("error", "Local AI could not generate a draft.");
-            setGeneratingDraft(false);
-            return;
-          }
-          // hybrid: fall through to cloud
-        }
-      } catch (err) {
-        console.error("Local draft generation failed:", err);
-        if (aiMode === "local") {
-          addToast("error", "Local AI error generating draft.");
-          setGeneratingDraft(false);
-          return;
-        }
-      }
-    }
-
-    // ── Cloud ─────────────────────────────────────────────────────────────
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+      const apiUrl = "/api";
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -576,7 +509,7 @@ export default function ComposeModal({
     if (!refineFeedback.trim() || !body) return;
     setRefining(true);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+      const apiUrl = "/api";
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -635,7 +568,6 @@ export default function ComposeModal({
     setShowToneMenu(false);
     setRephrasingTone(tone.id);
     const previousBody = body;
-    const aiMode = profile?.ai_mode || "cloud";
 
     const restore = () => {
       setBody(previousBody);
@@ -644,46 +576,26 @@ export default function ComposeModal({
 
     try {
       let rewritten: string | null = null;
-
-      if (aiMode === "local" || aiMode === "hybrid") {
-        try {
-          const result = await emailGraph.invoke({
-            task: "draft",
-            draftIntent: `Rewrite the message below so it reads ${tone.prompt}. Keep every fact, name, date, question and commitment exactly as written, and keep roughly the same length. Return only the rewritten message, with no preamble.\n\n${current}`,
-          });
-          if (result.draft?.trim()) rewritten = result.draft.trim();
-        } catch (err) {
-          console.error("[ComposeModal] local rephrase:", err);
-        }
-        if (!rewritten && aiMode === "local") {
-          addToast("error", "Local model could not rephrase this");
-          setRephrasingTone(null);
-          return;
-        }
-      }
-
-      if (!rewritten) {
-        const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const res = await fetch(`${apiUrl}/refine-draft`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session?.access_token}`,
-          },
-          body: JSON.stringify({
-            currentDraft: current,
-            feedback: `Rewrite this so it reads ${tone.prompt}. Preserve every fact, name, date, question and commitment exactly, and keep roughly the same length. Return only the rewritten message.`,
-            senderName: profile?.display_name || "",
-            skip_learning: true,
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.draft?.trim()) rewritten = data.draft.trim();
-        }
+      const apiUrl = "/api";
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const res = await fetch(`${apiUrl}/refine-draft`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          currentDraft: current,
+          feedback: `Rewrite this so it reads ${tone.prompt}. Preserve every fact, name, date, question and commitment exactly, and keep roughly the same length. Return only the rewritten message.`,
+          senderName: profile?.display_name || "",
+          skip_learning: true,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.draft?.trim()) rewritten = data.draft.trim();
       }
 
       if (!rewritten) {
@@ -763,38 +675,8 @@ export default function ComposeModal({
       status: "proposed",
     };
 
-    if (createZoomLink) {
-      try {
-        const apiUrl =
-          process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        const res = await fetch(`${apiUrl}/zoom/create-meeting`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session?.access_token}`,
-          },
-          body: JSON.stringify({
-            topic: title,
-            start_time: startTime.toISOString(),
-            duration: durationMin,
-            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          }),
-        });
-        if (res.ok) {
-          const zoom = await res.json();
-          meetingData.zoom_link = zoom.join_url;
-        }
-      } catch (err) {
-        console.error("[ComposeModal] Zoom creation:", err);
-        addToast("info", "Could not create Zoom link");
-      }
-    }
-
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+      const apiUrl = "/api";
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -809,8 +691,8 @@ export default function ComposeModal({
           start_time: startTime.toISOString(),
           end_time: endTime.toISOString(),
           attendees,
-          location: meetingLocation || (meetingData.zoom_link as string) || "",
-          description: `Scheduled from RuneMail`,
+          location: meetingLocation || "",
+          description: `Scheduled from Tabellar`,
           sendUpdates: "all",
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
@@ -843,9 +725,7 @@ export default function ComposeModal({
       minute: "2-digit",
       hour12: true,
     });
-    const locationLine = meetingData.zoom_link
-      ? `<a href="${meetingData.zoom_link}" style="color:#1a73e8;text-decoration:none">${meetingData.zoom_link}</a>`
-      : meetingLocation || "";
+    const locationLine = meetingLocation || "";
 
     const meetingBlock = `
 <div style="font-family:Google Sans,Roboto,Arial,sans-serif;max-width:600px;margin:20px 0">
@@ -981,7 +861,7 @@ export default function ComposeModal({
         await createMeetingRecord();
       }
 
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+      const apiUrl = "/api";
       const {
         data: { session },
       } = await supabase.auth.getSession();
@@ -1035,8 +915,8 @@ export default function ComposeModal({
             return;
           }
         }
-      } else if (attachments.length === 0 && !trackOpens) {
-        // Cancel Send: queue in scheduled_emails with 15-second window (no attachments/tracking)
+      } else if (attachments.length === 0) {
+        // Cancel Send: queue in scheduled_emails with 15-second window (no attachments)
         const { data: scheduled, error: undoErr } = await supabase
           .from("scheduled_emails")
           .insert({
@@ -1078,7 +958,7 @@ export default function ComposeModal({
           },
         });
       } else {
-        // Immediate send: attachments or read tracking present
+        // Immediate send: attachments present
         const attachmentData = await Promise.all(
           attachments.map(
             (file) =>
@@ -1115,7 +995,6 @@ export default function ComposeModal({
               body_html: sendBody,
               in_reply_to: replyTo?.gmail_id,
               thread_id: replyTo?.thread_id,
-              track: trackOpens,
               gmail_account_id: effectiveAccountId,
               attachments: attachmentData.length ? attachmentData : undefined,
             }),
@@ -1179,12 +1058,10 @@ export default function ComposeModal({
         .map((s: string) => s.trim())
         .join(", ");
       notifySent({ to: sentTo, subject, body_html: sendBody });
-      if (trackOpens)
-        notifyReceipt({ subject, recipient_email: to.split(",")[0].trim() });
 
       // Prepend to sent localStorage cache so SentView shows it immediately
       try {
-        const cacheKey = `runemail_sent_cache_${user.id}`;
+        const cacheKey = `tabellar_sent_cache_${user.id}`;
         const raw = localStorage.getItem(cacheKey);
         const existing = raw ? JSON.parse(raw) : { data: [], ts: 0 };
         const newEntry = {
@@ -1363,15 +1240,6 @@ export default function ComposeModal({
                       placeholder="Location (optional)"
                       className="flex-1 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs focus:outline-none focus:border-[var(--accent)] transition-colors"
                     />
-                    <label className="flex items-center gap-1.5 text-xs text-[var(--muted)] cursor-pointer shrink-0 select-none">
-                      <input
-                        type="checkbox"
-                        checked={createZoomLink}
-                        onChange={(e) => setCreateZoomLink(e.target.checked)}
-                        className="rounded"
-                      />
-                      Zoom link
-                    </label>
                   </div>
                 </div>
               </div>
@@ -1543,17 +1411,6 @@ export default function ComposeModal({
               >
                 <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>attach_file</span>
                 {attachments.length > 0 ? `${attachments.length} file${attachments.length > 1 ? "s" : ""}` : "Attach"}
-              </button>
-
-              <button
-                onClick={() => setTrackOpens(!trackOpens)}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 ${trackOpens ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
-                title={trackOpens ? "Read receipts ON" : "Read receipts OFF"}
-              >
-                <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>
-                  {trackOpens ? "mark_email_read" : "mail"}
-                </span>
-                Track
               </button>
 
               {/* Templates popover */}

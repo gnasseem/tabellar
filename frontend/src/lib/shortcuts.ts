@@ -22,7 +22,6 @@ export const GO_TO_VIEWS: Record<string, string> = {
   s: "sent",
   d: "drafts",
   f: "followups",
-  r: "receipts",
   c: "categories",
   ",": "settings",
 };
@@ -38,7 +37,6 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "g s", description: "Go to sent" },
       { keys: "g d", description: "Go to drafts" },
       { keys: "g f", description: "Go to follow-ups" },
-      { keys: "g r", description: "Go to read receipts" },
       { keys: "g c", description: "Go to categories" },
       { keys: "g ,", description: "Go to settings" },
     ],

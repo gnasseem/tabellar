@@ -1,7 +1,6 @@
-"use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import DOMPurify from "dompurify";
 import DateTimePicker from "../DateTimePicker";

@@ -1,4 +1,3 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "./AppShell";
@@ -14,7 +13,6 @@ const aiItems = [
   { id: "followups", icon: "schedule_send", label: "Follow-ups" },
   { id: "todos", icon: "checklist", label: "Todos" },
   { id: "meetings", icon: "event", label: "Meetings" },
-  { id: "receipts", icon: "mark_email_read", label: "Read Receipts" },
   { id: "categories", icon: "label", label: "Categories" },
 ];
 
@@ -38,7 +36,6 @@ function NavGroup({ label, items, view, setView, setSidebarOpen, badges }: {
       {items.map((item) => (
         <button
           key={item.id}
-          data-tour={item.id}
           onClick={() => {
             setView(item.id);
             setSidebarOpen(false);
@@ -113,7 +110,6 @@ export default function Sidebar() {
         {/* Compose button */}
         <div className="px-3 mb-5">
           <button
-            data-tour="compose"
             onClick={() => {
               openCompose();
               setSidebarOpen(false);

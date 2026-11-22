@@ -1,4 +1,3 @@
-"use client";
 
 import { useState, useRef, useEffect, useMemo, Fragment } from "react";
 import DOMPurify from "dompurify";
@@ -13,7 +12,6 @@ type CachedAttachment = {
   blobUrl: string;
   blob: Blob;
   text: string | null;
-  sheetHtml: string | null;
 };
 
 const ATTACHMENT_CACHE_MAX_BYTES = 64 * 1024 * 1024;
@@ -56,11 +54,9 @@ function touchAttachment(key: string): CachedAttachment | undefined {
   return entry;
 }
 
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/db";
 import { assessSuspicion, type SuspicionVerdict } from "@/lib/suspicion";
 import { useApp } from "./AppShell";
-import { initWebLLM, isWebLLMReady } from "@/lib/webllm";
-import { emailGraph } from "@/lib/emailGraph";
 import DateTimePicker from "./DateTimePicker";
 
 type EmailDetailProps = {
@@ -523,7 +519,7 @@ export default function EmailDetail({
   onResolvedChange,
   showBack = false,
 }: EmailDetailProps) {
-  const { user, profile, openCompose, addToast, theme, setView, setSearch, setPendingMeetingSchedule } =
+  const { user, openCompose, addToast, theme, setView, setSearch, setPendingMeetingSchedule } =
     useApp() as any;
   const supabase = createClient();
 
@@ -680,7 +676,6 @@ export default function EmailDetail({
   const [rethinking, setRethinking] = useState(false);
   const [extractingTodos, setExtractingTodos] = useState(false);
   const [addedTodos, setAddedTodos] = useState<Set<string>>(new Set());
-  const [analyzingEmail, setAnalyzingEmail] = useState(false);
   const [activeInputAction, setActiveInputAction] = useState<{
     qa: any;
     answers: Record<string, string>;
@@ -715,15 +710,12 @@ export default function EmailDetail({
       attachment_id: string;
     };
     blobUrl: string | null;
-    blob: Blob | null;
     text: string | null;
-    sheetHtml: string | null;
     error: string | null;
   };
   const [previewAtt, setPreviewAtt] = useState<AttachmentPreviewState | null>(
     null,
   );
-  const docxContainerRef = useRef<HTMLDivElement>(null);
   const snoozeRef = useRef<HTMLDivElement>(null);
   const catRef = useRef<HTMLDivElement>(null);
 
@@ -787,29 +779,7 @@ export default function EmailDetail({
 
   // Module-level cache doesn't need per-instance cleanup (blobs reused across emails)
 
-  // Render docx into container when preview is ready
-  useEffect(() => {
-    if (!previewAtt?.blob || !docxContainerRef.current) return;
-    if (!isDocxFile(previewAtt.att.mime_type, previewAtt.att.filename)) return;
-    const container = docxContainerRef.current;
-    container.innerHTML = "";
-    import("docx-preview").then(({ renderAsync }) => {
-      renderAsync(previewAtt.blob!, container, undefined, {
-        className: "docx-preview",
-        inWrapper: true,
-        ignoreWidth: false,
-        ignoreHeight: false,
-        ignoreFonts: false,
-        breakPages: true,
-        useBase64URL: true,
-      }).catch(() => {
-        container.innerHTML =
-          "<p style='padding:16px;color:var(--muted);font-size:12px'>Failed to render document.</p>";
-      });
-    });
-  }, [previewAtt?.blob, previewAtt?.att.attachment_id]);
-
-  const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+  const apiUrl = "/api";
 
   const getAuthHeaders = async () => {
     const {
@@ -820,14 +790,6 @@ export default function EmailDetail({
       Authorization: `Bearer ${session?.access_token}`,
     };
   };
-
-  const isDocxFile = (mime: string, filename: string) =>
-    mime?.includes("wordprocessingml") || /\.docx$/i.test(filename);
-
-  const isExcelFile = (mime: string, filename: string) =>
-    mime?.includes("spreadsheetml") ||
-    mime === "application/vnd.ms-excel" ||
-    /\.xlsx?$/i.test(filename);
 
   const fetchAttachmentBlob = async (
     att: {
@@ -858,29 +820,13 @@ export default function EmailDetail({
     });
     const blobUrl = URL.createObjectURL(blob);
     let text: string | null = null;
-    let sheetHtml: string | null = null;
     if (
       att.mime_type?.startsWith("text/") ||
       att.mime_type === "application/json"
     ) {
       text = await blob.text();
-    } else if (isExcelFile(att.mime_type, att.filename)) {
-      try {
-        const { read, utils } = await import("xlsx");
-        const ab = await blob.arrayBuffer();
-        const wb = read(new Uint8Array(ab), { type: "array" });
-        const parts = wb.SheetNames.map((name) => {
-          const html = utils.sheet_to_html(wb.Sheets[name]);
-          return `<h4 style="margin:12px 0 6px;font-size:11px;font-weight:600;color:var(--muted)">${name}</h4>${html}`;
-        });
-        sheetHtml = parts.join(
-          "<hr style='border:none;border-top:1px solid var(--border);margin:12px 0'/>",
-        );
-      } catch {
-        /* fall through to unsupported */
-      }
     }
-    const result = { blobUrl, blob, text, sheetHtml };
+    const result = { blobUrl, blob, text };
     cacheAttachment(cacheKey, result);
     return result;
   };
@@ -999,62 +945,6 @@ export default function EmailDetail({
   const handleRethink = async () => {
     if (rethinking) return;
     setRethinking(true);
-    const aiMode = profile?.ai_mode || "cloud";
-
-    // ── Local rethink via graph ──────────────────────────────────────────────
-    if (aiMode === "local" || aiMode === "hybrid") {
-      try {
-        const ready = await initWebLLM();
-        if (ready && isWebLLMReady()) {
-          const result = await emailGraph.invoke({
-            task: "rethink",
-            currentEmail: {
-              id: email.id,
-              subject: email.subject || "",
-              sender: email.sender || "",
-              snippet: email.snippet || "",
-              body_text: email.body_text || email.body || "",
-            },
-          });
-
-          if (!result.error) {
-            const updated = {
-              category: result.category || proc?.category,
-              summary: result.summary || proc?.summary,
-              quick_actions: result.quickActions || proc?.quick_actions,
-            };
-            // Persist to DB
-            await supabase
-              .from("email_processed")
-              .upsert(
-                { email_id: email.id, ...updated },
-                { onConflict: "email_id" },
-              );
-            setProc(updated);
-            onRethink?.(updated);
-            addToast("success", "AI analysis refreshed (local)");
-            setRethinking(false);
-            return;
-          }
-        }
-        if (aiMode === "local") {
-          addToast(
-            "error",
-            "Local AI not ready. Make sure the model is loaded.",
-          );
-          setRethinking(false);
-          return;
-        }
-      } catch (err) {
-        console.error("Local rethink failed:", err);
-        if (aiMode === "local") {
-          addToast("error", "Local AI error.");
-          setRethinking(false);
-          return;
-        }
-      }
-    }
-
     // ── Cloud rethink ─────────────────────────────────────────────────────────
     try {
       const headers = await getAuthHeaders();
@@ -1079,60 +969,6 @@ export default function EmailDetail({
 
   const handleExtractTodos = async () => {
     setExtractingTodos(true);
-    const aiMode = profile?.ai_mode || "cloud";
-
-    // ── Local extraction via graph ────────────────────────────────────────────
-    if (aiMode === "local" || aiMode === "hybrid") {
-      try {
-        const ready = await initWebLLM();
-        if (ready && isWebLLMReady()) {
-          const result = await emailGraph.invoke({
-            task: "todos",
-            emails: [
-              {
-                id: email.id,
-                subject: email.subject || "",
-                sender: email.sender || "",
-                snippet: email.snippet || "",
-                body_text: email.body_text || email.body || "",
-              },
-            ],
-          });
-
-          const suggestions = result.todoSuggestions || [];
-          if (suggestions.length > 0) {
-            await supabase.from("todos").insert(
-              suggestions.map((s) => ({
-                user_id: user.id,
-                text: s.task,
-                source: "email",
-              })),
-            );
-            addToast(
-              "success",
-              `Added ${suggestions.length} task${suggestions.length > 1 ? "s" : ""} to Todos`,
-            );
-          } else {
-            addToast("info", "No actionable tasks found in this email");
-          }
-          setExtractingTodos(false);
-          return;
-        }
-        if (aiMode === "local") {
-          addToast("error", "Local AI not ready.");
-          setExtractingTodos(false);
-          return;
-        }
-      } catch (err) {
-        console.error("Local extract todos failed:", err);
-        if (aiMode === "local") {
-          addToast("error", "Local AI error.");
-          setExtractingTodos(false);
-          return;
-        }
-      }
-    }
-
     // ── Cloud extraction ──────────────────────────────────────────────────────
     try {
       const headers = await getAuthHeaders();
@@ -1165,44 +1001,6 @@ export default function EmailDetail({
       .insert({ user_id: user.id, text: task, source: "email" });
     setAddedTodos((prev) => new Set([...prev, task]));
     addToast("success", "Added to Todos");
-  };
-
-  const generateSuggestions = async () => {
-    setAnalyzingEmail(true);
-    try {
-      const ready = await initWebLLM();
-      if (!ready) {
-        addToast("error", "Local AI not ready");
-        setAnalyzingEmail(false);
-        return;
-      }
-      const result = await emailGraph.invoke({
-        task: "process_email",
-        currentEmail: {
-          id: email.id,
-          subject: email.subject || "",
-          sender: email.sender || "",
-          snippet: email.snippet || "",
-          body_text: email.body_text || "",
-        },
-      });
-      const updated = {
-        category: result.category || proc?.category || "updates",
-        summary: result.summary || proc?.summary || null,
-        quick_actions: result.quickActions || [],
-      };
-      await supabase
-        .from("email_processed")
-        .upsert(
-          { user_id: user.id, email_id: email.id, ...updated },
-          { onConflict: "email_id" },
-        );
-      setProc(updated);
-      onRethink?.(updated);
-    } catch {
-      addToast("error", "Analysis failed");
-    }
-    setAnalyzingEmail(false);
   };
 
   const handleQuickAction = (action: any) => {
@@ -1581,9 +1379,7 @@ export default function EmailDetail({
                                       setPreviewAtt({
                                         att,
                                         blobUrl: null,
-                                        blob: null,
                                         text: null,
-                                        sheetHtml: null,
                                         error: null,
                                       });
                                       try {
@@ -1723,9 +1519,7 @@ export default function EmailDetail({
                           setPreviewAtt({
                             att,
                             blobUrl: null,
-                            blob: null,
                             text: null,
-                            sheetHtml: null,
                             error: null,
                           });
                           try {
@@ -2347,41 +2141,11 @@ export default function EmailDetail({
                 </pre>
               )}
 
-              {/* Word (.docx) preview */}
-              {previewAtt.blobUrl &&
-                isDocxFile(
-                  previewAtt.att.mime_type,
-                  previewAtt.att.filename,
-                ) && (
-                  <div
-                    ref={docxContainerRef}
-                    className="w-full h-full overflow-auto bg-white"
-                    style={{ colorScheme: "light" }}
-                  />
-                )}
-
-              {/* Excel preview */}
-              {previewAtt.blobUrl && previewAtt.sheetHtml !== null && (
-                <div
-                  className="attachment-sheet-preview w-full h-full overflow-auto p-4"
-                  dangerouslySetInnerHTML={{
-                    __html: DOMPurify.sanitize(previewAtt.sheetHtml, {
-                      USE_PROFILES: { html: true },
-                    }),
-                  }}
-                />
-              )}
-
               {/* Unsupported type */}
               {previewAtt.blobUrl &&
                 !previewAtt.att.mime_type?.startsWith("image/") &&
                 !previewAtt.att.mime_type?.includes("pdf") &&
-                previewAtt.text === null &&
-                !isDocxFile(
-                  previewAtt.att.mime_type,
-                  previewAtt.att.filename,
-                ) &&
-                previewAtt.sheetHtml === null && (
+                previewAtt.text === null && (
                   <div className="flex flex-col items-center gap-3 text-[var(--muted)] text-center px-8">
                     <span
                       className="material-symbols-outlined"

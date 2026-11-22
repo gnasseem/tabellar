@@ -21,14 +21,10 @@ credentials.json
 # Build / cache artifacts
 .uv_cache/
 node_modules/
-.next/
 out/
 build/
 dist/
 
-# Large model files
-models/
-models/**/*.gguf
 
 # SQLite database
 data/*.db
@@ -51,7 +47,6 @@ Thumbs.db
 
 # Private product notes
 todo.md
-.vercel
 .env*.local
 
 # Tool artifacts
@@ -65,8 +60,6 @@ graphify-out/
 .claude/
 frontend/.claude/
 
-# Supabase local temp files
-supabase/.temp/
 
 # Stale: this is an npm workspace, the root lockfile is authoritative
 frontend/package-lock.json

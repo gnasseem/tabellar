@@ -1,8 +1,7 @@
-"use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/db";
 
 export interface Contact {
   email: string;
@@ -191,7 +190,7 @@ async function triggerContactsSync() {
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) return;
-    const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+    const apiUrl = "/api";
     await fetch(`${apiUrl}/contacts/sync`, {
       method: "POST",
       headers: { Authorization: `Bearer ${session.access_token}` },
@@ -233,7 +232,7 @@ function useEmailAutocomplete(contacts: Contact[], accountId: string, multi = tr
           try {
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) return;
-            const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+            const apiUrl = "/api";
             const res = await fetch(
               `${apiUrl}/contacts/search?q=${encodeURIComponent(lastToken)}&account_id=${encodeURIComponent(accountId)}`,
               { headers: { Authorization: `Bearer ${session.access_token}` } },

@@ -1,4 +1,3 @@
-"use client";
 
 import {
   useState,
@@ -15,10 +14,9 @@ import AssistantPanel from "./AssistantPanel";
 import { ToastContainer, type ToastItem } from "./Toast";
 import AgentWorkspace from "./solve/AgentWorkspace";
 import ShortcutsHelp from "./ShortcutsHelp";
-import TutorialShell from "./tutorial/TutorialShell";
 import { GO_TO_VIEWS, isTypingTarget } from "@/lib/shortcuts";
-import type { User } from "@supabase/supabase-js";
-import { createClient } from "@/lib/supabase/client";
+import type { User } from "@/lib/db";
+import { createClient } from "@/lib/db";
 import { useLiveUpdates, type LiveChangeCounters } from "@/lib/useLiveUpdates";
 import {
   startAgent as apiStartAgent,
@@ -38,23 +36,13 @@ import type {
   AgentBatchAnswer,
   AgentAction,
   AgentTurnRow,
-  TtsJob,
 } from "@/lib/agentTypes";
-import {
-  getBriefingTtsFromCache,
-  setBriefingTtsCache,
-} from "@/lib/briefingTtsCache";
-import {
-  getBriefingAudioAutoplay,
-  persistBriefingAudioAutoplay,
-} from "@/lib/briefingAudioPref";
 
 type Profile = {
   id: string;
   email: string;
   display_name: string;
   avatar_url: string | null;
-  ai_mode: "cloud" | "local" | "hybrid";
   theme: "light" | "dark";
   style_notes?: string | null;
   working_hours?: Record<string, unknown> | null;
@@ -89,7 +77,6 @@ export type AppContextType = {
   // Global sync (used by InboxView for initial fetch overlay)
   syncing: boolean;
   setSyncing: (v: boolean) => void;
-  registerAnalyzeLocallyFn: (fn: () => Promise<void>) => void;
   // Inbox filter/sort (shared between TopBar and InboxView)
   inboxFilters: Set<string>;
   setInboxFilters: (v: Set<string>) => void;
@@ -117,18 +104,6 @@ export type AppContextType = {
     subject: string;
     body_html: string;
   }) => void;
-  // Read receipt notifications
-  pendingReceipt: {
-    id: string;
-    subject: string;
-    recipient_email: string;
-    open_count: number;
-    created_at: string;
-  } | null;
-  notifyReceipt: (receipt: {
-    subject: string;
-    recipient_email: string;
-  }) => void;
   // View data cache
   getViewCache: (key: string) => any | null;
   setViewCache: (key: string, data: any) => void;
@@ -142,14 +117,8 @@ export type AppContextType = {
   notifyBriefingUpdated: () => void;
   briefingRegenerating: boolean;
   requestBriefingRegeneration: (scope?: string) => void;
-  prefetchBriefingExecutiveTts: (executiveSummary: string) => void;
-  /** Stored in localStorage so settings save does not require a DB migration. */
-  briefingAudioAutoplay: boolean;
-  setBriefingAudioAutoplay: (value: boolean) => void;
   // Assistant panel open state (used by ComposeModal to shift position)
   assistantOpen: boolean;
-  // Tutorial
-  startTutorial: () => void;
   // Solve-Everything agent session (survives navigation)
   agentSession: AgentSessionState | null;
   agentTurns: AgentTurnRow[];
@@ -171,17 +140,6 @@ export type AppContextType = {
   /** True while a cancel request is in flight (direct DB update or API fallback). */
   solveAgentCancelInFlight: boolean;
   resetSolveAgent: () => void;
-  // Background TTS jobs keyed by (kind+key) e.g. "briefing:<version>"
-  ttsJobs: Record<string, TtsJob>;
-  startTts: (
-    kind: string,
-    key: string,
-    text: string,
-    voice?: string,
-  ) => Promise<void>;
-  pauseTts: (kind: string, key: string) => void;
-  resumeTts: (kind: string, key: string) => void;
-  stopTts: (kind: string, key: string) => void;
   // Pending meeting schedule (set when user clicks schedule_meeting quick action)
   pendingMeetingSchedule: {
     title?: string;
@@ -227,11 +185,10 @@ export default function AppShell({
   }, []);
   const view = viewRaw;
   const [syncing, setSyncing] = useState(false);
-  const analyzeLocallyFnRef = useRef<(() => Promise<void>) | null>(null);
   const [inboxFilters, setInboxFilters] = useState<Set<string>>(new Set());
   const [inboxSort, setInboxSort] = useState<"newest" | "smart">(() => {
     if (typeof window === "undefined") return "newest";
-    const saved = localStorage.getItem("runemail_inbox_sort");
+    const saved = localStorage.getItem("tabellar_inbox_sort");
     return saved === "smart" ? "smart" : "newest";
   });
   const [inboxCustomCategories, setInboxCustomCategories] = useState<string[]>(
@@ -241,8 +198,6 @@ export default function AppShell({
     { slug: string; displayName: string; color: string }[]
   >([]);
   const [assistantOpen, setAssistantOpen] = useState(false);
-  const [tutorialActive, setTutorialActive] = useState(false);
-  const startTutorial = useCallback(() => setTutorialActive(true), []);
   const [draftVersion, setDraftVersion] = useState(0);
   const notifyDraftChange = useCallback(
     () => setDraftVersion((v) => v + 1),
@@ -262,16 +217,9 @@ export default function AppShell({
     profileRef.current = profileState;
   }, [profileState]);
   useEffect(() => {
-    localStorage.setItem("runemail_inbox_sort", inboxSort);
+    localStorage.setItem("tabellar_inbox_sort", inboxSort);
   }, [inboxSort]);
 
-  const [briefingAudioAutoplay, setBriefingAudioAutoplayState] = useState(() =>
-    getBriefingAudioAutoplay(),
-  );
-  const setBriefingAudioAutoplay = useCallback((value: boolean) => {
-    persistBriefingAudioAutoplay(value);
-    setBriefingAudioAutoplayState(value);
-  }, []);
   const [pendingSentEmail, setPendingSentEmail] = useState<{
     id: string;
     to: string;
@@ -289,29 +237,6 @@ export default function AppShell({
     },
     [],
   );
-  const [pendingReceipt, setPendingReceipt] = useState<{
-    id: string;
-    subject: string;
-    recipient_email: string;
-    open_count: number;
-    created_at: string;
-  } | null>(null);
-  const notifyReceipt = useCallback(
-    (receipt: { subject: string; recipient_email: string }) => {
-      setPendingReceipt({
-        id: `pending-${Date.now()}`,
-        open_count: 0,
-        created_at: new Date().toISOString(),
-        ...receipt,
-      });
-    },
-    [],
-  );
-
-  const registerAnalyzeLocallyFn = useCallback((fn: () => Promise<void>) => {
-    analyzeLocallyFnRef.current = fn;
-  }, []);
-
   // Stable ref so useLiveUpdates can call addToast without a stale closure
   const addToastRef = useRef<
     | ((
@@ -345,7 +270,6 @@ export default function AppShell({
   // Centralized live updates (realtime + background sync + visibility refresh)
   const { changeCounters: liveChanges, processingCount } = useLiveUpdates(
     user.id,
-    profileState?.ai_mode || "cloud",
     profileState?.last_briefing_at ?? null,
     (profileState?.working_hours as {
       start?: string;
@@ -354,9 +278,6 @@ export default function AppShell({
     } | null) ?? null,
     {
       addToast: (type, msg) => addToastRef.current?.(type, msg),
-      analyzeLocally: async () => {
-        await analyzeLocallyFnRef.current?.();
-      },
       onBriefingUpdated: () => onBriefingUpdatedRef.current?.(),
     },
     profileState?.briefing_scope ?? null,
@@ -370,7 +291,7 @@ export default function AppShell({
     const supabase = createClient();
     const timer = setTimeout(async () => {
       try {
-        const [todosRes, meetingsRes, receiptsRes] = await Promise.all([
+        const [todosRes, meetingsRes] = await Promise.all([
           supabase
             .from("todos")
             .select("*")
@@ -384,12 +305,6 @@ export default function AppShell({
             .gte("start_time", new Date().toISOString())
             .order("start_time", { ascending: true })
             .limit(50),
-          supabase
-            .from("read_receipts")
-            .select("*")
-            .eq("user_id", user.id)
-            .order("created_at", { ascending: false })
-            .limit(50),
         ]);
         if (todosRes.data)
           viewCacheRef.current["todos"] = {
@@ -401,58 +316,12 @@ export default function AppShell({
             data: meetingsRes.data,
             timestamp: Date.now(),
           };
-        if (receiptsRes.data)
-          viewCacheRef.current["receipts"] = {
-            data: receiptsRes.data,
-            timestamp: Date.now(),
-          };
       } catch {
         // Non-blocking prefetch
       }
     }, 2000);
     return () => clearTimeout(timer);
   }, [user.id]);
-
-  // Service worker registration plus first-load push permission prompt.
-  // We ask once on initial load; subsequent loads rely on the Settings button.
-  useEffect(() => {
-    let cancelTimer: ReturnType<typeof setTimeout> | null = null;
-    import("@/lib/pushNotifications").then(
-      async ({ registerServiceWorker, isPushSupported, subscribeToPush }) => {
-        await registerServiceWorker();
-        if (!isPushSupported()) return;
-        try {
-          if (typeof Notification === "undefined") return;
-          const asked = localStorage.getItem("runemail_push_prompted");
-          if (asked === "1" || Notification.permission !== "default") {
-            localStorage.setItem("runemail_push_prompted", "1");
-            return;
-          }
-          cancelTimer = setTimeout(async () => {
-            localStorage.setItem("runemail_push_prompted", "1");
-            try {
-              const sb = createClient();
-              const {
-                data: { session },
-              } = await sb.auth.getSession();
-              if (!session?.access_token) return;
-              await subscribeToPush(
-                process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                session.access_token,
-              );
-            } catch {
-              /* ignore */
-            }
-          }, 1500);
-        } catch {
-          /* ignore */
-        }
-      },
-    );
-    return () => {
-      if (cancelTimer) clearTimeout(cancelTimer);
-    };
-  }, []);
 
   // Memoised: it goes into the context value and into the global shortcut
   // effect's dependencies, both of which would otherwise churn every render.
@@ -491,48 +360,6 @@ export default function AppShell({
   const invalidateViewCacheRef = useRef(invalidateViewCache);
   invalidateViewCacheRef.current = invalidateViewCache;
 
-  const prefetchBriefingExecutiveTts = useCallback(
-    async (executiveSummary: string) => {
-      const text = executiveSummary.trim();
-      if (!text || !getBriefingAudioAutoplay()) return;
-      if (getBriefingTtsFromCache(user.id, text)) return;
-      try {
-        const supabase = createClient();
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) return;
-        const chosenVoice = (() => {
-          try {
-            const stored = localStorage.getItem("runemail_tts_voice");
-            if (!stored || stored.startsWith("en-US-")) return "cedar";
-            return stored;
-          } catch {
-            return "cedar";
-          }
-        })();
-        const apiUrl =
-          process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api/tts";
-        const res = await fetch(apiUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify({ text, voice: chosenVoice }),
-        });
-        if (!res.ok) return;
-        const { audioContent } = await res.json();
-        if (typeof audioContent === "string" && audioContent.length > 0) {
-          setBriefingTtsCache(user.id, text, audioContent);
-        }
-      } catch {
-        /* non-critical */
-      }
-    },
-    [user.id],
-  );
-
   const requestBriefingRegeneration = useCallback(async (scope?: string) => {
     if (scope) pendingScopeRef.current = scope;
     if (briefingGenLockRef.current) return;
@@ -544,7 +371,7 @@ export default function AppShell({
         data: { session },
       } = await supabase.auth.getSession();
       if (!session?.access_token) return;
-      const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+      const apiUrl = "/api";
       const scopeToUse = pendingScopeRef.current;
       pendingScopeRef.current = null;
       const briefingUrl = scopeToUse
@@ -561,7 +388,7 @@ export default function AppShell({
       const iso = new Date(ts).toISOString();
       try {
         localStorage.setItem(
-          `runemail_briefing_cache_${user.id}`,
+          `tabellar_briefing_cache_${user.id}`,
           JSON.stringify({ data: briefingData, ts, scope: scopeToUse ?? profileRef.current?.briefing_scope ?? null }),
         );
       } catch {
@@ -580,12 +407,6 @@ export default function AppShell({
       });
       invalidateViewCacheRef.current("briefing");
       notifyBriefingUpdated();
-      const summaryText =
-        typeof (briefingData as { executiveSummary?: string })
-          .executiveSummary === "string"
-          ? (briefingData as { executiveSummary: string }).executiveSummary
-          : "";
-      if (summaryText) void prefetchBriefingExecutiveTts(summaryText);
       if (viewRef.current !== "briefing") {
         addToast("info", "Briefing finished updating.");
       }
@@ -604,7 +425,6 @@ export default function AppShell({
     addToast,
     notifyBriefingUpdated,
     updateProfile,
-    prefetchBriefingExecutiveTts,
   ]);
 
   // Keep refs in sync so useLiveUpdates callbacks can call these without stale closures
@@ -616,17 +436,8 @@ export default function AppShell({
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Show toast when returning from add-account redirect flow
-  useEffect(() => {
-    const linked = localStorage.getItem("runemail_account_linked");
-    if (linked) {
-      localStorage.removeItem("runemail_account_linked");
-      addToast("success", `Gmail account linked: ${linked}`);
-    }
-  }, [addToast]);
-
   // ── Solve-Everything agent state ───────────────────────────────────────
-  const AGENT_SESSION_KEY = `runemail_agent_session_${user.id}`;
+  const AGENT_SESSION_KEY = `tabellar_agent_session_${user.id}`;
   const [agentSession, setAgentSession] = useState<AgentSessionState | null>(
     null,
   );
@@ -712,7 +523,7 @@ export default function AppShell({
       ) {
         attachAgentRealtime(stored.id);
       }
-      // If the session was left in "planning" (e.g. edge function killed before
+      // If the session was left in "planning" (e.g. the server stopped before
       // completing), kick the orchestrator so it resumes instead of staying stuck.
       if (session.status === "planning") {
         apiStepAgent(supabase, stored.id).catch(() => {});
@@ -1053,204 +864,7 @@ export default function AppShell({
     return () => clearInterval(interval);
   }, [agentSession?.id, agentSession?.status, loadAgentTurns]);
 
-  // ── Background TTS jobs ────────────────────────────────────────────────
   const [pendingMeetingSchedule, setPendingMeetingSchedule] = useState<AppContextType["pendingMeetingSchedule"]>(null);
-  const [ttsJobs, setTtsJobs] = useState<Record<string, TtsJob>>({});
-  const ttsJobsRef = useRef<Record<string, TtsJob>>({});
-  useEffect(() => {
-    ttsJobsRef.current = ttsJobs;
-  }, [ttsJobs]);
-  const ttsAudioRef = useRef<Record<string, HTMLAudioElement>>({});
-  const ttsKey = (kind: string, key: string) => `${kind}:${key}`;
-
-  const startTts = useCallback(
-    async (kind: string, key: string, text: string, voice?: string) => {
-      const k = ttsKey(kind, key);
-      const existing = ttsJobsRef.current[k];
-
-      if (existing?.status === "buffered" && ttsAudioRef.current[k]) {
-        try {
-          await ttsAudioRef.current[k].play();
-          setTtsJobs((prev) => {
-            const cur = prev[k];
-            if (!cur) return prev;
-            return { ...prev, [k]: { ...cur, status: "playing" } };
-          });
-        } catch {
-          addToast("info", "Tap Listen again to start audio.");
-        }
-        return;
-      }
-
-      if (existing && existing.status === "playing") {
-        ttsAudioRef.current[k]?.pause();
-        setTtsJobs((prev) => ({
-          ...prev,
-          [k]: { ...existing, status: "paused" },
-        }));
-        return;
-      }
-      if (existing && existing.status === "paused" && ttsAudioRef.current[k]) {
-        try {
-          await ttsAudioRef.current[k].play();
-          setTtsJobs((prev) => ({
-            ...prev,
-            [k]: { ...existing, status: "playing" },
-          }));
-        } catch {
-          addToast("info", "Tap Listen again to start audio.");
-        }
-        return;
-      }
-      if (existing?.status === "loading") {
-        return;
-      }
-
-      const job: TtsJob = {
-        id: Math.random().toString(36).slice(2),
-        kind,
-        key,
-        status: "loading",
-        startedAt: Date.now(),
-      };
-      setTtsJobs((prev) => ({ ...prev, [k]: job }));
-
-      try {
-        let audioContent: string | null = null;
-        if (kind === "briefing" && text.trim()) {
-          audioContent = getBriefingTtsFromCache(user.id, text);
-        }
-
-        const supabase = createClient();
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-        if (!session?.access_token) throw new Error("Not authenticated");
-        const chosenVoice =
-          voice ??
-          (() => {
-            try {
-              const stored = localStorage.getItem("runemail_tts_voice");
-              if (!stored || stored.startsWith("en-US-")) return "cedar";
-              return stored;
-            } catch {
-              return "cedar";
-            }
-          })();
-
-        if (!audioContent) {
-          const apiUrl =
-            process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api/tts";
-          const res = await fetch(apiUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({ text, voice: chosenVoice }),
-          });
-          if (!res.ok) throw new Error("TTS request failed");
-          const body = (await res.json()) as { audioContent?: string };
-          audioContent = body.audioContent ?? null;
-          if (!audioContent) throw new Error("TTS request failed");
-          if (kind === "briefing" && text.trim()) {
-            setBriefingTtsCache(user.id, text, audioContent);
-          }
-        }
-
-        const audio = new Audio(`data:audio/mp3;base64,${audioContent}`);
-        ttsAudioRef.current[k] = audio;
-        audio.onended = () => {
-          setTtsJobs((prev) => {
-            const cur = prev[k];
-            if (!cur) return prev;
-            return { ...prev, [k]: { ...cur, status: "done" } };
-          });
-          delete ttsAudioRef.current[k];
-        };
-        audio.onerror = () => {
-          setTtsJobs((prev) => {
-            const cur = prev[k];
-            if (!cur) return prev;
-            return {
-              ...prev,
-              [k]: { ...cur, status: "error", error: "playback error" },
-            };
-          });
-        };
-
-        try {
-          await audio.play();
-          setTtsJobs((prev) => {
-            const cur = prev[k] ?? job;
-            return {
-              ...prev,
-              [k]: {
-                ...cur,
-                status: "playing",
-                audioBase64: audioContent ?? undefined,
-              },
-            };
-          });
-        } catch {
-          setTtsJobs((prev) => {
-            const cur = prev[k] ?? job;
-            return {
-              ...prev,
-              [k]: {
-                ...cur,
-                status: "buffered",
-                audioBase64: audioContent ?? undefined,
-              },
-            };
-          });
-          addToast("info", "Tap Listen again to start audio.");
-        }
-      } catch (err) {
-        setTtsJobs((prev) => ({
-          ...prev,
-          [k]: { ...job, status: "error", error: (err as Error).message },
-        }));
-      }
-    },
-    [user.id, addToast],
-  );
-
-  const pauseTts = useCallback((kind: string, key: string) => {
-    const k = ttsKey(kind, key);
-    ttsAudioRef.current[k]?.pause();
-    setTtsJobs((prev) => {
-      const cur = prev[k];
-      if (!cur) return prev;
-      return { ...prev, [k]: { ...cur, status: "paused" } };
-    });
-  }, []);
-
-  const resumeTts = useCallback((kind: string, key: string) => {
-    const k = ttsKey(kind, key);
-    ttsAudioRef.current[k]?.play();
-    setTtsJobs((prev) => {
-      const cur = prev[k];
-      if (!cur) return prev;
-      return { ...prev, [k]: { ...cur, status: "playing" } };
-    });
-  }, []);
-
-  const stopTts = useCallback((kind: string, key: string) => {
-    const k = ttsKey(kind, key);
-    const audio = ttsAudioRef.current[k];
-    if (audio) {
-      audio.pause();
-      audio.currentTime = 0;
-      delete ttsAudioRef.current[k];
-    }
-    setTtsJobs((prev) => {
-      const { [k]: _removed, ...rest } = prev;
-      void _removed;
-      return rest;
-    });
-  }, []);
-
   return (
     <AppContext.Provider
       value={{
@@ -1269,7 +883,6 @@ export default function AppShell({
         setSearch,
         syncing,
         setSyncing,
-        registerAnalyzeLocallyFn,
         inboxFilters,
         setInboxFilters,
         inboxSort,
@@ -1282,8 +895,6 @@ export default function AppShell({
         notifyDraftChange,
         pendingSentEmail,
         notifySent,
-        pendingReceipt,
-        notifyReceipt,
         getViewCache,
         setViewCache,
         invalidateViewCache,
@@ -1293,11 +904,7 @@ export default function AppShell({
         notifyBriefingUpdated,
         briefingRegenerating,
         requestBriefingRegeneration,
-        prefetchBriefingExecutiveTts,
-        briefingAudioAutoplay,
-        setBriefingAudioAutoplay,
         assistantOpen,
-        startTutorial,
         agentSession,
         agentTurns,
         agentWorkspaceOpen,
@@ -1310,11 +917,6 @@ export default function AppShell({
         cancelSolveAgent,
         solveAgentCancelInFlight,
         resetSolveAgent,
-        ttsJobs,
-        startTts,
-        pauseTts,
-        resumeTts,
-        stopTts,
         pendingMeetingSchedule,
         setPendingMeetingSchedule,
       }}
@@ -1378,7 +980,6 @@ export default function AppShell({
         {/* Floating assistant button */}
         {!assistantOpen && (
           <button
-            data-tour="assistant"
             onClick={() => setAssistantOpen(true)}
             className="fixed bottom-16 z-40 rounded-full bg-[var(--accent)] text-white shadow-lg hover:opacity-90 active:scale-95 transition-all flex items-center justify-center"
             title="Open Assistant"
@@ -1402,16 +1003,6 @@ export default function AppShell({
           onClose={() => setAssistantOpen(false)}
         />
 
-        {tutorialActive && (
-          <TutorialShell
-            userId={user.id}
-            syncComplete={!syncing}
-            onComplete={() => {
-              setTutorialActive(false);
-              setView("inbox");
-            }}
-          />
-        )}
         <ToastContainer toasts={toasts} removeToast={removeToast} />
         <ShortcutsHelp
           open={showShortcutsHelp}

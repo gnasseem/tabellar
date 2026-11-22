@@ -1,11 +1,59 @@
-"use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
-import { type BriefingResult, type BriefingEmail, type DeadlineItem } from "@/lib/emailGraph";
 import EmailDetail from "../EmailDetail";
 import SolveAgentButton from "../solve/SolveAgentButton";
+
+interface BriefingEmail {
+  subject: string;
+  senderName: string;
+  sender: string;
+  summary: string;
+  urgency: "critical" | "high" | "medium";
+  deadline?: string | null;
+  waitingForReply: boolean;
+  tags: string[];
+  email_id?: string;
+  /** One line: what the sender wants (Auto-Resolve / cloud briefing). */
+  signal?: string;
+  evidence?: string;
+  relationshipHint?: "first-party" | "known-contact" | "stranger" | "auto" | string;
+  suggestedAction?: "reply" | "todo" | "meeting" | "archive" | "ignore" | string;
+  resolved_at?: string | null;
+}
+
+interface DeadlineItem {
+  task: string;
+  date: string;
+  source: string;
+}
+
+interface BriefingResult {
+  executiveSummary: string;
+  // New shape (v2)
+  crucial?: BriefingEmail[];
+  replyNeeded?: BriefingEmail[];
+  deadlines?: BriefingEmail[] | DeadlineItem[];
+  nonEssential?: BriefingEmail[];
+  // Old shape (v1) kept for backward compat with cached briefings
+  topPriority?: BriefingEmail[];
+  waitingForReply?: BriefingEmail[];
+  stats: {
+    total: number;
+    // v2 fields
+    crucial?: number;
+    replyNeeded?: number;
+    nonEssential?: number;
+    // v1 fields
+    critical?: number;
+    deadlines?: number;
+    waitingOnYou?: number;
+    filtered?: number;
+  };
+  summary?: string;
+  actionItems?: string[];
+}
 
 type FilterType = "crucial" | "replyNeeded" | "deadlines" | "nonEssential" | null;
 
@@ -499,13 +547,8 @@ export default function BriefingView() {
     setViewCache,
     invalidateViewCache,
     briefingVersion,
-    ttsJobs,
-    startTts,
-    stopTts,
     briefingRegenerating,
     requestBriefingRegeneration,
-    prefetchBriefingExecutiveTts,
-    briefingAudioAutoplay,
   } = useApp();
   const supabase = createClient();
   const [briefing, setBriefing] = useState<BriefingResult | null>(null);
@@ -516,19 +559,11 @@ export default function BriefingView() {
   const [selectedEmail, setSelectedEmail] = useState<any | null>(null);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [activeFilter, setActiveFilter] = useState<FilterType>(null);
-  const briefingTtsKey = String(briefingVersion ?? "current");
-  const briefingTts = ttsJobs[`briefing:${briefingTtsKey}`];
-  const speaking = briefingTts?.status === "playing";
-  const audioLoading = briefingTts?.status === "loading";
-  const audioBuffered = briefingTts?.status === "buffered";
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const setSpeaking = (_: boolean) => { void _; };
-  const setAudioLoading = (_: boolean) => { void _; };
   const [nonEssentialExpanded, setNonEssentialExpanded] = useState(false);
   const [importantExpanded, setImportantExpanded] = useState(false);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => {
     try {
-      const raw = localStorage.getItem(`runemail_dismissed_briefing_${user.id}`);
+      const raw = localStorage.getItem(`tabellar_dismissed_briefing_${user.id}`);
       return new Set(raw ? JSON.parse(raw) : []);
     } catch { return new Set(); }
   });
@@ -540,7 +575,7 @@ export default function BriefingView() {
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
   const [resolvedSortToEnd, setResolvedSortToEnd] = useState<boolean>(() => {
     try {
-      const raw = localStorage.getItem(`runemail_resolved_sort_end_${user.id}`);
+      const raw = localStorage.getItem(`tabellar_resolved_sort_end_${user.id}`);
       return raw === null ? true : raw === "true";
     } catch { return true; }
   });
@@ -551,7 +586,7 @@ export default function BriefingView() {
     await supabase.from("profiles").update({ briefing_scope: scope }).eq("id", user.id);
     // Clear stale cache so the user sees "generating..." instead of the old briefing
     invalidateViewCache("briefing");
-    try { localStorage.removeItem(`runemail_briefing_cache_${user.id}`); } catch { /* ignore */ }
+    try { localStorage.removeItem(`tabellar_briefing_cache_${user.id}`); } catch { /* ignore */ }
     setBriefing(null);
     setBriefingAt(null);
     // Pass scope explicitly so the API call uses the correct scope even if locked
@@ -592,7 +627,7 @@ export default function BriefingView() {
     }
 
     try {
-      const cached = localStorage.getItem(`runemail_briefing_cache_${user.id}`);
+      const cached = localStorage.getItem(`tabellar_briefing_cache_${user.id}`);
       if (cached) {
         const { data, ts, scope: cachedScope } = JSON.parse(cached);
         const scopeMismatch = cachedScope && cachedScope !== currentScope;
@@ -621,7 +656,7 @@ export default function BriefingView() {
         setViewCache("briefing", { data: row.last_briefing, at: row.last_briefing_at ?? null, scope: currentScope } as any);
         const dbTs = row.last_briefing_at ? new Date(row.last_briefing_at).getTime() : null;
         localStorage.setItem(
-          `runemail_briefing_cache_${user.id}`,
+          `tabellar_briefing_cache_${user.id}`,
           JSON.stringify({ data: row.last_briefing, ts: dbTs ?? Date.now(), scope: currentScope }),
         );
         if (!isFromToday(dbTs)) generateBriefingOnDemandRef.current?.();
@@ -650,7 +685,7 @@ export default function BriefingView() {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
       if (accessToken) {
-        const apiUrl = process.env.NEXT_PUBLIC_SUPABASE_URL + "/functions/v1/api";
+        const apiUrl = "/api";
         const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
         const today = new Date().toISOString().split("T")[0];
         const res = await fetch(`${apiUrl}/calendar/events?date=${today}&timezone=${encodeURIComponent(timezone)}`, {
@@ -699,12 +734,6 @@ export default function BriefingView() {
     return () => { mounted = false; };
   }, [loadCachedBriefing, loadMeetings, user.id]);
 
-  useEffect(() => {
-    const s = briefing?.executiveSummary?.trim();
-    if (!s || !briefingAudioAutoplay || !executiveSummaryIsUsable(s)) return;
-    void prefetchBriefingExecutiveTts(s);
-  }, [briefing?.executiveSummary, briefingAudioAutoplay, prefetchBriefingExecutiveTts]);
-
   const prevBriefingVersion = useRef(briefingVersion);
   useEffect(() => {
     if (briefingVersion !== prevBriefingVersion.current) {
@@ -737,7 +766,7 @@ export default function BriefingView() {
   const dismissCard = useCallback((id: string) => {
     setDismissedIds((prev) => {
       const next = new Set(prev).add(id);
-      localStorage.setItem(`runemail_dismissed_briefing_${user.id}`, JSON.stringify([...next]));
+      localStorage.setItem(`tabellar_dismissed_briefing_${user.id}`, JSON.stringify([...next]));
       return next;
     });
   }, [user.id]);
@@ -751,16 +780,6 @@ export default function BriefingView() {
     if (data) setSelectedEmail(data);
   }, [supabase]);
 
-  const toggleAudio = useCallback(async () => {
-    const text = briefing?.executiveSummary;
-    if (!text || !executiveSummaryIsUsable(text)) return;
-    if (briefingTts?.status === "playing" || briefingTts?.status === "paused") {
-      stopTts("briefing", briefingTtsKey);
-      return;
-    }
-    await startTts("briefing", briefingTtsKey, text);
-  }, [briefing?.executiveSummary, briefingTts, briefingTtsKey, startTts, stopTts]);
-
   const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
 
   // Merge DB meetings and Google Calendar events into a unified sorted list
@@ -772,10 +791,10 @@ export default function BriefingView() {
       end: m.end_time,
       attendees: m.attendees ?? [],
       status: m.status ?? "confirmed",
-      source: "runemail" as const,
-      meetingLink: m.zoom_join_url ?? m.calendar_event_id ? null : null,
+      source: "tabellar" as const,
+      meetingLink: null,
     }));
-    // Deduplicate: skip GCal events that RuneMail already tracks via calendar_event_id,
+    // Deduplicate: skip GCal events that Tabellar already tracks via calendar_event_id,
     // or whose title+minute match a DB meeting (fallback for meetings without a GCal ID).
     const dbCalIds = new Set(meetings.map((m: any) => m.calendar_event_id).filter(Boolean));
     const dbKeys = new Set(
@@ -1050,7 +1069,7 @@ export default function BriefingView() {
                             onClick={() => {
                               const next = !resolvedSortToEnd;
                               setResolvedSortToEnd(next);
-                              try { localStorage.setItem(`runemail_resolved_sort_end_${user.id}`, String(next)); } catch { /* ignore */ }
+                              try { localStorage.setItem(`tabellar_resolved_sort_end_${user.id}`, String(next)); } catch { /* ignore */ }
                             }}
                             className="w-full flex items-center justify-between gap-2 text-left"
                           >
@@ -1143,43 +1162,11 @@ export default function BriefingView() {
                     })}
                   </div>
                 )}
-                {/* Executive summary + audio */}
+                {/* Executive summary */}
                 {briefing && executiveSummaryIsUsable(briefing.executiveSummary) && (
                   <div className="px-4 py-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface)]/90">
                     <div className="flex items-center justify-between gap-3 mb-2">
                       <span className="text-[10px] font-semibold tracking-[0.12em] text-[var(--muted)] uppercase font-['Syne',system-ui,sans-serif]">Executive summary</span>
-                      <button
-                        type="button"
-                        onClick={toggleAudio}
-                        disabled={audioLoading}
-                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all duration-150 cursor-pointer ${
-                          speaking
-                            ? "bg-red-500 text-white border border-red-600 hover:bg-red-600"
-                            : audioLoading
-                            ? "border border-[var(--border)] text-[var(--muted)] bg-[var(--surface-2)] opacity-70 cursor-wait"
-                            : "border border-[var(--border)] text-[var(--foreground)] bg-[var(--surface-2)] hover:border-[var(--accent)]/50"
-                        }`}
-                        title={
-                          speaking
-                            ? "Stop reading"
-                            : audioLoading
-                              ? "Loading audio..."
-                              : audioBuffered
-                                ? "Play briefing audio"
-                                : "Read aloud"
-                        }
-                      >
-                        <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>
-                          {speaking
-                            ? "stop_circle"
-                            : audioLoading
-                              ? "hourglass_empty"
-                              : audioBuffered
-                                ? "play_circle"
-                                : "volume_up"}
-                        </span>
-                        {speaking ? "Stop" : audioLoading ? "Loading..." : audioBuffered ? "Play" : "Listen"}
-                      </button>
                     </div>
                     <p className="text-[13px] leading-relaxed whitespace-pre-wrap text-slate-800 dark:text-slate-100 font-['DM_Sans',ui-sans-serif,sans-serif]">
                       {briefingExecutiveSummaryDisplay(briefing.executiveSummary)}
@@ -1455,9 +1442,9 @@ export default function BriefingView() {
                 {/* AI mode */}
                 <p className="text-[11px] text-[var(--muted)] flex items-center gap-1 pb-2">
                   <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>
-                    {profile?.ai_mode === "local" ? "computer" : "cloud"}
+                    cloud
                   </span>
-                  Generated by {profile?.ai_mode === "local" ? "local AI (Qwen 2.5 3B)" : "cloud AI"}
+                  Generated by cloud AI
                 </p>
               </div>
             )}

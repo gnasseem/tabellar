@@ -1,7 +1,6 @@
-"use client";
 // v3
 import { useState, useEffect, useCallback, useRef } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 
 export default function ScheduledView() {

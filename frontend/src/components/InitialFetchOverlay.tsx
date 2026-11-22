@@ -1,4 +1,3 @@
-"use client";
 
 import { useEffect, useState } from "react";
 
@@ -21,24 +20,14 @@ const REFRESH_PHASES: Phase[] = [
 type Props = {
   phaseIndex: number;
   mode?: "initial" | "refresh";
-  onStartTutorial?: () => void;
 };
 
-export default function InitialFetchOverlay({ phaseIndex, mode = "initial", onStartTutorial }: Props) {
+export default function InitialFetchOverlay({ phaseIndex, mode = "initial" }: Props) {
   const PHASES = mode === "refresh" ? REFRESH_PHASES : INITIAL_PHASES;
   const [displayPct, setDisplayPct] = useState(0);
-  const [showTutorialCta, setShowTutorialCta] = useState(false);
   const target = PHASES[Math.min(phaseIndex, PHASES.length - 1)].pct;
   const label = PHASES[Math.min(phaseIndex, PHASES.length - 1)].label;
   const isDone = phaseIndex >= PHASES.length - 1;
-
-  // Show the tutorial CTA after phase 1 (after "Connecting to Gmail" passes)
-  useEffect(() => {
-    if (mode === "initial" && phaseIndex >= 1 && onStartTutorial) {
-      const t = setTimeout(() => setShowTutorialCta(true), 800);
-      return () => clearTimeout(t);
-    }
-  }, [phaseIndex, mode, onStartTutorial]);
 
   // Smoothly animate the bar toward target
   useEffect(() => {
@@ -57,8 +46,8 @@ export default function InitialFetchOverlay({ phaseIndex, mode = "initial", onSt
       <div className="mb-10 flex flex-col items-center gap-4">
         <div className="relative">
           <img
-            src="/Logo.png"
-            alt="RuneMail"
+            src="/logo.svg"
+            alt="Tabellar"
             style={{ width: 56, height: 56, borderRadius: 14, objectFit: "contain" }}
           />
           {!isDone && (
@@ -78,7 +67,7 @@ export default function InitialFetchOverlay({ phaseIndex, mode = "initial", onSt
             className="text-[22px] font-bold text-[var(--foreground)] mb-1.5"
             style={{ fontFamily: '"Syne", sans-serif', letterSpacing: "-0.03em" }}
           >
-            {mode === "refresh" ? "Syncing RuneMail" : "Setting up RuneMail"}
+            {mode === "refresh" ? "Syncing Tabellar" : "Setting up Tabellar"}
           </h1>
           <p className="text-sm text-[var(--muted)]">
             {mode === "refresh" ? "Fetching everything fresh…" : "This only happens once. Grab a coffee."}
@@ -143,34 +132,6 @@ export default function InitialFetchOverlay({ phaseIndex, mode = "initial", onSt
           ))}
         </div>
       </div>
-
-      {/* Tutorial CTA */}
-      {showTutorialCta && onStartTutorial && (
-        <div
-          className="mt-10 w-80 rounded-2xl border border-[var(--border)] p-5 text-center"
-          style={{
-            background: "var(--background)",
-            opacity: showTutorialCta ? 1 : 0,
-            transition: "opacity 0.4s ease",
-          }}
-        >
-          <p className="text-[13px] font-semibold text-[var(--foreground)] mb-1">
-            This takes a minute.
-          </p>
-          <p className="text-[12px] text-[var(--muted)] mb-4">
-            Explore RuneMail with a sample workspace while you wait.
-          </p>
-          <button
-            onClick={onStartTutorial}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[var(--accent)] text-white dark:text-[#202124] text-[13px] font-bold hover:opacity-90 active:scale-[0.98] transition-all cursor-pointer shadow-md"
-          >
-            Explore RuneMail
-            <span className="material-symbols-outlined" style={{ fontSize: "16px", fontVariationSettings: "'FILL' 1" }}>
-              arrow_forward
-            </span>
-          </button>
-        </div>
-      )}
 
       <style>{`
         @keyframes pulse {

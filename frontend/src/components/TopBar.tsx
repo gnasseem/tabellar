@@ -1,9 +1,7 @@
-"use client";
 
 import { useRef, useEffect, useState } from "react";
 import { useApp } from "./AppShell";
-import { createClient } from "@/lib/supabase/client";
-import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/db";
 import { SEARCH_OPERATORS } from "@/lib/searchQuery";
 
 const STATUS_CHIPS = [
@@ -70,23 +68,17 @@ export default function TopBar() {
     setInboxSort,
     inboxCustomCategories,
     inboxCustomTags,
-    addToast,
     agentSession,
     openAgentWorkspace,
     setView,
   } = useApp();
   const supabase = createClient();
-  const router = useRouter();
 
   const [searchFocused, setSearchFocused] = useState(false);
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showSortMenu, setShowSortMenu] = useState(false);
-  const [showFeedback, setShowFeedback] = useState(false);
-  const [feedbackText, setFeedbackText] = useState("");
-  const [feedbackSending, setFeedbackSending] = useState(false);
   const filterMenuRef = useRef<HTMLDivElement>(null);
   const sortMenuRef = useRef<HTMLDivElement>(null);
-  const feedbackRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -100,68 +92,10 @@ export default function TopBar() {
         !sortMenuRef.current.contains(e.target as Node)
       )
         setShowSortMenu(false);
-      if (
-        feedbackRef.current &&
-        !feedbackRef.current.contains(e.target as Node)
-      )
-        setShowFeedback(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
-
-  const sendFeedback = async () => {
-    if (!feedbackText.trim() || feedbackSending) return;
-    setFeedbackSending(true);
-    try {
-      const feedbackRecipient =
-        process.env.NEXT_PUBLIC_FEEDBACK_EMAIL || "feedback@runemail.app";
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      // Escape user-supplied content so HTML metacharacters don't end up in
-      // the outgoing email body as live markup.
-      const escapeHtml = (s: string) =>
-        s
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/"/g, "&quot;")
-          .replace(/'/g, "&#39;");
-      const safeFrom = escapeHtml(user?.email ?? "unknown");
-      const safeBody = escapeHtml(feedbackText).replace(/\n/g, "<br>");
-      const res = await fetch(`${supabaseUrl}/functions/v1/api/send-email`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({
-          to: [feedbackRecipient],
-          subject: `RuneMail Feedback from ${user?.email ?? "user"}`,
-          body_html: `<p><strong>From:</strong> ${safeFrom}</p><p><strong>Feedback:</strong></p><p>${safeBody}</p>`,
-        }),
-      });
-      if (!res.ok) {
-        addToast?.("error", "Failed to send feedback");
-        return;
-      }
-      setFeedbackText("");
-      setShowFeedback(false);
-      addToast?.("success", "Thanks for the feedback!");
-    } catch (err) {
-      console.error("[topbar/feedback] network error:", err);
-      addToast?.("error", "Failed to send feedback");
-    } finally {
-      setFeedbackSending(false);
-    }
-  };
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    router.push("/");
-  };
 
   const toggleTheme = async () => {
     const next = theme === "light" ? "dark" : "light";
@@ -193,8 +127,8 @@ export default function TopBar() {
         </button>
         <div className="flex items-center gap-2">
           <img
-            src="/Logo.png"
-            alt="RuneMail"
+            src="/logo.svg"
+            alt="Tabellar"
             style={{
               width: 28,
               height: 28,
@@ -202,18 +136,17 @@ export default function TopBar() {
               objectFit: "contain",
             }}
           />
-          <span className="runemail-wordmark text-[17px] hidden sm:inline tracking-tight">
-            RuneMail
+          <span className="tabellar-wordmark text-[17px] hidden sm:inline tracking-tight">
+            Tabellar
           </span>
         </div>
       </div>
 
-      {/* Center: search + filter + sort (inbox, sent, drafts, todos, receipts) */}
+      {/* Center: search + filter + sort (inbox, sent, drafts, todos) */}
       {(view === "inbox" ||
         view === "sent" ||
         view === "drafts" ||
-        view === "todos" ||
-        view === "receipts") && (
+        view === "todos") && (
         <div className="flex-1 max-w-2xl mx-4 hidden md:flex items-center gap-1.5">
           {/* Search bar */}
           <div className="relative flex-1">
@@ -237,9 +170,7 @@ export default function TopBar() {
                     ? "Search sent…"
                     : view === "drafts"
                       ? "Search drafts…"
-                      : view === "todos"
-                        ? "Search tasks…"
-                        : "Search receipts…"
+                      : "Search tasks…"
               }
               className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-[13px] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/25 focus:border-[var(--accent)]/40 transition-all"
             />
@@ -488,48 +419,6 @@ export default function TopBar() {
 
       {/* Right: actions */}
       <div className="flex items-center gap-0.5 shrink-0">
-        {/* Feedback button */}
-        <div className="relative" ref={feedbackRef}>
-          <button
-            onClick={() => setShowFeedback((v) => !v)}
-            className="flex items-center justify-center p-2 rounded-lg hover:bg-[var(--surface-2)] text-[var(--muted)] transition-colors focus:outline-none font-bold text-[13px] leading-none"
-            title="Report an issue"
-          >
-            !!
-          </button>
-          {showFeedback && (
-            <div className="absolute right-0 top-full mt-1 bg-[var(--surface)] border border-[var(--border)] rounded-xl shadow-lg p-3 z-50 w-72 flex flex-col gap-2">
-              <p className="text-[12px] font-semibold text-[var(--foreground)]">
-                Report an issue
-              </p>
-              <textarea
-                autoFocus
-                value={feedbackText}
-                onChange={(e) => setFeedbackText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey))
-                    sendFeedback();
-                }}
-                placeholder="Describe the issue..."
-                rows={4}
-                className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-[12px] text-[var(--foreground)] placeholder:text-[var(--muted)] px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/25 focus:border-[var(--accent)]/40"
-              />
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] text-[var(--muted)]">
-                  Cmd+Enter to send
-                </span>
-                <button
-                  onClick={sendFeedback}
-                  disabled={!feedbackText.trim() || feedbackSending}
-                  className="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-40 transition-opacity"
-                >
-                  {feedbackSending ? "Sending..." : "Send"}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* Auto-Resolve agent status pill (only when a session is active) */}
         {agentSession &&
           ["planning", "asking", "executing", "ready"].includes(
@@ -612,12 +501,6 @@ export default function TopBar() {
               {initials}
             </div>
           )}
-          <button
-            onClick={handleSignOut}
-            className="text-[12px] font-medium text-[var(--muted)] hover:text-[var(--danger)] transition-colors focus:outline-none"
-          >
-            Sign out
-          </button>
         </div>
       </div>
     </header>

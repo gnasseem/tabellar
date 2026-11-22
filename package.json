@@ -1,15 +1,27 @@
 {
-  "name": "runemail-monorepo",
+  "name": "tabellar",
+  "version": "0.1.0",
   "private": true,
+  "description": "A personal email agent that runs on your Mac",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "tabellar": "server/tabellar.ts"
+  },
   "workspaces": [
     "frontend"
   ],
   "scripts": {
-    "dev": "cd frontend && npm run dev",
-    "build": "cd frontend && npm run build",
-    "start": "cd frontend && npm run start"
+    "setup": "node server/tabellar.ts setup",
+    "start": "npm run build && node server/tabellar.ts start",
+    "build": "npm run build --workspace tabellar-frontend",
+    "dev": "npm run dev --workspace tabellar-frontend",
+    "typecheck": "tsc -p server && npm run typecheck --workspace tabellar-frontend"
   },
   "devDependencies": {
-    "supabase": "^2.78.1"
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3"
   }
 }
