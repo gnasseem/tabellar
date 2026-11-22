@@ -1,12 +1,13 @@
-// The cloud model chosen in setup, behind one function.
+// The model chosen in setup, behind one function.
 //
 // The prompts and tool definitions were written against the OpenAI chat
 // completions format, so that is what callers build. For any OpenAI-compatible
-// endpoint the request goes out as it is. For Anthropic the request is
-// translated to the Messages API and the reply translated back, so callers see
-// the same response shape either way. The return value is a fetch Response so
+// cloud endpoint the request goes out as it is. For Anthropic, and for local
+// models through Ollama's own chat API, the request is translated and the
+// reply translated back, so callers see the same response shape either way. The return value is a fetch Response so
 // the callers' existing retry handling (429, 5xx, body parsing) keeps working.
 
+import { totalmem } from "node:os";
 import { loadConfig, keychainGet } from "./config.ts";
 
 type ChatMessage = {
@@ -33,7 +34,18 @@ export type ChatRequest = {
 
 export function modelConfigured(): boolean {
   const m = loadConfig().model;
-  return !!(m?.model && m.baseUrl && keychainGet("model-api-key"));
+  if (!m?.model || !m.baseUrl) return false;
+  return m.format === "ollama" || !!keychainGet("model-api-key");
+}
+
+export function isLocalModel(): boolean {
+  return loadConfig().model?.format === "ollama";
+}
+
+// Local models can take minutes on a long prompt, the first call also loads
+// the model into memory.
+export function modelTimeoutMs(): number {
+  return isLocalModel() ? 300_000 : 120_000;
 }
 
 // Fail at once, with a message the interface can show, instead of retrying.
@@ -43,20 +55,23 @@ export function requireModel(): void {
 
 export async function chatCompletion(req: ChatRequest, signal?: AbortSignal): Promise<Response> {
   const m = loadConfig().model;
+  if (!m) throw new Error("No model is set up. Run `tabellar setup`.");
+  if (m.format === "ollama") return ollama(m.baseUrl, m.model, req, signal);
   const key = keychainGet("model-api-key");
-  if (!m || !key) throw new Error("No model is set up. Run `tabellar setup`.");
+  if (!key) throw new Error("No API key is saved for the model. Run `tabellar setup`.");
   return m.format === "anthropic" ? anthropic(m.baseUrl, m.model, key, req, signal) : openai(m.baseUrl, m.model, key, req, signal);
 }
 
 // ── OpenAI-compatible (OpenAI, OpenRouter, Groq, Cerebras, ...) ─────────────
 
-function openai(baseUrl: string, model: string, key: string, req: ChatRequest, signal?: AbortSignal): Promise<Response> {
+async function openai(baseUrl: string, model: string, key: string, req: ChatRequest, signal?: AbortSignal): Promise<Response> {
   const openRouter = baseUrl.includes("openrouter.ai");
   const body: Record<string, unknown> = {
     model,
     messages: req.messages.map(({ _anthropic, ...m }) => m),
     temperature: req.temperature,
-    max_tokens: req.max_tokens,
+    // Reasoning models spend part of this on thinking, so leave room for the answer.
+    max_tokens: Math.max(req.max_tokens ?? 0, 4096),
   };
   if (req.tools?.length) {
     body.tools = req.tools;
@@ -68,15 +83,99 @@ function openai(baseUrl: string, model: string, key: string, req: ChatRequest, s
     body.provider = { data_collection: "deny", allow_fallbacks: true };
     if (req.reasoning) body.reasoning = { effort: "medium" };
   }
-  return fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-    method: "POST",
-    signal,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${key}`,
-      ...(openRouter ? { "X-Title": "Tabellar" } : {}),
+  const send = () =>
+    fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+        ...(openRouter ? { "X-Title": "Tabellar" } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  // Some models (OpenAI's reasoning models among them) reject temperature or
+  // want max_completion_tokens instead of max_tokens. Adjust and retry once each.
+  for (let attempt = 0; ; attempt++) {
+    const res = await send();
+    if (res.status !== 400 || attempt >= 2) return res;
+    const text = await res.text();
+    if (/temperature/i.test(text) && "temperature" in body) delete body.temperature;
+    else if (/max_tokens/i.test(text) && "max_tokens" in body) {
+      body.max_completion_tokens = body.max_tokens;
+      delete body.max_tokens;
+    } else return new Response(text, { status: res.status, headers: res.headers });
+  }
+}
+
+// ── Ollama (local models) ───────────────────────────────────────────────────
+// Ollama's own chat API rather than its OpenAI-compatible one, because only
+// the native API lets a request set the context window. Its default is far
+// too small for an email plus the prompts and tool definitions.
+
+function contextLength(): number {
+  const gb = totalmem() / 2 ** 30;
+  return gb >= 48 ? 32768 : gb >= 16 ? 16384 : 8192;
+}
+
+async function ollama(baseUrl: string, model: string, req: ChatRequest, signal?: AbortSignal): Promise<Response> {
+  const toolNames = new Map<string, string>();
+  const messages = req.messages.map((m) => {
+    if (m.role === "assistant" && m.tool_calls?.length) {
+      for (const tc of m.tool_calls) toolNames.set(tc.id, tc.function.name);
+      return {
+        role: "assistant",
+        content: asText(m.content),
+        tool_calls: m.tool_calls.map((tc) => ({ function: { name: tc.function.name, arguments: parseArgs(tc.function.arguments) } })),
+      };
+    }
+    if (m.role === "tool") {
+      return { role: "tool", content: asText(m.content), tool_name: m.name ?? toolNames.get(m.tool_call_id ?? "") ?? "" };
+    }
+    return { role: m.role, content: asText(m.content) };
+  });
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/chat`, {
+      method: "POST",
+      signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages,
+        tools: req.tools?.length ? req.tools : undefined,
+        stream: false,
+        options: { num_ctx: contextLength(), temperature: req.temperature, num_predict: Math.max(req.max_tokens ?? 0, 4096) },
+      }),
+    });
+  } catch {
+    if (signal?.aborted) throw new Error("Local model request was cancelled");
+    return new Response(JSON.stringify({ error: `Could not reach Ollama at ${baseUrl}. Is the Ollama app running?` }), { status: 503 });
+  }
+  if (!res.ok) return new Response(await res.text(), { status: res.status });
+  const data = (await res.json()) as {
+    message?: { content?: string; thinking?: string; tool_calls?: { id?: string; function: { name: string; arguments: unknown } }[] };
+    done_reason?: string;
+  };
+  const msg = data.message ?? {};
+  const toolCalls = (msg.tool_calls ?? []).map((tc, i) => ({
+    id: tc.id ?? `call_${Date.now().toString(36)}_${i}`,
+    type: "function",
+    function: {
+      name: tc.function.name,
+      arguments: typeof tc.function.arguments === "string" ? tc.function.arguments : JSON.stringify(tc.function.arguments ?? {}),
     },
-    body: JSON.stringify(body),
+  }));
+  const message = {
+    role: "assistant",
+    content: msg.content ?? "",
+    tool_calls: toolCalls.length ? toolCalls : undefined,
+    reasoning: msg.thinking || undefined,
+  };
+  const finish = toolCalls.length ? "tool_calls" : data.done_reason === "length" ? "length" : "stop";
+  return new Response(JSON.stringify({ choices: [{ message, finish_reason: finish }] }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
   });
 }
 

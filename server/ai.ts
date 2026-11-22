@@ -1,7 +1,7 @@
 // The prompts and the calls that use them. Every model call goes through
 // chatCompletion in llm.ts, which reaches the model chosen in setup.
 
-import { chatCompletion, requireModel } from "./llm.ts";
+import { chatCompletion, requireModel, modelTimeoutMs } from "./llm.ts";
 
 const PROMPTS = {
   categorize: `You are an expert email categorizer. Classify the email into exactly one category.
@@ -209,8 +209,8 @@ async function llm(
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(
-        () => reject(new Error("LLM request timed out after 120s")),
-        120_000,
+        () => reject(new Error(`LLM request timed out after ${modelTimeoutMs() / 1000}s`)),
+        modelTimeoutMs(),
       );
     });
     let res: Response;
@@ -316,8 +316,8 @@ export async function llmWithTools(params: {
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timeoutId = setTimeout(
-        () => reject(new Error("Agent LLM request timed out after 120s")),
-        120_000,
+        () => reject(new Error(`Agent LLM request timed out after ${modelTimeoutMs() / 1000}s`)),
+        modelTimeoutMs(),
       );
     });
     let res: Response;
@@ -1809,8 +1809,8 @@ export async function chatWithAssistant(
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<never>((_, reject) => {
         timeoutId = setTimeout(
-          () => reject(new Error("Chat request timed out after 120s")),
-          120_000,
+          () => reject(new Error(`Chat request timed out after ${modelTimeoutMs() / 1000}s`)),
+          modelTimeoutMs(),
         );
       });
       let res: Response;

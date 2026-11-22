@@ -63,3 +63,6 @@ frontend/.claude/
 
 # Stale: this is an npm workspace, the root lockfile is authoritative
 frontend/package-lock.json
+
+# Google OAuth client files (imported into the Keychain by setup)
+client_secret*.json

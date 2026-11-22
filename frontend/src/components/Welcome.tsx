@@ -5,7 +5,7 @@ export default function Welcome({ session, error }: { session?: Session; error?:
   const steps: { done: boolean; text: string }[] = session
     ? [
         { done: session.googleConfigured, text: "Google sign-in client set up" },
-        { done: session.modelConfigured, text: "Cloud model set up" },
+        { done: session.modelConfigured, text: "AI model set up (local or cloud)" },
       ]
     : [];
   const ready = !!session?.googleConfigured;

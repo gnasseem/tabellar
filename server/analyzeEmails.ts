@@ -19,6 +19,7 @@
 import type { Db } from "./db.ts";
 import { getEnv } from "./config.ts";
 import { extractEntities, processFullEmail } from "./ai.ts";
+import { isLocalModel } from "./llm.ts";
 
 
 /**
@@ -161,7 +162,7 @@ export async function analyzeEmailsForUser(
   // at once. The cap only matters if we ever hand this function a huge backlog.
   const CONCURRENCY = Math.max(
     1,
-    parseInt(getEnv("AI_PROCESS_CONCURRENCY") || "8", 10),
+    parseInt(getEnv("AI_PROCESS_CONCURRENCY") || (isLocalModel() ? "2" : "8"), 10),
   );
 
   let processed = 0;

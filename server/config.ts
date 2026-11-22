@@ -18,8 +18,10 @@ export const DEFAULT_PORT = 4848;
 mkdirSync(HOME, { recursive: true, mode: 0o700 });
 
 export type ModelConfig = {
-  format: "anthropic" | "openai"; // wire format: Anthropic Messages or OpenAI chat completions
-  baseUrl: string; // e.g. https://api.anthropic.com/v1 or https://openrouter.ai/api/v1
+  provider?: string; // "ollama", "openrouter", "anthropic", "openai", ... (setup's provider list)
+  // Wire format: Ollama's native chat API, Anthropic Messages, or OpenAI chat completions.
+  format: "ollama" | "anthropic" | "openai";
+  baseUrl: string; // e.g. http://127.0.0.1:11434, https://api.anthropic.com/v1, https://openrouter.ai/api/v1
   model: string;
 };
 

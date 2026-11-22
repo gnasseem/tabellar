@@ -19,7 +19,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 All commands run from the repo root. This is an npm workspace; `npm install` at the root installs everything.
 
 ```bash
-npm run setup      # Google sign-in client and cloud model (writes ~/.tabellar/config.json and the Keychain)
+npm run setup      # Google sign-in client and AI model, local (Ollama) or cloud (writes ~/.tabellar/config.json and the Keychain)
 npm start          # build the interface, run the server, open the window
 npm run dev        # Vite dev server for the interface, proxying to a running server on :4848
 npm run build      # build the interface to frontend/dist
@@ -47,9 +47,9 @@ frontend/    React + Tailwind, built with Vite to frontend/dist, served by the s
 - `db.ts`: the SQLite schema (one `SCHEMA` object; columns typed uuid/text/int/real/bool/json/time, defaults filled in on insert, new columns added automatically on start) and `execute(spec)`, which runs supabase-js style queries. Every write is published on `changes` for the event stream. `db.rpc` provides `alloc_agent_turn_idx`, `merge_bucket_draft_actions`, `increment_knowledge_use_count`.
 - `query.ts`: the query builder (`from().select().eq().order()...`, `.or()` PostgREST strings, embedded selects like `email_processed(summary)` and `emails!inner(...)`). Shared by the server and the interface.
 - `google.ts`: installed-app OAuth with PKCE on the loopback address. Refresh tokens live in the Keychain; `gmail_accounts.token_ref` holds only the Keychain item name. Access tokens are kept in memory (`freshAccessToken`).
-- `llm.ts`: `chatCompletion` takes OpenAI chat-completions requests and either forwards them to an OpenAI-compatible endpoint or translates them to the Anthropic Messages API and back. Anthropic content blocks come back on the message as `_anthropic` and are replayed verbatim on later turns so thinking blocks stay intact; the agent persists them in `agent_turns.content.raw`.
+- `llm.ts`: `chatCompletion` takes OpenAI chat-completions requests and sends them in the configured `model.format`: `ollama` (Ollama's native `/api/chat`, so `num_ctx` can be set; no API key), `openai` (forwarded to any OpenAI-compatible endpoint, retrying once without `temperature` or with `max_completion_tokens` when a model rejects them), or `anthropic` (translated to the Messages API and back). Local models get longer timeouts and lower analysis concurrency (`isLocalModel`, `modelTimeoutMs`). Anthropic content blocks come back on the message as `_anthropic` and are replayed verbatim on later turns so thinking blocks stay intact; the agent persists them in `agent_turns.content.raw`.
 - `ai.ts` (prompts and AI helpers), `gmail.ts` (Gmail, Calendar, People API client), `agentLoop.ts` / `agentTools.ts` / `agentExecute.ts` (the agent), `analyzeEmails.ts`, `buildBriefing.ts`.
-- `config.ts`: paths, `config.json` (port, Google client id, model format/base URL/model), Keychain helpers (`keychainGet/Set/Delete`), and `getEnv` for the few settings the backend reads.
+- `config.ts`: paths, `config.json` (port, Google client id, model provider/format/base URL/model), Keychain helpers (`keychainGet/Set/Delete`), and `getEnv` for the few settings the backend reads.
 
 ### Interface (`frontend/`)
 
@@ -64,4 +64,4 @@ One user per install. All tables keep a `user_id` column; the profile row is cre
 
 ### Secrets
 
-Never in files. Keychain items (service `tabellar`): `access-token`, `google-client-secret`, `model-api-key`, and one `google:<hash>` item per connected Google account.
+Never in files. Keychain items (service `tabellar`): `access-token`, `google-client-secret`, `model-api-key` (cloud models only), and one `google:<hash>` item per connected Google account. Downloaded `client_secret*.json` files are gitignored; setup imports them and offers to trash them.

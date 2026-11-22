@@ -2,7 +2,7 @@
 
 A personal email agent that runs on your Mac. Tabellar keeps a local copy of your Gmail, sorts it, writes a daily briefing, drafts replies in your style, pulls out todos and meetings, tracks mail that got no answer, answers questions about your inbox, and can plan and carry out a whole inbox cleanup that you approve.
 
-There is no hosted service and no sign-up. Your mail is stored in one SQLite file on your Mac. The only outside calls are to Google for your mail and calendar, and to the AI model you choose, billed to your own key.
+There is no hosted service and no sign-up. Your mail is stored in one SQLite file on your Mac. The AI runs either on your Mac through Ollama, free and private, or with a cloud provider of your choice on your own API key. The only outside calls are to Google for your mail and calendar, and to the cloud provider if you pick one.
 
 ## What it does
 
@@ -20,7 +20,7 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 - macOS
 - Node.js 24 or newer
 - A Google account (Gmail)
-- An API key for a cloud model: Anthropic, or any OpenAI-compatible endpoint (OpenAI, OpenRouter, and others)
+- For local AI: [Ollama](https://ollama.com/download). For cloud AI: an API key from OpenRouter, Anthropic, OpenAI, Google Gemini, Groq, Mistral, DeepSeek, xAI, Together, Cerebras, or any OpenAI-compatible endpoint
 
 ## Install
 
@@ -47,7 +47,12 @@ Tabellar signs in to Google with your own OAuth client, so your mail never passe
 tabellar setup
 ```
 
-It asks for the JSON file from step 1 and for your model: the API format (`anthropic` or `openai`), base URL, model name and API key. Settings go to `~/.tabellar/config.json`; the client secret, API key and Google tokens go to the macOS Keychain.
+It finds the client file from step 1 in Downloads, Desktop or the current folder (or you can drag it into the Terminal window), saves it to the Keychain and offers to move the file to the Trash. Then it asks where the AI should run:
+
+- **On this Mac**: uses Ollama. Setup lists the models you have and can download one sized for your Mac. No API key.
+- **In the cloud**: pick a provider, paste your API key, and choose a model from the provider's list.
+
+Settings go to `~/.tabellar/config.json`; the client secret, API key and Google tokens go to the macOS Keychain.
 
 ### 3. Start it
 
@@ -76,7 +81,7 @@ server/
   query.ts      query builder shared by server and interface
   google.ts     Google sign-in and Keychain token storage
   gmail.ts      Gmail, Calendar and contacts client
-  llm.ts        model calls in Anthropic or OpenAI-compatible format
+  llm.ts        model calls: Ollama, Anthropic, or OpenAI-compatible
   ai.ts         prompts and AI helpers
   agentLoop.ts, agentTools.ts, agentExecute.ts   the agent
   analyzeEmails.ts, buildBriefing.ts
