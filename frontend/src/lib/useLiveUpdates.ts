@@ -19,7 +19,8 @@ type TableName =
   | "todos"
   | "meetings"
   | "draft_emails"
-  | "scheduled_emails";
+  | "scheduled_emails"
+  | "action_log";
 
 
 // Background sync interval (ms)  -  Gmail push notifications are the primary delivery
@@ -96,6 +97,7 @@ export function useLiveUpdates(
     meetings: 0,
     draft_emails: 0,
     scheduled_emails: 0,
+    action_log: 0,
   });
 
   const bumpTable = useCallback((table: TableName) => {
@@ -222,6 +224,14 @@ export function useLiveUpdates(
         },
         () => bumpTable("email_processed"),
       );
+      // Rows the background engine writes while the window is open.
+      for (const table of ["action_log", "draft_emails", "todos", "meetings"] as const) {
+        channel.on(
+          "postgres_changes",
+          { event: "*", schema: "public", table, filter: `user_id=eq.${userId}` },
+          () => bumpTable(table),
+        );
+      }
       channel.subscribe((status) => {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           setTimeout(() => {

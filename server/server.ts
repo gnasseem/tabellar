@@ -1,5 +1,6 @@
 // The Tabellar server: serves the interface, the local API, the database
-// bridge and the live event stream, on 127.0.0.1 only.
+// bridge and the live event stream, on 127.0.0.1 only, and runs the
+// background engine (engine.ts) and the timer for scheduled sends.
 //
 // Access: every request must name this machine as its Host (which defeats DNS
 // rebinding) and, when a browser sends an Origin, come from Tabellar's own
@@ -22,6 +23,7 @@ import { handleSetup, startOllama } from "./setup.ts";
 import { signInUrl, finishSignIn, forgetTokens } from "./google.ts";
 import { sendEmail } from "./gmail.ts";
 import { modelConfigured } from "./llm.ts";
+import { startEngine } from "./engine.ts";
 
 const DIST = fileURLToPath(new URL("../frontend/dist/", import.meta.url));
 const MAX_BODY = 50 * 1024 * 1024; // attachments arrive base64-encoded in JSON
@@ -297,9 +299,11 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
     server.listen(port, "127.0.0.1", () => {
       // A local model needs Ollama running; start it if it is not.
       if (loadConfig().model?.format === "ollama") startOllama().catch(() => {});
+      const stopEngine = startEngine();
       resolve({
         port,
         close: () => {
+          stopEngine();
           clearInterval(timer);
           server.close();
         },

@@ -27,6 +27,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       last_briefing: "json", last_briefing_at: "time",
       briefing_scope: 'text ! ="today_new"', calendar_send_invites: "bool ! =true",
       notification_level: 'text ! ="important"', notification_preview: "bool ! =true",
+      autonomy_level: 'text ! ="suggest"', engine_paused: "bool ! =false",
       created_at: "time ! =now", updated_at: "time ! =now",
     },
   },
@@ -56,7 +57,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", email_id: "uuid ! >emails:cascade",
       category: 'text ! ="updates"', extra_labels: "json", summary: "text", urgency: "text",
-      quick_actions: "json =[]", processed_at: "time ! =now",
+      quick_actions: "json =[]", processed_at: "time ! =now", engine_at: "time",
     },
     unique: [["email_id"]],
   },
@@ -141,7 +142,16 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
   draft_emails: {
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", to_addresses: "json ! =[]", subject: "text",
-      body_html: "text", created_at: "time ! =now",
+      body_html: "text", email_id: "uuid >emails:null", source: "text", created_at: "time ! =now",
+    },
+  },
+  // Everything Tabellar does or proposes on its own, and what the agent and
+  // assistant do for the user. See policy.ts and actions.ts.
+  action_log: {
+    cols: {
+      id: "uuid pk =uuid", user_id: "uuid !", kind: "text !", status: "text !", source: "text !",
+      email_id: "uuid >emails:null", summary: "text !", detail: "json ! ={}", hash: "text",
+      reason: "text", error: "text", created_at: "time ! =now", decided_at: "time", undone_at: "time",
     },
   },
   email_signatures: {
@@ -189,6 +199,8 @@ const INDEXES = [
   "CREATE INDEX IF NOT EXISTS followups_status ON follow_up_reminders(user_id, status, remind_at)",
   "CREATE INDEX IF NOT EXISTS agent_sessions_user ON agent_sessions(user_id, status)",
   "CREATE INDEX IF NOT EXISTS agent_sessions_parent ON agent_sessions(parent_id)",
+  "CREATE INDEX IF NOT EXISTS action_log_user ON action_log(user_id, created_at DESC)",
+  "CREATE INDEX IF NOT EXISTS action_log_status ON action_log(user_id, status)",
   // At most one default signature per account (or per user, for global ones).
   "CREATE UNIQUE INDEX IF NOT EXISTS signatures_one_default ON email_signatures(user_id, coalesce(gmail_account_id, '')) WHERE is_default = 1",
 ];

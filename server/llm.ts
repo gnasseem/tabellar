@@ -26,7 +26,8 @@ export type ChatRequest = {
   tools?: { type: string; function: { name: string; description?: string; parameters?: unknown } }[];
   temperature?: number;
   max_tokens?: number;
-  // How hard the model should think. Only the Anthropic format uses it.
+  // How hard the model should think. Anthropic uses it as given; Ollama
+  // turns thinking on only for "high".
   effort?: "low" | "medium" | "high";
   // Ask OpenRouter for the model's reasoning text alongside the answer.
   reasoning?: boolean;
@@ -134,20 +135,29 @@ async function ollama(baseUrl: string, model: string, req: ChatRequest, signal?:
     }
     return { role: m.role, content: asText(m.content) };
   });
+  // Thinking models (qwen3, deepseek-r1) think by default, which made sorting
+  // one email take about 30 seconds instead of 1 with the same answer. Only
+  // a caller asking for high effort gets thinking.
+  const body: Record<string, unknown> = {
+    model,
+    messages,
+    tools: req.tools?.length ? req.tools : undefined,
+    stream: false,
+    think: req.effort === "high",
+    options: { num_ctx: contextLength(), temperature: req.temperature, num_predict: Math.max(req.max_tokens ?? 0, 4096) },
+  };
+  const post = () =>
+    fetch(`${baseUrl.replace(/\/+$/, "")}/api/chat`, { method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   let res: Response;
   try {
-    res = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/chat`, {
-      method: "POST",
-      signal,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages,
-        tools: req.tools?.length ? req.tools : undefined,
-        stream: false,
-        options: { num_ctx: contextLength(), temperature: req.temperature, num_predict: Math.max(req.max_tokens ?? 0, 4096) },
-      }),
-    });
+    res = await post();
+    // A model without a thinking mode may reject the field; ask again without it.
+    if (res.status === 400) {
+      const text = await res.text();
+      if (!/think/i.test(text)) return new Response(text, { status: 400 });
+      delete body.think;
+      res = await post();
+    }
   } catch {
     if (signal?.aborted) throw new Error("Local model request was cancelled");
     return new Response(JSON.stringify({ error: `Could not reach Ollama at ${baseUrl}. Is the Ollama app running?` }), { status: 503 });

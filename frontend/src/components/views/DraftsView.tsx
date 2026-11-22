@@ -63,7 +63,13 @@ export default function DraftsView() {
           {filtered.map((d: any) => (
             <div
               key={d.id}
-              onClick={() => openCompose(undefined, d)}
+              onClick={async () => {
+                // A reply draft Tabellar wrote opens as a reply, in its thread.
+                if (d.email_id) {
+                  const { data: email } = await supabase.from("emails").select("*").eq("id", d.email_id).maybeSingle();
+                  openCompose(email || undefined, d);
+                } else openCompose(undefined, d);
+              }}
               className="group p-3 rounded-lg border border-[var(--border)] hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer"
             >
               <div className="flex items-start gap-2">
@@ -76,7 +82,7 @@ export default function DraftsView() {
                   </p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-light)] text-[var(--accent)]">Draft</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--accent-light)] text-[var(--accent)]">{d.source === "tabellar" ? "Drafted by Tabellar" : "Draft"}</span>
                   <button
                     onClick={async (e) => {
                       e.stopPropagation();

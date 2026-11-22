@@ -1,6 +1,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "./AppShell";
+import { createClient } from "@/lib/db";
 
 const mailItems = [
   { id: "inbox", icon: "inbox", label: "Inbox" },
@@ -10,6 +11,7 @@ const mailItems = [
 
 const aiItems = [
   { id: "briefing", icon: "summarize", label: "Briefing" },
+  { id: "activity", icon: "smart_toy", label: "Activity" },
   { id: "followups", icon: "schedule_send", label: "Follow-ups" },
   { id: "todos", icon: "checklist", label: "Todos" },
   { id: "meetings", icon: "event", label: "Meetings" },
@@ -71,7 +73,17 @@ function NavGroup({ label, items, view, setView, setSidebarOpen, badges }: {
 }
 
 export default function Sidebar() {
-  const { view, setView, sidebarOpen, setSidebarOpen, openCompose, briefingVersion } = useApp();
+  const { view, setView, sidebarOpen, setSidebarOpen, openCompose, briefingVersion, user, liveChanges } = useApp();
+  // A dot on Activity while proposals wait for approval.
+  const [waiting, setWaiting] = useState(false);
+  useEffect(() => {
+    createClient()
+      .from("action_log")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("status", "proposed")
+      .then(({ count }: { count: number | null }) => setWaiting((count ?? 0) > 0));
+  }, [user.id, liveChanges.action_log]);
   const prevBriefingVersion = useRef(briefingVersion);
   const [briefingBadge, setBriefingBadge] = useState(false);
 
@@ -128,7 +140,7 @@ export default function Sidebar() {
 
         <nav className="flex-1 px-2 overflow-y-auto">
           <NavGroup label="Mail" items={mailItems} view={view} setView={setView} setSidebarOpen={setSidebarOpen} />
-          <NavGroup label="AI Features" items={aiItems} view={view} setView={setView} setSidebarOpen={setSidebarOpen} badges={{ briefing: briefingBadge }} />
+          <NavGroup label="AI Features" items={aiItems} view={view} setView={setView} setSidebarOpen={setSidebarOpen} badges={{ briefing: briefingBadge, activity: waiting }} />
           <NavGroup label="Account" items={settingsItems} view={view} setView={setView} setSidebarOpen={setSidebarOpen} />
         </nav>
       </aside>

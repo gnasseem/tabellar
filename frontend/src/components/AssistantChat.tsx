@@ -454,6 +454,9 @@ function ActionChip({
   if (action.type === "create_meeting") {
     return <ActionCard color="purple" icon="event" title={`Meeting created: ${action.data.title as string}`} subtitle={action.data.start_time ? new Date(action.data.start_time as string).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : undefined} onClick={onViewMeetings} />;
   }
+  if (action.type === "paused") {
+    return <ActionCard color="red" icon="pause_circle" title="Tabellar is paused" subtitle={action.data.message as string | undefined} />;
+  }
   if (action.type === "create_meeting_failed") {
     return <ActionCard color="red" icon="error" title="Failed to create meeting" />;
   }

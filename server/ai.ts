@@ -1,6 +1,7 @@
 // The prompts and the calls that use them. Every model call goes through
 // chatCompletion in llm.ts, which reaches the model chosen in setup.
 
+import { act, engineSettings } from "./actions.ts";
 import { chatCompletion, requireModel, modelTimeoutMs } from "./llm.ts";
 
 const PROMPTS = {
@@ -2348,14 +2349,13 @@ export async function chatWithAssistant(
             : "No pending follow-up reminders.";
       } else if (tc.function?.name === "archive_email" && db && userId) {
         const id = (args.id as string) ?? "";
-        const { error } = await db
-          .from("emails")
-          .update({ is_archived: true })
-          .eq("id", id)
-          .eq("user_id", userId);
-        toolResult = error
-          ? `Failed to archive email: ${error.message}`
-          : "Email archived.";
+        const { data: owned } = await db.from("emails").select("id").eq("id", id).eq("user_id", userId).maybeSingle();
+        if (!owned) {
+          toolResult = "Failed to archive email: not found.";
+        } else {
+          const outcome = await act(userId, { kind: "archive", emailId: id, summary: "Archive (asked in chat)", detail: {} }, { ...(await engineSettings(userId)), source: "assistant" });
+          toolResult = outcome === "done" ? "Email archived." : outcome === "refused" ? "Not archived: Tabellar is paused." : "Failed to archive email in Gmail.";
+        }
       } else if (
         tc.function?.name === "get_email_thread" &&
         db &&

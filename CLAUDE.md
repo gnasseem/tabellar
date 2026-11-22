@@ -26,7 +26,9 @@ npm run build      # build the interface to frontend/dist
 npm run typecheck  # tsc for server/ and frontend/
 
 tabellar open      # open the window of a running server (after `npm link`; same as node server/tabellar.ts open)
-tabellar status    # running? which accounts and model?
+tabellar status    # running? which accounts, model, engine level?
+tabellar autostart on|off   # start at login via launchd (~/Library/LaunchAgents/com.tabellar.server.plist)
+tabellar check     # policy asserts and planted-instruction emails through the engine, in a throwaway TABELLAR_HOME
 ```
 
 Set `TABELLAR_HOME` to run against a different data folder (default `~/.tabellar`). The Keychain service is always `tabellar`.
@@ -43,6 +45,11 @@ frontend/    React + Tailwind, built with Vite to frontend/dist, served by the s
 ### Server (`server/`)
 
 - `server.ts`: `node:http` on 127.0.0.1 (port 4848 by default). Checks the Host header, refuses foreign Origins, and requires the access token as `Authorization: Bearer` on `/api/*`, `/db`, `/db/rpc` and `/session`. `index.html` is served with the token injected only to browsers holding the session cookie, which is exchanged for a one-time code minted by `tabellar open`. Also runs Google sign-in (`/oauth/start`, `/oauth/callback`), the live event stream (`/events`, server-sent events), and a 10-second timer that sends due `scheduled_emails` (undo send and send later).
+- `sync.ts`: `syncMail(userId, initial)` fetches new mail (Gmail history, paginated) and `analyzeInbox(userId)` runs the analysis; each is serialised so the window and the engine never overlap.
+- `engine.ts`: the background engine, started by `startServer`. Every 2 minutes (and on the first tick after wake) it runs sync, analysis, then `planNew`, which turns each newly analysed email (`email_processed.engine_at` null, received within 7 days) into planned actions: a `Tabellar/<Category>` Gmail label, a reply draft (action-required, real sender), a todo, a meeting proposal. Sends macOS notifications per `profiles.notification_level`.
+- `policy.ts`: `decide()` is the only place an action is authorised. Levels `observe`/`suggest`/`assist` (`profiles.autonomy_level`; anything else counts as observe), `profiles.engine_paused`, caps per cycle and per day, and `looksLikeInstructions()` which limits planted-instruction email to a label. The engine never sends or archives. `proposalHash()` binds an approval to the exact proposal.
+- `actions.ts`: `act()` decides then does, proposes (status `proposed` with a hash) or logs a refusal in `action_log`; `approve`, `dismiss`, `undo`. The agent's archive and the assistant's archive go through `act()` and archive in Gmail; agent and assistant sends are recorded. Everything checks pause.
+- `notify.ts` (channels list, macOS via osascript argv), `launchd.ts` (login item), `check.ts` (run by `tabellar check`).
 - `api.ts`: `handleApi(req, path)` with all routes under `/api` (fetch-emails, send-email, drafts, briefing, calendar, chat, follow-ups, signatures, agent, ...). Written against Web `Request`/`Response`.
 - `db.ts`: the SQLite schema (one `SCHEMA` object; columns typed uuid/text/int/real/bool/json/time, defaults filled in on insert, new columns added automatically on start) and `execute(spec)`, which runs supabase-js style queries. Every write is published on `changes` for the event stream. `db.rpc` provides `alloc_agent_turn_idx`, `merge_bucket_draft_actions`, `increment_knowledge_use_count`.
 - `query.ts`: the query builder (`from().select().eq().order()...`, `.or()` PostgREST strings, embedded selects like `email_processed(summary)` and `emails!inner(...)`). Shared by the server and the interface.
@@ -61,7 +68,7 @@ frontend/    React + Tailwind, built with Vite to frontend/dist, served by the s
 
 ### Data
 
-One user per install. All tables keep a `user_id` column; the profile row is created at first Google sign-in. Key tables: `profiles`, `gmail_accounts`, `emails`, `email_processed` (category, summary, quick_actions; upsert on `email_id`), `todos`, `meetings`, `follow_up_reminders`, `scheduled_emails`, `draft_emails`, `knowledge_base`, `email_memory`, `contacts`, `agent_sessions`, `agent_turns`.
+One user per install. All tables keep a `user_id` column; the profile row is created at first Google sign-in. Key tables: `profiles`, `gmail_accounts`, `emails`, `action_log` (what the engine, agent and assistant did or propose, with undo info in `detail`), `email_processed` (category, summary, quick_actions; upsert on `email_id`), `todos`, `meetings`, `follow_up_reminders`, `scheduled_emails`, `draft_emails`, `knowledge_base`, `email_memory`, `contacts`, `agent_sessions`, `agent_turns`.
 
 ### Secrets
 

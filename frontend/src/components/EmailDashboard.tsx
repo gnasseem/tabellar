@@ -15,6 +15,7 @@ const BriefingView = lazy(() => import("./views/BriefingView"));
 const SettingsView = lazy(() => import("./views/SettingsView"));
 const RelationshipsView = lazy(() => import("./views/RelationshipsView"));
 const FollowupsView = lazy(() => import("./views/FollowupsView"));
+const ActivityView = lazy(() => import("./views/ActivityView"));
 
 const views: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
   inbox: InboxView,
@@ -28,6 +29,7 @@ const views: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
   settings: SettingsView,
   relationships: RelationshipsView,
   followups: FollowupsView,
+  activity: ActivityView,
 };
 
 export default function EmailDashboard() {

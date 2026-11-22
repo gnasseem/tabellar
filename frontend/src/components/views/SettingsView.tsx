@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
+import { LEVELS, engineFetch } from "./ActivityView";
 import { EmailField, useContacts } from "../EmailAutocomplete";
 import { ModelSettings } from "../ModelSetup";
 
@@ -63,6 +64,7 @@ type DelegationRule = {
 type TabId =
   | "account"
   | "ai"
+  | "background"
   | "schedule"
   | "briefing"
   | "automation"
@@ -249,12 +251,128 @@ function TimePickerAmPm({
 const TABS: { id: TabId; label: string; icon: string }[] = [
   { id: "account", label: "Account", icon: "manage_accounts" },
   { id: "ai", label: "AI", icon: "auto_awesome" },
+  { id: "background", label: "Background", icon: "smart_toy" },
   { id: "schedule", label: "Schedule", icon: "schedule" },
   { id: "briefing", label: "Briefing", icon: "summarize" },
   { id: "automation", label: "Automation", icon: "alt_route" },
   { id: "templates", label: "Templates", icon: "description" },
   { id: "signatures", label: "Signatures", icon: "draw" },
 ];
+
+// The background engine: how much it may do, how it tells you, and whether
+// Tabellar starts at login. Each control saves as soon as it changes.
+function BackgroundSettings() {
+  const { user, profile, updateProfile, addToast } = useApp();
+  const supabase = createClient();
+  const [level, setLevel] = useState<string>(profile.autonomy_level ?? "suggest");
+  const [paused, setPaused] = useState<boolean>(!!profile.engine_paused);
+  const [notify, setNotify] = useState<string>(profile.notification_level ?? "important");
+  const [preview, setPreview] = useState<boolean>(profile.notification_preview !== false);
+  const [autostart, setAutostart] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    engineFetch("/engine/status")
+      .then((s) => {
+        setAutostart(!!s.autostart);
+        setLevel(s.level);
+        setPaused(!!s.paused);
+      })
+      .catch(() => setAutostart(false));
+  }, []);
+
+  const save = async (patch: Record<string, unknown>) => {
+    const { error } = await supabase.from("profiles").update(patch).eq("id", user.id);
+    if (error) addToast("error", error.message);
+    else updateProfile(patch);
+  };
+
+  const toggleAutostart = async (on: boolean) => {
+    try {
+      const r = await engineFetch("/engine/autostart", { on });
+      setAutostart(!!r.autostart);
+      addToast("success", on ? "Tabellar will start at login" : "Tabellar will no longer start at login");
+    } catch (e) {
+      addToast("error", (e as Error).message);
+    }
+  };
+
+  return (
+    <>
+      <SectionLabel>What Tabellar may do on its own</SectionLabel>
+      <SectionCard>
+        {LEVELS.map((l) => (
+          <button
+            key={l.id}
+            type="button"
+            onClick={() => {
+              setLevel(l.id);
+              save({ autonomy_level: l.id });
+            }}
+            className="w-full flex items-start gap-3 py-3.5 px-5 border-b border-[var(--border)] last:border-0 text-left hover:bg-[var(--surface-2)] transition-colors"
+          >
+            <span className="material-symbols-outlined mt-0.5" style={{ fontSize: "18px", color: level === l.id ? "var(--accent)" : "var(--muted)", fontVariationSettings: level === l.id ? "'FILL' 1" : "'FILL' 0" }}>
+              {level === l.id ? "radio_button_checked" : "radio_button_unchecked"}
+            </span>
+            <span>
+              <span className="block text-sm font-medium text-[var(--foreground)]">{l.label}</span>
+              <span className="block text-xs text-[var(--muted)] mt-0.5">{l.text}</span>
+            </span>
+          </button>
+        ))}
+        <SettingRow label="Pause" description="Stops every action at once, including the agent and the assistant. Mail still syncs.">
+          <Toggle
+            value={paused}
+            onChange={(v) => {
+              setPaused(v);
+              save({ engine_paused: v });
+            }}
+          />
+        </SettingRow>
+      </SectionCard>
+      <p className="text-xs text-[var(--muted)] px-1 -mt-1">
+        It never deletes mail. Everything it does is listed in Activity, where labels, drafts, todos and meeting proposals can be undone.
+      </p>
+
+      <SectionLabel>Notifications</SectionLabel>
+      <SectionCard>
+        <SettingRow label="Notify me about" description="macOS notifications for new mail, sent while Tabellar runs, with the window open or closed.">
+          <select
+            value={notify}
+            onChange={(e) => {
+              setNotify(e.target.value);
+              save({ notification_level: e.target.value });
+            }}
+            className="text-sm bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-[var(--foreground)]"
+          >
+            <option value="important">Important and action needed</option>
+            <option value="all">All new mail</option>
+            <option value="none">Nothing</option>
+          </select>
+        </SettingRow>
+        <SettingRow label="Show sender and summary" description="Off shows only that something arrived, for privacy on a shared screen.">
+          <Toggle
+            value={preview}
+            onChange={(v) => {
+              setPreview(v);
+              save({ notification_preview: v });
+            }}
+          />
+        </SettingRow>
+      </SectionCard>
+
+      <SectionLabel>Running in the background</SectionLabel>
+      <SectionCard>
+        <SettingRow label="Start at login" description="Keeps Tabellar running after you close this window and the terminal, and restarts it if it stops unexpectedly.">
+          {autostart === null ? (
+            <span className="material-symbols-outlined animate-spin text-[var(--muted)]" style={{ fontSize: "18px" }}>progress_activity</span>
+          ) : (
+            <Toggle value={autostart} onChange={toggleAutostart} />
+          )}
+        </SettingRow>
+      </SectionCard>
+    </>
+  );
+}
 
 function SettingRow({
   label,
@@ -1038,6 +1156,8 @@ export default function SettingsView() {
               </SectionCard>
             </>
           )}
+
+          {activeTab === "background" && <BackgroundSettings />}
 
           {/* ---- AI & WRITING ---- */}
           {activeTab === "ai" && (

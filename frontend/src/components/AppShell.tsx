@@ -50,6 +50,10 @@ type Profile = {
   last_briefing_at?: string | null;
   briefing_scope?: string | null;
   calendar_send_invites?: boolean | null;
+  autonomy_level?: string | null;
+  engine_paused?: boolean | null;
+  notification_level?: string | null;
+  notification_preview?: boolean | null;
 };
 
 // In-memory view data cache for instant view switching

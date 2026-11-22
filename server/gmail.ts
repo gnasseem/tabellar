@@ -394,40 +394,36 @@ export async function fetchEmailsByHistoryId(
     accountId,
   );
 
-  const res = await gmailRequest(
-    tokenData.token,
-    `/history?startHistoryId=${startHistoryId}&labelId=INBOX&historyTypes=messageAdded`,
-  );
-
-  if (res.status === 404) {
-    return { emails: [], newHistoryId: null, tooOld: true };
-  }
-  if (!res.ok) {
-    try {
-      console.error(
-        `[gmail] history.list failed status=${res.status} body=${await res.text()}`,
-      );
-    } catch {
-      /* ignore */
-    }
-    throw new Error("Gmail history fetch failed");
-  }
-
-  const data = await res.json();
-  const newHistoryId = (data.historyId as string) ?? null;
-
-  // Collect unique message IDs added to INBOX.
-  // The API request already filters by labelId=INBOX, so all returned
-  // messagesAdded records are for inbox messages. The stub objects in
-  // messagesAdded frequently have an empty labelIds array even for genuine
-  // inbox messages, so filtering on the stub is incorrect — trust the API.
+  // Collect unique message IDs added to INBOX, following pages so a long
+  // sleep does not drop mail. The API request already filters by
+  // labelId=INBOX; the stubs in messagesAdded often have empty labelIds even
+  // for genuine inbox messages, so trust the API rather than the stub.
   const messageIds = new Set<string>();
-  for (const record of (data.history ?? []) as {
-    messagesAdded?: { message: { id: string } }[];
-  }[]) {
-    for (const added of record.messagesAdded ?? []) {
-      messageIds.add(added.message.id);
+  let newHistoryId: string | null = null;
+  let pageToken = "";
+  for (let page = 0; page < 10 && messageIds.size < 300; page++) {
+    const res = await gmailRequest(
+      tokenData.token,
+      `/history?startHistoryId=${startHistoryId}&labelId=INBOX&historyTypes=messageAdded${pageToken ? `&pageToken=${pageToken}` : ""}`,
+    );
+    if (res.status === 404) {
+      return { emails: [], newHistoryId: null, tooOld: true };
     }
+    if (!res.ok) {
+      console.error(`[gmail] history.list failed status=${res.status} body=${await res.text().catch(() => "")}`);
+      throw new Error("Gmail history fetch failed");
+    }
+    const data = await res.json();
+    newHistoryId = (data.historyId as string) ?? newHistoryId;
+    for (const record of (data.history ?? []) as {
+      messagesAdded?: { message: { id: string } }[];
+    }[]) {
+      for (const added of record.messagesAdded ?? []) {
+        messageIds.add(added.message.id);
+      }
+    }
+    pageToken = data.nextPageToken ?? "";
+    if (!pageToken) break;
   }
 
   if (messageIds.size === 0) {
@@ -441,6 +437,45 @@ export async function fetchEmailsByHistoryId(
     emails: results.filter((e): e is EmailData => e !== null),
     newHistoryId,
   };
+}
+
+// ── Labels ──────────────────────────────────────────────────────────────────
+// Tabellar only adds and removes labels. There is deliberately no function
+// here that deletes or trashes a message.
+
+const labelCache = new Map<string, string>(); // `${tokenRef}|${name}` -> label id
+
+// The id of the user label with this name, created if it does not exist.
+export async function ensureLabel(tokenRef: string, name: string): Promise<string> {
+  const key = `${tokenRef}|${name}`;
+  const cached = labelCache.get(key);
+  if (cached) return cached;
+  const { tokenData } = await resolveTokens(tokenRef);
+  const list = await gmailRequest(tokenData.token, "/labels");
+  if (!list.ok) throw new Error(`Gmail labels list failed (${list.status})`);
+  const found = ((await list.json()).labels ?? []).find((l: { name: string }) => l.name === name) as { id: string } | undefined;
+  let id = found?.id;
+  if (!id) {
+    const res = await gmailRequest(tokenData.token, "/labels", {
+      method: "POST",
+      body: JSON.stringify({ name, labelListVisibility: "labelShow", messageListVisibility: "show" }),
+    });
+    if (!res.ok) throw new Error(`Gmail label create failed (${res.status}): ${await res.text().catch(() => "")}`);
+    id = (await res.json()).id as string;
+  }
+  labelCache.set(key, id);
+  return id;
+}
+
+// Add and remove labels on one message. Archiving is removing INBOX.
+export async function modifyLabels(tokenRef: string, gmailId: string, add: string[], remove: string[]): Promise<string[]> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const res = await gmailRequest(tokenData.token, `/messages/${encodeURIComponent(gmailId)}/modify`, {
+    method: "POST",
+    body: JSON.stringify({ addLabelIds: add, removeLabelIds: remove }),
+  });
+  if (!res.ok) throw new Error(`Gmail label change failed (${res.status}): ${await res.text().catch(() => "")}`);
+  return ((await res.json()).labelIds ?? []) as string[];
 }
 
 export async function sendEmail(

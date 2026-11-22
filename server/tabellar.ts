@@ -7,13 +7,17 @@
 //   tabellar start    Run Tabellar and open its window (Ctrl-C stops it)
 //   tabellar open     Open the window of a running Tabellar
 //   tabellar status   Is it running, which accounts and model it uses
+//   tabellar autostart on|off   Start Tabellar at login and keep it running
+//   tabellar check    Safety checks, with planted-instruction emails
 
 import { createInterface } from "node:readline/promises";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { basename, dirname } from "node:path";
+import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig, saveConfig, keychainSet, accessToken, HOME, type Config, type ModelConfig } from "./config.ts";
+import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
 import {
   findClientFiles, googleConfigured, saveGoogleClient, moveToTrash, OLLAMA_URL, LOCAL_CHOICES, recommendedLocalModel,
   ollamaInstalled, ollamaModels, startOllama, installOllama, pullOllamaModel, PROVIDERS, listModels, savedKeyFor, type Progress,
@@ -244,10 +248,48 @@ async function status() {
   const m = config.model;
   const where = m?.format === "ollama" ? "on this Mac (Ollama)" : `via ${PROVIDERS.find((p) => p.id === m?.provider)?.name ?? m?.baseUrl}`;
   console.log(`Model:    ${m ? `${m.model} ${where}` : "not set up (tabellar setup)"}`);
+  console.log(`At login: ${autostartInstalled() ? "starts automatically (tabellar autostart off to stop)" : "no (tabellar autostart on)"}`);
   if (up) {
-    const r = await fetch(`${baseUrl()}/session`, { headers: { Authorization: `Bearer ${accessToken()}` } });
-    const s = (await r.json()) as { user: { email: string } | null; accounts: number };
+    const headers = { Authorization: `Bearer ${accessToken()}` };
+    const s = (await (await fetch(`${baseUrl()}/session`, { headers })).json()) as { user: { email: string } | null; accounts: number };
     console.log(`Accounts: ${s.user ? `${s.accounts} connected (${s.user.email})` : "none yet, sign in from the window"}`);
+    if (s.user) {
+      const e = (await (await fetch(`${baseUrl()}/api/engine/status`, { headers })).json()) as { level: string; paused: boolean; lastCycleAt: string | null; lastError: string | null };
+      const last = e.lastCycleAt ? `last checked mail ${new Date(e.lastCycleAt).toLocaleTimeString()}` : "has not checked mail yet";
+      console.log(`Engine:   ${e.paused ? "paused" : e.level}, ${last}${e.lastError ? ` (error: ${e.lastError})` : ""}`);
+    }
+  }
+}
+
+async function autostart() {
+  const which = args[0];
+  if (which === "on") {
+    installAutostart();
+    console.log("Tabellar now starts at login and keeps running in the background.");
+    console.log(`Its log is ${join(HOME, "server.log")}. Open the window with \`tabellar open\`.`);
+  } else if (which === "off") {
+    removeAutostart();
+    console.log("Tabellar no longer starts at login, and the background copy is stopped.");
+  } else {
+    console.log(autostartInstalled() ? "Tabellar starts at login." : "Tabellar does not start at login.");
+    console.log("Usage: tabellar autostart on|off");
+  }
+}
+
+// Runs check.ts against a throwaway data folder, carrying over only the model
+// settings so the planted emails can also go through the real model.
+function check() {
+  const home = mkdtempSync(join(tmpdir(), "tabellar-check-"));
+  try {
+    const { model } = loadConfig();
+    if (model) writeFileSync(join(home, "config.json"), JSON.stringify({ model }));
+    const r = spawnSync(process.execPath, [fileURLToPath(new URL("./check.ts", import.meta.url))], {
+      stdio: "inherit",
+      env: { ...process.env, TABELLAR_HOME: home },
+    });
+    process.exitCode = r.status ?? 1;
+  } finally {
+    rmSync(home, { recursive: true, force: true });
   }
 }
 
@@ -258,8 +300,10 @@ try {
     if (!(await running())) throw new Error("Tabellar is not running. Start it with `tabellar start`.");
     await openWindow();
   } else if (command === "status") await status();
+  else if (command === "autostart") await autostart();
+  else if (command === "check") check();
   else {
-    console.log("Usage: tabellar <setup|start|open|status>");
+    console.log("Usage: tabellar <setup|start|open|status|autostart|check>");
     process.exitCode = command === "help" ? 0 : 1;
   }
 } catch (e) {

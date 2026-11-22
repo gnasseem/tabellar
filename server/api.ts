@@ -25,21 +25,18 @@
 //   GET|POST /signatures, PATCH|DELETE /signatures/:id
 //   GET  /attachment            Fetch a Gmail attachment
 //   POST /agent/start|step|answer|execute|cancel   The agent
+//   GET  /engine/status, POST /engine/run, POST /engine/autostart
+//   POST /actions/approve|dismiss|undo   The action log
 
 import { db, type Db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { freshAccessToken, revokeGoogleTokens } from "./google.ts";
 import {
-  fetchEmailsByHistoryId,
-  fetchEmails,
   fetchSentEmails,
-  fetchGoogleContacts,
   searchGoogleContacts,
   listAllGoogleContacts,
   fetchAttachment,
   sendEmail,
-  currentHistoryId,
-  type EmailData,
 } from "./gmail.ts";
 import {
   analyzeWritingStyle,
@@ -55,7 +52,10 @@ import {
   processFullEmail,
   type ChatContext,
 } from "./ai.ts";
-import { analyzeEmailsForUser } from "./analyzeEmails.ts";
+import { syncMail, analyzeInbox } from "./sync.ts";
+import { kickEngine, draftReply, runCycle, engineStatus } from "./engine.ts";
+import { approve, dismiss, undo, record, engineSettings } from "./actions.ts";
+import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
 import { buildBriefingForUser } from "./buildBriefing.ts";
 import {
   runAgentStep,
@@ -165,320 +165,16 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       }
       const isInitialFetch = body.initial === true;
 
-      const initialLimit = 50;
-
-      const { data: accounts } = await db
+      const { count: accountCount } = await db
         .from("gmail_accounts")
-        .select("*")
+        .select("id", { count: "exact", head: true })
         .eq("user_id", userId)
         .eq("is_active", true);
-
-      if (!accounts?.length) {
+      if (!accountCount) {
         return json({ error: "No Gmail account connected" }, 400, corsHeaders);
       }
 
-      const allNew: string[] = [];
-
-      for (const account of accounts) {
-        try {
-          // Incremental sync needs a starting point in Gmail's change history.
-          // Take it before a full fetch so mail arriving in between is not missed.
-          if (isInitialFetch || !account.history_id) {
-            try {
-              const historyId = await currentHistoryId(account.token_ref as string);
-              await db.from("gmail_accounts").update({ history_id: historyId }).eq("id", account.id);
-            } catch (err) {
-              console.warn("[fetch-emails] could not read the mailbox history id:", err);
-            }
-          }
-
-          // Initial fetch: grab the 15 most recent inbox emails.
-          // Non-initial refresh: use Gmail history API to fetch only NEW emails
-          // since the last sync (stored history_id). Falls back to latest 15 if
-          // no history_id is stored yet or the history has expired.
-          let rawEmails: EmailData[] = [];
-          let updatedTokenRef: string | undefined;
-
-          if (isInitialFetch) {
-            const result = await fetchEmails(
-              account.token_ref as string,
-              initialLimit,
-              db,
-              account.id as string,
-              false,
-            );
-            rawEmails = result.emails;
-            updatedTokenRef = result.updatedTokenRef;
-          } else {
-            const storedHistoryId = account.history_id as string | null;
-            if (storedHistoryId) {
-              const {
-                emails: histEmails,
-                newHistoryId,
-                tooOld,
-              } = await fetchEmailsByHistoryId(
-                account.token_ref as string,
-                storedHistoryId,
-                db,
-                account.id as string,
-              );
-              if (tooOld) {
-                // History expired; fall back to recent 15 and start over from now
-                try {
-                  const historyId = await currentHistoryId(account.token_ref as string);
-                  await db.from("gmail_accounts").update({ history_id: historyId }).eq("id", account.id);
-                } catch (err) {
-                  console.warn("[fetch-emails] could not read the mailbox history id:", err);
-                }
-                const result = await fetchEmails(
-                  account.token_ref as string,
-                  15,
-                  db,
-                  account.id as string,
-                  false,
-                );
-                rawEmails = result.emails;
-                updatedTokenRef = result.updatedTokenRef;
-              } else {
-                rawEmails = histEmails;
-                if (newHistoryId) {
-                  await db
-                    .from("gmail_accounts")
-                    .update({ history_id: newHistoryId })
-                    .eq("id", account.id);
-                }
-              }
-            } else {
-              // No history_id yet; fetch latest 15
-              const result = await fetchEmails(
-                account.token_ref as string,
-                15,
-                db,
-                account.id as string,
-                false,
-              );
-              rawEmails = result.emails;
-              updatedTokenRef = result.updatedTokenRef;
-            }
-          }
-
-          if (updatedTokenRef) {
-            await db
-              .from("gmail_accounts")
-              .update({ token_ref: updatedTokenRef })
-              .eq("id", account.id);
-          }
-
-          // Batch-check which gmail_ids already exist (1 query instead of N)
-          const incomingGmailIds = rawEmails.map((e) => e.gmail_id);
-          const { data: existingEmails } = await db
-            .from("emails")
-            .select("gmail_id")
-            .eq("user_id", userId)
-            .in("gmail_id", incomingGmailIds);
-          const existingGmailIds = new Set(
-            (existingEmails || []).map((e) => e.gmail_id as string),
-          );
-
-          // Track senders for batch memory update (count per sender)
-          const senderMap = new Map<
-            string,
-            { sender: string; subject: string; count: number }
-          >();
-
-          // Collect new email rows to bulk-insert in a single query
-          const newEmailRows: Record<string, unknown>[] = [];
-          const newEmailSenders: {
-            email: string;
-            sender: string;
-            subject: string;
-          }[] = [];
-
-          for (const emailData of rawEmails) {
-            if (existingGmailIds.has(emailData.gmail_id)) continue;
-            // Skip sent mail: check both the SENT label and the sender address matching the account
-            if (
-              emailData.label_ids.includes("SENT") ||
-              !emailData.label_ids.includes("INBOX") ||
-              (account.gmail_address &&
-                emailData.sender_email?.toLowerCase() ===
-                  (account.gmail_address as string).toLowerCase())
-            )
-              continue;
-
-            newEmailRows.push({
-              user_id: userId,
-              gmail_id: emailData.gmail_id,
-              thread_id: emailData.thread_id,
-              gmail_account_id: account.id,
-              subject: emailData.subject,
-              sender: emailData.sender,
-              sender_email: emailData.sender_email,
-              recipients: emailData.recipients,
-              snippet: emailData.snippet,
-              body_text: emailData.body_text,
-              body_html: emailData.body_html,
-              received_at: emailData.received_at,
-              is_read: emailData.is_read,
-              label_ids: emailData.label_ids,
-              has_attachments: emailData.has_attachments,
-              attachments: emailData.attachments ?? [],
-              has_list_unsubscribe: emailData.has_list_unsubscribe,
-              is_reply: emailData.is_reply,
-              reply_to_email: emailData.reply_to_email,
-              cc_recipients: emailData.cc_recipients,
-              precedence_header: emailData.precedence_header,
-            });
-
-            if (emailData.sender_email) {
-              newEmailSenders.push({
-                email: emailData.sender_email,
-                sender: emailData.sender,
-                subject: emailData.subject,
-              });
-            }
-          }
-
-          if (newEmailRows.length > 0) {
-            const { data: insertedEmails } = await db
-              .from("emails")
-              .insert(newEmailRows)
-              .select("id");
-
-            if (insertedEmails?.length) {
-              allNew.push(
-                ...(insertedEmails as { id: string }[]).map((e) => e.id),
-              );
-            }
-          }
-
-          for (const { email, sender, subject } of newEmailSenders) {
-            const prev = senderMap.get(email);
-            if (prev) {
-              prev.count++;
-              prev.subject = subject;
-            } else {
-              senderMap.set(email, { sender, subject, count: 1 });
-            }
-          }
-
-          // Batch-update sender memory (2 queries instead of 2N)
-          if (senderMap.size > 0) {
-            try {
-              const senderEmails = [...senderMap.keys()];
-              const { data: existingMemory } = await db
-                .from("email_memory")
-                .select("sender_email, interaction_count")
-                .eq("user_id", userId)
-                .in("sender_email", senderEmails);
-              const memMap = new Map(
-                (existingMemory || []).map((m) => [
-                  m.sender_email as string,
-                  m.interaction_count as number,
-                ]),
-              );
-              const now = new Date().toISOString();
-              const upsertRows = [...senderMap.entries()].map(
-                ([email, info]) => ({
-                  user_id: userId,
-                  sender_email: email,
-                  sender_name: info.sender,
-                  last_subject: info.subject,
-                  last_interaction_at: now,
-                  interaction_count: Number(memMap.get(email) ?? 0) + info.count,
-                }),
-              );
-              await db
-                .from("email_memory")
-                .upsert(upsertRows, { onConflict: "user_id,sender_email" });
-            } catch (err) {
-              console.error("[analyze-inbox] email_memory upsert:", err);
-            }
-          }
-
-          // Import Google Contacts into email_memory (runs every sync, upserts safely)
-          try {
-            const gContacts = await fetchGoogleContacts(
-              account.token_ref as string,
-            );
-            if (gContacts.length > 0) {
-              const contactRows = gContacts.map((c) => ({
-                user_id: userId,
-                sender_email: c.email,
-                sender_name: c.name,
-                interaction_count: 0,
-                last_interaction_at: new Date().toISOString(),
-              }));
-              await db.from("email_memory").upsert(contactRows, {
-                onConflict: "user_id,sender_email",
-                ignoreDuplicates: true,
-              });
-              console.log(
-                `[fetch-emails] upserted ${contactRows.length} Google contacts`,
-              );
-            }
-          } catch (contactErr) {
-            console.warn(
-              "[fetch-emails] Google contacts import failed:",
-              contactErr,
-            );
-          }
-
-          // Import recent sent emails on every fetch (20 on initial, 5 on subsequent)
-          // so SentView stays up to date for both Tabellar and Gmail-client sends.
-          {
-            const sentLimit = isInitialFetch ? 20 : 5;
-            try {
-              const sentEmails = await fetchSentEmails(
-                account.token_ref as string,
-                sentLimit,
-              );
-              const sentGmailIds = sentEmails.map((e) => e.id);
-              if (sentGmailIds.length > 0) {
-                const { data: existingSent } = await db
-                  .from("emails")
-                  .select("gmail_id")
-                  .eq("user_id", userId)
-                  .in("gmail_id", sentGmailIds);
-                const existingSentIds = new Set(
-                  (existingSent || []).map((e) => e.gmail_id as string),
-                );
-                const sentRows = sentEmails
-                  .filter((sent) => !existingSentIds.has(sent.id))
-                  .map((sent) => {
-                    const sentDate = new Date(sent.date);
-                    return {
-                      user_id: userId,
-                      gmail_id: sent.id,
-                      gmail_account_id: account.id,
-                      subject: sent.subject,
-                      recipients: sent.to,
-                      body_html: sent.body_html,
-                      body_text: sent.body,
-                      snippet: sent.snippet,
-                      received_at: isNaN(sentDate.getTime())
-                        ? new Date().toISOString()
-                        : sentDate.toISOString(),
-                      is_read: true,
-                      label_ids: ["SENT"],
-                      has_attachments: sent.has_attachments ?? false,
-                      attachments: sent.attachments ?? [],
-                    };
-                  });
-                if (sentRows.length > 0) {
-                  await db
-                    .from("emails")
-                    .upsert(sentRows, { onConflict: "user_id,gmail_id", ignoreDuplicates: true });
-                }
-              }
-            } catch (e) {
-              console.warn("[fetch-emails] sent email import failed:", e);
-            }
-          }
-        } catch (e) {
-          console.error(`Fetch failed for account ${account.id}:`, e);
-        }
-      }
+      const allNew = await syncMail(userId, isInitialFetch);
 
       // On initial fetch, kick off analysis + briefing as a background task so
       // the frontend can return from this call immediately and start polling
@@ -490,7 +186,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         backgroundPipeline = true;
         const pipeline = (async () => {
           try {
-            await analyzeEmailsForUser(userId, db);
+            await analyzeInbox(userId);
+            kickEngine();
           } catch (err) {
             console.error("[fetch-emails] background analysis:", err);
           }
@@ -512,13 +209,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           }
         })();
 
-        try {
-          // deno-lint-ignore no-explicit-any
-          (globalThis as any)[Symbol.for("EdgeRuntime")]?.waitUntil(pipeline);
-        } catch {
-          // If waitUntil isn't available in this runtime, fire and forget.
-          void pipeline;
-        }
+        void pipeline;
       }
 
       return json(
@@ -534,8 +225,43 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
     // ── POST /analyze-inbox ─────────────────────────────────────────────────
     if (path === "/analyze-inbox" && req.method === "POST") {
-      const result = await analyzeEmailsForUser(userId, db);
+      const result = await analyzeInbox(userId);
+      kickEngine();
       return json(result, 200, corsHeaders);
+    }
+
+    // ── Background engine and the action log ───────────────────────────────
+    //   GET  /engine/status              level, pause, last run, autostart
+    //   POST /engine/run                 sync and plan now
+    //   POST /engine/autostart {on}      start Tabellar at login (launchd)
+    //   POST /actions/approve {id, hash} carry out a proposal exactly as shown
+    //   POST /actions/dismiss {id}
+    //   POST /actions/undo {id}
+    if (path === "/engine/status" && req.method === "GET") {
+      return json({ ...(await engineSettings(userId)), ...engineStatus, autostart: autostartInstalled() });
+    }
+    if (path === "/engine/run" && req.method === "POST") {
+      void runCycle();
+      return json({ started: true });
+    }
+    if (path === "/engine/autostart" && req.method === "POST") {
+      const { on } = await req.json();
+      if (on) installAutostart();
+      else removeAutostart();
+      return json({ autostart: autostartInstalled() });
+    }
+    if (path.startsWith("/actions/") && req.method === "POST") {
+      const { id, hash } = await req.json();
+      if (typeof id !== "string" || !UUID_RE.test(id)) return json({ error: "id is required" }, 400);
+      try {
+        if (path === "/actions/approve") await approve(userId, id, String(hash ?? ""));
+        else if (path === "/actions/dismiss") await dismiss(userId, id);
+        else if (path === "/actions/undo") await undo(userId, id);
+        else return json({ error: "Not found" }, 404);
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
+      return json({ ok: true });
     }
 
     // ── POST /learn-style ───────────────────────────────────────────────────
@@ -969,83 +695,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return json({ error: "Email not found" }, 404, corsHeaders);
       }
 
-      const e = emails[0];
-      const emailText = `Subject: ${e.subject}\nFrom: ${e.sender}\n\n${
-        e.body_text || e.snippet
-      }`;
-
-      // Fetch style + knowledge context in parallel
-      const senderName =
-        e.sender?.split("<")[0]?.trim().split(" ")[0]?.toLowerCase() || "";
-      const [
-        { data: styleData2 },
-        { data: profileData2 },
-        { data: relevantKb2 },
-        { data: recentKb2 },
-      ] = await Promise.all([
-        db
-          .from("style_profiles")
-          .select("*")
-          .eq("user_id", userId)
-          .limit(1),
-        db
-          .from("profiles")
-          .select("style_notes")
-          .eq("id", userId)
-          .single(),
-        senderName
-          ? db
-              .from("knowledge_base")
-              .select("entity, entity_type, info")
-              .eq("user_id", userId)
-              .ilike("entity", `%${senderName}%`)
-              .limit(10)
-          : Promise.resolve({ data: [] }),
-        db
-          .from("knowledge_base")
-          .select("entity, entity_type, info")
-          .eq("user_id", userId)
-          .order("updated_at", { ascending: false })
-          .limit(20),
-      ]);
-      const kbSeen2 = new Set(
-        (relevantKb2 || []).map((k: { entity: string }) => k.entity),
-      );
-      const kbData2 = [
-        ...(relevantKb2 || []),
-        ...(recentKb2 || []).filter(
-          (k: { entity: string }) => !kbSeen2.has(k.entity),
-        ),
-      ].slice(0, 20);
-
-      let styleContext: string | undefined;
-      if (styleData2?.[0]) {
-        const s = styleData2[0];
-        styleContext = `Greeting: ${s.greeting_style || "Hi"}. Closing: ${s.closing_style || "Best"}. Tone: ${s.tone || "professional"}.`;
-      }
-      if (profileData2?.style_notes) {
-        styleContext = (styleContext || "") + " " + profileData2.style_notes;
-      }
-
-      let knowledgeContext2: string | undefined;
-      if (kbData2?.length) {
-        knowledgeContext2 = kbData2
-          .map(
-            (k: { entity: string; entity_type: string; info: string }) =>
-              `${k.entity} (${k.entity_type}): ${k.info}`,
-          )
-          .join("\n");
-      }
-
-      const emailTextWithKnowledge = knowledgeContext2
-        ? `${emailText}\n\nBackground context:\n${knowledgeContext2}`
-        : emailText;
-
-      const draft = await generateDraft(
-        emailTextWithKnowledge,
-        body.instructions ?? "",
-        styleContext,
-      );
+      const draft = await draftReply(userId, emails[0] as Parameters<typeof draftReply>[1], body.instructions ?? "");
 
       return json({ draft }, 200, corsHeaders);
     }
@@ -2007,7 +1657,9 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         }
       };
 
-      for (const tc of tool_calls) {
+      // Pause stops these too; the assistant is told and nothing runs.
+      const { paused } = await engineSettings(userId);
+      for (const tc of paused ? [] : tool_calls) {
         if (tc.name === "create_todo") {
           const args = tc.arguments as { text: string };
           console.log("[chat/create_todo] inserting:", args.text);
@@ -2143,6 +1795,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
                 bodyHtml,
               );
               console.log("[chat/send_email] sent OK, message_id:", result.id);
+              await record(userId, { kind: "send", emailId: null, summary: `Sent "${args.subject}" to ${toCheck.emails!.join(", ")} (asked in chat)`, detail: { to: toCheck.emails, subject: args.subject } }, "assistant");
 
               // Save to emails table so SentView can display it
               try {
@@ -2494,6 +2147,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       // Note: knowledge use_count is incremented by the search_knowledge_base tool
       // inside chatWithAssistant when entries are explicitly searched and returned.
 
+      if (paused && tool_calls.length) actions.push({ type: "paused", data: { message: "Tabellar is paused, so nothing was done. Resume it in Activity." } });
       return json({ reply, actions }, 200, corsHeaders);
     }
 

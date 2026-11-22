@@ -1,7 +1,8 @@
 /**
  * Shared email analysis helper.
  *
- * Called from /fetch-emails and /analyze-inbox.
+ * Called through analyzeInbox (sync.ts) by /fetch-emails, /analyze-inbox and
+ * the background engine.
  *
  * Performance notes:
  * - All emails in a batch are analyzed in parallel (no chunk barrier), so one
@@ -32,19 +33,9 @@ export async function analyzeEmailsForUser(
 ): Promise<{ analyzed: number; briefing: unknown }> {
   const { data: alreadyProcessed } = await db
     .from("email_processed")
-    .select("email_id, quick_actions, category")
+    .select("email_id")
     .eq("user_id", userId);
-
-  // Consider an email fully processed only if it has actions OR is a category that legitimately has none.
-  // Emails with empty quick_actions on action-required/important categories were likely victims of
-  // the token-truncation bug and should be retried.
-  const processedIds = (alreadyProcessed || [])
-    .filter((p) => {
-      const hasActions = Array.isArray(p.quick_actions) && (p.quick_actions as unknown[]).length > 0;
-      const noActionsExpected = ["promotions", "updates"].includes((p.category as string) || "");
-      return hasActions || noActionsExpected;
-    })
-    .map((p) => p.email_id as string);
+  const processedIds = (alreadyProcessed || []).map((p) => p.email_id as string);
 
   let unprocessedQuery = db
     .from("emails")

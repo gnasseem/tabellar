@@ -7,7 +7,9 @@
  *   - reply     -> /send-email flow (Gmail) OR draft_emails row
  *   - todo      -> todos row
  *   - meeting   -> meetings row + Google Calendar event
- *   - archive   -> emails.is_archived update (per id)
+ *   - archive   -> archived in Gmail and logged in action_log (undoable)
+ *
+ * Every action first asks the policy, so nothing runs while Tabellar is paused.
  *
  * Results are written back to agent_sessions.results keyed by action id:
  *   { status: 'success' | 'error', info?: string, error?: string }
@@ -16,6 +18,8 @@
 import type { Db } from "./db.ts";
 import { sendEmail } from "./gmail.ts";
 import { freshAccessToken } from "./google.ts";
+import { decide } from "./policy.ts";
+import { act, record, engineSettings } from "./actions.ts";
 
 
 interface ApprovedAction {
@@ -32,7 +36,7 @@ interface ApprovedAction {
 // and independent of the runtime's own zone, which may not be the user's
 // and so silently hid the distinction.
 
-function parseWallClock(iso: string): number | null {
+export function parseWallClock(iso: string): number | null {
   const m = iso.match(
     /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/,
   );
@@ -55,7 +59,7 @@ function formatWallClock(ms: number): string {
 // Resolve a wall clock in a named zone to the instant it refers to. Computes
 // the zone's offset at a first guess, then corrects; the second pass settles
 // readings near a DST transition, where the offset before and after differs.
-function wallClockToUtc(wallMs: number, tz: string): Date {
+export function wallClockToUtc(wallMs: number, tz: string): Date {
   const offsetAt = (instantMs: number): number => {
     const parts = Object.fromEntries(
       new Intl.DateTimeFormat("en-US", {
@@ -134,8 +138,13 @@ export async function executeAgentPlan(
     .update({ status: "executing" })
     .eq("id", sessionId);
 
+  const { paused } = await engineSettings(userId);
+
   for (const action of approved) {
     try {
+      const kind = action.type === "reply" ? (action.payload.send_now === false ? "draft" : "send") : action.type;
+      const verdict = decide({ kind, source: "agent", level: "suggest", paused });
+      if (verdict.verdict !== "do") throw new Error(verdict.reason);
       if (action.type === "reply") {
         const to = String(action.payload.to ?? "").trim();
         const subject = String(action.payload.subject ?? "").trim();
@@ -199,6 +208,7 @@ export async function executeAgentPlan(
               .eq("user_id", userId)
               .is("resolved_at", null);
           }
+          await record(userId, { kind: "send", emailId: action.linked_email_id ?? null, summary: `Sent reply to ${to}`, detail: { to: [to], subject } }, "agent");
           results[action.id] = {
             status: "success",
             info: `Sent reply to ${to}`,
@@ -340,6 +350,12 @@ export async function executeAgentPlan(
           Boolean,
         );
         if (!ids.length) throw new Error("Archive action has no email_ids");
+        let failed = 0;
+        for (const id of ids) {
+          const r = await act(userId, { kind: "archive", emailId: id, summary: "Archive", detail: {} }, { level: "suggest", paused, source: "agent" });
+          if (r !== "done") failed++;
+        }
+        // Mark them handled here even if Gmail refused, as before.
         await db
           .from("emails")
           .update({ is_archived: true, resolved_at: new Date().toISOString() })
@@ -348,7 +364,7 @@ export async function executeAgentPlan(
           .is("resolved_at", null);
         results[action.id] = {
           status: "success",
-          info: `Archived ${ids.length} email${ids.length === 1 ? "" : "s"}`,
+          info: `Archived ${ids.length} email${ids.length === 1 ? "" : "s"}${failed ? ` (${failed} only in Tabellar, Gmail refused)` : ""}`,
         };
       } else {
         throw new Error(`Unknown action type: ${action.type}`);
