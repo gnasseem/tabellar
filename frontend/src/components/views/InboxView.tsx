@@ -6,10 +6,11 @@ import { isTypingTarget } from "@/lib/shortcuts";
 import { rowStatus, setMailState, type Outcome } from "@/lib/outcomes";
 import { useInboxSync } from "@/lib/useInboxSync";
 import { useApp } from "../AppShell";
+import EmailBody from "../EmailBody";
 import EmailDetail from "../EmailDetail";
 import InitialFetchOverlay from "../InitialFetchOverlay";
 import { Questions } from "../Profile";
-import { Countdown, Empty, Glyph, Menu, Seg, SkeletonRows, Tick, ViewBar, VirtualList, dayLabel, shortWhen, type MailState } from "../ui";
+import { Countdown, Empty, Glyph, Menu, OutcomeLines, Seg, SkeletonRows, Tick, ViewBar, VirtualList, dayLabel, shortWhen, type MailState } from "../ui";
 
 // The inbox: every email on one quiet line that ends in what Tabellar did
 // with it. Only mail that needs the user is set in strong type and wax red.
@@ -208,6 +209,11 @@ export default function InboxView() {
       // Fetched but not read by the model yet.
       const unread = !t.latest.email_processed && mail.engine?.model;
       t.text = s.text || labels[cat] || CATEGORY[cat] || cat || (unread ? "Reading" : "");
+      // Marked done by hand: handled, unless Tabellar has something on it.
+      if (t.latest.resolved_at && s.state === "filed") {
+        t.state = "done";
+        t.text = "Done";
+      }
       t.sendAt = s.sendAt;
     }
     return list;
@@ -357,6 +363,20 @@ export default function InboxView() {
     await setMailState(ids, { read }).catch(() => addToast("error", read ? "Could not mark it read in Gmail." : "Could not mark it unread in Gmail."));
   };
 
+  // Done: dealt with, kept in the inbox. Done again takes it back.
+  const markDone = async (t: Thread) => {
+    const at = t.latest.resolved_at ? null : new Date().toISOString();
+    const ids = t.ids;
+    const set = (v: string | null) => setEmails((prev) => prev.map((e) => (ids.includes(e.id) ? { ...e, resolved_at: v } : e)));
+    set(at);
+    const { error } = await supabase.from("emails").update({ resolved_at: at }).in("id", ids);
+    if (error) {
+      set(t.latest.resolved_at ?? null);
+      return addToast("error", "Could not mark it done.");
+    }
+    if (at && !t.latest.is_read) markRead([t], true);
+  };
+
   const open = (t: Thread) => {
     setReading(t.latest);
     if (!t.latest.is_read) markRead([t], true);
@@ -418,7 +438,6 @@ export default function InboxView() {
       <EmailDetail
         key={reading.id}
         email={reading as any}
-        showBack
         onBack={() => setReading(null)}
         onArchive={() => {
           const t = rows.find((r) => r.ids.includes(reading.id));
@@ -456,7 +475,7 @@ export default function InboxView() {
         key={t.key}
         role="option"
         aria-selected={isCursor}
-        className={`row group ${COLUMNS} ${isPicked && !isCursor ? "bg-hover" : ""}`}
+        className={`row group relative ${COLUMNS} ${isPicked && !isCursor ? "bg-hover" : ""}`}
         onClick={(ev) => (ev.shiftKey ? pick(t, true) : setCursorKey(t.key))}
         onDoubleClick={() => open(t)}
       >
@@ -474,7 +493,6 @@ export default function InboxView() {
         </span>
         <span className="hidden min-w-0 items-center gap-2 pr-4 md:flex">
           <b className={`shrink truncate ${filed ? "font-normal text-ink3" : need ? "font-medium text-ink" : "font-normal text-ink"}`}>{e.subject || "(no subject)"}</b>
-          {e.has_attachments && <Icon name="attachment" size={13} className="text-ink3" />}
           {!filed && <span className="min-w-0 flex-1 truncate text-ink3">{e.email_processed?.summary || e.snippet}</span>}
         </span>
         <span className={`truncate text-[12.5px] ${need ? "font-semibold text-wax-ink" : t.state === "going" ? "font-medium text-wax-ink" : t.state === "held" ? "font-medium text-warn" : t.state === "failed" ? "font-medium text-danger" : t.state === "done" ? "text-ink2" : "text-ink3"}`}>
@@ -487,6 +505,14 @@ export default function InboxView() {
           )}
         </span>
         <time className="text-right text-xs text-ink3">{shortWhen(e.received_at)}</time>
+        <span className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 gap-0.5 rounded-md bg-hover pl-1 group-hover:flex group-aria-selected:bg-sel">
+          <button className="iconbtn h-6 w-6" title="Archive" aria-label="Archive" onClick={(ev) => (ev.stopPropagation(), archive([t]))}>
+            <Icon name="archive" size={15} />
+          </button>
+          <button className="iconbtn h-6 w-6" title={e.resolved_at ? "Not done" : "Done"} aria-label={e.resolved_at ? "Not done" : "Done"} aria-pressed={!!e.resolved_at} onClick={(ev) => (ev.stopPropagation(), markDone(t))}>
+            <Icon name="check" size={15} />
+          </button>
+        </span>
       </div>
     );
   };
@@ -599,7 +625,7 @@ export default function InboxView() {
           )}
           </div>
         </div>
-        {details && cursor && rows.length > 0 && <Details thread={cursor} primary={primary(cursor)} onOpen={() => open(cursor)} onArchive={() => archive([cursor])} />}
+        {details && cursor && rows.length > 0 && <Details key={cursor.latest.id} thread={cursor} primary={primary(cursor)} onOpen={() => open(cursor)} onReply={() => openCompose(cursor.latest)} onArchive={() => archive([cursor])} />}
       </div>
     </>
   );
@@ -626,136 +652,139 @@ function GroupHead({ head, folded, onFold }: { head: Head; folded: boolean; onFo
   );
 }
 
-// The panel on the right: what the email says, what Tabellar did about it and
-// why, and how to take each thing back.
-function Details({ thread, primary, onOpen, onArchive }: { thread: Thread; primary: { label: string; run: () => void }; onOpen: () => void; onArchive: () => void }) {
-  const { mail, setView, setViewCache, addToast } = useApp();
+// The panel on the right: who wrote, what it is about, what Tabellar made of
+// it, then the email itself. Its width is dragged and remembered.
+const PANEL_MIN = 320;
+const PANEL_MAX = 760;
+// The list keeps room for its sender, subject, status and time.
+const LIST_MIN = 600;
+
+function readPanelWidth(): number {
+  try {
+    const w = Number(localStorage.getItem("tabellar_inbox_details_width"));
+    return w ? Math.min(PANEL_MAX, Math.max(PANEL_MIN, w)) : 404;
+  } catch {
+    return 404;
+  }
+}
+
+function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thread; primary: { label: string; run: () => void }; onOpen: () => void; onReply: () => void; onArchive: () => void }) {
   const e = thread.latest;
-  // The email's own words, fetched when the panel shows it; long ones are cut
-  // with a way to open the whole thing.
-  const [body, setBody] = useState<string | null>(null);
+  const [width, setWidth] = useState(readPanelWidth);
+  const [room, setRoom] = useState(Infinity);
+  const aside = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const parent = aside.current?.parentElement;
+    if (!parent) return;
+    const ro = new ResizeObserver(() => setRoom(parent.clientWidth - LIST_MIN));
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, []);
+  const shown = Math.max(PANEL_MIN, Math.min(width, room));
+  const [body, setBody] = useState<{ body_html: string | null; body_text: string | null } | null>(null);
   useEffect(() => {
     let live = true;
-    setBody(null);
     createClient()
       .from("emails")
-      .select("body_text")
+      .select("body_html, body_text")
       .eq("id", e.id)
       .single()
-      .then(({ data }: { data: { body_text: string | null } | null }) => {
-        if (live) setBody((data?.body_text || "").replace(/\n{3,}/g, "\n\n").trim());
-      });
+      .then(({ data }: { data: { body_html: string | null; body_text: string | null } | null }) => live && setBody(data || { body_html: null, body_text: null }));
     return () => {
       live = false;
     };
   }, [e.id]);
-  const LIMIT = 1400;
-  const act = (o: Outcome) => {
-    const a = o.act;
-    if (!a) return null;
-    if (a.kind === "undo")
-      return (
-        <button className="link" onClick={() => mail.undo(a.id).then(() => addToast("info", "Undone")).catch(() => {})}>
-          Undo
-        </button>
-      );
-    if (a.kind === "cancel")
-      return (
-        <button className="link" onClick={() => mail.undo(a.id).then(() => addToast("success", "Reply cancelled. It is kept as a draft.")).catch(() => {})}>
-          Cancel
-        </button>
-      );
-    if (a.kind === "approve")
-      return (
-        <span className="flex gap-3">
-          <button className="link" onClick={() => mail.dismiss(a.id).catch(() => {})}>
-            Not this
-          </button>
-          <button className="link !text-wax-ink" onClick={() => mail.approve(a.id, a.hash).then(() => addToast("success", "Approved")).catch(() => {})}>
-            Approve
-          </button>
-        </span>
-      );
-    if (a.kind === "review")
-      return (
-        <button className="link" onClick={() => (setViewCache("replies:focus", a.draftId), setView("replies"))}>
-          Review
-        </button>
-      );
-    return (
-      <button className="link" onClick={() => setView(a.view)}>
-        Show
-      </button>
-    );
+
+  const resize = (next: number) => {
+    const w = Math.round(Math.min(PANEL_MAX, Math.max(PANEL_MIN, next)));
+    setWidth(w);
+    try {
+      localStorage.setItem("tabellar_inbox_details_width", String(w));
+    } catch {
+      // a remembered width is a convenience
+    }
   };
+  const drag = (ev: React.PointerEvent<HTMLDivElement>) => {
+    const handle = ev.currentTarget;
+    const startX = ev.clientX;
+    const start = shown;
+    handle.setPointerCapture(ev.pointerId);
+    const onMove = (m: PointerEvent) => resize(Math.min(room, start + startX - m.clientX));
+    const onUp = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onUp);
+      document.body.style.cursor = "";
+    };
+    document.body.style.cursor = "col-resize";
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onUp);
+  };
+
+  const waiting = primary.label !== "Open email";
+  const noreply = /no.?reply|do.?not.?reply|mailer-daemon|postmaster/i.test(e.sender_email || "");
   return (
-    <aside className="hidden w-[404px] flex-none flex-col border-l border-line md:flex" aria-label="Details">
-      <div className="border-b border-line-soft px-5 pb-3.5 pt-4">
-        <div className="flex items-start gap-2">
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate text-[15px] font-[650] leading-tight tracking-[-0.01em]">{senderName(e)}</h2>
-            <p className="mt-0.5 truncate text-xs text-ink3">
-              {e.sender_email}, {dayLabel(e.received_at).name.toLowerCase()} {shortWhen(e.received_at)}
-            </p>
-          </div>
-          <button className="iconbtn" title="Open email (O)" aria-label="Open email" onClick={onOpen}>
-            <Icon name="open" size={16} />
-          </button>
-        </div>
-        <p className="mt-3 font-semibold leading-snug">{e.subject || "(no subject)"}</p>
-        {e.email_processed?.summary && <p className="mt-1.5 leading-normal text-ink2">{e.email_processed.summary}</p>}
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
-        {thread.outcomes.length > 0 && (
-          <div className="mt-2">
-          {thread.outcomes.map((o) => (
-            <div key={o.key} className="grid grid-cols-[22px_1fr_auto] items-start gap-x-1 border-b border-line-soft py-[9px] last:border-0">
-              <Glyph state={o.state} className="mt-px" />
-              <div className="min-w-0">
-                <b className={`block leading-snug ${o.state === "info" ? "font-normal text-ink2" : "font-medium"}`}>{o.title}</b>
-                {o.why && <p className="mt-0.5 text-[12.5px] leading-snug text-ink2">{o.why}</p>}
-                {o.sendAt && (
-                  <p className="mt-0.5 text-[12.5px] font-medium text-wax-ink">
-                    Sends in <Countdown until={o.sendAt} />
-                  </p>
-                )}
-              </div>
-              <div className="pt-px">{act(o)}</div>
+    <aside ref={aside} className="relative hidden flex-none flex-col border-l border-line md:flex" style={{ width: shown }} aria-label="Details">
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Panel width"
+        aria-valuemin={PANEL_MIN}
+        aria-valuemax={PANEL_MAX}
+        aria-valuenow={shown}
+        tabIndex={0}
+        className="absolute -left-[3px] bottom-0 top-0 z-10 w-[6px] cursor-col-resize outline-none transition-colors duration-150 hover:bg-line focus-visible:bg-wax/40"
+        onPointerDown={drag}
+        onDoubleClick={() => resize(404)}
+        onKeyDown={(k) => {
+          if (k.key === "ArrowLeft") resize(Math.min(room, shown + 24));
+          else if (k.key === "ArrowRight") resize(shown - 24);
+          else return;
+          k.preventDefault();
+        }}
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <header className="px-5 pb-3 pt-4">
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <h2 className="truncate text-[15px] font-[650] leading-tight tracking-[-0.01em]">{senderName(e)}</h2>
+              <p className="mt-0.5 truncate text-xs text-ink3">
+                {e.sender_email}, {dayLabel(e.received_at).name.toLowerCase()} {shortWhen(e.received_at)}
+              </p>
             </div>
-          ))}
+            <button className="iconbtn -mr-1.5" title="Open" aria-label="Open email" onClick={onOpen}>
+              <Icon name="open" size={16} />
+            </button>
           </div>
-        )}
-        <h3 className="label mb-1 mt-4">The email</h3>
-        {body === null ? (
-          <div className="space-y-2 pt-1" aria-busy="true">
-            <span className="skel block h-2.5 w-full" />
-            <span className="skel block h-2.5 w-11/12" />
-            <span className="skel block h-2.5 w-3/5" />
-          </div>
-        ) : (
-          <>
-            <p className="whitespace-pre-line text-[12.5px] leading-relaxed text-ink2">{body.length > LIMIT ? `${body.slice(0, LIMIT).replace(/\s+\S*$/, "")}...` : body || e.snippet}</p>
-            {body.length > LIMIT && (
-              <button className="link mt-1.5" onClick={onOpen}>
-                Read the whole email
-              </button>
-            )}
-          </>
-        )}
+          <p className="mt-3 font-semibold leading-snug text-ink">{e.subject || "(no subject)"}</p>
+          {e.email_processed?.summary && <p className="mt-1 line-clamp-2 leading-normal text-ink2">{e.email_processed.summary}</p>}
+          <OutcomeLines outcomes={thread.outcomes} className="mt-2" />
+        </header>
+        <div className="border-t border-line-soft px-5 pb-6 pt-4">
+          {body === null ? (
+            <div className="space-y-2 pt-1" aria-busy="true">
+              <span className="skel block h-2.5 w-full" />
+              <span className="skel block h-2.5 w-11/12" />
+              <span className="skel block h-2.5 w-3/5" />
+            </div>
+          ) : (
+            <EmailBody email={{ ...body, snippet: e.snippet }} size="sm" />
+          )}
+        </div>
       </div>
       <div className="flex flex-none items-center gap-2 border-t border-line py-2.5 pl-5 pr-3.5">
-        <button className="btn btn-pri" onClick={primary.run}>
-          {primary.label}
-        </button>
+        {waiting && (
+          <button className="btn btn-pri" onClick={primary.run}>
+            {primary.label}
+          </button>
+        )}
+        {!noreply && (
+          <button className="btn" onClick={onReply}>
+            Reply
+          </button>
+        )}
         <button className="btn" onClick={onArchive}>
           Archive
         </button>
-        <span className="flex-1" />
-        {primary.label !== "Open email" && (
-          <button className="btn btn-plain" onClick={onOpen}>
-            Open email
-          </button>
-        )}
       </div>
     </aside>
   );

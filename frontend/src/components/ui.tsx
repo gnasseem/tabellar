@@ -4,6 +4,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Icon from "./Icon";
 import { useApp } from "./AppShell";
+import type { Outcome } from "@/lib/outcomes";
 
 // The state of a piece of mail, drawn as the seal: filled when it needs the
 // user, a ring while a reply is on its way out, a check once handled, a
@@ -318,4 +319,50 @@ export function dayLabel(iso: string): { name: string; date: string; key: string
   if (days <= 0) return { name: "Today", date, key, head: "Today" };
   if (days === 1) return { name: "Yesterday", date, key, head: "Yesterday" };
   return { name: weekday, date: full, key, head: days < 7 ? weekday : full };
+}
+
+// What Tabellar made of an email, one line each with its one action. History
+// lines (undone, dismissed) stay in History.
+export function OutcomeLines({ outcomes, className = "" }: { outcomes: Outcome[]; className?: string }) {
+  const { mail, setView, setViewCache, addToast } = useApp();
+  const shown = outcomes.filter((o) => o.state !== "info");
+  if (!shown.length) return null;
+  const action = (o: Outcome) => {
+    const a = o.act;
+    if (!a) return null;
+    const [label, run, wax] =
+      a.kind === "undo"
+        ? ["Undo", () => mail.undo(a.id).then(() => addToast("info", "Undone")), false]
+        : a.kind === "cancel"
+          ? ["Cancel", () => mail.undo(a.id).then(() => addToast("success", "Cancelled. Kept as a draft.")), false]
+          : a.kind === "approve"
+            ? ["Approve", () => mail.approve(a.id, a.hash).then(() => addToast("success", "Approved")), true]
+            : a.kind === "review"
+              ? ["Review", () => (setViewCache("replies:focus", a.draftId), setView("replies"), Promise.resolve()), true]
+              : ["Show", () => (setView(a.view), Promise.resolve()), false];
+    return (
+      <button className={`link flex-none ${wax ? "!text-wax-ink" : ""}`} onClick={() => run().catch(() => {})}>
+        {label}
+      </button>
+    );
+  };
+  return (
+    <ul className={className}>
+      {shown.map((o) => (
+        <li key={o.key} className="flex h-7 items-center gap-1.5">
+          <Glyph state={o.state} />
+          <span className={`min-w-0 flex-1 truncate ${o.state === "need" || o.state === "going" ? "font-medium text-ink" : "text-ink2"}`} title={o.why || o.title}>
+            {o.title}
+            {o.sendAt && (
+              <span className="text-wax-ink">
+                {" in "}
+                <Countdown until={o.sendAt} />
+              </span>
+            )}
+          </span>
+          {action(o)}
+        </li>
+      ))}
+    </ul>
+  );
 }

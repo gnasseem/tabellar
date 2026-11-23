@@ -887,25 +887,6 @@ export async function factsFromSent(sample: string): Promise<string[]> {
     .slice(0, 10);
 }
 
-export async function extractTodos(
-  subject: string,
-  sender: string,
-  body: string,
-): Promise<string[]> {
-  const text = `Subject: ${subject}\nFrom: ${sender}\n\n${body.slice(0, 1500)}`;
-  const raw = await llm(
-    'Extract actionable to-do items from this email. Return a JSON array of concise task strings. Return [] if none found. Example: ["Reply to John about the proposal","Schedule call with team"]',
-    text,
-    0.2,
-    512,
-    "fast",
-  );
-  const parsed = parseJson(raw);
-  return Array.isArray(parsed)
-    ? parsed.filter((t: unknown) => typeof t === "string").slice(0, 6)
-    : [];
-}
-
 // ─── Personal Assistant Chat ──────────────────────────────────────────────────
 
 export interface ChatContext {

@@ -860,7 +860,6 @@ export default function BriefingView() {
         }}
         onSnooze={() => setSelectedEmail(null)}
         onRethink={(updated: any) => setSelectedEmail((prev: any) => (prev ? { ...prev, email_processed: updated } : prev))}
-        showBack
       />
     );
 

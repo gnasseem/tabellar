@@ -734,7 +734,6 @@ export default function MeetingsView() {
         }}
         onSnooze={() => setReading(null)}
         onRethink={(updated: any) => setReading((prev: any) => (prev ? { ...prev, email_processed: updated } : prev))}
-        showBack
       />
     );
 

@@ -97,6 +97,23 @@ function isOutsideWorkingHours(isoStr: string, wh: WorkingHours): boolean {
   return mins < startH * 60 + startM || mins >= endH * 60 + endM;
 }
 
+// A saved draft's HTML as the text the editor holds; sending turns line breaks back into HTML.
+function draftText(html: string): string {
+  if (!/<(p|br|div)\b/i.test(html)) return html;
+  return html
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div)>\s*/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export default function ComposeModal({
   onClose,
   onMinimize,
@@ -184,7 +201,7 @@ export default function ComposeModal({
   );
   const [body, setBody] = useState<string>(
     draft
-      ? draft.body_html || ""
+      ? draftText(draft.body_html || "")
       : replyTo?._autoGenerate
         ? ""
         : replyTo?._prefillBody || "",

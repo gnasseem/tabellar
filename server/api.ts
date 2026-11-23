@@ -14,7 +14,6 @@
 //   POST /calendar/create-event Create a Google Calendar event
 //   POST /calendar/update-event Update a Google Calendar event
 //   POST /rethink-email         Re-categorize one email
-//   POST /extract-todos         Todos from one email
 //   GET  /contacts/search       Search contacts
 //   POST /contacts/sync         Import Google contacts
 //   POST /remove-gmail-account  Disconnect a Gmail account
@@ -40,7 +39,6 @@ import {
 } from "./gmail.ts";
 import {
   chatWithAssistant,
-  extractTodos,
   briefingSummaryNeedsRecovery,
   generateBriefingExecutiveSummary,
   updateBriefing,
@@ -1330,52 +1328,6 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       );
 
       return json({ ...result, email_id: emailId }, 200, corsHeaders);
-    }
-
-    // ── POST /extract-todos ────────────────────────────────────────────────
-    if (path === "/extract-todos" && req.method === "POST") {
-      const body = await req.json();
-      const emailId = body.email_id as string;
-
-      const { data: emails } = await db
-        .from("emails")
-        .select("subject, sender, body_text, snippet")
-        .eq("id", emailId)
-        .eq("user_id", userId);
-
-      if (!emails?.length) {
-        return json({ error: "Email not found" }, 404, corsHeaders);
-      }
-
-      const email = emails[0];
-      const tasks = await extractTodos(
-        (email.subject as string) || "",
-        (email.sender as string) || "",
-        (email.body_text as string) || (email.snippet as string) || "",
-      );
-
-      if (!tasks.length) {
-        return json({ todos: [], count: 0 }, 200, corsHeaders);
-      }
-
-      const { data: inserted, error: insertErr } = await db
-        .from("todos")
-        .insert(
-          tasks.map((text: string) => ({
-            user_id: userId,
-            text,
-            source: "email",
-          })),
-        )
-        .select();
-
-      if (insertErr) throw insertErr;
-
-      return json(
-        { todos: inserted ?? [], count: (inserted ?? []).length },
-        200,
-        corsHeaders,
-      );
     }
 
     // ── GET /contacts/search ───────────────────────────────────────────────

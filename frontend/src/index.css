@@ -337,7 +337,7 @@
   }
 }
 
-/* The email reader keeps its own scheme so remote mail renders as written. */
+/* The reader's scrollbar. */
 .email-reader-pane {
   scrollbar-color: var(--ink4) transparent;
 }

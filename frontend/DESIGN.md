@@ -273,7 +273,7 @@ A warm, almost colourless paper-and-ink palette with one sealing-wax red, define
 
 ## Layout
 
-A three-column window: a 224px sidebar, a flexible list, and a 404px details panel on the right, each separated by a single hairline. Every view stacks two bands: one 52px bar (title, two or three filter segments, a flexible gap, one wide search field, at most two icons or menus) and the scrolling content. There is no footer and no second bar; a selection replaces the bar with its own actions.
+A three-column window: a 224px sidebar, a flexible list, and a details panel on the right (404px by default, dragged between 320 and 760px and remembered, never leaving the list under 600px), each separated by a single hairline. Every view stacks two bands: one 52px bar (title, two or three filter segments, a flexible gap, one wide search field, at most two icons or menus) and the scrolling content. There is no footer and no second bar; a selection replaces the bar with its own actions.
 
 Content is inset 20px from the left edge of the main column (bar, group headers, panel); list rows sit 8px in from each side so their rounded selection floats inside the column. The inbox row is a fixed grid: 26px glyph, 164px sender, flexible subject and summary, 172px status, 46px time. Sticky group headers are 34px and bottom-aligned, and show the name only (Today, Needs you, Going out): no notes, no counts. Lists are windowed, so row heights are fixed and exact (32px one-line, about 58px two-line).
 
@@ -313,7 +313,7 @@ Quiet, native and compact.
 - **State:** pressed fills with the selected tone and goes to medium ink.
 
 ### Rows
-- **One-line row (32px):** 6px corners, inset 8px; the seal glyph in the first column swaps to a tick on hover or selection. Hover tone on hover, selected tone for the keyboard cursor.
+- **One-line row (32px):** 6px corners, inset 8px; the seal glyph in the first column swaps to a tick on hover or selection. Hover tone on hover, selected tone for the keyboard cursor. An inbox row is sender, subject, one-line summary, status and time, with no other mark; on hover two 24px icon buttons, Archive and Done, cover the time. Done keeps the email in the inbox as handled ("Done", ink 3 check) until done again.
 - **Two-line row:** 7px corners, 9px vertical padding, a soft hairline under it starting at 32px from the left, hidden next to a selected row.
 - **Group header:** 34px, sticky, paper fill, the bold name in ink and nothing else. A foldable group (Inbox Priority: People, Updates, Promotions) adds a 13px ink 3 chevron after the name; Promotions starts folded.
 
@@ -339,7 +339,13 @@ The state of a piece of mail, drawn as the seal in a 16px box: a filled wax dot 
 - **Sheet:** "?" opens a dialog listing every key, grouped by view, each in the kbd chip (10.5px medium ink 3 on paper, 1px hairline border, 4px corners, at least 17px wide). Keys are not shown anywhere else: no footer, no chips in buttons or the search field. A tooltip may name a key.
 
 ### Details panel
-404px, hairline left edge: sender, address and time, the subject as a title, a summary in ink 2, then the outcomes as a list of seal-glyph items each with a right-aligned Undo or Review link, then the email itself. Actions sit in a hairline-topped strip at the bottom, primary first.
+Hairline left edge with a 6px drag handle on it (hairline tone on hover; arrow keys when focused; double-click restores 404px). Sender, address and time, the subject in semibold ink, the summary clamped to two lines in ink 2, then the outcomes, one 28px line each: seal glyph, a self-contained title ("Reply drafted", "Todo: Send the form", "Replying in 2:41"), and one right-aligned link (Approve or Review in wax ink; Undo, Cancel or Show). Nothing about how approval works; the reason, where there is one, is the line's tooltip. Under a soft hairline comes the email itself, rendered as in the reader. A hairline-topped strip at the bottom: the one wax button only when something waits (Approve, Review reply, Cancel reply), then Reply and Archive.
+
+### Reader
+One column at 680px. The bar is back, the subject as its title, then the one action row: Reply (standard button), Archive and a more menu (Reply all, Forward, Mark unread, Done, Snooze, Remind me if no answer, Category and labels, Read again). Under the bar: the outcome lines, then the thread oldest first, each earlier message one two-line-row line (sender, snippet, time) that opens in place, the latest open in full. Tabellar's reply sits under the thread in an inset block: "Reply drafted" with its text, Edit and send (wax) and Discard; or "Replying in" with the countdown and Cancel.
+
+### Email body
+The email's HTML is sanitised and shown in a sandboxed frame with no script, its height following its content and a layout wider than the frame scaled down to fit. Remote images and fonts are blocked until "Show images" (a link above the body, only when there are any); a blocked image gives way to its alt text. Quoted earlier messages (Gmail, Outlook, Apple Mail, plain "On ... wrote:" and ">" lines) are cut, with "Show quoted text" under the body; a forward is never cut. Mail with no HTML is set as text at 13 or 14px with links underlined. In the dark theme, dark text the email sets is lightened and near-white grounds are dropped.
 
 ### Questions and "Not this"
 - **Question row:** one 32px row at the top of the Inbox list, an ink 3 info ring, "A question" (or "2 questions") in medium ink and a chevron. It opens in place: each question in ink, what Tabellar would do in 12.5px ink 3, then its answers as small buttons, the last ("Not now") plain. No wax: a question is asked, not demanded. Hidden when nothing is open.
