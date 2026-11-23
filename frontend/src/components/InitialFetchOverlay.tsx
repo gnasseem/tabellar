@@ -1,22 +1,10 @@
+import { Glyph } from "./ui";
 
-import { useEffect, useState } from "react";
-import Icon from "@/components/Icon";
+// Shown over the Inbox while mail is fetched and read: the steps in order,
+// the finished ones ticked and the current one marked as working.
 
-type Phase = { label: string; pct: number };
-
-const INITIAL_PHASES: Phase[] = [
-  { label: "Connecting to Gmail…", pct: 8 },
-  { label: "Fetching your emails…", pct: 28 },
-  { label: "Analysing emails, extracting actions & generating briefing…", pct: 85 },
-  { label: "All done!", pct: 100 },
-];
-
-const REFRESH_PHASES: Phase[] = [
-  { label: "Connecting to Gmail…", pct: 10 },
-  { label: "Fetching new emails…", pct: 30 },
-  { label: "Syncing & analysing emails…", pct: 85 },
-  { label: "All done!", pct: 100 },
-];
+const INITIAL_PHASES = ["Connect to Gmail", "Fetch your recent mail", "Read each email: sort it, draft replies, find todos and meetings, write the briefing"];
+const REFRESH_PHASES = ["Connect to Gmail", "Fetch new mail", "Read the new mail"];
 
 type Props = {
   phaseIndex: number;
@@ -24,116 +12,32 @@ type Props = {
 };
 
 export default function InitialFetchOverlay({ phaseIndex, mode = "initial" }: Props) {
-  const PHASES = mode === "refresh" ? REFRESH_PHASES : INITIAL_PHASES;
-  const [displayPct, setDisplayPct] = useState(0);
-  const target = PHASES[Math.min(phaseIndex, PHASES.length - 1)].pct;
-  const label = PHASES[Math.min(phaseIndex, PHASES.length - 1)].label;
-  const isDone = phaseIndex >= PHASES.length - 1;
-
-  // Smoothly animate the bar toward target
-  useEffect(() => {
-    const id = setInterval(() => {
-      setDisplayPct((prev) => {
-        if (prev >= target) return prev;
-        return Math.min(prev + 1, target);
-      });
-    }, 18);
-    return () => clearInterval(id);
-  }, [target]);
-
+  const phases = mode === "refresh" ? REFRESH_PHASES : INITIAL_PHASES;
   return (
-    <div className="fixed inset-0 z-[250] flex flex-col items-center justify-center bg-canvas">
-      {/* Logo */}
-      <div className="mb-10 flex flex-col items-center gap-4">
-        <div className="relative">
-          <img
-            src="/logo.svg"
-            alt="Tabellar"
-            style={{ width: 56, height: 56, borderRadius: 14, objectFit: "contain" }}
-          />
-          {!isDone && (
-            <span
-              className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-canvas flex items-center justify-center"
-            >
-              <span
-                className="block w-2.5 h-2.5 rounded-full bg-wax"
-                style={{ animation: "pulse 1.5s ease-in-out infinite" }}
-              />
-            </span>
-          )}
-        </div>
-
-        <div className="text-center">
-          <h1
-            className="text-[22px] font-bold text-ink mb-1.5"
-            style={{ fontFamily: '"Syne", sans-serif', letterSpacing: "-0.03em" }}
-          >
-            {mode === "refresh" ? "Syncing Tabellar" : "Setting up Tabellar"}
-          </h1>
-          <p className="text-sm text-ink3">
-            {mode === "refresh" ? "Fetching everything fresh…" : "This only happens once. Grab a coffee."}
-          </p>
-        </div>
+    <div className="fixed inset-y-0 left-0 right-0 z-30 grid place-items-center bg-canvas/80 p-4 lg:left-56">
+      <div className="w-full max-w-[400px] rounded-[12px] bg-raised px-5 pb-4 pt-[18px] shadow-pop" role="status" aria-live="polite">
+        <h2 className="text-[15px] font-[650] tracking-[-0.01em] text-ink">{mode === "refresh" ? "Checking Gmail again" : "Getting your mail ready"}</h2>
+        <p className="mt-1 text-xs leading-normal text-ink2">
+          {mode === "refresh"
+            ? "Tabellar is fetching what arrived since the last check and reading it."
+            : "Tabellar fetches your recent mail once, then reads each email. With a model running on this Mac this can take a few minutes."}
+        </p>
+        <ol className="mt-3 border-t border-line-soft pt-2">
+          {phases.map((label, i) => {
+            const done = i < phaseIndex;
+            const current = i === phaseIndex;
+            return (
+              <li key={label} className="grid grid-cols-[22px_minmax(0,1fr)] items-start py-[5px]" aria-current={current ? "step" : undefined}>
+                {done ? <Glyph state="done" className="mt-px" /> : <span className="mt-px grid h-4 w-4 place-items-center">{current && <i className="h-[5px] w-[5px] rounded-full bg-ink2" />}</span>}
+                <span className={done ? "text-ink2" : current ? "text-ink" : "text-ink3"}>
+                  {label}
+                  {current && <span className="skel mt-1.5 block h-[3px] w-24" />}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
       </div>
-
-      {/* Progress area */}
-      <div className="w-80 space-y-4">
-        {/* Bar */}
-        <div
-          className="h-1 rounded-full overflow-hidden"
-          style={{ background: "var(--line)" }}
-        >
-          <div
-            className="h-full rounded-full bg-wax transition-none"
-            style={{ width: `${displayPct}%`, transition: "width 0.06s linear" }}
-          />
-        </div>
-
-        {/* Status row */}
-        <div className="flex items-center gap-2 text-sm text-ink3">
-          {!isDone ? (
-            <Icon name="progress_activity" size={16} className="text-wax shrink-0" style={{ animation: "spin 1s linear infinite" }} />
-          ) : (
-            <Icon name="check_circle" size={16} className="text-wax shrink-0" />
-          )}
-          <span className="flex-1 truncate">{label}</span>
-          <span
-            className="font-mono text-xs tabular-nums text-wax"
-          >
-            {displayPct}%
-          </span>
-        </div>
-
-        {/* Step dots */}
-        <div className="flex gap-1 justify-center pt-1">
-          {PHASES.map((_, i) => (
-            <div
-              key={i}
-              className="rounded-full transition-all duration-300"
-              style={{
-                height: "3px",
-                width: i < phaseIndex ? "16px" : i === phaseIndex ? "24px" : "4px",
-                background:
-                  i <= phaseIndex
-                    ? "var(--wax)"
-                    : "var(--line)",
-                opacity: i === phaseIndex ? 0.8 : 1,
-              }}
-            />
-          ))}
-        </div>
-      </div>
-
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.5; transform: scale(0.85); }
-        }
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
     </div>
   );
 }

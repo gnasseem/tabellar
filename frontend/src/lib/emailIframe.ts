@@ -1,3 +1,17 @@
+// Default colours for an email shown in an iframe, as a style block to put
+// ahead of the email's own markup. The frame cannot see the window's tokens,
+// so their current values are read from the page. The rules have no
+// specificity and sit on the root, so an email that sets its own background,
+// text or link colour keeps it.
+export function emailFrameThemeCss(): string {
+  const cs = getComputedStyle(document.documentElement);
+  const token = (name: string) => cs.getPropertyValue(name).trim();
+  return (
+    `<style>:where(html){color-scheme:${cs.colorScheme || "light"};background:${token("--bg")};color:${token("--ink")}}` +
+    `:where(a){color:${token("--ink")};text-decoration-color:${token("--ink4")};text-underline-offset:2px}</style>`
+  );
+}
+
 function isFullBleedOverlay(el: HTMLElement, doc: Document): boolean {
   const st = getComputedStyle(el);
   if (st.position !== "fixed" && st.position !== "absolute") return false;

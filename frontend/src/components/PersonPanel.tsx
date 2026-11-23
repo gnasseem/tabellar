@@ -1,8 +1,8 @@
-
 import { useState, useEffect, useRef, useCallback } from "react";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
+import { Empty } from "./ui";
 
 type ContactInsights = {
   name: string;
@@ -37,44 +37,32 @@ type RecentMeeting = {
   status: string;
 };
 
-function healthLabel(health: ContactInsights["relationship_health"]): { label: string; color: string; icon: string } {
-  switch (health) {
-    case "active":  return { label: "Active",   color: "text-ok bg-ok-soft",   icon: "favorite" };
-    case "recent":  return { label: "Recent",   color: "text-ink2 bg-field",     icon: "bolt" };
-    case "fading":  return { label: "Fading",   color: "text-warn bg-warn-soft", icon: "trending_down" };
-    case "dormant": return { label: "Dormant",  color: "text-ink2 bg-field",    icon: "bedtime" };
-    default:        return { label: "New",      color: "text-ink2 bg-field", icon: "star" };
-  }
-}
+const HEALTH: Record<ContactInsights["relationship_health"], string> = {
+  active: "In touch this week",
+  recent: "In touch this month",
+  fading: "Quiet for over a month",
+  dormant: "Quiet for over three months",
+  new: "New to you",
+};
 
 function timeAgo(iso: string): string {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
+  if (days === 0) return "today";
+  if (days === 1) return "yesterday";
   if (days < 7) return `${days} days ago`;
   if (days < 30) return `${Math.floor(days / 7)} week${Math.floor(days / 7) > 1 ? "s" : ""} ago`;
   if (days < 365) return `${Math.floor(days / 30)} month${Math.floor(days / 30) > 1 ? "s" : ""} ago`;
-  return `${Math.floor(days / 365)}y ago`;
+  return `${Math.floor(days / 365)} year${Math.floor(days / 365) > 1 ? "s" : ""} ago`;
 }
 
-function Initials({ name, email }: { name: string; email: string }) {
-  const str = name || email;
-  const parts = str.split(/[\s.@]/);
-  const initials = parts.length >= 2
-    ? (parts[0][0] + parts[1][0]).toUpperCase()
-    : str.slice(0, 2).toUpperCase();
-  // Deterministic color based on email
-  const colors = [
-    "bg-wax", "bg-wax", "bg-ok", "bg-danger",
-    "bg-warn", "bg-wax", "bg-wax", "bg-ok",
-  ];
-  const idx = email.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0) % colors.length;
-  return (
-    <div className={`w-12 h-12 rounded-2xl ${colors[idx]} flex items-center justify-center text-white font-bold text-lg shrink-0 shadow-sm`}>
-      {initials}
-    </div>
-  );
+function replyTime(hours: number): string {
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} min`;
+  if (hours < 24) return `${Math.round(hours)} h`;
+  const days = Math.round(hours / 24);
+  return `${days} day${days > 1 ? "s" : ""}`;
 }
+
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString([], { day: "numeric", month: "short" });
 
 type PersonPanelProps = {
   senderEmail: string;
@@ -211,180 +199,132 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
     }, 800);
   };
 
+  const pane = "flex h-full w-full flex-none flex-col overflow-y-auto border-l border-line md:w-[300px]";
+
   if (loading) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
-        <Icon name="progress_activity" size={22} className="animate-spin text-ink3" />
-      </div>
+      <aside className={pane} aria-busy="true" aria-label="About the sender">
+        <div className="space-y-2 px-4 pt-4">
+          <div className="skel h-3 w-32" />
+          <div className="skel h-2.5 w-44" />
+        </div>
+        <div className="space-y-3 px-4 pt-7">
+          <div className="skel h-2.5 w-20" />
+          <div className="skel h-2.5 w-full" />
+          <div className="skel h-2.5 w-4/5" />
+          <div className="skel h-2.5 w-3/5" />
+        </div>
+      </aside>
     );
   }
 
   if (!insights) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-2 p-6 text-center">
-        <Icon name="person_off" size={28} fill className="text-ink3" />
-        <p className="text-xs text-ink3">No contact data available</p>
-      </div>
+      <aside className={pane} aria-label="About the sender">
+        <Empty icon="person_off" title="Nothing known about this sender">
+          Tabellar could not read what it has on {senderEmail || "this address"}. Close this panel and open it again to retry.
+        </Empty>
+      </aside>
     );
   }
 
-  const health = healthLabel(insights.relationship_health);
+  const section = "border-t border-line-soft px-4 py-3";
+  const line = "flex min-h-[26px] items-baseline gap-3";
 
   return (
-    <div className="h-full overflow-y-auto flex flex-col gap-0">
-
-      {/* ── Contact header ── */}
-      <div className="px-4 pt-5 pb-4 border-b border-line">
-        <div className="flex items-start gap-3">
-          <Initials name={insights.name} email={insights.email} />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-ink truncate leading-tight">{insights.name}</p>
-            <p className="text-[11px] text-ink3 truncate mt-0.5">{insights.email}</p>
-            {insights.domain && (
-              <p className="text-[10px] text-ink3 opacity-60 truncate">{insights.domain}</p>
-            )}
-          </div>
-        </div>
-
-        {/* Relationship health badge */}
-        <div className="mt-3 flex items-center gap-2">
-          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${health.color}`}>
-            <Icon name={health.icon} size={10} fill />
-            {health.label}
-          </span>
-          {insights.last_interaction_at && (
-            <span className="text-[10px] text-ink3">{timeAgo(insights.last_interaction_at)}</span>
-          )}
+    <aside className={pane} aria-label="About the sender">
+      <div className="px-4 pb-3.5 pt-4">
+        <p className="truncate text-[15px] font-[650] tracking-[-0.01em] text-ink">{insights.name}</p>
+        <p className="truncate text-xs text-ink3">{insights.email}</p>
+        <p className="mt-2 text-xs text-ink2">
+          {HEALTH[insights.relationship_health]}
+          {insights.last_interaction_at && <span className="text-ink3">, last mail {timeAgo(insights.last_interaction_at)}</span>}
+        </p>
+        <div className="mt-3 flex gap-2">
+          <button className="btn" onClick={onCompose}>
+            Write to {insights.name.split(" ")[0]}
+          </button>
+          <button className="btn" onClick={onFindAllEmails}>
+            Find all emails
+          </button>
         </div>
       </div>
 
-      {/* ── Stats ── */}
       {insights.interaction_count > 0 && (
-        <div className="px-4 py-3 border-b border-line">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-ink3 mb-2">Relationship</p>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-xl bg-field px-3 py-2">
-              <p className="text-lg font-bold text-ink leading-tight">{insights.interaction_count}</p>
-              <p className="text-[10px] text-ink3">emails</p>
+        <div className={section}>
+          <h3 className="label mb-1">With you</h3>
+          <div className={line}>
+            <span className="flex-1 text-ink2">Emails exchanged</span>
+            <span className="text-ink">{insights.interaction_count.toLocaleString()}</span>
+          </div>
+          {insights.avg_response_time_hours !== null && (
+            <div className={line}>
+              <span className="flex-1 text-ink2">Usual time to reply</span>
+              <span className="text-ink">{replyTime(insights.avg_response_time_hours)}</span>
             </div>
-            {insights.avg_response_time_hours !== null && (
-              <div className="rounded-xl bg-field px-3 py-2">
-                <p className="text-lg font-bold text-ink leading-tight">
-                  {insights.avg_response_time_hours < 1
-                    ? `${Math.round(insights.avg_response_time_hours * 60)}m`
-                    : insights.avg_response_time_hours < 24
-                    ? `${Math.round(insights.avg_response_time_hours)}h`
-                    : `${Math.round(insights.avg_response_time_hours / 24)}d`}
-                </p>
-                <p className="text-[10px] text-ink3">avg reply</p>
-              </div>
-            )}
-          </div>
+          )}
         </div>
       )}
 
-      {/* ── Recent emails ── */}
       {recentEmails.length > 0 && (
-        <div className="px-4 py-3 border-b border-line">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-ink3 mb-2">Recent emails</p>
-          <div className="flex flex-col gap-1.5">
-            {recentEmails.map((e) => (
-              <div key={e.id} className="rounded-lg bg-field px-2.5 py-1.5">
-                <p className="text-[11px] font-medium text-ink truncate leading-tight">
-                  {e.subject || "(no subject)"}
-                </p>
-                <p className="text-[10px] text-ink3 mt-0.5">
-                  {new Date(e.received_at).toLocaleDateString([], { month: "short", day: "numeric" })}
-                  {e.snippet ? ` - ${e.snippet.slice(0, 50)}${e.snippet.length > 50 ? "…" : ""}` : ""}
-                </p>
-              </div>
-            ))}
-          </div>
+        <div className={section}>
+          <h3 className="label mb-1">Recent emails</h3>
+          {recentEmails.map((e) => (
+            <div key={e.id} className={line} title={e.snippet || undefined}>
+              <span className="min-w-0 flex-1 truncate text-ink2">{e.subject || "(no subject)"}</span>
+              <time className="flex-none text-xs text-ink3">{shortDate(e.received_at)}</time>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* ── Todos from this contact ── */}
       {recentTodos.length > 0 && (
-        <div className="px-4 py-3 border-b border-line">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-ink3 mb-2">Related todos</p>
-          <div className="flex flex-col gap-1">
-            {recentTodos.map((t) => (
-              <div key={t.id} className="flex items-start gap-1.5">
-                <Icon name={t.is_completed ? "check_circle" : "radio_button_unchecked"} size={12} fill={t.is_completed} className="shrink-0 mt-0.5" style={{ color: t.is_completed ? "var(--wax)" : "var(--ink3)" }} />
-                <p className={`text-[11px] leading-tight ${t.is_completed ? "line-through text-ink3" : "text-ink"}`}>
-                  {t.text}
-                </p>
-              </div>
-            ))}
-          </div>
+        <div className={section}>
+          <h3 className="label mb-1">Todos from their mail</h3>
+          {recentTodos.map((t) => (
+            <div key={t.id} className="flex min-h-[26px] items-start gap-2 py-1">
+              <Icon name={t.is_completed ? "check" : "radio_button_unchecked"} size={13} className="mt-0.5 text-ink3" />
+              <span className={`min-w-0 flex-1 leading-snug ${t.is_completed ? "text-ink3 line-through" : "text-ink2"}`}>{t.text}</span>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* ── Meetings with this contact ── */}
       {recentMeetings.length > 0 && (
-        <div className="px-4 py-3 border-b border-line">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-ink3 mb-2">Meetings</p>
-          <div className="flex flex-col gap-1.5">
-            {recentMeetings.map((m) => {
-              const isPast = new Date(m.start_time) < new Date();
-              return (
-                <div key={m.id} className="flex items-start gap-1.5">
-                  <Icon name="event" size={12} fill className="shrink-0 mt-0.5 text-wax" style={{ opacity: isPast ? 0.5 : 1 }} />
-                  <div className="min-w-0">
-                    <p className={`text-[11px] font-medium leading-tight truncate ${isPast ? "text-ink3" : "text-ink"}`}>
-                      {m.title}
-                    </p>
-                    <p className="text-[10px] text-ink3">
-                      {new Date(m.start_time).toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+        <div className={section}>
+          <h3 className="label mb-1">Meetings</h3>
+          {recentMeetings.map((m) => {
+            const isPast = new Date(m.start_time) < new Date();
+            return (
+              <div key={m.id} className={line}>
+                <span className={`min-w-0 flex-1 truncate ${isPast ? "text-ink3" : "text-ink2"}`}>{m.title}</span>
+                <time className="flex-none text-xs text-ink3">
+                  {new Date(m.start_time).toLocaleDateString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}
+                </time>
+              </div>
+            );
+          })}
         </div>
       )}
 
-      {/* ── Notes ── */}
-      <div className="px-4 py-3 border-b border-line">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-ink3">Notes</p>
-          {notesDirty && (
-            <span className="text-[9px] text-ink3 italic">saving...</span>
-          )}
-          {notesSaved && !notesDirty && (
-            <span className="text-[9px] text-ok flex items-center gap-0.5">
-              <Icon name="check" size={10} />
-              saved
-            </span>
-          )}
+      <div className={section}>
+        <div className="mb-1.5 flex items-baseline justify-between">
+          <label htmlFor="person-notes" className="label">
+            Notes
+          </label>
+          <span className="text-xs text-ink3" role="status">
+            {notesDirty ? "Saving" : notesSaved ? "Saved" : ""}
+          </span>
         </div>
         <textarea
+          id="person-notes"
           value={notes}
           onChange={(e) => handleNotesChange(e.target.value)}
-          placeholder="Add private notes about this contact..."
-          rows={3}
-          className="w-full text-xs text-ink bg-field rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-wax placeholder:text-ink3 leading-relaxed transition-shadow"
+          placeholder="Private notes about this person. Tabellar uses them in the briefing and when you ask about them."
+          rows={4}
+          className="input resize-none"
         />
       </div>
-
-      {/* ── Actions ── */}
-      <div className="px-4 py-3 flex flex-col gap-2 mt-auto">
-        <button
-          onClick={onCompose}
-          className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-wax text-on-wax text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
-        >
-          <Icon name="edit" size={15} />
-          Compose to {insights.name.split(" ")[0]}
-        </button>
-        <button
-          onClick={onFindAllEmails}
-          className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-line text-xs font-medium text-ink hover:bg-field transition-colors cursor-pointer"
-        >
-          <Icon name="search" size={15} />
-          Find all emails
-        </button>
-      </div>
-    </div>
+    </aside>
   );
 }

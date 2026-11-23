@@ -2,6 +2,8 @@
 import { useState, useRef, useEffect, useMemo, Fragment } from "react";
 import Icon from "@/components/Icon";
 import DOMPurify from "dompurify";
+import { emailFrameThemeCss, measureEmailIframeBodyHeight } from "@/lib/emailIframe";
+import { Glyph, Kbd, shortWhen } from "./ui";
 
 // Module-level attachment blob cache -- survives across email navigations.
 //
@@ -79,14 +81,11 @@ const CATEGORIES = [
   "updates",
 ];
 
-const categoryColorMap: Record<string, string> = {
-  important: "bg-danger-soft text-danger",
-  "action-required":
-    "bg-warn-soft text-warn",
-  promotions:
-    "bg-field text-ink2",
-  updates:
-    "bg-field text-ink2",
+const CATEGORY_NAMES: Record<string, string> = {
+  important: "Important",
+  "action-required": "Action required",
+  promotions: "Promotions",
+  updates: "Updates",
 };
 
 const SNOOZE_OPTIONS = [
@@ -216,7 +215,7 @@ function linkify(text: string) {
         href={part}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-ink2 underline break-all hover:text-ink3"
+        className="break-all underline decoration-ink4 underline-offset-2 hover:text-ink2"
       >
         {part}
       </a>
@@ -367,41 +366,28 @@ function hslToHex(h: number, s: number, l: number): string {
   return `#${f(0)}${f(8)}${f(4)}`;
 }
 
+// A light version of a dark colour, for the dark theme. Greys return "" so the
+// email's text takes the theme's ink instead.
 function lightenColor([r, g, b]: [number, number, number]): string {
   const [h, s] = toHsl([r, g, b]);
-  if (s < 0.05) return "#d1d5db"; // achromatic gray
+  if (s < 0.05) return "";
   return hslToHex(h, Math.min(s, 0.65), 0.82);
 }
 
-
-
-function processLinks(html: string): string {
+// Links open outside the window. In the dark theme, dark text the email sets
+// is lightened and near-white grounds are dropped so the theme's ground shows
+// through; colours the email does not set come from emailFrameThemeCss.
+function prepareEmailHtml(html: string, dark: boolean): string {
   if (typeof window === "undefined") return html;
   try {
     const doc = new DOMParser().parseFromString(html, "text/html");
     doc.querySelectorAll("a[href]").forEach((a) => {
-      (a as HTMLElement).setAttribute("target", "_blank");
-      (a as HTMLElement).setAttribute("rel", "noopener noreferrer");
-      (a as HTMLElement).style.color = "#3b82f6";
+      a.setAttribute("target", "_blank");
+      a.setAttribute("rel", "noopener noreferrer");
     });
-    return doc.body.innerHTML;
-  } catch {
-    return html;
-  }
-}
-
-function adaptTextForDarkMode(html: string): string {
-  if (typeof window === "undefined") return html;
-  try {
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    doc.querySelectorAll("a[href]").forEach((a) => {
-      (a as HTMLElement).setAttribute("target", "_blank");
-      (a as HTMLElement).setAttribute("rel", "noopener noreferrer");
-      (a as HTMLElement).style.color = "#60a5fa";
-    });
+    if (!dark) return doc.body.innerHTML;
     const walk = (el: Element): void => {
       if (el instanceof HTMLElement) {
-        // Lighten explicit dark text colors
         if (el.style.color) {
           const rgb = parseRgb(el.style.color);
           if (rgb && relLum(rgb) < 0.25) el.style.color = lightenColor(rgb);
@@ -409,14 +395,15 @@ function adaptTextForDarkMode(html: string): string {
         const cAttr = el.getAttribute("color");
         if (cAttr && !el.style.color) {
           const rgb = parseRgb(cAttr);
-          if (rgb && relLum(rgb) < 0.25)
-            el.setAttribute("color", lightenColor(rgb));
+          if (rgb && relLum(rgb) < 0.25) {
+            const light = lightenColor(rgb);
+            if (light) el.setAttribute("color", light);
+            else el.removeAttribute("color");
+          }
         }
-        // Remove near-white/white backgrounds so the dark UI shows through
         if (el.style.backgroundColor) {
           const rgb = parseRgb(el.style.backgroundColor);
-          if (rgb && relLum(rgb) > 0.7)
-            el.style.backgroundColor = "transparent";
+          if (rgb && relLum(rgb) > 0.7) el.style.backgroundColor = "transparent";
         }
         const bgAttr = el.getAttribute("bgcolor");
         if (bgAttr) {
@@ -433,76 +420,151 @@ function adaptTextForDarkMode(html: string): string {
   }
 }
 
+const FRAME_BASE_CSS =
+  "<style>html,body{margin:0;padding:0;min-height:0!important;height:auto!important;overflow-x:hidden}" +
+  "body{font:14px/1.6 system-ui,-apple-system,'Helvetica Neue',sans-serif;word-break:break-word}" +
+  "img,table{max-width:100%!important;height:auto!important}</style>";
+
+// The email itself, in a sandboxed frame of its own so its markup and styles
+// cannot touch the window. Its height follows its content.
+function EmailFrame({ html }: { html: string }) {
+  const { theme } = useApp() as any;
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(120);
+  const build = () =>
+    `<base target="_blank">` + emailFrameThemeCss() + FRAME_BASE_CSS + prepareEmailHtml(fixMojibake(html), theme === "dark");
+  const [srcDoc, setSrcDoc] = useState(build);
+
+  // The theme class changes on the root after this renders, so the theme's
+  // colours are read a frame later.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setSrcDoc(build()));
+    return () => cancelAnimationFrame(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [html, theme]);
+
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    if (!iframe) return;
+    let detach: (() => void) | undefined;
+    const bind = () => {
+      const doc = iframe.contentDocument;
+      const body = doc?.body;
+      if (!doc || !body) return;
+      const measure = () => {
+        const b = iframe.contentDocument?.body;
+        if (b) setHeight(measureEmailIframeBodyHeight(b));
+      };
+      measure();
+      requestAnimationFrame(measure);
+      const t1 = window.setTimeout(measure, 60);
+      const t2 = window.setTimeout(measure, 280);
+      const ro = new ResizeObserver(() => requestAnimationFrame(measure));
+      ro.observe(body);
+      const imgs = [...body.querySelectorAll("img")];
+      imgs.forEach((img) => img.addEventListener("load", measure));
+      detach = () => {
+        window.clearTimeout(t1);
+        window.clearTimeout(t2);
+        ro.disconnect();
+        imgs.forEach((img) => img.removeEventListener("load", measure));
+      };
+    };
+    const onLoad = () => {
+      detach?.();
+      bind();
+    };
+    iframe.addEventListener("load", onLoad);
+    return () => {
+      iframe.removeEventListener("load", onLoad);
+      detach?.();
+    };
+  }, [srcDoc]);
+
+  return (
+    <iframe
+      ref={iframeRef}
+      srcDoc={srcDoc}
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      title="Email content"
+      className="block w-full border-0"
+      style={{ height }}
+    />
+  );
+}
+
+// One message's body: the email's own HTML in a frame, else its text.
+function MessageBody({ body }: { body: ResolvedBody }) {
+  if (body.kind === "html") return <EmailFrame html={body.html} />;
+  if (body.kind === "text")
+    return <pre className="whitespace-pre-wrap break-words font-sans text-sm leading-[1.6] text-ink">{linkify(body.text)}</pre>;
+  if (body.kind === "snippet") return <p className="text-sm leading-[1.6] text-ink2">{body.text}</p>;
+  return <p className="text-ink3">This email has no content.</p>;
+}
+
+// A caution about the sender or its links, on one line. Details open below it.
 function SuspicionBanner({ verdict }: { verdict: SuspicionVerdict }) {
+  const [open, setOpen] = useState(false);
   if (verdict.level === "none") return null;
   const danger = verdict.level === "danger";
   return (
-    <div
-      className={`mb-4 rounded-xl border px-4 py-3 ${
-        danger
-          ? "border-danger-line bg-danger-soft"
-          : "border-warn-line bg-warn-soft"
-      }`}
-    >
-      <div className="flex items-start gap-2">
-        <Icon name={danger ? "gpp_maybe" : "warning"} size={18} className={`shrink-0 ${
-            danger
-              ? "text-danger"
-              : "text-warn"
-          }`} />
-        <div className="min-w-0">
-          <div
-            className={`text-xs font-semibold ${
-              danger
-                ? "text-danger"
-                : "text-warn"
-            }`}
-          >
-            {danger
-              ? "This message looks like a phishing attempt"
-              : "Something about this message looks off"}
-          </div>
-          <ul className="mt-1.5 space-y-1">
-            {verdict.signals.map((s) => (
-              <li
-                key={s.id}
-                className="text-[11px] leading-relaxed text-ink/80"
-              >
-                <span className="font-medium">{s.label}.</span> {s.detail}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-1.5 text-[11px] text-ink3">
-            Do not enter passwords or payment details from a link in this
-            email. If it claims to be from a service you use, open that service
-            directly instead.
-          </div>
-        </div>
+    <div className={`mt-4 rounded-[9px] px-3 py-2 ${danger ? "bg-danger-soft text-danger" : "bg-warn-soft text-warn"}`} role="alert">
+      <div className="flex items-center gap-2">
+        <Glyph state={danger ? "failed" : "held"} />
+        <span className="min-w-0 flex-1 font-medium">
+          {danger ? "This looks like phishing." : "Something about this email looks off."} Do not enter passwords or payment details from its links.
+        </span>
+        <button className="link flex-none" onClick={() => setOpen(!open)} aria-expanded={open}>
+          {open ? "Hide why" : "Why"}
+        </button>
       </div>
+      {open && (
+        <ul className="mt-1.5 space-y-1 pb-0.5 pl-6 text-xs leading-normal text-ink2">
+          {verdict.signals.map((s) => (
+            <li key={s.id}>
+              <span className="font-medium text-ink">{s.label}.</span> {s.detail}
+            </li>
+          ))}
+          <li>If it claims to be from a service you use, open that service directly instead.</li>
+        </ul>
+      )}
     </div>
   );
 }
 
-function EmailBody({ html, isDark }: { html: string; isDark: boolean }) {
-  const processed = useMemo(() => {
-    const content = fixMojibake(html);
-    return isDark ? adaptTextForDarkMode(content) : processLinks(content);
-  }, [html, isDark]);
+type Att = { filename: string; mime_type: string; size: number; attachment_id: string };
 
+const fileSize = (n: number) => (n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.ceil(n / 1024))} KB`);
+const fileIcon = (mime: string | undefined) => (mime?.startsWith("image/") ? "image" : mime?.includes("pdf") ? "picture_as_pdf" : "description");
+
+// Attachments as quiet rows: the name opens a preview, Download saves it.
+function AttachmentList({ atts, onPreview, onDownload }: { atts: Att[]; onPreview: (a: Att) => void; onDownload: (a: Att) => void }) {
+  if (!atts.length) return null;
   return (
-    <div
-      dangerouslySetInnerHTML={{ __html: processed }}
-      style={{
-        fontSize: "14px",
-        lineHeight: "1.65",
-        wordBreak: "break-word",
-        overflowX: "auto",
-        maxWidth: "100%",
-        color: isDark ? "#e2e8f0" : undefined,
-      }}
-    />
+    <div className="mt-5 border-t border-line-soft pt-3">
+      <p className="label mb-1">{atts.length === 1 ? "1 attachment" : `${atts.length} attachments`}</p>
+      {atts.map((att) => (
+        <div key={att.attachment_id} className="-mx-2 flex h-8 items-center gap-2 rounded-md px-2 hover:bg-hover">
+          <Icon name={fileIcon(att.mime_type)} size={14} className="flex-none text-ink3" />
+          <button className="min-w-0 truncate text-left text-ink hover:underline" onClick={() => onPreview(att)} title="Preview">
+            {att.filename}
+          </button>
+          {att.size > 0 && <span className="flex-none text-xs text-ink3">{fileSize(att.size)}</span>}
+          <span className="flex-1" />
+          <button className="btn btn-plain btn-sm" onClick={() => onDownload(att)} aria-label={`Download ${att.filename}`}>
+            Download
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }
+
+const nameOf = (sender: string | null | undefined, address: string | null | undefined) =>
+  (sender ?? "").replace(/<.*>/, "").replace(/"/g, "").trim() || address || "Unknown sender";
+
+const fullWhen = (iso: string) =>
+  new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 
 export default function EmailDetail({
   email,
@@ -515,7 +577,7 @@ export default function EmailDetail({
   onResolvedChange,
   showBack = false,
 }: EmailDetailProps) {
-  const { user, openCompose, addToast, theme, setView, setSearch, setPendingMeetingSchedule } =
+  const { user, openCompose, addToast, setView, setPendingMeetingSchedule, mail, setViewCache } =
     useApp() as any;
   const supabase = createClient();
 
@@ -527,8 +589,9 @@ export default function EmailDetail({
       : email.email_processed,
   );
   const [categoryOverride, setCategoryOverride] = useState("");
-  const [showCategoryMenu, setShowCategoryMenu] = useState(false);
-  const [showTagMenu, setShowTagMenu] = useState(false);
+  // The open popover in the bar, if any.
+  const [menu, setMenu] = useState<"" | "sort" | "snooze" | "more" | "track">("");
+  const barRef = useRef<HTMLElement>(null);
   const [userTags, setUserTags] = useState<
     { slug: string; display_name: string; color: string }[]
   >([]);
@@ -538,8 +601,6 @@ export default function EmailDetail({
   const [bodyHtml, setBodyHtml] = useState<string | null | undefined>(
     email.body_html,
   );
-  const tagRef = useRef<HTMLDivElement>(null);
-  const [showSnoozeMenu, setShowSnoozeMenu] = useState(false);
   const suspicion = useMemo(() => assessSuspicion(email), [email]);
   const [resolvedAt, setResolvedAt] = useState<string | null>(
     email.resolved_at ?? null,
@@ -550,7 +611,6 @@ export default function EmailDetail({
   }, [email.id, email.resolved_at]);
   // Follow-up tracking
   const [isTracked, setIsTracked] = useState(false);
-  const [showTrackPopup, setShowTrackPopup] = useState(false);
   const [trackRemindAt, setTrackRemindAt] = useState<string>(() => {
     const d = new Date(Date.now() + 3 * 86_400_000);
     d.setHours(9, 0, 0, 0);
@@ -662,11 +722,11 @@ export default function EmailDetail({
       { onConflict: "user_id,thread_id" },
     );
     setTrackingSaving(false);
-    setShowTrackPopup(false);
+    setMenu("");
     if (!error) {
       setIsTracked(true);
       addToast("success", "Follow-up reminder set");
-    } else addToast("error", "Failed to set reminder");
+    } else addToast("error", "Could not set the reminder. Try again.");
   };
 
   const [rethinking, setRethinking] = useState(false);
@@ -705,6 +765,7 @@ export default function EmailDetail({
       size: number;
       attachment_id: string;
     };
+    gmailId?: string; // the message the attachment belongs to, in a thread
     blobUrl: string | null;
     text: string | null;
     error: string | null;
@@ -712,8 +773,8 @@ export default function EmailDetail({
   const [previewAtt, setPreviewAtt] = useState<AttachmentPreviewState | null>(
     null,
   );
-  const snoozeRef = useRef<HTMLDivElement>(null);
-  const catRef = useRef<HTMLDivElement>(null);
+  // Thread messages shown in full; the rest are one line each.
+  const [openMessages, setOpenMessages] = useState<Set<string>>(new Set());
 
   // Fetch all thread emails for chat view
   useEffect(() => {
@@ -733,6 +794,7 @@ export default function EmailDetail({
         setThreadLoading(false);
         if (data && data.length > 1) {
           setThreadEmails(data as ThreadEmail[]);
+          setOpenMessages(new Set([email.id, (data as ThreadEmail[])[data.length - 1].id]));
           // Preload thread attachments in the background.
           for (const msg of data as ThreadEmail[]) {
             const msgAtts = Array.isArray(msg.attachments) ? msg.attachments : [];
@@ -759,19 +821,15 @@ export default function EmailDetail({
       });
   }, [user.id]);
 
-  // Close dropdowns on outside click
+  // Close the bar's popover on a click outside the bar
   useEffect(() => {
+    if (!menu) return;
     const handler = (e: MouseEvent) => {
-      if (snoozeRef.current && !snoozeRef.current.contains(e.target as Node))
-        setShowSnoozeMenu(false);
-      if (catRef.current && !catRef.current.contains(e.target as Node))
-        setShowCategoryMenu(false);
-      if (tagRef.current && !tagRef.current.contains(e.target as Node))
-        setShowTagMenu(false);
+      if (barRef.current && !barRef.current.contains(e.target as Node)) setMenu("");
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, []);
+  }, [menu]);
 
   // Module-level cache doesn't need per-instance cleanup (blobs reused across emails)
 
@@ -851,7 +909,7 @@ export default function EmailDetail({
 
   const overrideCategory = async (newCategory: string) => {
     setCategoryOverride(newCategory);
-    setShowCategoryMenu(false);
+    setMenu("");
 
     // Update local state and notify parent immediately
     const updatedProc = { ...proc, category: newCategory };
@@ -863,7 +921,7 @@ export default function EmailDetail({
       .update({ category: newCategory })
       .eq("email_id", email.id);
 
-    addToast("success", `Category changed to "${newCategory}"`);
+    addToast("success", `Moved to ${CATEGORY_NAMES[newCategory] || newCategory}`);
   };
 
   const toggleTag = async (slug: string) => {
@@ -933,7 +991,7 @@ export default function EmailDetail({
       .eq("id", email.id);
     // Keep localStorage as fast local cache
     localStorage.setItem(`snooze:${email.id}`, until);
-    setShowSnoozeMenu(false);
+    setMenu("");
     addToast("success", `Snoozed until ${label}`);
     onSnooze?.();
   };
@@ -953,12 +1011,12 @@ export default function EmailDetail({
         const updated = await res.json();
         setProc(updated);
         onRethink?.(updated);
-        addToast("success", "AI analysis refreshed");
+        addToast("success", "Tabellar read it again");
       } else {
-        addToast("error", "Rethink failed");
+        addToast("error", "Tabellar could not read it again. Try once more.");
       }
     } catch {
-      addToast("error", "Network error");
+      addToast("error", "Tabellar's server did not answer. Try again.");
     }
     setRethinking(false);
   };
@@ -980,13 +1038,13 @@ export default function EmailDetail({
           "success",
           count > 0
             ? `Added ${count} task${count > 1 ? "s" : ""} to Todos`
-            : "No actionable tasks found",
+            : "No todos in this email",
         );
       } else {
-        addToast("error", "Could not extract tasks");
+        addToast("error", "Could not look for todos. Try again.");
       }
     } catch {
-      addToast("error", "Network error");
+      addToast("error", "Tabellar's server did not answer. Try again.");
     }
     setExtractingTodos(false);
   };
@@ -997,23 +1055,6 @@ export default function EmailDetail({
       .insert({ user_id: user.id, text: task, source: "email" });
     setAddedTodos((prev) => new Set([...prev, task]));
     addToast("success", "Added to Todos");
-  };
-
-  const handleQuickAction = (action: any) => {
-    const label = (action.label || action.text || action || "").toLowerCase();
-    if (label.includes("forward")) {
-      openCompose({
-        ...email,
-        sender_email: "",
-        subject: `Fwd: ${email.subject}`,
-      });
-    } else {
-      openCompose({
-        ...email,
-        _prefillBody: action.text || "",
-        _autoGenerate: !!action.text,
-      });
-    }
   };
 
   const submitInputAction = (replyAll = false) => {
@@ -1041,12 +1082,11 @@ export default function EmailDetail({
   const todoActions = (proc?.quick_actions || []).filter(
     (qa: any) => qa.action === "add_todo",
   );
-  const hasNoActions = !proc?.quick_actions || proc.quick_actions.length === 0;
   const hasReplyAll =
     !!(email.cc_recipients) ||
     (email.recipients || "").split(",").filter(Boolean).length > 1;
   // Only show the panel when there are actual actions to render.
-  // If the AI ran and returned [] it made a deliberate decision  -  hide the panel.
+  // An empty list from Tabellar is a decision too: then there is no panel.
   const hasActions =
     replyActions.length > 0 ||
     meetingActions.length > 0 ||
@@ -1061,916 +1101,536 @@ export default function EmailDetail({
     snippet: email.snippet,
   });
   const isMultiMessageThread = threadEmails.length > 1;
+  const needsReply = !isNoreply && (replyActions.length > 0 || currentCategory === "action-required");
+  const singleAtts: Att[] = Array.isArray(email.attachments) ? email.attachments : [];
+  const categoryText = CATEGORY_NAMES[currentCategory] || currentCategory || "Not sorted yet";
+  const labelNames = emailTags
+    .map((slug) => userTags.find((t) => t.slug === slug)?.display_name)
+    .filter(Boolean) as string[];
+
+  const reply = () => {
+    openCompose(email);
+    onReply();
+  };
+
+  const openPreview = async (att: Att, gmailId?: string) => {
+    setPreviewAtt({ att, gmailId, blobUrl: null, text: null, error: null });
+    try {
+      const result = await fetchAttachmentBlob(att, gmailId);
+      setPreviewAtt({ att, gmailId, blobUrl: result.blobUrl, text: result.text, error: null });
+    } catch {
+      setPreviewAtt((prev) => (prev ? { ...prev, error: "Tabellar could not load this attachment from Gmail." } : null));
+    }
+  };
+
+  // Keys while reading: Esc goes back (or closes what is open), R replies,
+  // E archives, U marks unread. Caught before the list's own handler.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      if (document.querySelector("[data-compose-modal]")) return;
+      if (e.key === "Escape") {
+        if (previewAtt) setPreviewAtt(null);
+        else if (menu) setMenu("");
+        else if (document.querySelector('[aria-modal="true"]')) return;
+        else onBack();
+        e.stopPropagation();
+        return;
+      }
+      if (previewAtt || document.querySelector('[aria-modal="true"]')) return;
+      const k = e.key.toLowerCase();
+      if (k === "r") reply();
+      else if (k === "e") onArchive();
+      else if (k === "u") handleMarkUnread();
+      else return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  });
+
+  const toggleMenu = (m: typeof menu) => setMenu(menu === m ? "" : m);
+  const divider = <div className="mx-2 my-1 border-t border-line-soft" />;
+
+  // What the user has set on this email: dealt with, a follow-up reminder.
+  const status = (resolvedAt || isTracked) && (
+    <div className="mt-3 space-y-1 text-xs text-ink3">
+      {resolvedAt && (
+        <p className="flex items-center gap-1.5">
+          <Glyph state="done" />
+          You marked this as dealt with.
+          <button className="link" onClick={toggleResolved} disabled={resolvingEmail}>
+            Undo
+          </button>
+        </p>
+      )}
+      {isTracked && (
+        <p className="flex items-center gap-1.5">
+          <Glyph state="info" />
+          Tabellar reminds you if nobody replies.
+          <button className="link" onClick={() => setView("followups")}>
+            Open in Follow-ups
+          </button>
+        </p>
+      )}
+    </div>
+  );
+
+  const missingAnswer =
+    !!activeInputAction &&
+    (activeInputAction.qa.questions || []).some((q: any) => !(activeInputAction.answers[q.key] || "").trim());
+
+  // What Tabellar did with this email, each with its reason and its undo.
+  const outcomes = (mail?.byEmail.get(email.id) || []).filter((o: any) => o.state !== "info" || o.title);
+  const doneBlock = outcomes.length > 0 && (
+    <div className="mt-4">
+      <p className="label mb-0.5">What Tabellar did</p>
+      {outcomes.map((o: any) => (
+        <div key={o.key} className="grid grid-cols-[22px_1fr_auto] items-start gap-x-1 border-b border-line-soft py-2 last:border-0">
+          <Glyph state={o.state} className="mt-px" />
+          <div className="min-w-0">
+            <b className={`block leading-snug ${o.state === "info" ? "font-normal text-ink2" : "font-medium"}`}>{o.title}</b>
+            {o.why && <p className="mt-0.5 text-[12.5px] leading-snug text-ink2">{o.why}</p>}
+          </div>
+          <div className="pt-px">
+            {o.act?.kind === "undo" && (
+              <button className="link" onClick={() => mail.undo(o.act.id).then(() => addToast("info", "Undone")).catch(() => {})}>
+                Undo
+              </button>
+            )}
+            {o.act?.kind === "cancel" && (
+              <button className="link" onClick={() => mail.undo(o.act.id).then(() => addToast("success", "Reply cancelled. It is kept as a draft.")).catch(() => {})}>
+                Cancel
+              </button>
+            )}
+            {o.act?.kind === "approve" && (
+              <button className="link !text-wax-ink" onClick={() => mail.approve(o.act.id, o.act.hash).then(() => addToast("success", "Approved")).catch(() => {})}>
+                Approve
+              </button>
+            )}
+            {o.act?.kind === "review" && (
+              <button className="link !text-wax-ink" onClick={() => (setViewCache("replies:focus", o.act.draftId), setView("replies"))}>
+                Review reply
+              </button>
+            )}
+            {o.act?.kind === "view" && (
+              <button className="link" onClick={() => setView(o.act.view)}>
+                Show
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  // What Tabellar made of the email, and the next steps it suggests.
+  const summaryBlock = (proc?.summary || showSuggestionsPanel || rethinking) && (
+    <div className="inset mt-4">
+      <div className="mb-1 flex items-baseline justify-between gap-3">
+        <p className="label">Summary</p>
+        {rethinking && (
+          <span className="text-xs text-ink3" role="status">
+            Reading it again
+          </span>
+        )}
+      </div>
+      {proc?.summary && <p className="leading-normal text-ink2">{proc.summary}</p>}
+      {showSuggestionsPanel && (
+        <div className={`flex flex-wrap gap-1.5 ${proc?.summary ? "mt-2.5" : "mt-1"} ${activeInputAction ? "opacity-50" : ""}`}>
+          {replyActions.map((qa: any, i: number) => {
+            const label = (qa.label || "").replace(/^Reply:\s*/i, "");
+            const prefill = qa.text || label;
+            const hasQuestions = qa.questions?.length > 0;
+            const run = (replyAll: boolean) => {
+              if (hasQuestions) setActiveInputAction({ qa, answers: {} });
+              else openCompose({ ...email, _prefillBody: prefill, _autoGenerate: true, ...(replyAll ? { _replyAll: true } : {}) });
+            };
+            return (
+              <span key={`reply-${i}`} className="inline-flex gap-0.5">
+                <button className="btn btn-sm" onClick={() => run(false)} title={hasQuestions ? `${label}. Tabellar asks a few details first.` : label}>
+                  <Icon name="reply" size={13} className="text-ink3" />
+                  {label}
+                </button>
+                {hasReplyAll && (
+                  <button className="btn btn-sm px-1.5" onClick={() => run(true)} title={`${label}, to everyone`} aria-label={`${label}, to everyone`}>
+                    <Icon name="reply_all" size={13} className="text-ink3" />
+                  </button>
+                )}
+              </span>
+            );
+          })}
+          {meetingActions.map((qa: any, i: number) => {
+            const label = (qa.label || "").replace(/^Schedule:\s*/i, "").replace(/^Add to Calendar:\s*/i, "");
+            const details = qa.meetingDetails;
+            return (
+              <button
+                key={`meeting-${i}`}
+                className="btn btn-sm"
+                title={`Set up in Meetings: ${label}`}
+                onClick={() => {
+                  setPendingMeetingSchedule({
+                    title: details?.title || qa.text?.trim() || label,
+                    dateTime: details?.dateTime || undefined,
+                    duration: details?.duration || undefined,
+                    location: details?.location || undefined,
+                    attendees: details?.attendees || (email.sender_email ? [email.sender_email] : []),
+                    description: details?.description || email.subject,
+                  });
+                  setView("meetings");
+                }}
+              >
+                <Icon name="event" size={13} className="text-ink3" />
+                {label}
+              </button>
+            );
+          })}
+          {todoActions.map((qa: any, i: number) => {
+            const task = (qa.label || "").replace(/^Todo:\s*/i, "");
+            const added = addedTodos.has(task);
+            return (
+              <button key={`todo-${i}`} className="btn btn-sm" onClick={() => !added && addTodoFromChip(task)} disabled={added} title={added ? "Added to Todos" : `Add to Todos: ${task}`}>
+                <Icon name={added ? "check" : "add_task"} size={13} className="text-ink3" />
+                {added ? `Added: ${task}` : task}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* A suggested reply that needs a few details before Tabellar writes it */}
+      {activeInputAction && (
+        <div className="mt-3 border-t border-line pt-3">
+          <p className="mb-2 font-medium text-ink">{(activeInputAction.qa.label || "").replace(/^Reply:\s*/i, "")}</p>
+          {(activeInputAction.qa.questions || []).map((q: any, qi: number) => {
+            const isLast = qi === (activeInputAction.qa.questions || []).length - 1;
+            return (
+              <label key={q.key} className="mb-2 block">
+                <span className="mb-1 block text-xs text-ink3">{q.label}</span>
+                <input
+                  type="text"
+                  autoFocus={qi === 0}
+                  placeholder={q.placeholder || ""}
+                  value={activeInputAction.answers[q.key] || ""}
+                  onChange={(e) =>
+                    setActiveInputAction((prev) => (prev ? { ...prev, answers: { ...prev.answers, [q.key]: e.target.value } } : null))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && isLast && !missingAnswer) submitInputAction();
+                    if (e.key === "Escape") setActiveInputAction(null);
+                  }}
+                  className="input"
+                />
+              </label>
+            );
+          })}
+          <div className="mt-3 flex items-center gap-1.5">
+            <button className="btn btn-sm btn-pri" onClick={() => submitInputAction(false)} disabled={missingAnswer}>
+              Write reply
+            </button>
+            {hasReplyAll && (
+              <button className="btn btn-sm" onClick={() => submitInputAction(true)} disabled={missingAnswer}>
+                Write reply to all
+              </button>
+            )}
+            <button className="btn btn-sm btn-plain" onClick={() => setActiveInputAction(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   return (
-    <div className="h-full flex overflow-hidden bg-canvas">
-      {/* Main email content column */}
-      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        {/* ── Compact header ── */}
-        <div className="px-3 py-1.5 flex-shrink-0 bg-raised">
-          <div className="flex items-center gap-2 min-w-0">
-            <button
-              onClick={onBack}
-              className={`${showBack ? "flex" : "md:hidden"} p-0.5 rounded hover:bg-field shrink-0 items-center gap-1 text-ink3 hover:text-ink transition-colors`}
-            >
-              <Icon name="arrow_back" size={16} />
-              {showBack && <span className="text-xs font-medium">Back</span>}
-            </button>
-            <div className="min-w-0 flex-1">
-              {/* Sender + subject + time + badges  -  first line */}
-              <div className="flex items-center gap-2 min-w-0">
-                <p className="text-[12px] font-semibold text-ink shrink-0 max-w-[35%] truncate">
-                  {(email.sender ?? "").replace(/<.*>/, "").trim() ||
-                    email.sender_email ||
-                    "Unknown"}
-                </p>
-                <p className="text-[11px] text-ink3 truncate flex-1 min-w-0">
-                  {email.subject || "(no subject)"}
-                </p>
-                <div className="flex items-center gap-0.5 shrink-0">
-                  {/* Category badge + dropdown */}
-                  <div ref={catRef} className="relative">
-                    <button
-                      onClick={() => {
-                        setShowCategoryMenu(!showCategoryMenu);
-                        setShowTagMenu(false);
-                      }}
-                      className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium cursor-pointer ${categoryColorMap[currentCategory] || "bg-field text-ink2"}`}
-                      title="Change category"
-                    >
-                      {currentCategory || "uncategorized"}
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-canvas">
+      <header ref={barRef} className="bar gap-1 pl-3">
+        <button className="iconbtn" onClick={onBack} title="Back (Esc)" aria-label="Back">
+          <Icon name="arrow_back" size={16} />
+        </button>
+        <h1 className="bar-title ml-1 min-w-0 flex-1 truncate" title={email.subject || undefined}>
+          {email.subject || "(no subject)"}
+        </h1>
+
+        {/* Category and labels, as plain text, changed from a menu */}
+        <div className="relative hidden flex-none items-center gap-2 pr-2 text-xs text-ink3 md:flex">
+          <span className="max-w-[240px] truncate">{[categoryText, ...labelNames].join(", ")}</span>
+          <button className="link" aria-haspopup="menu" aria-expanded={menu === "sort"} onClick={() => toggleMenu("sort")}>
+            Change
+          </button>
+          {menu === "sort" && (
+            <div className="pop absolute right-0 top-8 w-56" role="menu">
+              <p className="label px-2 py-1">Category</p>
+              {CATEGORIES.map((cat) => (
+                <button key={cat} role="menuitemradio" aria-checked={currentCategory === cat} className="pop-item" onClick={() => overrideCategory(cat)}>
+                  <Icon name="check" size={13} className={currentCategory === cat ? "text-ink" : "invisible"} />
+                  {CATEGORY_NAMES[cat]}
+                </button>
+              ))}
+              {divider}
+              <p className="label px-2 py-1">Labels</p>
+              {userTags.length === 0 ? (
+                <p className="px-2 pb-1.5 text-xs leading-normal text-ink3">No labels yet. Make one in Labels to file mail under it.</p>
+              ) : (
+                userTags.map((tag) => {
+                  const on = emailTags.includes(tag.slug);
+                  return (
+                    <button key={tag.slug} role="menuitemcheckbox" aria-checked={on} className="pop-item" onClick={() => toggleTag(tag.slug)}>
+                      <Icon name="check" size={13} className={on ? "text-ink" : "invisible"} />
+                      <span className="truncate">{tag.display_name}</span>
                     </button>
-                    {showCategoryMenu && (
-                      <div className="absolute right-0 top-full mt-1 bg-canvas border border-line rounded-lg shadow-lg p-1 z-20 min-w-[160px]">
-                        {CATEGORIES.map((cat) => (
-                          <button
-                            key={cat}
-                            onClick={() => overrideCategory(cat)}
-                            className={`w-full text-left px-2.5 py-1.5 text-xs rounded flex items-center gap-2 hover:bg-field`}
-                          >
-                            <span
-                              className={`inline-block w-2 h-2 rounded-full shrink-0 ${categoryColorMap[cat]?.includes("red") ? "bg-danger" : categoryColorMap[cat]?.includes("orange") ? "bg-warn" : categoryColorMap[cat]?.includes("purple") ? "bg-wax" : "bg-wax"}`}
-                            />
-                            <span
-                              className={`flex-1 ${categoryColorMap[cat] || ""} px-1 py-0.5 rounded text-[10px] font-medium ${currentCategory === cat ? "font-bold" : ""}`}
-                            >
-                              {cat}
-                            </span>
-                            {currentCategory === cat && (
-                              <Icon name="check" size={12} className="text-wax" />
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {/* Tag + button */}
-                  <div ref={tagRef} className="relative">
-                    <button
-                      onClick={() => {
-                        setShowTagMenu(!showTagMenu);
-                        setShowCategoryMenu(false);
-                      }}
-                      className="flex items-center p-0.5 rounded text-ink3 hover:bg-field"
-                      title="Add tag"
-                    >
-                      <Icon name="add" size={12} />
-                    </button>
-                    {showTagMenu && (
-                      <div className="absolute right-0 top-full mt-1 bg-canvas border border-line rounded-lg shadow-lg p-2 z-20 min-w-[160px]">
-                        <p className="text-[10px] text-ink3 font-semibold uppercase tracking-wide mb-1.5 px-1">
-                          Tags
-                        </p>
-                        {userTags.length === 0 ? (
-                          <p className="text-xs text-ink3 px-1 py-1">
-                            No tags yet. Create tags in Categories.
-                          </p>
-                        ) : (
-                          userTags.map((tag) => {
-                            const active = emailTags.includes(tag.slug);
-                            return (
-                              <button
-                                key={tag.slug}
-                                onClick={() => toggleTag(tag.slug)}
-                                className="w-full text-left px-2 py-1.5 text-xs rounded flex items-center gap-2 hover:bg-field"
-                              >
-                                <span
-                                  className="w-2.5 h-2.5 rounded-full shrink-0"
-                                  style={{ backgroundColor: tag.color }}
-                                />
-                                <span className="flex-1 text-ink">
-                                  {tag.display_name}
-                                </span>
-                                {active && (
-                                  <Icon name="check" size={12} className="text-wax" />
-                                )}
-                              </button>
-                            );
-                          })
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                {/* Applied tags */}
-                {emailTags.length > 0 &&
-                  emailTags.map((slug) => {
-                    const tag = userTags.find((t) => t.slug === slug);
-                    if (!tag) return null;
-                    return (
-                      <span
-                        key={slug}
-                        className="flex items-center gap-0.5 px-1 py-0.5 rounded text-[9px] font-medium shrink-0"
-                        style={{
-                          backgroundColor: `${tag.color}20`,
-                          color: tag.color,
-                          boxShadow: `inset 0 0 0 1px ${tag.color}40`,
-                        }}
-                      >
-                        {tag.display_name}
-                      </span>
-                    );
-                  })}
-                {email.has_attachments && (
-                  <Icon name="attachment" size={12} className="text-ink3 shrink-0" title="Has attachments" />
-                )}
-                <span className="text-[10px] text-ink3 shrink-0 tabular-nums">
-                  {new Date(email.received_at).toLocaleString([], {
-                    month: "short",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </span>
-              </div>
+                  );
+                })
+              )}
             </div>
-          </div>
+          )}
         </div>
 
-        {/* ── Email body or Thread chat view ── */}
-        {threadLoading ? (
-          <div className="flex-1 flex flex-col gap-3 px-3 py-3">
-            {[1, 2, 3].map((n) => (
-              <div
-                key={n}
-                className={`flex flex-col gap-1 ${n % 2 === 0 ? "items-end" : "items-start"}`}
-              >
-                <div className="h-3 w-24 rounded bg-line animate-pulse" />
-                <div
-                  className={`h-12 rounded-2xl animate-pulse bg-line ${n % 2 === 0 ? "w-48 rounded-tr-sm" : "w-64 rounded-tl-sm"}`}
-                />
-              </div>
-            ))}
-          </div>
-        ) : threadEmails.length > 1 ? (
-          <div className="flex-1 min-h-0 overflow-auto email-reader-pane bg-canvas">
-            <div className="w-full max-w-3xl mx-auto px-3 sm:px-4 py-4 min-w-0">
-              <div className="mb-4 flex items-center gap-2 rounded-xl border border-line bg-field/60 px-3 py-2.5">
-                <Icon name="forum" size={20} className="text-wax shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-ink3">
-                    Thread
-                  </p>
-                  <p className="text-[13px] font-medium text-ink truncate">
-                    {threadEmails.length} messages in this conversation
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-col gap-0">
-                {threadEmails.map((msg, msgIndex) => {
-                  const msgSenderName =
-                    (msg.sender ?? "").replace(/<.*>/, "").trim() ||
-                    msg.sender_email ||
-                    "Unknown";
-                  const isMe = !!(
-                    user?.email &&
-                    msg.sender_email &&
-                    msg.sender_email.toLowerCase() === user.email.toLowerCase()
-                  );
-                  const atts = Array.isArray(msg.attachments)
-                    ? (msg.attachments as ThreadAtt[])
-                    : [];
-                  const bodyDisplay = resolveEmailBodyDisplay({
-                    body_html: msg.body_html,
-                    body_text: msg.body_text,
-                    snippet: msg.snippet,
-                  });
-                  const timeStr = new Date(msg.received_at).toLocaleString([], {
-                    month: "short",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  });
-                  const isLast = msgIndex === threadEmails.length - 1;
-                  return (
-                    <div
-                      key={msg.id}
-                      className="flex gap-3 min-w-0 pb-5 last:pb-0"
-                    >
-                      <div className="flex w-10 shrink-0 flex-col items-center pt-1">
-                        <div
-                          className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition-colors duration-200 ${
-                            isMe
-                              ? "bg-wax/20 text-wax ring-2 ring-wax/35"
-                              : "bg-field text-ink ring-1 ring-line"
-                          }`}
-                          title={`Message ${msgIndex + 1} of ${threadEmails.length}`}
-                        >
-                          {msgIndex + 1}
-                        </div>
-                        {!isLast && (
-                          <div
-                            className="mt-1 w-px flex-1 min-h-[20px] bg-gradient-to-b from-line to-transparent"
-                            aria-hidden
-                          />
-                        )}
-                      </div>
-                      <article
-                        className={`min-w-0 flex-1 overflow-hidden rounded-2xl border bg-raised transition-shadow duration-200 motion-reduce:transition-none ${
-                          isMe
-                            ? "border-wax/40 shadow-sm dark:shadow-[0_4px_20px_rgba(0,0,0,0.45)]"
-                            : "border-line shadow-sm dark:shadow-[0_4px_20px_rgba(0,0,0,0.35)] dark:ring-1"
-                        }`}
-                      >
-                        <header className="flex flex-wrap items-start justify-between gap-2 border-b border-line/70 bg-field/30 px-3 py-2.5 sm:px-4">
-                          <div className="min-w-0">
-                            <p className="text-[13px] font-semibold leading-snug text-ink">
-                              {isMe ? "You" : msgSenderName}
-                            </p>
-                            <p className="mt-0.5 text-[11px] text-ink3 tabular-nums">
-                              {timeStr}
-                            </p>
-                          </div>
-                          <span className="shrink-0 rounded-md bg-field px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink3">
-                            {msgIndex + 1} / {threadEmails.length}
-                          </span>
-                        </header>
-                        <div className="px-3 py-3 sm:px-4 sm:py-4">
-                          {!isMe && (
-                            <SuspicionBanner verdict={assessSuspicion(msg)} />
-                          )}
-                          {bodyDisplay.kind === "html" && (
-                            <EmailBody
-                              html={bodyDisplay.html}
-                              isDark={theme === "dark"}
-                            />
-                          )}
-                          {bodyDisplay.kind === "text" && (
-                            <pre className="whitespace-pre-wrap font-sans text-[13px] leading-[1.65] text-ink">
-                              {linkify(bodyDisplay.text)}
-                            </pre>
-                          )}
-                          {bodyDisplay.kind === "snippet" && (
-                            <p className="text-[13px] leading-relaxed text-ink3">
-                              {bodyDisplay.text}
-                            </p>
-                          )}
-                          {bodyDisplay.kind === "empty" && (
-                            <p className="text-xs text-ink3">
-                              (no content)
-                            </p>
-                          )}
-                          {msg.has_attachments && atts.length > 0 && (
-                            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-line/50 pt-2.5">
-                              {atts.map((att) => (
-                                <div
-                                  key={att.attachment_id}
-                                  className="flex items-center overflow-hidden rounded-lg border border-line bg-field/60 transition-colors duration-150 group"
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={async () => {
-                                      setPreviewAtt({
-                                        att,
-                                        blobUrl: null,
-                                        text: null,
-                                        error: null,
-                                      });
-                                      try {
-                                        const result =
-                                          await fetchAttachmentBlob(
-                                            att,
-                                            msg.gmail_id,
-                                          );
-                                        setPreviewAtt({
-                                          att,
-                                          ...result,
-                                          error: null,
-                                        });
-                                      } catch {
-                                        setPreviewAtt((prev) =>
-                                          prev
-                                            ? {
-                                                ...prev,
-                                                error:
-                                                  "Failed to load attachment",
-                                              }
-                                            : null,
-                                        );
-                                      }
-                                    }}
-                                    className="flex cursor-pointer items-center gap-1 px-2 py-1 hover:bg-field"
-                                  >
-                                    <Icon name={att.mime_type?.startsWith("image/")
-                                        ? "image"
-                                        : att.mime_type?.includes("pdf")
-                                          ? "picture_as_pdf"
-                                          : "description"} size={13} className="text-ink3 group-hover:text-wax" />
-                                    <span className="max-w-[120px] truncate text-left text-[10px] font-medium text-ink">
-                                      {att.filename}
-                                    </span>
-                                    {att.size > 0 && (
-                                      <span className="shrink-0 text-[9px] text-ink3 tabular-nums">
-                                        {att.size > 1024 * 1024
-                                          ? `${(att.size / 1024 / 1024).toFixed(1)}M`
-                                          : `${Math.ceil(att.size / 1024)}K`}
-                                      </span>
-                                    )}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      downloadAttachment(att, msg.gmail_id)
-                                    }
-                                    className="cursor-pointer border-l border-line px-1.5 py-1 hover:bg-field"
-                                    title="Download"
-                                    aria-label={`Download ${att.filename}`}
-                                  >
-                                    <Icon name="download" size={11} className="text-ink3 hover:text-wax" />
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </article>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1 min-h-0 overflow-auto email-reader-pane bg-canvas px-3 py-4 sm:px-5">
-            <div className="mx-auto w-full max-w-3xl min-w-0">
-              <SuspicionBanner verdict={suspicion} />
-              {singleMessageBody.kind === "html" && (
-                <EmailBody
-                  html={singleMessageBody.html}
-                  isDark={theme === "dark"}
-                />
-              )}
-              {singleMessageBody.kind === "text" && (
-                <pre className="max-w-prose whitespace-pre-wrap font-sans text-[15px] leading-[1.65] text-ink">
-                  {linkify(singleMessageBody.text)}
-                </pre>
-              )}
-              {singleMessageBody.kind === "snippet" && (
-                <p className="max-w-prose text-[15px] leading-relaxed text-ink3">
-                  {singleMessageBody.text}
-                </p>
-              )}
-              {singleMessageBody.kind === "empty" && (
-                <span className="text-sm text-ink3">
-                  (no content)
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ── Attachments + AI Suggestions Panel ── */}
-        {((Array.isArray(email.attachments) &&
-          email.attachments.length > 0 &&
-          !isMultiMessageThread) ||
-          showSuggestionsPanel) && (
-          <div className="px-3 pt-2 pb-2 flex-shrink-0 bg-wax/5 flex flex-col gap-1.5">
-            {/* Attachments row  -  only for single-message view (thread messages show their own) */}
-            {!isMultiMessageThread &&
-              Array.isArray(email.attachments) &&
-              email.attachments.length > 0 && (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <Icon name="attach_file" size={13} className="text-ink3" />
-                  {(
-                    email.attachments as {
-                      filename: string;
-                      mime_type: string;
-                      size: number;
-                      attachment_id: string;
-                    }[]
-                  ).map((att, i) => (
-                    <div
-                      key={i}
-                      className="flex items-center rounded-xl border border-line bg-raised overflow-hidden group"
-                    >
-                      <button
-                        onClick={async () => {
-                          setPreviewAtt({
-                            att,
-                            blobUrl: null,
-                            text: null,
-                            error: null,
-                          });
-                          try {
-                            const result = await fetchAttachmentBlob(att);
-                            setPreviewAtt({ att, ...result, error: null });
-                          } catch {
-                            setPreviewAtt((prev) =>
-                              prev
-                                ? {
-                                    ...prev,
-                                    error: "Failed to load attachment",
-                                  }
-                                : null,
-                            );
-                          }
-                        }}
-                        className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-field transition-colors"
-                      >
-                        <Icon name={att.mime_type?.startsWith("image/")
-                            ? "image"
-                            : att.mime_type?.includes("pdf")
-                              ? "picture_as_pdf"
-                              : "description"} size={13} className="text-ink3 group-hover:text-wax" />
-                        <span className="text-[11px] font-medium text-ink truncate max-w-[140px]">
-                          {att.filename}
-                        </span>
-                        <span className="text-[9px] text-ink3 shrink-0">
-                          {att.size > 1024 * 1024
-                            ? `${(att.size / 1024 / 1024).toFixed(1)} MB`
-                            : `${Math.ceil(att.size / 1024)} KB`}
-                        </span>
-                        <Icon name="visibility" size={12} className="text-ink3 group-hover:text-wax shrink-0" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          downloadAttachment(att);
-                        }}
-                        className="px-1.5 py-1.5 border-l border-line hover:bg-field transition-colors shrink-0"
-                        title="Download"
-                      >
-                        <Icon name="download" size={12} className="text-ink3 hover:text-wax" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-            {showSuggestionsPanel && (
-              <div className="flex flex-col gap-2">
-              <div className={`flex items-center gap-1.5 flex-wrap transition-opacity ${activeInputAction ? "opacity-50" : "opacity-100"}`}>
-                <Icon name="auto_awesome" size={13} className="text-ink3 shrink-0" />
-                {replyActions.map((qa: any, i: number) => {
-                  const label = (qa.label || "").replace(/^Reply:\s*/i, "");
-                  const prefill = qa.text || label;
-                  const hasQuestions = qa.questions?.length > 0;
-                  const isActive = activeInputAction?.qa === qa;
-                  const baseChipClass = isActive
-                    ? "border-line bg-field text-ink2"
-                    : "border-line bg-field text-ink2 hover:bg-field";
-                  return (
-                    <div key={`reply-${i}`} className="flex items-stretch">
-                      <button
-                        onClick={() => {
-                          if (hasQuestions) {
-                            setActiveInputAction({ qa, answers: {} });
-                          } else {
-                            openCompose({
-                              ...email,
-                              _prefillBody: prefill,
-                              _autoGenerate: true,
-                            });
-                          }
-                        }}
-                        className={`flex items-center gap-1 px-3 py-1.5 border text-[11px] font-medium transition-colors ${hasReplyAll ? "rounded-l-xl border-r-0" : "rounded-xl"} ${baseChipClass}`}
-                        title={label}
-                      >
-                        <Icon name="chat_bubble" size={12} className="text-ink2" />
-                        <span>{label}</span>
-                        {hasQuestions && (
-                          <Icon name="edit" size={11} className="text-ink2 opacity-70" />
-                        )}
-                      </button>
-                      {hasReplyAll && (
-                        <button
-                          onClick={() => {
-                            if (hasQuestions) {
-                              setActiveInputAction({ qa, answers: {} });
-                            } else {
-                              openCompose({
-                                ...email,
-                                _prefillBody: prefill,
-                                _autoGenerate: true,
-                                _replyAll: true,
-                              });
-                            }
-                          }}
-                          className={`flex items-center px-1.5 py-1.5 rounded-r-xl border text-[11px] transition-colors ${baseChipClass}`}
-                          title={`${label} (Reply All)`}
-                        >
-                          <Icon name="reply_all" size={12} className="text-ink2" />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-                {meetingActions.map((qa: any, i: number) => {
-                  const label = (qa.label || "").replace(/^Schedule:\s*/i, "").replace(/^Add to Calendar:\s*/i, "");
-                  const details = qa.meetingDetails;
-                  return (
-                    <button
-                      key={`meeting-${i}`}
-                      onClick={() => {
-                        setPendingMeetingSchedule({
-                          title: details?.title || (qa.text?.trim()) || label,
-                          dateTime: details?.dateTime || undefined,
-                          duration: details?.duration || undefined,
-                          location: details?.location || undefined,
-                          attendees: details?.attendees || (email.sender_email ? [email.sender_email] : []),
-                          description: details?.description || email.subject,
-                        });
-                        setView("meetings");
-                      }}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-ok-line bg-ok-soft text-[11px] font-medium text-ok hover:bg-ok-soft transition-colors"
-                      title={label}
-                    >
-                      <Icon name="event_upcoming" size={12} className="text-ok" />
-                      <span>{label}</span>
-                    </button>
-                  );
-                })}
-                {todoActions.map((qa: any, i: number) => {
-                  const task = (qa.label || "").replace(/^Todo:\s*/i, "");
-                  const added = addedTodos.has(task);
-                  return (
-                    <button
-                      key={`todo-${i}`}
-                      onClick={() => !added && addTodoFromChip(task)}
-                      disabled={added}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-medium transition-all ${
-                        added
-                          ? "border-ok-line bg-ok-soft text-ok cursor-default"
-                          : "border-warn-line bg-warn-soft text-warn hover:bg-warn-soft"
-                      }`}
-                      title={task}
-                    >
-                      <Icon name={added ? "check_circle" : "add_task"} size={13} fill={added} />
-                      <span>{task}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Inline input card  -  shown when a reply action with questions is clicked */}
-              {activeInputAction && (
-                <div className="rounded-xl border border-line bg-field p-3 flex flex-col gap-2.5 shadow-sm">
-                  {/* Header */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <Icon name="auto_awesome" size={12} className="text-ink2 shrink-0" />
-                      <span className="text-[11px] font-medium text-ink2 truncate">
-                        {(activeInputAction.qa.label || "").replace(/^Reply:\s*/i, "")}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => setActiveInputAction(null)}
-                      className="shrink-0 p-0.5 rounded hover:bg-field text-ink2 hover:text-ink2 transition-colors"
-                      title="Dismiss"
-                    >
-                      <Icon name="close" size={13} />
-                    </button>
-                  </div>
-
-                  {/* Question fields */}
-                  {(activeInputAction.qa.questions || []).map((q: any, qi: number) => {
-                    const isLast = qi === (activeInputAction.qa.questions || []).length - 1;
-                    return (
-                      <div key={q.key} className="flex flex-col gap-1">
-                        <label className="text-[10px] font-medium text-ink3">{q.label}</label>
-                        <input
-                          type="text"
-                          autoFocus={qi === 0}
-                          placeholder={q.placeholder || ""}
-                          value={activeInputAction.answers[q.key] || ""}
-                          onChange={(e) =>
-                            setActiveInputAction((prev) =>
-                              prev ? { ...prev, answers: { ...prev.answers, [q.key]: e.target.value } } : null
-                            )
-                          }
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && isLast) submitInputAction();
-                          }}
-                          className="text-[11px] rounded-lg border border-line bg-white text-ink px-2 py-1.5 w-full outline-none focus:ring-1 focus:ring-line placeholder:text-ink3 transition-shadow"
-                        />
-                      </div>
-                    );
-                  })}
-
-                  {/* Submit row */}
-                  <div className="flex justify-end gap-1.5">
-                    {hasReplyAll && (
-                      <button
-                        onClick={() => submitInputAction(true)}
-                        disabled={
-                          (activeInputAction.qa.questions || []).some(
-                            (q: any) => !(activeInputAction.answers[q.key] || "").trim()
-                          )
-                        }
-                        className="flex items-center gap-1 px-3 py-1 text-[11px] font-medium rounded-lg border border-line text-ink2 hover:bg-field transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        <Icon name="reply_all" size={12} />
-                        <span>Reply All</span>
-                      </button>
-                    )}
-                    <button
-                      onClick={() => submitInputAction(false)}
-                      disabled={
-                        (activeInputAction.qa.questions || []).some(
-                          (q: any) => !(activeInputAction.answers[q.key] || "").trim()
-                        )
-                      }
-                      className="flex items-center gap-1 px-3 py-1 text-[11px] font-medium rounded-lg bg-wax hover:bg-wax text-on-wax transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      <span>Write Reply</span>
-                      <Icon name="arrow_forward" size={12} />
-                    </button>
-                  </div>
-                </div>
-              )}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── Action bar ── */}
-        <div className="px-3 py-1.5 border-t border-line flex-shrink-0 flex items-center gap-1.5 flex-wrap">
-          {/* Reply button  -  always visible */}
-          <button
-            onClick={() => onReply()}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-line text-[11px] font-medium text-ink2 hover:bg-field transition-colors"
-          >
-            <Icon name="reply" size={12} />
-            Reply
+        {!needsReply && (
+          <button className="iconbtn" onClick={reply} title="Reply (R)" aria-label="Reply">
+            <Icon name="reply" size={16} />
           </button>
-
-          {/* Reply All  -  show when there are CC recipients or multiple TO recipients */}
-          {hasReplyAll && (
-            <button
-              onClick={() => openCompose({ ...email, _replyAll: true })}
-              className="flex items-center gap-1 px-2 py-1 rounded-lg border border-line text-[11px] font-medium text-ink2 hover:bg-field transition-colors"
-            >
-              <Icon name="reply_all" size={12} />
-              Reply All
-            </button>
+        )}
+        <button className="iconbtn" onClick={onArchive} title="Archive (E)" aria-label="Archive">
+          <Icon name="archive" size={16} />
+        </button>
+        <button className="iconbtn" onClick={handleMarkUnread} title="Mark unread (U)" aria-label="Mark unread">
+          <Icon name="mark_email_unread" size={16} />
+        </button>
+        <div className="relative">
+          <button className="iconbtn" onClick={() => toggleMenu("snooze")} title="Snooze" aria-label="Snooze" aria-haspopup="menu" aria-expanded={menu === "snooze"}>
+            <Icon name="snooze" size={16} />
+          </button>
+          {menu === "snooze" && (
+            <div className="pop absolute right-0 top-8 min-w-[180px]" role="menu">
+              <p className="label px-2 py-1">Snooze until</p>
+              {SNOOZE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.hours}
+                  role="menuitem"
+                  className="pop-item"
+                  onClick={() =>
+                    handleSnooze(
+                      opt.hours,
+                      new Date(Date.now() + opt.hours * 3_600_000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }),
+                    )
+                  }
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           )}
-
-          <div className="flex-1" />
-
-          {/* Action buttons */}
+        </div>
+        <div className="relative">
           <button
-            onClick={() =>
-              openCompose({
-                ...email,
-                sender_email: "",
-                subject: `Fwd: ${email.subject}`,
-              })
-            }
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-ink2 hover:bg-field transition-colors"
+            className="iconbtn"
+            onClick={() => toggleMenu(menu === "track" ? "track" : "more")}
+            title="More"
+            aria-label="More actions"
+            aria-haspopup="menu"
+            aria-expanded={menu === "more" || menu === "track"}
           >
-            <Icon name="forward_to_inbox" size={13} />
-            Delegate
+            <Icon name="more" size={16} />
           </button>
-          <button
-            onClick={handleMarkUnread}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-ink2 hover:bg-field transition-colors"
-          >
-            <Icon name="mark_email_unread" size={13} />
-            Unread
-          </button>
-          <div ref={snoozeRef} className="relative">
-            <button
-              onClick={() => setShowSnoozeMenu(!showSnoozeMenu)}
-              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-ink2 hover:bg-field transition-colors"
-            >
-              <Icon name="snooze" size={13} />
-              Snooze
-            </button>
-            {showSnoozeMenu && (
-              <div className="absolute bottom-full mb-1 right-0 bg-canvas border border-line rounded-lg shadow-lg p-1 z-20 min-w-[160px]">
-                {SNOOZE_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.hours}
-                    onClick={() => handleSnooze(opt.hours, opt.label)}
-                    className="w-full text-left px-3 py-1.5 text-xs rounded text-ink hover:bg-field"
-                  >
-                    {opt.label}
+          {menu === "more" && (
+            <div className="pop absolute right-0 top-8 w-60" role="menu">
+              {hasReplyAll && (
+                <button role="menuitem" className="pop-item" onClick={() => (setMenu(""), openCompose({ ...email, _replyAll: true }))}>
+                  Reply all
+                </button>
+              )}
+              <button role="menuitem" className="pop-item" onClick={() => (setMenu(""), openCompose({ ...email, sender_email: "", subject: `Fwd: ${email.subject}` }))}>
+                Forward
+              </button>
+              {email.thread_id &&
+                (isTracked ? (
+                  <button role="menuitem" className="pop-item" onClick={() => (setMenu(""), setView("followups"))}>
+                    Open in Follow-ups
+                  </button>
+                ) : (
+                  <button role="menuitem" className="pop-item" onClick={() => setMenu("track")}>
+                    Remind me if nobody replies
                   </button>
                 ))}
-              </div>
-            )}
-          </div>
-          {/* Track follow-up  -  shown for sent/outbound emails with a thread_id */}
-          {email.thread_id && (
-            <div className="relative">
-              <button
-                onClick={() => {
-                  if (isTracked) {
-                    setView("followups");
-                  } else {
-                    setShowTrackPopup((v) => !v);
-                  }
-                }}
-                className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition-colors ${
-                  isTracked
-                    ? "border-wax text-wax bg-wax-soft"
-                    : "border-line text-ink3 hover:bg-field hover:text-ink"
-                }`}
-                title={isTracked ? "View in Follow-ups" : "Track follow-up"}
-              >
-                <Icon name="schedule_send" size={13} fill={isTracked} />
-                {isTracked ? "Tracked" : "Track"}
+              <button role="menuitem" className="pop-item" disabled={resolvingEmail} onClick={() => (setMenu(""), toggleResolved())}>
+                {resolvedAt ? "Mark as not dealt with" : "Mark as dealt with, keep in Inbox"}
               </button>
-              {showTrackPopup && !isTracked && (
-                <>
-                  <div
-                    className="fixed inset-0 z-10"
-                    onClick={() => setShowTrackPopup(false)}
-                  />
-                  <div className="absolute bottom-full mb-2 right-0 z-20 bg-canvas border border-line rounded-xl shadow-xl p-3 w-64">
-                    <p className="text-[11px] font-semibold text-ink mb-2">
-                      Remind me if no reply by
-                    </p>
-                    <div className="mb-2">
-                      <DateTimePicker
-                        value={trackRemindAt}
-                        onChange={setTrackRemindAt}
-                        placeholder="Pick date and time"
-                      />
-                    </div>
-                    <button
-                      onClick={trackFollowUp}
-                      disabled={trackingSaving}
-                      className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-semibold hover:opacity-90 disabled:opacity-60 transition-opacity"
-                    >
-                      {trackingSaving ? (
-                        <Icon name="progress_activity" size={13} className="animate-spin" />
-                      ) : (
-                        <Icon name="add_alert" size={13} />
-                      )}
-                      Set Reminder
-                    </button>
-                  </div>
-                </>
-              )}
+              {divider}
+              <button role="menuitem" className="pop-item disabled:opacity-45" disabled={extractingTodos} onClick={() => (setMenu(""), handleExtractTodos())}>
+                {extractingTodos ? "Looking for todos" : "Look for todos"}
+              </button>
+              <button role="menuitem" className="pop-item disabled:opacity-45" disabled={rethinking} onClick={() => (setMenu(""), handleRethink())}>
+                Read it again with Tabellar
+              </button>
             </div>
           )}
-          <button
-            onClick={toggleResolved}
-            disabled={resolvingEmail}
-            title={
-              resolvedAt
-                ? "Mark this email as still needing attention"
-                : "Mark this email as dealt with, without archiving it"
-            }
-            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors disabled:opacity-60 ${
-              resolvedAt
-                ? "text-ok bg-ok/10 hover:bg-ok/20"
-                : "text-ink3 hover:bg-line"
-            }`}
-          >
-            <Icon name={resolvedAt ? "task_alt" : "check_circle"} size={13} />
-            {resolvedAt ? "Resolved" : "Resolve"}
+          {menu === "track" && (
+            <div className="pop absolute right-0 top-8 w-72 p-3" role="dialog" aria-label="Follow-up reminder">
+              <p className="label mb-2">Remind me if nobody replies by</p>
+              <DateTimePicker value={trackRemindAt} onChange={setTrackRemindAt} placeholder="Pick date and time" />
+              <div className="mt-3 flex items-center gap-1.5">
+                <button className="btn btn-sm btn-pri" onClick={trackFollowUp} disabled={trackingSaving}>
+                  {trackingSaving ? "Setting reminder" : "Set reminder"}
+                </button>
+                <button className="btn btn-sm btn-plain" onClick={() => setMenu("")}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+        {needsReply && (
+          <button className="btn btn-pri ml-1.5" onClick={reply}>
+            Reply <Kbd>R</Kbd>
           </button>
-          <button
-            onClick={onArchive}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-danger hover:bg-danger-soft transition-colors"
-          >
-            <Icon name="archive" size={13} />
-            Archive
-          </button>
+        )}
+      </header>
+
+      <div className="email-reader-pane min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-[720px] px-5 pb-12 pt-5 md:px-8">
+          {threadLoading ? (
+            <div aria-busy="true" aria-label="Loading">
+              <div className="skel h-3.5 w-44" />
+              <div className="skel mt-2 h-2.5 w-64" />
+              <div className="skel mt-6 h-16 w-full rounded-[9px]" />
+              <div className="skel mt-6 h-2.5 w-full" />
+              <div className="skel mt-2.5 h-2.5 w-11/12" />
+              <div className="skel mt-2.5 h-2.5 w-3/5" />
+            </div>
+          ) : isMultiMessageThread ? (
+            <>
+              {status}
+              {summaryBlock}
+              {doneBlock}
+              <p className="label mb-1 mt-6">{threadEmails.length} messages</p>
+              <div className="-mx-2">
+                {threadEmails.map((msg) => {
+                  const isMe = !!(user?.email && msg.sender_email && msg.sender_email.toLowerCase() === user.email.toLowerCase());
+                  const name = isMe ? "You" : nameOf(msg.sender, msg.sender_email);
+                  const toggle = () =>
+                    setOpenMessages((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(msg.id)) next.delete(msg.id);
+                      else next.add(msg.id);
+                      return next;
+                    });
+                  if (!openMessages.has(msg.id))
+                    return (
+                      <button key={msg.id} className="row2 flex w-[calc(100%-1rem)] items-baseline gap-3 text-left" onClick={toggle} aria-expanded={false}>
+                        <span className="w-36 flex-none truncate font-medium text-ink">{name}</span>
+                        <span className="min-w-0 flex-1 truncate text-ink3">{msg.snippet}</span>
+                        {msg.has_attachments && <Icon name="attachment" size={13} className="flex-none self-center text-ink3" title="Has attachments" />}
+                        <time className="flex-none text-xs text-ink3">{shortWhen(msg.received_at)}</time>
+                      </button>
+                    );
+                  const atts = Array.isArray(msg.attachments) ? (msg.attachments as Att[]) : [];
+                  return (
+                    <article key={msg.id} className="mx-2 border-b border-line-soft pb-6 pl-1.5 pr-3 pt-3 last:border-b-0">
+                      <button className="flex w-full items-baseline gap-2 text-left" onClick={toggle} aria-expanded title="Collapse">
+                        <span className="min-w-0 truncate text-[15px] font-[650] tracking-[-0.01em] text-ink">{name}</span>
+                        {!isMe && msg.sender_email && <span className="min-w-0 truncate text-xs text-ink3">{msg.sender_email}</span>}
+                        <span className="flex-1" />
+                        <time className="flex-none text-xs text-ink3">{fullWhen(msg.received_at)}</time>
+                      </button>
+                      {!isMe && <SuspicionBanner verdict={assessSuspicion(msg)} />}
+                      <div className="mt-3">
+                        <MessageBody
+                          body={resolveEmailBodyDisplay({ body_html: msg.body_html, body_text: msg.body_text, snippet: msg.snippet })}
+                        />
+                      </div>
+                      <AttachmentList atts={atts} onPreview={(a) => openPreview(a, msg.gmail_id)} onDownload={(a) => downloadAttachment(a, msg.gmail_id)} />
+                    </article>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-baseline gap-2">
+                <span className="min-w-0 truncate text-[15px] font-[650] tracking-[-0.01em] text-ink">{nameOf(email.sender, email.sender_email)}</span>
+                {email.sender_email && <span className="min-w-0 truncate text-xs text-ink3">{email.sender_email}</span>}
+                <span className="flex-1" />
+                <time className="flex-none text-xs text-ink3">{fullWhen(email.received_at)}</time>
+              </div>
+              {(email.recipients || email.cc_recipients) && (
+                <p className="mt-0.5 truncate text-xs text-ink3" title={[email.recipients, email.cc_recipients].filter(Boolean).join(", ")}>
+                  To {email.recipients || "you"}
+                  {email.cc_recipients ? `, cc ${email.cc_recipients}` : ""}
+                </p>
+              )}
+              {status}
+              <SuspicionBanner verdict={suspicion} />
+              {summaryBlock}
+              {doneBlock}
+              <div className="mt-5">
+                <MessageBody body={singleMessageBody} />
+              </div>
+              <AttachmentList atts={singleAtts} onPreview={(a) => openPreview(a)} onDownload={(a) => downloadAttachment(a)} />
+            </>
+          )}
         </div>
       </div>
-      {/* end main column */}
 
-      {/* ── Attachment Preview Modal ── */}
+      {/* Attachment preview */}
       {previewAtt && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={() => setPreviewAtt(null)}
-        >
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setPreviewAtt(null)}>
           <div
-            className="relative flex flex-col bg-canvas border border-line rounded-2xl shadow-2xl overflow-hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-label={previewAtt.att.filename}
+            className="flex flex-col overflow-hidden rounded-[12px] bg-raised shadow-pop"
             style={{ width: "min(92vw, 900px)", height: "min(90vh, 700px)" }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Header */}
-            <div className="flex items-center gap-2.5 px-4 py-3 border-b border-line bg-raised shrink-0">
-              <Icon name={previewAtt.att.mime_type?.startsWith("image/")
-                  ? "image"
-                  : previewAtt.att.mime_type?.includes("pdf")
-                    ? "picture_as_pdf"
-                    : "description"} size={18} className="text-wax" />
-              <div className="flex-1 min-w-0">
-                <p className="text-[13px] font-semibold text-ink truncate">
-                  {previewAtt.att.filename}
-                </p>
-                <p className="text-[10px] text-ink3">
-                  {previewAtt.att.size > 1024 * 1024
-                    ? `${(previewAtt.att.size / 1024 / 1024).toFixed(1)} MB`
-                    : `${Math.ceil(previewAtt.att.size / 1024)} KB`}
-                  {" · "}
-                  {previewAtt.att.mime_type || "unknown type"}
-                </p>
-              </div>
-              <button
-                onClick={() => downloadAttachment(previewAtt.att)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-[11px] font-semibold hover:opacity-90 transition-opacity shrink-0"
-              >
-                <Icon name="download" size={13} />
+            <div className="flex h-11 flex-none items-center gap-2 border-b border-line-soft pl-4 pr-1.5">
+              <p className="min-w-0 flex-1 truncate font-semibold text-ink">{previewAtt.att.filename}</p>
+              {previewAtt.att.size > 0 && <span className="flex-none text-xs text-ink3">{fileSize(previewAtt.att.size)}</span>}
+              <button className="btn ml-1" onClick={() => downloadAttachment(previewAtt.att, previewAtt.gmailId)}>
                 Download
               </button>
-              <button
-                onClick={() => setPreviewAtt(null)}
-                className="p-1.5 rounded-lg hover:bg-field transition-colors shrink-0"
-                title="Close"
-              >
-                <Icon name="close" size={16} className="text-ink3" />
+              <button className="iconbtn" onClick={() => setPreviewAtt(null)} title="Close (Esc)" aria-label="Close">
+                <Icon name="close" size={16} />
               </button>
             </div>
 
-            {/* Content area */}
-            <div className="flex-1 overflow-auto flex items-center justify-center bg-field">
-              {/* Loading */}
-              {!previewAtt.blobUrl && !previewAtt.error && (
-                <div className="flex flex-col items-center gap-3 text-ink3">
-                  <Icon name="progress_activity" size={28} className="animate-spin text-wax" />
-                  <span className="text-[12px]">Loading preview...</span>
-                </div>
-              )}
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-side">
+              {!previewAtt.blobUrl && !previewAtt.error && <div className="skel h-[70%] w-[70%] rounded-[9px]" aria-busy="true" aria-label="Loading" />}
 
-              {/* Error */}
               {previewAtt.error && (
-                <div className="flex flex-col items-center gap-3 text-ink3">
-                  <Icon name="error_outline" size={28} className="text-danger" />
-                  <span className="text-[12px]">{previewAtt.error}</span>
-                  <button
-                    onClick={() => downloadAttachment(previewAtt.att)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-[11px] font-medium hover:bg-raised transition-colors"
-                  >
-                    <Icon name="download" size={13} />
-                    Download instead
+                <div className="empty">
+                  <p className="!mt-0 !text-danger">{previewAtt.error}</p>
+                  <button className="btn mt-3" onClick={() => downloadAttachment(previewAtt.att, previewAtt.gmailId)}>
+                    Try downloading it
                   </button>
                 </div>
               )}
 
-              {/* Image preview */}
-              {previewAtt.blobUrl &&
-                previewAtt.att.mime_type?.startsWith("image/") && (
-                  <img
-                    src={previewAtt.blobUrl}
-                    alt={previewAtt.att.filename}
-                    className="max-w-full max-h-full object-contain"
-                    style={{ padding: "16px" }}
-                  />
-                )}
-
-              {/* PDF preview */}
-              {previewAtt.blobUrl &&
-                previewAtt.att.mime_type?.includes("pdf") && (
-                  <iframe
-                    src={previewAtt.blobUrl}
-                    title={previewAtt.att.filename}
-                    className="w-full h-full border-0"
-                  />
-                )}
-
-              {/* Text / CSV / JSON preview */}
-              {previewAtt.blobUrl && previewAtt.text !== null && (
-                <pre className="w-full h-full overflow-auto p-4 text-[11px] font-mono text-ink leading-relaxed whitespace-pre-wrap break-all">
-                  {previewAtt.text}
-                </pre>
+              {previewAtt.blobUrl && previewAtt.att.mime_type?.startsWith("image/") && (
+                <img src={previewAtt.blobUrl} alt={previewAtt.att.filename} className="max-h-full max-w-full object-contain p-4" />
               )}
 
-              {/* Unsupported type */}
+              {previewAtt.blobUrl && previewAtt.att.mime_type?.includes("pdf") && (
+                <iframe src={previewAtt.blobUrl} title={previewAtt.att.filename} className="h-full w-full border-0" />
+              )}
+
+              {previewAtt.blobUrl && previewAtt.text !== null && (
+                <pre className="h-full w-full overflow-auto whitespace-pre-wrap break-all p-4 font-mono text-xs leading-relaxed text-ink">{previewAtt.text}</pre>
+              )}
+
               {previewAtt.blobUrl &&
                 !previewAtt.att.mime_type?.startsWith("image/") &&
                 !previewAtt.att.mime_type?.includes("pdf") &&
                 previewAtt.text === null && (
-                  <div className="flex flex-col items-center gap-3 text-ink3 text-center px-8">
-                    <Icon name="draft" size={36} />
-                    <p className="text-[13px] font-medium text-ink">
-                      Preview not available
-                    </p>
-                    <p className="text-[11px]">
-                      This file type cannot be previewed in the browser.
-                    </p>
-                    <button
-                      onClick={() => downloadAttachment(previewAtt.att)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-[11px] font-semibold hover:opacity-90 transition-opacity"
-                    >
-                      <Icon name="download" size={13} />
-                      Download to open
+                  <div className="empty">
+                    <Icon name="description" size={22} className="text-ink3" />
+                    <h3>No preview for this kind of file</h3>
+                    <p>Download it to open it in the app it belongs to.</p>
+                    <button className="btn mt-4" onClick={() => downloadAttachment(previewAtt.att, previewAtt.gmailId)}>
+                      Download
                     </button>
                   </div>
                 )}

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Icon from "@/components/Icon";
+import { Glyph, Seg } from "@/components/ui";
 import { formatBytes, getSetupState, setupPost, setupStream, type ModelInfo, type Progress, type SetupState, type Slot } from "@/lib/setup";
 
-// Choosing an AI model: on this Mac through Ollama (installing Ollama and
+// Choosing a model: on this Mac through Ollama (installing Ollama and
 // downloading a model if needed) or a cloud provider with the user's own key.
 // There are two slots: the careful model writes and plans, the fast model
 // reads each email. Onboarding sets the careful one, which the fast slot
-// follows until Settings > AI gives it its own.
+// follows until Settings, under Models, gives it its own.
 
 export function useSetupState() {
   const [state, setState] = useState<SetupState | null>(null);
@@ -32,12 +33,11 @@ export function modelLabel(m: ModelInfo | null, providers: SetupState["providers
   return `${m.model} through ${m.provider === "custom" ? "your endpoint" : name}`;
 }
 
-const btnPrimary =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-wax px-4 text-sm font-semibold text-on-wax transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:brightness-100";
-const btnSecondary =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-raised px-4 text-sm font-medium text-ink transition-colors hover:bg-field disabled:cursor-not-allowed disabled:opacity-40";
-const input =
-  "h-10 w-full rounded-lg border border-line bg-raised px-3 text-sm text-ink placeholder:text-ink3 transition-shadow focus:border-wax focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wax)_22%,transparent)]";
+// Buttons and fields at the size used during setup, a little larger than in
+// the rest of the window.
+const btnPrimary = "btn btn-pri h-8 px-3.5";
+const btnSecondary = "btn h-8 px-3.5";
+const input = "input h-8";
 
 export const ui = { btnPrimary, btnSecondary, input };
 
@@ -50,54 +50,71 @@ export function Spinner({ size = 16 }: { size?: number }) {
 export function ErrorLine({ text }: { text: string }) {
   if (!text) return null;
   return (
-    <p role="alert" className="flex items-start gap-2 text-sm text-danger">
-      <Icon name="error" size={18} className="mt-px" />
-      <span>{text}</span>
+    <p role="alert" className="text-danger">
+      {text}
     </p>
   );
 }
 
-function RadioDot({ on }: { on: boolean }) {
+export function RadioDot({ on }: { on: boolean }) {
   return (
-    <span
-      aria-hidden
-      className={`grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border-2 transition-colors ${
-        on ? "border-wax" : "border-line"
-      }`}
-    >
-      <span className={`h-2 w-2 rounded-full bg-wax transition-transform duration-200 ${on ? "scale-100" : "scale-0"}`} />
+    <span aria-hidden className={`mt-[2.5px] grid h-3.5 w-3.5 flex-none place-items-center rounded-full border-[1.2px] transition-colors duration-150 ${on ? "border-ink" : "border-ink4"}`}>
+      {on && <span className="h-1.5 w-1.5 rounded-full bg-ink" />}
     </span>
+  );
+}
+
+// One choice in a list of them: a radio mark, a name and a line about it.
+function Choice({ on, onClick, disabled, title, hint, right, mono }: { on: boolean; onClick: () => void; disabled?: boolean; title: string; hint?: string; right?: string; mono?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={on}
+      disabled={disabled}
+      onClick={onClick}
+      className={`flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 disabled:pointer-events-none disabled:opacity-45 ${on ? "bg-sel" : "hover:bg-hover"}`}
+    >
+      <RadioDot on={on} />
+      <span className="min-w-0 flex-1">
+        <span className={`block truncate text-ink ${mono ? "font-mono text-[12.5px]" : "font-medium"}`}>{title}</span>
+        {hint && <span className="block text-xs leading-snug text-ink2">{hint}</span>}
+      </span>
+      {right && <span className="flex-none pt-px text-xs text-ink3">{right}</span>}
+    </button>
   );
 }
 
 function InUse({ name }: { name: string }) {
   return (
-    <p className="flex items-center gap-2 text-sm text-ink">
-      <Icon name="check_circle" size={18} className="text-wax" />
+    <p className="flex items-center gap-1.5 text-ink2">
+      <Glyph state="done" />
       <span>
-        <span className="font-mono text-[13px] font-medium">{name}</span> is in use
+        <span className="font-mono text-[12.5px] text-ink">{name}</span> is in use
       </span>
     </p>
   );
 }
 
+// A thin bar with the numbers beside it. Without a total it shows only that
+// work is going on.
 export function ProgressBar({ label, p }: { label: string; p?: Progress }) {
   const pct = p?.total && p.completed !== undefined ? Math.min(100, (p.completed / p.total) * 100) : null;
   return (
-    <div className="space-y-2" role="status" aria-live="polite">
-      <div className="flex items-baseline justify-between gap-4 text-sm">
-        <span className="font-medium text-ink">{label}</span>
+    <div role="status" aria-live="polite">
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="text-ink">{label}</span>
         {pct !== null && (
-          <span className="tabular-nums text-xs text-ink3">
-            {formatBytes(p!.completed!)} of {formatBytes(p!.total!)}
+          <span className="text-xs text-ink3">
+            {formatBytes(p!.completed!)} of {formatBytes(p!.total!)}, {Math.round(pct)}%
           </span>
         )}
       </div>
-      <div className="relative h-1.5 overflow-hidden rounded-full bg-field">
+      <div className="relative mt-1.5 h-[3px] overflow-hidden rounded-full bg-field">
         {pct !== null ? (
-          <div className="h-full rounded-full bg-wax transition-[width] duration-300 ease-out" style={{ width: `${Math.max(2, pct)}%` }} />
+          <div className="h-full rounded-full bg-ink2 transition-[width] duration-300 ease-out" style={{ width: `${Math.max(2, pct)}%` }} />
         ) : (
-          <div className="ob-indeterminate absolute inset-y-0 w-2/5 rounded-full bg-wax" />
+          <div className="ob-indeterminate absolute inset-y-0 w-2/5 rounded-full bg-ink2" />
         )}
       </div>
     </div>
@@ -118,39 +135,11 @@ type PanelProps = { state: SetupState; slot: Slot; current: ModelInfo | null; re
 export default function ModelSetup({ state, refresh, onSaved, slot = "careful" }: { state: SetupState; refresh: () => Promise<void>; onSaved?: () => void; slot?: Slot }) {
   const current = slot === "fast" ? (state.fastModel ?? state.model) : state.model;
   const [where, setWhere] = useState<"local" | "cloud">(current && current.format !== "ollama" ? "cloud" : "local");
-  const options = [
-    { id: "local" as const, icon: "laptop_mac", title: "On this Mac", text: "Free and private. Runs with Ollama; slower on long threads." },
-    { id: "cloud" as const, icon: "cloud", title: "Cloud provider", text: "Faster and sharper. Your own API key, billed by the provider." },
-  ];
   return (
-    <div className="space-y-6">
-      <div role="radiogroup" aria-label="Where the AI runs" className="grid gap-3 sm:grid-cols-2">
-        {options.map((o) => {
-          const on = where === o.id;
-          return (
-            <button
-              key={o.id}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              onClick={() => setWhere(o.id)}
-              className={`group flex items-start gap-3 rounded-xl border p-4 text-left transition-[border-color,background-color,box-shadow] ${
-                on
-                  ? "border-wax bg-wax-soft shadow-[0_1px_2px_rgba(16,40,28,0.06),0_6px_16px_-8px_rgba(16,64,40,0.25)]"
-                  : "border-line bg-raised hover:border-[color-mix(in_srgb,var(--ink3)_55%,transparent)]"
-              }`}
-            >
-              <Icon name={o.icon} size={22} className={on ? "text-wax" : "text-ink3"} />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="text-[15px] font-semibold text-ink">{o.title}</span>
-                  <RadioDot on={on} />
-                </span>
-                <span className="mt-1 block text-[13px] leading-snug text-ink3">{o.text}</span>
-              </span>
-            </button>
-          );
-        })}
+    <div className="space-y-5">
+      <div role="radiogroup" aria-label="Where the model runs" className="-mx-2">
+        <Choice on={where === "local"} onClick={() => setWhere("local")} title="On this Mac" hint="Free and private: nothing is sent to a model provider. Runs with Ollama; slower on long threads." />
+        <Choice on={where === "cloud"} onClick={() => setWhere("cloud")} title="Cloud provider" hint="Faster and sharper. Your own API key, billed by the provider; the mail being read is sent to it." />
       </div>
       {where === "local" ? (
         <LocalPanel state={state} slot={slot} current={current} refresh={refresh} onSaved={onSaved} />
@@ -161,7 +150,13 @@ export default function ModelSetup({ state, refresh, onSaved, slot = "careful" }
   );
 }
 
-// ── On this Mac ─────────────────────────────────────────────────────────────
+// On this Mac
+
+const ABOUT: Record<string, string> = {
+  "qwen3.5:4b": "Small and quick; sorts mail well, simpler drafts",
+  "gemma4:12b": "Writes good drafts in your voice; wants 24 GB of memory",
+  "gemma4:26b": "Best drafts, and quick for its size; wants 48 GB of memory",
+};
 
 function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProps) {
   const { ollama, local } = state;
@@ -204,7 +199,7 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
     run(async () => {
       setBusy({ label: "Starting Ollama" });
       const { running } = await setupPost<{ running: boolean }>("/ollama/start");
-      if (!running) throw new Error("Ollama did not start. Open it from your Applications folder.");
+      if (!running) throw new Error("Ollama did not start. Open it from your Applications folder, then try again.");
       await refresh();
     });
 
@@ -225,25 +220,19 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
   if (!ollama.installed || !ollama.running) {
     const missing = !ollama.installed;
     return (
-      <div className="space-y-4 rounded-xl border border-line bg-raised p-5">
-        <div className="flex items-start gap-3">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-field text-ink">
-            <Icon name={missing ? "download" : "power_settings_new"} size={20} />
-          </span>
-          <div className="space-y-1">
-            <p className="text-[15px] font-semibold text-ink">{busy ? "Setting up Ollama" : missing ? "Ollama isn't installed yet" : "Ollama isn't running"}</p>
-            <p className="text-[13px] leading-relaxed text-ink3">
-              {missing
-                ? "Ollama is the free app that runs AI models on your Mac. Tabellar downloads it from ollama.com, checks its signature and puts it in Applications."
-                : "Ollama is installed. Start it and Tabellar will list your models."}
-            </p>
-          </div>
+      <div className="space-y-3">
+        <div>
+          <p className="font-medium text-ink">{busy ? "Setting up Ollama" : missing ? "Ollama is not installed yet" : "Ollama is not running"}</p>
+          <p className="mt-0.5 text-xs leading-normal text-ink2">
+            {missing
+              ? "Ollama is the free app that runs models on your Mac. Tabellar downloads it from ollama.com, checks its signature and puts it in Applications."
+              : "Ollama is installed. Start it and Tabellar will list your models."}
+          </p>
         </div>
         {busy ? (
           <ProgressBar label={busy.label} p={busy.p} />
         ) : (
           <button type="button" className={btnPrimary} onClick={missing ? install : start}>
-            <Icon name={missing ? "download" : "play_arrow"} size={18} />
             {missing ? "Install Ollama, about 230 MB" : "Start Ollama"}
           </button>
         )}
@@ -254,90 +243,56 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
 
   const inUse = current === choice && !!model?.ready;
   return (
-    <div className="space-y-4">
-      <div role="radiogroup" aria-label="Local model" className="overflow-hidden rounded-xl border border-line bg-raised">
-        {rows.map((m, i) => {
-          const on = selected === m.name;
-          const recommended = m.name === recommendedName;
-          const has = installed.has(m.name);
-          const about: Record<string, string> = {
-            "qwen3.5:4b": "Small and quick; sorts mail well, simpler drafts",
-            "gemma4:12b": "Writes good drafts in your voice; wants 24 GB of memory",
-            "gemma4:26b": "Best drafts, and quick for its size; wants 48 GB of memory",
-          };
-          const hint = recommended ? `Recommended for this Mac's ${local.memoryGb} GB of memory` : (about[m.name] ?? "Already on this Mac");
-          return (
-            <button
+    <div className="space-y-3">
+      <div>
+        <p className="label mb-1">Model</p>
+        <div role="radiogroup" aria-label="Local model" className="-mx-2">
+          {rows.map((m) => (
+            <Choice
               key={m.name}
-              type="button"
-              role="radio"
-              aria-checked={on}
+              mono
+              on={selected === m.name}
               disabled={!!busy}
               onClick={() => setSelected(m.name)}
-              className={`flex w-full items-center gap-3 px-4 py-3 text-left transition-colors ${i ? "border-t border-line" : ""} ${
-                on ? "bg-wax-soft" : "hover:bg-field"
-              }`}
-            >
-              <RadioDot on={on} />
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-[13px] font-medium text-ink">{m.name}</span>
-                  {recommended && (
-                    <span className="rounded-full bg-wax-soft px-2 py-0.5 text-[11px] font-semibold text-wax">Recommended</span>
-                  )}
-                </span>
-                <span className="mt-0.5 block text-xs text-ink3">{hint}</span>
-              </span>
-              <span className="shrink-0 text-xs tabular-nums text-ink3">
-                {current === m.name && model?.ready ? "In use" : has ? "On this Mac" : formatBytes(m.size)}
-              </span>
+              title={m.name}
+              hint={m.name === recommendedName ? `Recommended for this Mac's ${local.memoryGb} GB of memory` : (ABOUT[m.name] ?? "Already on this Mac")}
+              right={current === m.name && model?.ready ? "In use" : installed.has(m.name) ? "On this Mac" : formatBytes(m.size)}
+            />
+          ))}
+          <div className={`flex items-center gap-2.5 rounded-md px-2 py-1 transition-colors duration-150 ${selected === "__other" ? "bg-sel" : "hover:bg-hover"}`} onClick={() => !busy && setSelected("__other")}>
+            <button type="button" role="radio" aria-checked={selected === "__other"} aria-label="Another model" disabled={!!busy} onClick={() => setSelected("__other")} className="flex">
+              <RadioDot on={selected === "__other"} />
             </button>
-          );
-        })}
-        <div
-          className={`flex w-full items-center gap-3 border-t border-line px-4 py-3 transition-colors ${
-            selected === "__other" ? "bg-wax-soft" : "hover:bg-field"
-          }`}
-          onClick={() => !busy && setSelected("__other")}
-        >
-          <button type="button" role="radio" aria-checked={selected === "__other"} aria-label="Another model" disabled={!!busy} onClick={() => setSelected("__other")}>
-            <RadioDot on={selected === "__other"} />
-          </button>
-          <input
-            value={other}
-            disabled={!!busy}
-            onFocus={() => setSelected("__other")}
-            onChange={(e) => setOther(e.target.value)}
-            placeholder="Another model from ollama.com/library, e.g. qwen3.5:9b"
-            className="h-8 min-w-0 flex-1 bg-transparent font-mono text-[13px] text-ink placeholder:font-sans placeholder:text-ink3 focus:outline-none"
-            aria-label="Another Ollama model"
-          />
+            <input
+              value={other}
+              disabled={!!busy}
+              onFocus={() => setSelected("__other")}
+              onChange={(e) => setOther(e.target.value)}
+              placeholder="Another model from ollama.com/library, such as qwen3.5:9b"
+              className="h-6 min-w-0 flex-1 bg-transparent font-mono text-[12.5px] text-ink outline-none placeholder:font-sans placeholder:text-[13px]"
+              spellCheck={false}
+              aria-label="Another Ollama model"
+            />
+          </div>
         </div>
       </div>
       {busy ? (
         <ProgressBar label={busy.label} p={busy.p} />
       ) : (
-        <div className="flex min-h-10 flex-wrap items-center gap-3">
+        <div className="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1.5">
           {inUse ? (
             <InUse name={choice} />
           ) : (
             <button type="button" className={btnPrimary} disabled={!choice} onClick={use}>
-              {installed.has(choice) ? (
-                `Use ${choice}`
-              ) : (
-                <>
-                  <Icon name="download" size={18} />
-                  {choice ? `Download and use ${choice}` : "Download and use"}
-                </>
-              )}
+              {installed.has(choice) ? `Use ${choice}` : choice ? `Download and use ${choice}` : "Download and use"}
             </button>
           )}
           {!inUse && pairFast && (
-            <span className="text-xs text-ink3">
+            <span className="text-xs text-ink2">
               {installed.has(pairFast) ? "Also uses" : "Also downloads"} <span className="font-mono">{pairFast}</span> to read new mail quickly{installed.has(pairFast) && installed.has(choice) ? "." : "; downloads once, then runs offline."}
             </span>
           )}
-          {!installed.has(choice) && choice && !inUse && !pairFast && <span className="text-xs text-ink3">Downloads once, then runs offline.</span>}
+          {!installed.has(choice) && choice && !inUse && !pairFast && <span className="text-xs text-ink2">Downloads once, then runs offline.</span>}
         </div>
       )}
       <ErrorLine text={error} />
@@ -345,7 +300,7 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
   );
 }
 
-// ── Cloud provider ──────────────────────────────────────────────────────────
+// Cloud provider
 
 function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProps) {
   const current = model && model.format !== "ollama" ? model : null;
@@ -413,52 +368,36 @@ function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
   const inUse = !!current && current.provider === providerId && current.model === selected && !key && current.ready;
 
   return (
-    <div className="space-y-5">
-      <fieldset className="space-y-2">
-        <legend className="mb-2 text-sm font-medium text-ink">Provider</legend>
-        <div className="flex flex-wrap gap-2">
-          {state.providers.map((p) => {
-            const on = p.id === providerId;
-            return (
-              <button
-                key={p.id}
-                type="button"
-                aria-pressed={on}
-                onClick={() => setProviderId(p.id)}
-                className={`h-9 rounded-full border px-3.5 text-[13px] font-medium transition-colors ${
-                  on
-                    ? "border-wax bg-wax-soft text-wax"
-                    : "border-line bg-raised text-ink hover:bg-field"
-                }`}
-              >
-                {p.name}
-              </button>
-            );
-          })}
+    <div className="space-y-4">
+      <div>
+        <p className="label mb-1">Provider</p>
+        <div role="radiogroup" aria-label="Provider" className="-mx-2 grid sm:grid-cols-2">
+          {state.providers.map((p) => (
+            <Choice key={p.id} on={p.id === providerId} onClick={() => setProviderId(p.id)} title={p.name} right={p.hasKey ? "Key saved" : undefined} />
+          ))}
         </div>
-      </fieldset>
+      </div>
 
       {providerId === "custom" && (
-        <label className="block space-y-1.5">
-          <span className="text-sm font-medium text-ink">Base URL</span>
+        <label className="block">
+          <span className="label mb-1 block">Base URL</span>
           <input className={input} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://example.com/v1" spellCheck={false} />
         </label>
       )}
 
       <form
-        className="space-y-1.5"
         onSubmit={(e) => {
           e.preventDefault();
           check(key);
         }}
       >
-        <div className="flex items-baseline justify-between gap-3">
-          <label htmlFor="api-key" className="text-sm font-medium text-ink">
+        <div className="mb-1 flex items-baseline justify-between gap-3">
+          <label htmlFor="api-key" className="label">
             API key
           </label>
           {provider.keyUrl && (
-            <a href={provider.keyUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[13px] font-medium text-wax hover:underline underline-offset-2">
-              Get a key from {provider.name} <Icon name="open_in_new" size={14} />
+            <a href={provider.keyUrl} target="_blank" rel="noreferrer" className="link">
+              Get a key from {provider.name}
             </a>
           )}
         </div>
@@ -473,61 +412,41 @@ function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
             onChange={(e) => setKey(e.target.value)}
             placeholder={provider.hasKey ? "Saved in your Keychain. Paste a new one to replace it." : "Paste your key"}
           />
-          <button type="submit" className={`${btnSecondary} shrink-0`} disabled={busy !== "" || (!key && !provider.hasKey)}>
-            {busy === "check" ? <Spinner /> : null}
-            {models && !key ? "Refresh" : "Check key"}
+          <button type="submit" className={`${btnSecondary} flex-none`} disabled={busy !== "" || (!key && !provider.hasKey)}>
+            {busy === "check" ? "Checking" : models && !key ? "Refresh" : "Check key"}
           </button>
         </div>
-        <p className="text-xs text-ink3">Stored in the macOS Keychain, never in a file. Usage is billed by {providerId === "custom" ? "your provider" : provider.name}.</p>
+        <p className="mt-1.5 text-xs text-ink2">Stored in the macOS Keychain, never in a file. Usage is billed by {providerId === "custom" ? "your provider" : provider.name}.</p>
       </form>
 
       {models && (
-        <div className="space-y-2">
-          <div className="flex items-baseline justify-between">
-            <span className="text-sm font-medium text-ink">Model</span>
-            {models.length > 0 && <span className="text-xs tabular-nums text-ink3">{models.length} available</span>}
+        <div>
+          <div className="mb-1 flex items-baseline justify-between">
+            <span className="label">Model</span>
+            {models.length > 0 && <span className="text-xs text-ink3">{models.length} available</span>}
           </div>
           {models.length ? (
-            <div className="overflow-hidden rounded-xl border border-line bg-raised">
-              <div className="flex items-center gap-2 border-b border-line px-3">
-                <Icon name="search" size={18} className="text-ink3" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search models"
-                  aria-label="Search models"
-                  className="h-10 min-w-0 flex-1 bg-transparent text-sm text-ink placeholder:text-ink3 focus:outline-none"
-                />
-              </div>
-              <div role="radiogroup" aria-label="Model" className="max-h-64 overflow-y-auto overscroll-contain py-1">
+            <>
+              <label className="searchbox !w-full">
+                <Icon name="search" size={15} />
+                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search models" aria-label="Search models" spellCheck={false} />
+              </label>
+              <div role="radiogroup" aria-label="Model" className="-mx-2 mt-1 max-h-64 overflow-y-auto overscroll-contain">
                 {shown.map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected === m}
-                    onClick={() => setSelected(m)}
-                    className={`flex w-full items-center gap-3 px-3 py-2 text-left font-mono text-[13px] transition-colors ${
-                      selected === m ? "bg-wax-soft text-ink" : "text-ink hover:bg-field"
-                    }`}
-                  >
-                    <RadioDot on={selected === m} />
-                    <span className="truncate">{m}</span>
-                  </button>
+                  <Choice key={m} mono on={selected === m} onClick={() => setSelected(m)} title={m} />
                 ))}
-                {!shown.length && <p className="px-3 py-3 text-sm text-ink3">No model matches "{query}".</p>}
+                {!shown.length && <p className="px-2 py-2 text-ink3">No model matches "{query}".</p>}
               </div>
-            </div>
+            </>
           ) : (
             <input className={`${input} font-mono`} value={selected} onChange={(e) => setSelected(e.target.value)} placeholder="Model name" spellCheck={false} aria-label="Model name" />
           )}
-          <div className="flex min-h-10 items-center gap-3 pt-2">
+          <div className="mt-3 flex min-h-8 items-center gap-3">
             {inUse ? (
               <InUse name={selected} />
             ) : (
               <button type="button" className={btnPrimary} disabled={!selected.trim() || busy !== ""} onClick={save}>
-                {busy === "save" ? <Spinner /> : null}
-                {selected ? `Use ${selected.length > 32 ? selected.slice(0, 31) + "…" : selected}` : "Choose a model"}
+                {busy === "save" ? "Saving" : selected ? `Use ${selected.length > 32 ? selected.slice(0, 31) + "…" : selected}` : "Choose a model"}
               </button>
             )}
           </div>
@@ -538,16 +457,26 @@ function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
   );
 }
 
-// Settings > AI: the same picker for each slot, with its own state.
+// Settings, Models: the same picker for each slot, with its own state.
+const SLOTS: { id: Slot; label: string; text: string }[] = [
+  { id: "careful", label: "Careful model", text: "Writes drafts and the briefing, answers in Ask, runs the agent." },
+  { id: "fast", label: "Fast model", text: "Reads each new email to sort it, summarise it and find todos and meetings." },
+];
+
 export function ModelSettings() {
   const { state, error, refresh } = useSetupState();
   const [slot, setSlot] = useState<Slot>("careful");
   const [saved, setSaved] = useState<Slot | null>(null);
-  if (!state) return error ? <ErrorLine text={error} /> : <p className="flex items-center gap-2 text-sm text-ink3"><Spinner /> Loading</p>;
-  const slots = [
-    { id: "careful" as const, title: "Careful model", text: "Writes drafts and the briefing, answers in the assistant, runs the agent." },
-    { id: "fast" as const, title: "Fast model", text: "Reads each new email to sort it, summarise it and find todos and meetings." },
-  ];
+  if (!state)
+    return error ? (
+      <ErrorLine text={`Could not load the model settings: ${error}. Check that Tabellar is still running, then open Settings again.`} />
+    ) : (
+      <div className="space-y-2.5 py-1" aria-busy="true" aria-label="Loading">
+        <span className="skel block h-2.5 w-40" />
+        <span className="skel block h-2.5 w-72" />
+        <span className="skel block h-2.5 w-56" />
+      </div>
+    );
   const sameAsCareful = !state.fastModel;
   const shown = slot === "fast" ? (state.fastModel ?? state.model) : state.model;
 
@@ -558,53 +487,36 @@ export function ModelSettings() {
   };
 
   return (
-    <div className="space-y-5">
-      <div role="tablist" aria-label="Model slot" className="grid gap-2 sm:grid-cols-2">
-        {slots.map((s) => {
-          const on = slot === s.id;
-          const m = s.id === "fast" ? (state.fastModel ?? state.model) : state.model;
-          return (
-            <button
-              key={s.id}
-              type="button"
-              role="tab"
-              aria-selected={on}
-              onClick={() => {
-                setSlot(s.id);
-                setSaved(null);
-              }}
-              className={`rounded-xl border p-3.5 text-left transition-[border-color,background-color] ${
-                on ? "border-wax bg-wax-soft" : "border-line bg-raised hover:bg-field"
-              }`}
-            >
-              <span className="block text-sm font-semibold text-ink">{s.title}</span>
-              <span className="mt-0.5 block text-xs leading-snug text-ink3">{s.text}</span>
-              <span className="mt-2 block truncate font-mono text-[12px] text-ink">
-                {m?.ready ? (s.id === "fast" && sameAsCareful ? `Same as careful, ${m.model}` : modelLabel(m, state.providers)) : "Not chosen yet"}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-
-      <p className="text-sm text-ink3">
-        {shown?.ready ? (
-          <>
-            {slot === "fast" && sameAsCareful ? "Reading mail with the careful model, " : "Using "}
-            <span className="font-medium text-ink">{modelLabel(shown, state.providers)}</span>.
-          </>
-        ) : (
-          "No model yet. Mail still syncs, but sorting, the briefing and drafts wait until you choose one."
+    <div className="space-y-4">
+      <div>
+        <div className="-ml-2">
+          <Seg
+            value={slot}
+            onChange={(s) => {
+              setSlot(s);
+              setSaved(null);
+            }}
+            options={SLOTS}
+          />
+        </div>
+        <p className="mt-2 text-xs text-ink2">{SLOTS.find((s) => s.id === slot)!.text}</p>
+        <p className="mt-1.5 text-ink2">
+          {shown?.ready ? (
+            <>
+              {slot === "fast" && sameAsCareful ? "Reading mail with the careful model, " : "Using "}
+              <span className="font-medium text-ink">{modelLabel(shown, state.providers)}</span>.
+            </>
+          ) : (
+            "No model yet. Mail still syncs, but sorting, the briefing and drafts wait until you choose one."
+          )}
+          {saved === slot && <span className="ml-2 text-ok">Saved.</span>}
+        </p>
+        {slot === "fast" && state.model?.ready && !sameAsCareful && (
+          <button type="button" className="btn mt-2.5" onClick={followCareful}>
+            Use the careful model for this too
+          </button>
         )}
-        {saved === slot && <span className="ml-2 font-medium text-ok">Saved.</span>}
-      </p>
-
-      {slot === "fast" && state.model?.ready && !sameAsCareful && (
-        <button type="button" className={btnSecondary} onClick={followCareful}>
-          <Icon name="link" size={18} />
-          Use the careful model for this too
-        </button>
-      )}
+      </div>
 
       <ModelSetup key={slot} slot={slot} state={state} refresh={refresh} onSaved={() => setSaved(slot)} />
     </div>

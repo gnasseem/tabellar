@@ -1,5 +1,4 @@
-
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import Icon from "@/components/Icon";
 import { createPortal } from "react-dom";
 import { createClient } from "@/lib/db";
@@ -201,20 +200,27 @@ async function triggerContactsSync() {
   }
 }
 
-/** Autocomplete logic for a comma-separated email field */
-function useEmailAutocomplete(contacts: Contact[], accountId: string, multi = true) {
+/** Suggestions for the address being typed: known contacts first, then a live People search. */
+function useEmailAutocomplete(contacts: Contact[], accountId: string) {
   const [suggestions, setSuggestions] = useState<Contact[]>([]);
   const [activeIdx, setActiveIdx] = useState(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Counts lookups so a slow search cannot reopen the list after it was closed.
+  const lookup = useRef(0);
   const supabase = createClient();
 
+  const clear = useCallback(() => {
+    lookup.current++;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setSuggestions([]);
+  }, []);
+
   const getSuggestions = useCallback(
-    (value: string) => {
-      const lastToken = multi
-        ? (value.split(",").pop()?.trim() ?? "")
-        : value.trim();
-      if (lastToken.length < 1) { setSuggestions([]); return; }
-      const lower = lastToken.toLowerCase();
+    (typed: string) => {
+      const query = typed.trim();
+      if (query.length < 1) { clear(); return; }
+      const mine = ++lookup.current;
+      const lower = query.toLowerCase();
       const filtered = contacts
         .filter(
           (c) =>
@@ -227,20 +233,20 @@ function useEmailAutocomplete(contacts: Contact[], accountId: string, multi = tr
       setActiveIdx(0);
 
       // Live Google People API search (debounced, 2+ chars)
-      if (lastToken.length >= 2 && accountId) {
-        if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (query.length >= 2 && accountId) {
         debounceRef.current = setTimeout(async () => {
           try {
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) return;
             const apiUrl = "/api";
             const res = await fetch(
-              `${apiUrl}/contacts/search?q=${encodeURIComponent(lastToken)}&account_id=${encodeURIComponent(accountId)}`,
+              `${apiUrl}/contacts/search?q=${encodeURIComponent(query)}&account_id=${encodeURIComponent(accountId)}`,
               { headers: { Authorization: `Bearer ${session.access_token}` } },
             );
-            if (!res.ok) return;
+            if (!res.ok || mine !== lookup.current) return;
             const { contacts: live } = await res.json() as { contacts: { name: string; email: string; source?: string }[] };
-            if (!live?.length) return;
+            if (!live?.length || mine !== lookup.current) return;
             setSuggestions((prev) => {
               const seen = new Set(prev.map((c) => c.email));
               const merged = [...prev];
@@ -256,36 +262,21 @@ function useEmailAutocomplete(contacts: Contact[], accountId: string, multi = tr
         }, 300);
       }
     },
-    [contacts, accountId, multi]
+    [contacts, accountId, clear]
   );
 
-  const applySuggestion = useCallback(
-    (value: string, contact: Contact) => {
-      // Insert only the email address  -  name is shown in the dropdown for identification only
-      const formatted = contact.email;
-      if (multi) {
-        const parts = value.split(",");
-        parts[parts.length - 1] = " " + formatted;
-        setSuggestions([]);
-        return parts.join(",").replace(/^ /, "");
-      } else {
-        setSuggestions([]);
-        return formatted;
-      }
-    },
-    [multi]
-  );
-
-  const clear = useCallback(() => setSuggestions([]), []);
-
-  return { suggestions, activeIdx, setActiveIdx, getSuggestions, applySuggestion, clear };
+  return { suggestions, activeIdx, setActiveIdx, getSuggestions, clear };
 }
 
+const looksLikeAddress = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+
 /**
- * A controlled email input with autocomplete dropdown.
- * - `multi` (default true): comma-separated list of addresses
+ * A controlled email input with autocomplete.
+ * - `multi` (default true): `value` is a comma-separated list. Finished
+ *   addresses show as tokens; the address being typed is the last entry.
  * - `multi=false`: single address
- * - `label` is optional; omit for a plain input
+ * - `label` puts the field on a borderless row (the compose window); without
+ *   it the field is a filled box like `.input`.
  */
 export function EmailField({
   label,
@@ -305,98 +296,175 @@ export function EmailField({
   contacts: Contact[];
   accountId?: string;
   className?: string;
-  suffix?: React.ReactNode;
+  suffix?: ReactNode;
   placeholder?: string;
   multi?: boolean;
   inputClassName?: string;
 }) {
-  const { suggestions, activeIdx, setActiveIdx, getSuggestions, applySuggestion, clear } =
-    useEmailAutocomplete(contacts, accountId, multi);
+  const { suggestions, activeIdx, setActiveIdx, getSuggestions, clear } =
+    useEmailAutocomplete(contacts, accountId);
   const ref = useRef<HTMLInputElement>(null);
-  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
-  // Detect theme from the nearest .dark ancestor so the portal inherits it
-  const [isDark, setIsDark] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({});
 
-  useEffect(() => {
-    setIsDark(!!document.querySelector(".dark"));
-  }, [suggestions.length]);
+  // The text being typed is kept here and also sent up as the last entry of
+  // `value`, so the parent always holds everything in the field. When the two
+  // stop matching (the parent set a new value), every entry is a token.
+  const [draft, setDraft] = useState("");
+  const parts = multi ? value.split(",").map((s) => s.trim()).filter(Boolean) : [];
+  const typing = multi && draft.trim() !== "" && parts[parts.length - 1] === draft.trim();
+  const tokens = typing ? parts.slice(0, -1) : parts;
+  const text = multi ? (typing ? draft : "") : value;
 
-  // Recompute dropdown position whenever suggestions open/change
-  useEffect(() => {
-    if (!suggestions.length || !ref.current) return;
-    const rect = ref.current.getBoundingClientRect();
+  const emit = (list: string[], typed: string) =>
+    onChange([...list, typed.trim()].filter(Boolean).join(", "));
+
+  const type = (typed: string) => {
+    if (!multi) {
+      onChange(typed);
+      getSuggestions(typed);
+      return;
+    }
+    // A comma or semicolon, typed or pasted, finishes the addresses before it.
+    const pieces = typed.split(/[,;]/);
+    const rest = pieces.pop() ?? "";
+    setDraft(rest);
+    emit([...tokens, ...pieces.map((s) => s.trim()).filter(Boolean)], rest);
+    getSuggestions(rest);
+  };
+
+  const pick = (c: Contact) => {
+    clear();
+    if (!multi) {
+      onChange(c.email);
+      return;
+    }
+    setDraft("");
+    emit([...tokens, c.email], "");
+  };
+
+  const remove = (index: number) => {
+    emit(tokens.filter((_, i) => i !== index), text);
+    ref.current?.focus();
+  };
+
+  // Place the list under the field whenever it opens or changes.
+  useLayoutEffect(() => {
+    if (!suggestions.length || !boxRef.current) return;
+    const rect = boxRef.current.getBoundingClientRect();
+    const width = Math.max(320, Math.min(rect.width, 440));
     setDropdownStyle({
       position: "fixed",
       top: rect.bottom + 4,
-      left: rect.left,
-      width: Math.max(320, rect.width),
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
+      width,
       zIndex: 9999,
     });
-  }, [suggestions.length]);
+  }, [suggestions.length, tokens.length]);
 
-  const handleKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!suggestions.length) return;
-    if (e.key === "ArrowDown") { e.preventDefault(); setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1)); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); setActiveIdx((i) => Math.max(i - 1, 0)); }
-    else if (e.key === "Enter" || e.key === "Tab") {
+  const handleKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (suggestions.length) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1)); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); setActiveIdx((i) => Math.max(i - 1, 0)); }
+      else if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); pick(suggestions[activeIdx]); }
+      else if (e.key === "Escape") { e.stopPropagation(); clear(); }
+      return;
+    }
+    if (!multi) return;
+    if (e.key === "Enter" && text.trim()) {
+      // Finish the address being typed: it becomes a token.
       e.preventDefault();
-      onChange(applySuggestion(value, suggestions[activeIdx]));
-    } else if (e.key === "Escape") { clear(); }
+      setDraft("");
+    } else if (e.key === "Backspace" && !text && tokens.length) {
+      // Put the last token back in the input so it can be corrected.
+      e.preventDefault();
+      setDraft(tokens[tokens.length - 1]);
+    }
   };
 
   const dropdown = suggestions.length > 0 && typeof document !== "undefined"
     ? createPortal(
-        // Wrap in the theme class so CSS variables resolve correctly outside the app root
-        <div className={isDark ? "dark" : ""}>
-          <div
-            style={dropdownStyle}
-            className="bg-raised border border-line rounded-lg shadow-xl overflow-hidden text-ink"
-          >
-            {suggestions.map((c, i) => (
-              <button
-                key={c.email}
-                type="button"
-                onMouseDown={() => onChange(applySuggestion(value, c))}
-                className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-field ${i === activeIdx ? "bg-field" : ""}`}
-              >
-                <Icon name={c.source === "directory" ? "domain" : "person"} size={14} className="text-ink3" />
-                <span className="truncate flex-1">
-                  {c.name && <span className="font-medium">{c.name} </span>}
-                  <span className="text-ink3">{c.email}</span>
-                </span>
-                {c.source === "directory" && (
-                  <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-field text-ink2 font-medium">
-                    org
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+        <div style={dropdownStyle} className="pop max-h-[236px] overflow-y-auto" role="listbox">
+          {suggestions.map((c, i) => (
+            <button
+              key={c.email}
+              type="button"
+              role="option"
+              aria-selected={i === activeIdx}
+              data-active={i === activeIdx}
+              // mousedown, and no default, so the input keeps focus for the next address
+              onMouseDown={(e) => { e.preventDefault(); pick(c); }}
+              onMouseEnter={() => setActiveIdx(i)}
+              className="pop-item"
+            >
+              <span className="max-w-[50%] flex-none truncate">{c.name || c.email}</span>
+              {c.name && <span className="min-w-0 truncate text-ink3">{c.email}</span>}
+              {c.source === "directory" && <span className="ml-auto flex-none pl-2 text-xs text-ink3">Directory</span>}
+            </button>
+          ))}
         </div>,
         document.body
       )
     : null;
 
+  const input = (
+    <input
+      ref={ref}
+      type="text"
+      value={text}
+      onChange={(e) => type(e.target.value)}
+      onKeyDown={handleKey}
+      // Leaving the field finishes the address being typed. The delay lets a
+      // click on a suggestion land first.
+      onBlur={() => setTimeout(() => { clear(); setDraft(""); }, 150)}
+      placeholder={tokens.length ? undefined : placeholder}
+      spellCheck={false}
+      autoComplete="off"
+      className={inputClassName ?? "h-[22px] min-w-[120px] flex-1 bg-transparent text-[13px] text-ink outline-none"}
+    />
+  );
+
+  const chips = tokens.map((t, i) => (
+    <span
+      key={`${t}:${i}`}
+      title={looksLikeAddress(t) ? undefined : "This is not a complete email address"}
+      className={`flex h-[22px] max-w-full items-center gap-0.5 rounded-md pl-1.5 pr-0.5 text-[13px] ${label ? "bg-field" : "bg-canvas"} ${looksLikeAddress(t) ? "text-ink" : "text-danger"}`}
+    >
+      <span className="truncate">{t}</span>
+      <button
+        type="button"
+        aria-label={`Remove ${t}`}
+        className="grid h-4 w-4 flex-none place-items-center rounded text-ink3 transition-colors duration-150 hover:bg-sel hover:text-ink"
+        onClick={(e) => { e.stopPropagation(); remove(i); }}
+      >
+        <Icon name="close" size={11} />
+      </button>
+    </span>
+  ));
+
+  if (label) {
+    return (
+      <div ref={boxRef} className={`flex min-h-9 items-start gap-2 border-b border-line-soft py-[7px] ${className ?? ""}`} onClick={() => ref.current?.focus()}>
+        <span className="w-12 flex-none text-xs leading-[22px] text-ink3">{label}</span>
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+          {chips}
+          {input}
+        </div>
+        {suffix}
+        {dropdown}
+      </div>
+    );
+  }
+
   return (
-    <div className={`relative ${label ? "flex items-center gap-2" : ""} ${className ?? ""}`}>
-      {label && (
-        <span className="text-xs text-ink3 w-8 shrink-0">{label}</span>
-      )}
-      <input
-        ref={ref}
-        type="text"
-        value={value}
-        onChange={(e) => { onChange(e.target.value); getSuggestions(e.target.value); }}
-        onKeyDown={handleKey}
-        onBlur={() => setTimeout(clear, 150)}
-        placeholder={placeholder}
-        className={
-          inputClassName ??
-          (label
-            ? "flex-1 px-2 py-1.5 border-b border-line bg-transparent text-sm focus:outline-none focus:border-wax"
-            : "w-full px-3 py-1.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none")
-        }
-      />
+    <div
+      ref={boxRef}
+      className={`flex min-h-7 flex-wrap items-center gap-1 rounded-[7px] bg-field py-[3px] pl-2.5 pr-1.5 focus-within:shadow-[0_0_0_2px_color-mix(in_oklch,var(--wax)_55%,transparent)] ${className ?? ""}`}
+      onClick={() => ref.current?.focus()}
+    >
+      {chips}
+      {input}
       {suffix}
       {dropdown}
     </div>

@@ -1,57 +1,31 @@
-
-import { useState, useEffect, useRef } from "react";
-import Icon from "@/components/Icon";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import DOMPurify from "dompurify";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
-import { LEVELS, confirmLevel, engineFetch } from "./ActivityView";
+import { LEVELS, confirmLevel } from "../Sidebar";
+import { engineFetch } from "./ActivityView";
 import { EmailField, useContacts } from "../EmailAutocomplete";
-import { ModelSettings } from "../ModelSetup";
+import { ModelSettings, RadioDot } from "../ModelSetup";
+import { Seg, ViewBar } from "../ui";
 
-// Sanitize user-authored signature HTML before rendering via
-// dangerouslySetInnerHTML or saving back to the DB. Keeps inline styles
-// and basic formatting but strips <script>, event handlers, iframes, etc.
+// Settings, laid out like the Mac's own: the sections on the left, the chosen
+// one on the right as groups of rows, each row a setting with its control.
+
+// Sanitize user-authored signature HTML before rendering it or saving it.
+// Keeps inline styles and basic formatting but strips scripts, event
+// handlers, iframes and forms.
 function sanitizeSignatureHtml(html: string): string {
   return DOMPurify.sanitize(html ?? "", {
     USE_PROFILES: { html: true },
-    ALLOWED_ATTR: [
-      "href",
-      "src",
-      "alt",
-      "title",
-      "style",
-      "class",
-      "target",
-      "rel",
-      "width",
-      "height",
-      "cellpadding",
-      "cellspacing",
-      "border",
-      "align",
-      "color",
-      "face",
-      "size",
-    ],
-    FORBID_TAGS: [
-      "script",
-      "style",
-      "iframe",
-      "object",
-      "embed",
-      "form",
-      "input",
-      "button",
-    ],
-    FORBID_ATTR: [
-      "onerror",
-      "onload",
-      "onclick",
-      "onmouseover",
-      "onfocus",
-      "onblur",
-    ],
+    ALLOWED_ATTR: ["href", "src", "alt", "title", "style", "class", "target", "rel", "width", "height", "cellpadding", "cellspacing", "border", "align", "color", "face", "size"],
+    FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form", "input", "button"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur"],
   });
+}
+
+function plainText(html: string): string {
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
 type DelegationRule = {
@@ -62,15 +36,19 @@ type DelegationRule = {
   weight: number;
 };
 
-type TabId =
-  | "account"
-  | "ai"
-  | "background"
-  | "schedule"
-  | "briefing"
-  | "automation"
-  | "templates"
-  | "signatures";
+type TabId = "account" | "background" | "ai" | "style" | "signatures" | "templates" | "schedule" | "briefing" | "automation";
+
+const SECTIONS: { id: TabId; label: string }[] = [
+  { id: "account", label: "General" },
+  { id: "background", label: "Engine" },
+  { id: "ai", label: "Models" },
+  { id: "style", label: "Writing style" },
+  { id: "signatures", label: "Signatures" },
+  { id: "templates", label: "Templates" },
+  { id: "schedule", label: "Working hours" },
+  { id: "briefing", label: "Briefing and calendar" },
+  { id: "automation", label: "Forwarding" },
+];
 
 interface EmailTemplate {
   id: string;
@@ -88,172 +66,79 @@ interface EmailSignature {
   created_at: string;
 }
 
-function to12h(time24: string): {
-  hour: string;
-  minute: string;
-  ampm: "AM" | "PM";
-} {
-  const [h, m] = (time24 || "09:00").split(":").map(Number);
-  const ampm = h >= 12 ? "PM" : "AM";
-  const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-  return { hour: String(hour12), minute: String(m).padStart(2, "0"), ampm };
-}
+// The parts every section is built from.
 
-function to24h(hour: string, minute: string, ampm: "AM" | "PM"): string {
-  let h = parseInt(hour, 10);
-  if (ampm === "AM" && h === 12) h = 0;
-  if (ampm === "PM" && h !== 12) h += 12;
-  return `${h.toString().padStart(2, "0")}:${minute}`;
-}
-
-function TimePickerAmPm({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const { hour, minute, ampm } = to12h(value || "09:00");
-
-  const openDropdown = () => {
-    if (!open && btnRef.current) {
-      const rect = btnRef.current.getBoundingClientRect();
-      setDropdownStyle({
-        position: "fixed",
-        top: rect.bottom + 6,
-        left: rect.left,
-        width: rect.width < 224 ? 224 : rect.width,
-      });
-    }
-    setOpen(!open);
-  };
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (
-        btnRef.current &&
-        !btnRef.current.contains(e.target as Node) &&
-        dropdownRef.current &&
-        !dropdownRef.current.contains(e.target as Node)
-      )
-        setOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
+// A group of settings: a label, then rows between hairlines.
+function Group({ title, right, note, children }: { title: string; right?: ReactNode; note?: ReactNode; children: ReactNode }) {
   return (
-    <div className="relative mt-1">
-      <button
-        ref={btnRef}
-        type="button"
-        onClick={openDropdown}
-        className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-line hover:border-wax transition-colors group"
-      >
-        <Icon name="schedule" size={15} className="text-wax" />
-        <span className="text-sm font-semibold text-ink flex-1 text-left tabular-nums">
-          {hour}:{minute}
-        </span>
-        <span
-          className={`text-xs font-bold px-1.5 py-0.5 rounded ${ampm === "AM" ? "bg-field text-ink2" : "bg-warn-soft text-warn"}`}
-        >
-          {ampm}
-        </span>
-        <Icon name={open ? "expand_less" : "expand_more"} size={14} className="text-ink3" />
-      </button>
+    <section className="mt-8 first-of-type:mt-0">
+      <div className="mb-1.5 flex min-h-6 items-center gap-3">
+        <h3 className="label">{title}</h3>
+        <span className="flex-1" />
+        {right}
+      </div>
+      <div className="divide-y divide-line-soft border-y border-line-soft">{children}</div>
+      {note && <p className="mt-2 text-xs leading-normal text-ink3">{note}</p>}
+    </section>
+  );
+}
 
-      {open && (
-        <div
-          ref={dropdownRef}
-          style={{ ...dropdownStyle, zIndex: 9999 }}
-          className="bg-canvas border border-line rounded-xl shadow-xl p-3 w-56"
-        >
-          <p className="text-[9px] font-bold text-ink3 uppercase tracking-widest mb-1.5">
-            Hour
-          </p>
-          <div className="grid grid-cols-6 gap-1 mb-3">
-            {Array.from({ length: 12 }, (_, i) => i + 1).map((h) => (
-              <button
-                key={h}
-                type="button"
-                onClick={() => onChange(to24h(String(h), minute, ampm))}
-                className={`py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  hour === String(h)
-                    ? "bg-wax text-on-wax shadow-sm"
-                    : "text-ink2 hover:bg-field"
-                }`}
-              >
-                {h}
-              </button>
-            ))}
-          </div>
-
-          <p className="text-[9px] font-bold text-ink3 uppercase tracking-widest mb-1.5">
-            Minute
-          </p>
-          <div className="flex gap-1 mb-3">
-            {["00", "15", "30", "45"].map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => onChange(to24h(hour, m, ampm))}
-                className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  minute === m
-                    ? "bg-wax text-on-wax shadow-sm"
-                    : "text-ink2 hover:bg-field"
-                }`}
-              >
-                :{m}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex rounded-lg overflow-hidden border border-line">
-            {(["AM", "PM"] as const).map((period) => (
-              <button
-                key={period}
-                type="button"
-                onClick={() => {
-                  onChange(to24h(hour, minute, period));
-                  setOpen(false);
-                }}
-                className={`flex-1 py-1.5 text-xs font-bold transition-all ${
-                  ampm === period
-                    ? period === "AM"
-                      ? "bg-wax text-on-wax"
-                      : "bg-warn text-white"
-                    : "text-ink3 hover:bg-hover"
-                }`}
-              >
-                {period}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+// One setting: its name and a line about it on the left, its control on the right.
+function Row({ name, text, children, disabled }: { name: ReactNode; text?: ReactNode; children?: ReactNode; disabled?: boolean }) {
+  return (
+    <div className={`flex min-h-[52px] items-center gap-4 py-2.5 ${disabled ? "opacity-45" : ""}`} aria-disabled={disabled || undefined}>
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] text-ink">{name}</div>
+        {text && <div className="mt-px text-xs leading-snug text-ink2">{text}</div>}
+      </div>
+      {children !== undefined && <div className="flex flex-none items-center gap-2">{children}</div>}
     </div>
   );
 }
 
-const TABS: { id: TabId; label: string; icon: string }[] = [
-  { id: "account", label: "Account", icon: "manage_accounts" },
-  { id: "ai", label: "AI", icon: "auto_awesome" },
-  { id: "background", label: "Background", icon: "smart_toy" },
-  { id: "schedule", label: "Schedule", icon: "schedule" },
-  { id: "briefing", label: "Briefing", icon: "summarize" },
-  { id: "automation", label: "Automation", icon: "alt_route" },
-  { id: "templates", label: "Templates", icon: "description" },
-  { id: "signatures", label: "Signatures", icon: "draw" },
-];
+// A row that is one of several choices, chosen by clicking anywhere on it.
+function ChoiceRow({ on, onClick, name, text }: { on: boolean; onClick: () => void; name: string; text: string }) {
+  return (
+    <button type="button" role="radio" aria-checked={on} onClick={onClick} className="flex min-h-[52px] w-full items-start gap-3 py-2.5 text-left">
+      <RadioDot on={on} />
+      <span className="min-w-0 flex-1">
+        <span className={`block text-[13px] text-ink ${on ? "font-medium" : ""}`}>{name}</span>
+        <span className="mt-px block text-xs leading-snug text-ink2">{text}</span>
+      </span>
+    </button>
+  );
+}
 
-// The background engine: how much it may do, how it tells you, and whether
-// Tabellar starts at login. Each control saves as soon as it changes.
-function BackgroundSettings() {
-  const { user, profile, updateProfile, addToast } = useApp();
+function Switch({ on, onChange, label, disabled }: { on: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onChange(!on)}
+      className={`relative h-[18px] w-8 flex-none rounded-full transition-colors duration-150 disabled:pointer-events-none ${on ? "bg-ink" : "bg-ink4"}`}
+    >
+      <span className={`absolute left-0.5 top-0.5 h-[14px] w-[14px] rounded-full bg-canvas shadow-control transition-transform duration-150 ${on ? "translate-x-[14px]" : ""}`} />
+    </button>
+  );
+}
+
+// Labelled fields in an editor that opens inside a group.
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="grid grid-cols-[88px_minmax(0,1fr)] items-center gap-x-3">
+      <span className="text-ink3">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+// The engine: how far Tabellar goes on its own, Autopilot's limits, how it
+// tells you, and whether it starts at login. Each control saves at once.
+function EngineSettings() {
+  const { user, profile, updateProfile, addToast, mail } = useApp();
   const supabase = createClient();
   const [level, setLevel] = useState<string>(profile.autonomy_level ?? "suggest");
   const [paused, setPaused] = useState<boolean>(!!profile.engine_paused);
@@ -276,8 +161,9 @@ function BackgroundSettings() {
 
   const save = async (patch: Record<string, unknown>) => {
     const { error } = await supabase.from("profiles").update(patch).eq("id", user.id);
-    if (error) addToast("error", error.message);
-    else updateProfile(patch);
+    if (error) return addToast("error", `Could not save that: ${error.message}. Try again.`);
+    updateProfile(patch);
+    mail.refreshEngine();
   };
 
   const toggleAutostart = async (on: boolean) => {
@@ -290,222 +176,208 @@ function BackgroundSettings() {
     }
   };
 
+  const autopilot = level === "autopilot";
+
   return (
     <>
-      <SectionLabel>What Tabellar may do on its own</SectionLabel>
-      <SectionCard>
-        {LEVELS.map((l) => (
-          <button
-            key={l.id}
-            type="button"
-            onClick={() => {
-              if (!confirmLevel(l.id)) return;
-              setLevel(l.id);
-              save({ autonomy_level: l.id });
-            }}
-            className="w-full flex items-start gap-3 py-3.5 px-5 border-b border-line last:border-0 text-left hover:bg-field transition-colors"
-          >
-            <Icon name={level === l.id ? "radio_button_checked" : "radio_button_unchecked"} size={18} fill={level === l.id} className="mt-0.5" style={{ color: level === l.id ? "var(--wax)" : "var(--ink3)" }} />
-            <span>
-              <span className="block text-sm font-medium text-ink">{l.label}</span>
-              <span className="block text-xs text-ink3 mt-0.5">{l.text}</span>
-            </span>
-          </button>
-        ))}
-        <SettingRow label="Pause" description="Stops every action at once, including the agent and the assistant. Mail still syncs.">
-          <Toggle
-            value={paused}
+      <Group title="How far Tabellar goes on its own" note="It never deletes mail. Everything it does is listed in Activity, where labels, drafts, todos and meeting proposals can be undone.">
+        <div role="radiogroup" aria-label="Level" className="divide-y divide-line-soft">
+          {LEVELS.map((l) => (
+            <ChoiceRow
+              key={l.id}
+              on={level === l.id}
+              name={l.label}
+              text={l.text}
+              onClick={() => {
+                if (l.id === level || !confirmLevel(l.id)) return;
+                setLevel(l.id);
+                save({ autonomy_level: l.id });
+              }}
+            />
+          ))}
+        </div>
+        <Row name="Pause" text="Stops every action at once, including the agent and Ask. Mail still syncs.">
+          <Switch
+            label="Pause"
+            on={paused}
             onChange={(v) => {
               setPaused(v);
               save({ engine_paused: v });
             }}
           />
-        </SettingRow>
-      </SectionCard>
-      <p className="text-xs text-ink3 px-1 -mt-1">
-        It never deletes mail. Everything it does is listed in Activity, where labels, drafts, todos and meeting proposals can be undone.
-      </p>
+        </Row>
+      </Group>
 
-      {level === "autopilot" && (
-        <>
-          <SectionLabel>Autopilot limits</SectionLabel>
-          <SectionCard>
-            <SettingRow label="Wait before sending" description="Each reply waits this long in Activity, where you can read it and cancel it.">
-              <select
-                value={delay}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setDelay(v);
-                  save({ autopilot_delay_min: v });
-                }}
-                className="text-sm bg-field border border-line rounded-lg px-2 py-1.5 text-ink"
-              >
-                {[2, 5, 10, 30, 60].map((m) => (
-                  <option key={m} value={m}>{m} minutes</option>
-                ))}
-              </select>
-            </SettingRow>
-            <SettingRow label="Replies per day" description="After this many, replies are saved as drafts until tomorrow.">
-              <select
-                value={cap}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  setCap(v);
-                  save({ autopilot_daily_cap: v });
-                }}
-                className="text-sm bg-field border border-line rounded-lg px-2 py-1.5 text-ink"
-              >
-                {[1, 3, 5, 10, 20].map((n) => (
-                  <option key={n} value={n}>{n}</option>
-                ))}
-              </select>
-            </SettingRow>
-            <SettingRow label="Only people I have written to" description="Anyone else gets a draft for you to send yourself.">
-              <Toggle
-                value={knownOnly}
-                onChange={(v) => {
-                  setKnownOnly(v);
-                  save({ autopilot_known_only: v });
-                }}
-              />
-            </SettingRow>
-          </SectionCard>
-          <p className="text-xs text-ink3 px-1 -mt-1">
-            Autopilot only answers the person who wrote, inside the same thread, with nobody copied in and no attachments. When a good answer needs a decision or facts it does not have, it saves a draft instead.
-          </p>
-        </>
-      )}
-
-      <SectionLabel>Notifications</SectionLabel>
-      <SectionCard>
-        <SettingRow label="Notify me about" description="macOS notifications for new mail, sent while Tabellar runs, with the window open or closed.">
+      <Group
+        title="Autopilot limits"
+        note={
+          autopilot
+            ? "Autopilot answers only the person who wrote, inside the same thread, with nobody copied in and no attachments. When an answer needs a decision or facts it does not have, it saves a draft instead."
+            : "These apply only at Autopilot."
+        }
+      >
+        <Row name="Wait before sending" text="Each reply waits this long under Going out, in Replies and the sidebar, where you can cancel it." disabled={!autopilot}>
           <select
+            className="input w-auto"
+            disabled={!autopilot}
+            value={delay}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setDelay(v);
+              save({ autopilot_delay_min: v });
+            }}
+          >
+            {[2, 5, 10, 30, 60].map((m) => (
+              <option key={m} value={m}>
+                {m} minutes
+              </option>
+            ))}
+          </select>
+        </Row>
+        <Row name="Replies per day" text="After this many, replies are saved as drafts until tomorrow." disabled={!autopilot}>
+          <select
+            className="input w-auto"
+            disabled={!autopilot}
+            value={cap}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setCap(v);
+              save({ autopilot_daily_cap: v });
+            }}
+          >
+            {[1, 3, 5, 10, 20].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </Row>
+        <Row name="Only people you have written to" text="Anyone else gets a draft for you to send yourself." disabled={!autopilot}>
+          <Switch
+            label="Only people you have written to"
+            disabled={!autopilot}
+            on={knownOnly}
+            onChange={(v) => {
+              setKnownOnly(v);
+              save({ autopilot_known_only: v });
+            }}
+          />
+        </Row>
+      </Group>
+
+      <Group title="Notifications">
+        <Row name="Notify me about" text="macOS notifications for new mail, while Tabellar runs, with the window open or closed.">
+          <select
+            className="input w-auto"
             value={notify}
             onChange={(e) => {
               setNotify(e.target.value);
               save({ notification_level: e.target.value });
             }}
-            className="text-sm bg-field border border-line rounded-lg px-2 py-1.5 text-ink"
           >
             <option value="important">Important and action needed</option>
             <option value="all">All new mail</option>
             <option value="none">Nothing</option>
           </select>
-        </SettingRow>
-        <SettingRow label="Show sender and summary" description="Off shows only that something arrived, for privacy on a shared screen.">
-          <Toggle
-            value={preview}
+        </Row>
+        <Row name="Show sender and summary" text="Off shows only that something arrived, for privacy on a shared screen.">
+          <Switch
+            label="Show sender and summary"
+            on={preview}
             onChange={(v) => {
               setPreview(v);
               save({ notification_preview: v });
             }}
           />
-        </SettingRow>
-      </SectionCard>
+        </Row>
+      </Group>
 
-      <SectionLabel>Running in the background</SectionLabel>
-      <SectionCard>
-        <SettingRow label="Start at login" description="Keeps Tabellar running after you close this window and the terminal, and restarts it if it stops unexpectedly.">
-          {autostart === null ? (
-            <Icon name="progress_activity" size={18} className="animate-spin text-ink3" />
-          ) : (
-            <Toggle value={autostart} onChange={toggleAutostart} />
-          )}
-        </SettingRow>
-      </SectionCard>
+      <Group title="Running in the background">
+        <Row name="Start at login" text="Keeps Tabellar running after you close this window and the terminal, and restarts it if it stops unexpectedly.">
+          {autostart === null ? <span className="skel block h-[18px] w-8" aria-label="Loading" /> : <Switch label="Start at login" on={autostart} onChange={toggleAutostart} />}
+        </Row>
+      </Group>
     </>
   );
 }
 
-function SettingRow({
-  label,
-  description,
-  children,
-}: {
-  label: string;
-  description?: string;
-  children: React.ReactNode;
-}) {
+// The signature body is edited in place. Its HTML is set once when the
+// editor opens, so typing does not reset the caret.
+function SignatureBody({ initial, onChange }: { initial: string; onChange: (html: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.innerHTML = sanitizeSignatureHtml(initial);
+  }, []);
+  const command = (cmd: string, value?: string) => document.execCommand(cmd, false, value);
+  const tools: { cmd: string; icon: string; title: string }[] = [
+    { cmd: "bold", icon: "format_bold", title: "Bold" },
+    { cmd: "italic", icon: "format_italic", title: "Italic" },
+    { cmd: "underline", icon: "format_underlined", title: "Underline" },
+  ];
   return (
-    <div className="flex items-center justify-between gap-4 py-4 px-5 border-b border-line last:border-0">
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-ink">{label}</p>
-        {description && (
-          <p className="text-xs text-ink3 mt-0.5 leading-relaxed">
-            {description}
-          </p>
-        )}
+    <div className="rounded-[7px] bg-field focus-within:shadow-[0_0_0_2px_color-mix(in_oklch,var(--wax)_55%,transparent)]">
+      <div className="flex items-center gap-0.5 border-b border-line-soft px-1 py-0.5">
+        {tools.map((t) => (
+          <button
+            key={t.cmd}
+            type="button"
+            className="iconbtn !h-6 !w-6"
+            title={t.title}
+            aria-label={t.title}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              command(t.cmd);
+            }}
+          >
+            <Icon name={t.icon} size={15} />
+          </button>
+        ))}
+        <button
+          type="button"
+          className="iconbtn !h-6 !w-6"
+          title="Insert link"
+          aria-label="Insert link"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            const url = prompt("Link address:");
+            if (url) command("createLink", url);
+          }}
+        >
+          <Icon name="link" size={15} />
+        </button>
+        <button
+          type="button"
+          className="iconbtn !h-6 !w-6"
+          title="Clear formatting"
+          aria-label="Clear formatting"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            command("removeFormat");
+          }}
+        >
+          <Icon name="format_clear" size={15} />
+        </button>
       </div>
-      <div className="shrink-0">{children}</div>
-    </div>
-  );
-}
-
-function Toggle({
-  value,
-  onChange,
-}: {
-  value: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!value)}
-      className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${value ? "bg-wax" : "bg-ink4"}`}
-    >
-      <span
-        className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${value ? "translate-x-5" : ""}`}
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={(e) => onChange((e.target as HTMLDivElement).innerHTML)}
+        className="min-h-[96px] px-2.5 py-2 text-[13px] leading-[1.6] text-ink outline-none"
+        aria-label="Signature"
       />
-    </button>
-  );
-}
-
-function SectionCard({
-  children,
-  className = "",
-  allowOverflow = false,
-}: {
-  children: React.ReactNode;
-  className?: string;
-  allowOverflow?: boolean;
-}) {
-  return (
-    <div
-      className={`rounded-xl border border-line ${allowOverflow ? "overflow-visible" : "overflow-hidden"} ${className}`}
-    >
-      {children}
     </div>
-  );
-}
-
-function SectionLabel({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <p
-      className={`text-[11px] font-semibold uppercase tracking-widest px-1 pt-1 pb-1 text-ink3 ${className}`}
-    >
-      {children}
-    </p>
   );
 }
 
 export default function SettingsView() {
-  const {
-    user,
-    profile,
-    updateProfile,
-    addToast,
-  } = useApp();
+  const { user, profile, updateProfile, addToast, theme, setTheme, setView, mail } = useApp();
   const supabase = createClient();
   const { contacts } = useContacts(user.id);
 
   const [activeTab, setActiveTab] = useState<TabId>("account");
+  // Below md the section list and the chosen section show one at a time.
+  const [listOpen, setListOpen] = useState(false);
 
   // Delegation rules
   const [delegations, setDelegations] = useState<DelegationRule[]>([]);
@@ -516,46 +388,27 @@ export default function SettingsView() {
   const [saved, setSaved] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialLoadRef = useRef(true);
-  const [gmailAccounts, setGmailAccounts] = useState<
-    { id: string; gmail_address: string }[]
-  >([]);
+  const [gmailAccounts, setGmailAccounts] = useState<{ id: string; gmail_address: string }[]>([]);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
   const [removingAccount, setRemovingAccount] = useState<string | null>(null);
   const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([]);
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
-  const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(
-    null,
-  );
+  const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(null);
   const [showTemplateEditor, setShowTemplateEditor] = useState(false);
-  const [templateForm, setTemplateForm] = useState<{
-    name: string;
-    subject: string;
-    body_html: string;
-  }>({ name: "", subject: "", body_html: "" });
+  const [templateForm, setTemplateForm] = useState<{ name: string; subject: string; body_html: string }>({ name: "", subject: "", body_html: "" });
   const [savingTemplate, setSavingTemplate] = useState(false);
 
   // Signatures
   const [signatures, setSignatures] = useState<EmailSignature[]>([]);
   const [signaturesLoaded, setSignaturesLoaded] = useState(false);
-  const [editingSignature, setEditingSignature] =
-    useState<EmailSignature | null>(null);
-  const [sigForm, setSigForm] = useState<{
-    name: string;
-    html: string;
-    is_default: boolean;
-    gmail_account_id: string;
-  }>({ name: "", html: "", is_default: false, gmail_account_id: "" });
+  const [editingSignature, setEditingSignature] = useState<EmailSignature | null>(null);
+  const [sigForm, setSigForm] = useState<{ name: string; html: string; is_default: boolean; gmail_account_id: string }>({ name: "", html: "", is_default: false, gmail_account_id: "" });
   const [savingSignature, setSavingSignature] = useState(false);
   const [showSigEditor, setShowSigEditor] = useState(false);
 
   // Writing style
   const [styleNotes, setStyleNotes] = useState(profile?.style_notes || "");
-  const [detectedStyle, setDetectedStyle] = useState<{
-    greeting_style: string;
-    closing_style: string;
-    tone: string;
-    avg_length: string;
-    last_learned_at: string;
-  } | null>(null);
+  const [detectedStyle, setDetectedStyle] = useState<{ greeting_style: string; closing_style: string; tone: string; avg_length: string; last_learned_at: string } | null>(null);
   const [styleGreeting, setStyleGreeting] = useState("");
   const [styleClosing, setStyleClosing] = useState("");
   const [styleTone, setStyleTone] = useState("");
@@ -570,25 +423,16 @@ export default function SettingsView() {
         data: { session },
       } = await supabase.auth.getSession();
       if (!session?.access_token) {
-        addToast("error", "Session expired. Please sign in again.");
+        addToast("error", "This window lost its session. Open it again with tabellar open.");
         return;
       }
-      const res = await fetch(
-        `/api/learn-style`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-          },
-        },
-      );
+      const res = await fetch(`/api/learn-style`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        addToast(
-          "error",
-          err.error || "Couldn't detect style yet. Send a few emails first.",
-        );
+        addToast("error", err.error || "Could not learn your style yet. Send a few emails first, then try again.");
         return;
       }
       const data = await res.json();
@@ -604,12 +448,9 @@ export default function SettingsView() {
       setStyleClosing(s.closing_style || "");
       setStyleTone(s.tone || "");
       setStyleLength(s.avg_length || "");
-      addToast(
-        "success",
-        `Writing style detected from ${data.sample_count} sent emails.`,
-      );
+      addToast("success", `Learned your style from ${data.sample_count} sent emails`);
     } catch {
-      addToast("error", "Could not detect writing style.");
+      addToast("error", "Could not learn your style. Check that Tabellar is running, then try again.");
     } finally {
       setDetectingStyle(false);
     }
@@ -622,14 +463,10 @@ export default function SettingsView() {
   const [workDnd, setWorkDnd] = useState(false);
 
   // Briefing scope
-  const [briefingScope, setBriefingScope] = useState(
-    profile?.briefing_scope || "today_new",
-  );
+  const [briefingScope, setBriefingScope] = useState(profile?.briefing_scope || "today_new");
 
   // Calendar invites
-  const [calendarSendInvites, setCalendarSendInvites] = useState(
-    profile?.calendar_send_invites !== false,
-  );
+  const [calendarSendInvites, setCalendarSendInvites] = useState(profile?.calendar_send_invites !== false);
 
   const loadGmailAccounts = () => {
     supabase
@@ -637,39 +474,33 @@ export default function SettingsView() {
       .select("id, gmail_address")
       .eq("user_id", user.id)
       .eq("is_active", true)
-      .then(({ data }) =>
-        setGmailAccounts(
-          (data || []) as { id: string; gmail_address: string }[],
-        ),
-      );
+      .then(({ data }) => {
+        setGmailAccounts((data || []) as { id: string; gmail_address: string }[]);
+        setAccountsLoaded(true);
+      });
   };
 
   const loadDelegations = async () => {
-    const { data } = await supabase
-      .from("delegation_rules")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("weight", { ascending: false })
-      .limit(200);
+    const { data } = await supabase.from("delegation_rules").select("*").eq("user_id", user.id).order("weight", { ascending: false }).limit(200);
     setDelegations(data || []);
     setDelegationsLoaded(true);
   };
 
   const loadTemplates = async () => {
-    const { data } = await supabase
-      .from("email_templates")
-      .select("id, name, subject, body_html")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
+    const { data } = await supabase.from("email_templates").select("id, name, subject, body_html").eq("user_id", user.id).order("created_at", { ascending: false });
     setEmailTemplates(data || []);
     setTemplatesLoaded(true);
   };
 
-  const deleteTemplate = async (id: string) => {
-    await supabase.from("email_templates").delete().eq("id", id);
-    setEmailTemplates((prev) => prev.filter((t) => t.id !== id));
-    if (editingTemplate?.id === id) setShowTemplateEditor(false);
-    addToast("success", "Template deleted");
+  const deleteTemplate = async (t: EmailTemplate) => {
+    await supabase.from("email_templates").delete().eq("id", t.id);
+    setEmailTemplates((prev) => prev.filter((x) => x.id !== t.id));
+    if (editingTemplate?.id === t.id) setShowTemplateEditor(false);
+    const undo = async () => {
+      const { data } = await supabase.from("email_templates").insert({ user_id: user.id, name: t.name, subject: t.subject, body_html: t.body_html }).select("id, name, subject, body_html");
+      if (data?.[0]) setEmailTemplates((prev) => [data[0], ...prev]);
+    };
+    addToast("info", `Template "${t.name}" deleted`, { action: { label: "Undo", onClick: undo } });
   };
 
   const openNewTemplate = () => {
@@ -680,60 +511,35 @@ export default function SettingsView() {
 
   const openEditTemplate = (t: EmailTemplate) => {
     setEditingTemplate(t);
-    setTemplateForm({
-      name: t.name,
-      subject: t.subject || "",
-      body_html: t.body_html,
-    });
+    setTemplateForm({ name: t.name, subject: t.subject || "", body_html: t.body_html });
     setShowTemplateEditor(true);
   };
 
   const saveTemplate = async () => {
-    if (!templateForm.name.trim()) {
-      addToast("error", "Template name is required");
-      return;
-    }
-    if (!templateForm.body_html.trim()) {
-      addToast("error", "Template body is required");
-      return;
-    }
+    if (!templateForm.name.trim()) return addToast("error", "Give the template a name.");
+    if (!templateForm.body_html.trim()) return addToast("error", "Write the template's text first.");
     setSavingTemplate(true);
     if (editingTemplate) {
       const { data } = await supabase
         .from("email_templates")
-        .update({
-          name: templateForm.name,
-          subject: templateForm.subject || null,
-          body_html: templateForm.body_html,
-        })
+        .update({ name: templateForm.name, subject: templateForm.subject || null, body_html: templateForm.body_html })
         .eq("id", editingTemplate.id)
         .select("id, name, subject, body_html");
       if (data?.[0]) {
-        setEmailTemplates((prev) =>
-          prev.map((t) => (t.id === editingTemplate.id ? data[0] : t)),
-        );
+        setEmailTemplates((prev) => prev.map((t) => (t.id === editingTemplate.id ? data[0] : t)));
         setShowTemplateEditor(false);
-        addToast("success", "Template updated");
-      } else {
-        addToast("error", "Failed to update template");
-      }
+        addToast("success", "Template saved");
+      } else addToast("error", "Could not save the template. Try again.");
     } else {
       const { data } = await supabase
         .from("email_templates")
-        .insert({
-          user_id: user.id,
-          name: templateForm.name,
-          subject: templateForm.subject || null,
-          body_html: templateForm.body_html,
-        })
+        .insert({ user_id: user.id, name: templateForm.name, subject: templateForm.subject || null, body_html: templateForm.body_html })
         .select("id, name, subject, body_html");
       if (data?.[0]) {
         setEmailTemplates((prev) => [data[0], ...prev]);
         setShowTemplateEditor(false);
         addToast("success", "Template created");
-      } else {
-        addToast("error", "Failed to create template");
-      }
+      } else addToast("error", "Could not create the template. Try again.");
     }
     setSavingTemplate(false);
   };
@@ -744,12 +550,7 @@ export default function SettingsView() {
     } = await supabase.auth.getSession();
     if (!session) return;
     try {
-      const res = await fetch(
-        `/api/signatures`,
-        {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        },
-      );
+      const res = await fetch(`/api/signatures`, { headers: { Authorization: `Bearer ${session.access_token}` } });
       const json = await res.json();
       setSignatures(json.signatures ?? []);
     } catch {
@@ -760,10 +561,10 @@ export default function SettingsView() {
 
   const openNewSignature = () => {
     setEditingSignature(null);
-    const displayName = profile?.display_name || "Your Name";
+    const displayName = profile?.display_name || "Your name";
     setSigForm({
       name: "",
-      html: `<p><strong>${displayName}</strong><br />Your Title<br />Your Company</p>`,
+      html: `<p><strong>${displayName}</strong><br />Your title<br />Your company</p>`,
       is_default: signatures.length === 0,
       gmail_account_id: gmailAccounts[0]?.id || "",
     });
@@ -772,139 +573,96 @@ export default function SettingsView() {
 
   const openEditSignature = (sig: EmailSignature) => {
     setEditingSignature(sig);
-    setSigForm({
-      name: sig.name,
-      html: sig.html,
-      is_default: sig.is_default,
-      gmail_account_id: sig.gmail_account_id || "",
-    });
+    setSigForm({ name: sig.name, html: sig.html, is_default: sig.is_default, gmail_account_id: sig.gmail_account_id || "" });
     setShowSigEditor(true);
   };
 
-  const saveSignature = async () => {
-    if (!sigForm.name.trim()) {
-      addToast("error", "Signature name is required");
-      return;
-    }
-    setSavingSignature(true);
+  const postSignature = async (body: { name: string; html: string; is_default: boolean; gmail_account_id: string | null }, id?: string) => {
     const {
       data: { session },
     } = await supabase.auth.getSession();
-    if (!session) {
-      setSavingSignature(false);
-      return;
-    }
+    if (!session) throw new Error("This window lost its session");
+    const res = await fetch(id ? `/api/signatures/${id}` : `/api/signatures`, {
+      method: id ? "PATCH" : "POST",
+      headers: { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return res.json();
+  };
+
+  const saveSignature = async () => {
+    if (!sigForm.name.trim()) return addToast("error", "Give the signature a name.");
+    setSavingSignature(true);
     try {
-      const body = {
-        name: sigForm.name,
-        html: sanitizeSignatureHtml(sigForm.html),
-        is_default: sigForm.is_default,
-        gmail_account_id: sigForm.gmail_account_id || null,
-      };
-      const url = editingSignature
-        ? `/api/signatures/${editingSignature.id}`
-        : `/api/signatures`;
-      const res = await fetch(url, {
-        method: editingSignature ? "PATCH" : "POST",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
-      const json = await res.json();
+      const json = await postSignature(
+        { name: sigForm.name, html: sanitizeSignatureHtml(sigForm.html), is_default: sigForm.is_default, gmail_account_id: sigForm.gmail_account_id || null },
+        editingSignature?.id,
+      );
       if (json.signature) {
         if (editingSignature) {
-          setSignatures((prev) =>
-            prev.map((s) =>
-              s.id === editingSignature.id
-                ? json.signature
-                : sigForm.is_default
-                  ? { ...s, is_default: false }
-                  : s,
-            ),
-          );
+          setSignatures((prev) => prev.map((s) => (s.id === editingSignature.id ? json.signature : sigForm.is_default ? { ...s, is_default: false } : s)));
         } else {
-          setSignatures((prev) => [
-            ...(sigForm.is_default
-              ? prev.map((s) => ({ ...s, is_default: false }))
-              : prev),
-            json.signature,
-          ]);
+          setSignatures((prev) => [...(sigForm.is_default ? prev.map((s) => ({ ...s, is_default: false })) : prev), json.signature]);
         }
         setShowSigEditor(false);
-        addToast(
-          "success",
-          editingSignature ? "Signature updated" : "Signature created",
-        );
-      } else {
-        addToast("error", json.error || "Failed to save signature");
-      }
+        addToast("success", editingSignature ? "Signature saved" : "Signature created");
+      } else addToast("error", json.error || "Could not save the signature. Try again.");
     } catch {
-      addToast("error", "Failed to save signature");
+      addToast("error", "Could not save the signature. Try again.");
     }
     setSavingSignature(false);
   };
 
-  const deleteSignature = async (id: string) => {
+  const deleteSignature = async (sig: EmailSignature) => {
     const {
       data: { session },
     } = await supabase.auth.getSession();
     if (!session) return;
-    await fetch(
-      `/api/signatures/${id}`,
-      {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      },
-    );
-    setSignatures((prev) => prev.filter((s) => s.id !== id));
-    addToast("success", "Signature deleted");
+    await fetch(`/api/signatures/${sig.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${session.access_token}` } });
+    setSignatures((prev) => prev.filter((s) => s.id !== sig.id));
+    if (editingSignature?.id === sig.id) setShowSigEditor(false);
+    const undo = async () => {
+      const json = await postSignature({ name: sig.name, html: sig.html, is_default: sig.is_default, gmail_account_id: sig.gmail_account_id }).catch(() => ({}) as { signature?: EmailSignature });
+      if (json.signature) setSignatures((prev) => [...prev, json.signature]);
+    };
+    addToast("info", `Signature "${sig.name}" deleted`, { action: { label: "Undo", onClick: undo } });
   };
 
   const addDelegation = async () => {
     if (!newPattern.trim() || !newTargetEmail.trim()) return;
-    const { data } = await supabase
-      .from("delegation_rules")
-      .insert({
-        user_id: user.id,
-        pattern: newPattern.trim(),
-        target_email: newTargetEmail.trim(),
-      })
-      .select();
+    const { data } = await supabase.from("delegation_rules").insert({ user_id: user.id, pattern: newPattern.trim(), target_email: newTargetEmail.trim() }).select();
     if (data?.[0]) setDelegations((prev) => [data[0], ...prev]);
+    else addToast("error", "Could not add that rule. Try again.");
     setNewPattern("");
     setNewTargetEmail("");
   };
 
   const toggleDelegation = async (id: string, enabled: boolean) => {
-    await supabase
-      .from("delegation_rules")
-      .update({ is_enabled: !enabled })
-      .eq("id", id);
-    setDelegations((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, is_enabled: !enabled } : d)),
-    );
+    await supabase.from("delegation_rules").update({ is_enabled: !enabled }).eq("id", id);
+    setDelegations((prev) => prev.map((d) => (d.id === id ? { ...d, is_enabled: !enabled } : d)));
   };
 
-  const deleteDelegation = async (id: string) => {
-    await supabase.from("delegation_rules").delete().eq("id", id);
-    setDelegations((prev) => prev.filter((d) => d.id !== id));
+  const deleteDelegation = async (d: DelegationRule) => {
+    await supabase.from("delegation_rules").delete().eq("id", d.id);
+    setDelegations((prev) => prev.filter((x) => x.id !== d.id));
+    const undo = async () => {
+      const { data } = await supabase.from("delegation_rules").insert({ user_id: user.id, pattern: d.pattern, target_email: d.target_email, is_enabled: d.is_enabled, weight: d.weight }).select();
+      if (data?.[0]) setDelegations((prev) => [data[0], ...prev]);
+    };
+    addToast("info", "Forwarding rule removed", { action: { label: "Undo", onClick: undo } });
   };
 
-  const removeGmailAccount = async (accountId: string) => {
+  const removeGmailAccount = async (accountId: string, address: string) => {
+    const last = gmailAccounts.length === 1;
+    if (!window.confirm(`Remove ${address || "this account"} from Tabellar?\n\nIts mail stays in Gmail and Tabellar stops reading it.${last ? " It is the only account, so this window signs out." : ""}`)) return;
     setRemovingAccount(accountId);
     try {
-      const apiUrl = "/api";
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      await fetch(`${apiUrl}/remove-gmail-account`, {
+      await fetch(`/api/remove-gmail-account`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
         body: JSON.stringify({ account_id: accountId }),
       });
       const remaining = gmailAccounts.filter((a) => a.id !== accountId);
@@ -915,9 +673,19 @@ export default function SettingsView() {
         loadGmailAccounts();
       }
     } catch {
-      /* ignore */
+      addToast("error", "Could not remove the account. Check that Tabellar is running, then try again.");
     }
     setRemovingAccount(null);
+  };
+
+  // Wipes what Tabellar stored and learned; Gmail and the connected accounts stay.
+
+
+  const chooseTheme = async (next: "light" | "dark") => {
+    setTheme(next);
+    updateProfile({ theme: next });
+    const { error } = await supabase.from("profiles").update({ theme: next }).eq("id", user.id);
+    if (error) addToast("error", "Could not save the appearance. It applies until the window is reloaded.");
   };
 
   useEffect(() => {
@@ -925,20 +693,12 @@ export default function SettingsView() {
 
     supabase
       .from("style_profiles")
-      .select(
-        "greeting_style, closing_style, tone, avg_length, last_learned_at",
-      )
+      .select("greeting_style, closing_style, tone, avg_length, last_learned_at")
       .eq("user_id", user.id)
       .maybeSingle()
       .then(({ data }) => {
         if (data) {
-          const s = data as {
-            greeting_style: string;
-            closing_style: string;
-            tone: string;
-            avg_length: string;
-            last_learned_at: string;
-          };
+          const s = data as { greeting_style: string; closing_style: string; tone: string; avg_length: string; last_learned_at: string };
           setDetectedStyle(s);
           setStyleGreeting(s.greeting_style || "");
           setStyleClosing(s.closing_style || "");
@@ -948,7 +708,7 @@ export default function SettingsView() {
       });
 
     if (profile?.working_hours) {
-      const wh = profile.working_hours as any;
+      const wh = profile.working_hours as { start?: string; end?: string; days?: number[]; dnd?: boolean };
       if (wh.start) setWorkStart(wh.start);
       if (wh.end) setWorkEnd(wh.end);
       if (wh.days) setWorkDays(wh.days);
@@ -967,33 +727,15 @@ export default function SettingsView() {
       .from("profiles")
       .update({
         style_notes: styleNotes || null,
-        working_hours: {
-          start: workStart,
-          end: workEnd,
-          days: workDays,
-          timezone: detectedTimezone,
-          dnd: workDnd,
-        },
+        working_hours: { start: workStart, end: workEnd, days: workDays, timezone: detectedTimezone, dnd: workDnd },
         briefing_scope: briefingScope,
         calendar_send_invites: calendarSendInvites,
       })
       .eq("id", user.id);
     let styleErr: { message?: string } | null = null;
-    if (
-      detectedStyle ||
-      styleGreeting ||
-      styleClosing ||
-      styleTone ||
-      styleLength
-    ) {
+    if (detectedStyle || styleGreeting || styleClosing || styleTone || styleLength) {
       const res = await supabase.from("style_profiles").upsert(
-        {
-          user_id: user.id,
-          greeting_style: styleGreeting || null,
-          closing_style: styleClosing || null,
-          tone: styleTone || null,
-          avg_length: styleLength || null,
-        },
+        { user_id: user.id, greeting_style: styleGreeting || null, closing_style: styleClosing || null, tone: styleTone || null, avg_length: styleLength || null },
         { onConflict: "user_id" },
       );
       styleErr = res.error;
@@ -1001,20 +743,12 @@ export default function SettingsView() {
     setSaving(false);
     if (profileErr || styleErr) {
       console.error("[settings/autosave] failed:", profileErr ?? styleErr);
-      const hint =
-        profileErr?.message || styleErr?.message || "Failed to save settings";
-      addToast("error", hint);
+      addToast("error", `Could not save your settings: ${profileErr?.message || styleErr?.message || "unknown error"}. Try again.`);
       return;
     }
     updateProfile({
       style_notes: styleNotes || null,
-      working_hours: {
-        start: workStart,
-        end: workEnd,
-        days: workDays,
-        timezone: detectedTimezone,
-        dnd: workDnd,
-      },
+      working_hours: { start: workStart, end: workEnd, days: workDays, timezone: detectedTimezone, dnd: workDnd },
       briefing_scope: briefingScope,
       calendar_send_invites: calendarSendInvites,
     });
@@ -1034,21 +768,18 @@ export default function SettingsView() {
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
-  }, [
-    styleNotes,
-    workStart,
-    workEnd,
-    workDays,
-    workDnd,
-    briefingScope,
-    calendarSendInvites,
-    styleGreeting,
-    styleClosing,
-    styleTone,
-    styleLength,
-  ]);
+  }, [styleNotes, workStart, workEnd, workDays, workDnd, briefingScope, calendarSendInvites, styleGreeting, styleClosing, styleTone, styleLength]);
 
-  const dayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  // Monday first, as the week is read; the stored numbers keep Sunday as 0.
+  const WEEK: [number, string][] = [
+    [1, "Mon"],
+    [2, "Tue"],
+    [3, "Wed"],
+    [4, "Thu"],
+    [5, "Fri"],
+    [6, "Sat"],
+    [0, "Sun"],
+  ];
 
   const connectGmail = async (addAccount = false) => {
     if (addAccount) {
@@ -1065,971 +796,380 @@ export default function SettingsView() {
     }
   };
 
-  return (
-    <div className="flex flex-col h-full overflow-y-auto">
-      {/* Header */}
-      <div className="max-w-xl mx-auto w-full px-6 pt-6 pb-0 shrink-0">
-        <div className="flex items-center justify-between mb-5">
-          <h1 className="text-lg font-bold text-ink">
-            Settings
-          </h1>
-          {(saving || saved) && (
-            <div
-              className={`flex items-center gap-1.5 text-xs font-medium transition-all ${saved ? "text-ok" : "text-ink3"}`}
-            >
-              <Icon name={saving ? "sync" : "check_circle"} size={14} />
-              {saving ? "Saving..." : "Saved"}
-            </div>
-          )}
-        </div>
+  const emptyLine = (text: string) => <p className="py-3 text-ink3">{text}</p>;
+  const loadingLines = (
+    <div className="space-y-3 py-4" aria-busy="true" aria-label="Loading">
+      <span className="skel block h-2.5 w-48" />
+      <span className="skel block h-2.5 w-72" />
+    </div>
+  );
 
-        {/* Tab bar */}
-        <div className="flex gap-0.5 bg-field rounded-xl p-1">
-          {TABS.map((tab) => (
+  const templateEditor = (
+    <form
+      className="space-y-2.5 py-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        saveTemplate();
+      }}
+      onKeyDown={(e) => e.key === "Escape" && setShowTemplateEditor(false)}
+    >
+      <Field label="Name">
+        <input autoFocus className="input" value={templateForm.name} onChange={(e) => setTemplateForm((f) => ({ ...f, name: e.target.value }))} placeholder="Such as Follow-up, Introduction, Thank you" />
+      </Field>
+      <Field label="Subject">
+        <input className="input" value={templateForm.subject} onChange={(e) => setTemplateForm((f) => ({ ...f, subject: e.target.value }))} placeholder="Optional, fills in the subject line" />
+      </Field>
+      <label className="grid grid-cols-[88px_minmax(0,1fr)] gap-x-3">
+        <span className="pt-1.5 text-ink3">Text</span>
+        <textarea className="input resize-y leading-[1.6]" rows={7} value={templateForm.body_html} onChange={(e) => setTemplateForm((f) => ({ ...f, body_html: e.target.value }))} placeholder="What the template says" />
+      </label>
+      <div className="flex items-center gap-2 pl-[100px]">
+        <button type="submit" className="btn btn-pri" disabled={savingTemplate || !templateForm.name.trim() || !templateForm.body_html.trim()}>
+          {savingTemplate ? "Saving" : editingTemplate ? "Save" : "Create template"}
+        </button>
+        <button type="button" className="btn btn-plain" onClick={() => setShowTemplateEditor(false)}>
+          Cancel
+        </button>
+        <span className="flex-1" />
+        {editingTemplate && (
+          <button type="button" className="btn btn-danger" onClick={() => deleteTemplate(editingTemplate)}>
+            Delete
+          </button>
+        )}
+      </div>
+    </form>
+  );
+
+  const signatureEditor = (
+    <form
+      className="space-y-2.5 py-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        saveSignature();
+      }}
+    >
+      <Field label="Name">
+        <input autoFocus className="input" value={sigForm.name} onChange={(e) => setSigForm((f) => ({ ...f, name: e.target.value }))} placeholder="Such as Work" />
+      </Field>
+      {gmailAccounts.length > 1 && (
+        <Field label="Account">
+          <select className="input" value={sigForm.gmail_account_id} onChange={(e) => setSigForm((f) => ({ ...f, gmail_account_id: e.target.value }))}>
+            <option value="">All accounts</option>
+            {gmailAccounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.gmail_address}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      <div className="grid grid-cols-[88px_minmax(0,1fr)] gap-x-3">
+        <span className="pt-1.5 text-ink3">Signature</span>
+        <div>
+          <SignatureBody key={editingSignature?.id ?? "new"} initial={sigForm.html} onChange={(html) => setSigForm((f) => ({ ...f, html }))} />
+          <p className="mt-1.5 text-xs text-ink2">Your contact block, added after your closing line: name, title, company, phone or a link.</p>
+        </div>
+      </div>
+      <div className="grid grid-cols-[88px_minmax(0,1fr)] items-center gap-x-3">
+        <span className="text-ink3">Default</span>
+        <span className="flex items-center gap-2.5 text-ink2">
+          <Switch label="Use by default" on={sigForm.is_default} onChange={(v) => setSigForm((f) => ({ ...f, is_default: v }))} />
+          Added to new emails{gmailAccounts.length > 1 ? " from this account" : ""}
+        </span>
+      </div>
+      <div className="flex items-center gap-2 pl-[100px] pt-1">
+        <button type="submit" className="btn btn-pri" disabled={savingSignature || !sigForm.name.trim()}>
+          {savingSignature ? "Saving" : editingSignature ? "Save" : "Create signature"}
+        </button>
+        <button type="button" className="btn btn-plain" onClick={() => setShowSigEditor(false)}>
+          Cancel
+        </button>
+        <span className="flex-1" />
+        {editingSignature && (
+          <button type="button" className="btn btn-danger" onClick={() => deleteSignature(editingSignature)}>
+            Delete
+          </button>
+        )}
+      </div>
+    </form>
+  );
+
+  const section = SECTIONS.find((s) => s.id === activeTab)!;
+
+  return (
+    <>
+      <ViewBar title="Settings" search={false} right={<span className="text-xs text-ink3" aria-live="polite">{saving ? "Saving" : saved ? "Saved" : ""}</span>} />
+      <div className="flex min-h-0 flex-1">
+        <nav className={`flex-none overflow-y-auto border-line px-2 py-3 md:block md:w-[200px] md:border-r ${listOpen ? "block w-full" : "hidden"}`} aria-label="Settings sections">
+          {SECTIONS.map((s) => (
             <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 flex flex-col items-center gap-0.5 py-2 px-1 rounded-lg text-center transition-all duration-150 ${
-                activeTab === tab.id
-                  ? "bg-canvas text-wax shadow-sm"
-                  : "text-ink3 hover:text-ink"
-              }`}
+              key={s.id}
+              aria-current={activeTab === s.id ? "page" : undefined}
+              onClick={() => {
+                setActiveTab(s.id);
+                setListOpen(false);
+              }}
+              className={`flex h-7 w-full items-center rounded-md px-2 text-left transition-colors duration-150 ${activeTab === s.id ? "bg-sel font-medium text-ink" : "text-ink2 hover:bg-hover"}`}
             >
-              <Icon name={tab.icon} size={18} />
-              <span className="text-[10px] font-semibold tracking-wide">
-                {tab.label}
-              </span>
+              {s.label}
             </button>
           ))}
-        </div>
-      </div>
+        </nav>
 
-      {/* Tab content */}
-      <div className="flex-1 px-6 py-5">
-        <div className="max-w-xl mx-auto space-y-4">
-          {/* ---- ACCOUNT ---- */}
-          {activeTab === "account" && (
-            <>
-              <SectionLabel>Gmail Accounts</SectionLabel>
-              <SectionCard>
-                {gmailAccounts.length === 0 ? (
-                  <div className="p-4 flex items-center gap-3 text-ink3">
-                    <Icon name="error" size={22} />
-                    <p className="text-sm">
-                      No Gmail account connected. Connect one to start fetching
-                      emails.
-                    </p>
-                  </div>
-                ) : (
-                  gmailAccounts.map((acc) => (
-                    <div
-                      key={acc.id}
-                      className="p-3 flex items-center gap-3 border-b border-line last:border-0"
-                    >
-                      <Icon name="check_circle" size={20} className="text-ok" />
-                      <p className="text-sm font-medium text-ink flex-1 truncate">
-                        {acc.gmail_address || "Connected account"}
-                      </p>
-                      <button
-                        onClick={() => connectGmail(false)}
-                        title="Re-connect"
-                        className="p-1.5 rounded-lg hover:bg-field text-ink3"
-                      >
-                        <Icon name="sync" size={16} />
-                      </button>
-                      <button
-                        onClick={() => removeGmailAccount(acc.id)}
-                        disabled={removingAccount === acc.id}
-                        title="Remove"
-                        className="p-1.5 rounded-lg hover:bg-danger-soft text-danger disabled:opacity-50"
-                      >
-                        <Icon name={removingAccount === acc.id
-                            ? "hourglass_top"
-                            : "close"} size={16} />
-                      </button>
-                    </div>
-                  ))
-                )}
-                <div className="p-3 border-t border-line">
-                  <button
-                    onClick={() => connectGmail(gmailAccounts.length > 0)}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-dashed border-line text-sm text-ink3 hover:border-wax hover:text-wax transition-colors"
-                  >
-                    <Icon name="add" size={18} />
-                    {gmailAccounts.length === 0
-                      ? "Connect Gmail"
-                      : "Add another account"}
-                  </button>
-                </div>
-              </SectionCard>
-            </>
-          )}
+        <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto md:block ${listOpen ? "hidden" : "block"}`}>
+          <div className="max-w-[640px] px-5 pb-12 pt-5 md:px-8">
+            <button className="link mb-3 md:hidden" onClick={() => setListOpen(true)}>
+              All settings
+            </button>
+            <h2 className="bar-title mb-5">{section.label}</h2>
 
-          {activeTab === "background" && <BackgroundSettings />}
-
-          {/* ---- AI & WRITING ---- */}
-          {activeTab === "ai" && (
-            <>
-              <SectionLabel>Model</SectionLabel>
-              <SectionCard allowOverflow>
-                <div className="p-4">
-                  <ModelSettings />
-                </div>
-              </SectionCard>
-
-              <SectionLabel>Writing Style</SectionLabel>
-              <SectionCard>
-                <div className="p-4 border-b border-line">
-                  <div className="flex items-center justify-between gap-2 mb-3">
-                    <div className="flex items-center gap-2">
-                      <Icon name="auto_awesome" size={15} className="text-wax" />
-                      <span className="text-xs font-medium text-wax">
-                        {detectedStyle
-                          ? "Auto-detected from your sent emails"
-                          : "Detect from your sent emails or set manually"}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleDetectStyle}
-                      disabled={detectingStyle}
-                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-wax text-on-wax hover:opacity-90 disabled:opacity-50 transition-opacity"
-                    >
-                      <Icon name={detectingStyle ? "progress_activity" : "auto_fix"} size={13} className={`${detectingStyle ? " animate-spin" : ""}`} />
-                      {detectingStyle
-                        ? "Detecting..."
-                        : detectedStyle
-                          ? "Redetect"
-                          : "Detect now"}
+            {activeTab === "account" && (
+              <>
+                <Group
+                  title="Gmail accounts"
+                  right={
+                    <button className="btn btn-sm" onClick={() => connectGmail(gmailAccounts.length > 0)}>
+                      {gmailAccounts.length === 0 ? "Connect Gmail" : "Add an account"}
                     </button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    {[
-                      {
-                        label: "Greeting",
-                        value: styleGreeting,
-                        set: setStyleGreeting,
-                        placeholder: "e.g. Hi",
-                      },
-                      {
-                        label: "Closing",
-                        value: styleClosing,
-                        set: setStyleClosing,
-                        placeholder: "e.g. Best regards",
-                      },
-                      {
-                        label: "Tone",
-                        value: styleTone,
-                        set: setStyleTone,
-                        placeholder: "e.g. casual",
-                      },
-                      {
-                        label: "Length",
-                        value: styleLength,
-                        set: setStyleLength,
-                        placeholder: "e.g. short",
-                      },
-                    ].map(({ label, value, set, placeholder }) => (
-                      <div key={label} className="flex flex-col gap-1">
-                        <span className="text-xs text-ink3">
-                          {label}
-                        </span>
-                        <input
-                          type="text"
-                          value={value}
-                          onChange={(e) => set(e.target.value)}
-                          placeholder={placeholder}
-                          className="px-2 py-1.5 rounded-lg border border-line bg-transparent text-xs font-medium text-ink placeholder:text-ink3 focus:outline-none focus:ring-1 focus:ring-wax"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  {!detectedStyle &&
-                    !styleGreeting &&
-                    !styleClosing &&
-                    !styleTone &&
-                    !styleLength && (
-                      <p className="text-[11px] text-ink3 mt-2">
-                        Style not yet detected. Click Detect now, or fill these
-                        fields manually.
-                      </p>
-                    )}
-                </div>
-                <div className="p-4">
-                  <p className="text-xs text-ink3 mb-3">
-                    Override or add context the AI can&apos;t detect, e.g.
-                    &quot;Always sign off with &apos;Best, George&apos;&quot; or
-                    &quot;Never use bullet points&quot;.
-                  </p>
-                  <textarea
-                    value={styleNotes}
-                    onChange={(e) => setStyleNotes(e.target.value)}
-                    placeholder="e.g. Always sign off with 'Best, George'. Never use bullet points."
-                    rows={3}
-                    className="w-full px-3 py-2 rounded-lg border border-line bg-transparent text-sm text-ink placeholder:text-ink3 focus:outline-none focus:ring-1 focus:ring-wax resize-none"
-                  />
-                </div>
-              </SectionCard>
-            </>
-          )}
-
-          {/* ---- SCHEDULE ---- */}
-          {activeTab === "schedule" && (
-            <>
-              <SectionLabel>Working Hours</SectionLabel>
-              <SectionCard allowOverflow>
-                <div className="p-4 border-b border-line">
-                  <p className="text-xs font-medium text-ink3 mb-2">
-                    Work Days
-                  </p>
-                  <div className="flex gap-1.5">
-                    {dayLabels.map((day, i) => (
-                      <button
-                        key={i}
-                        onClick={() =>
-                          setWorkDays((prev) =>
-                            prev.includes(i)
-                              ? prev.filter((d) => d !== i)
-                              : [...prev, i],
-                          )
-                        }
-                        className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                          workDays.includes(i)
-                            ? "bg-wax text-on-wax"
-                            : "bg-field text-ink3 hover:bg-sel"
-                        }`}
-                      >
-                        {day}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="p-4 overflow-visible">
-                  <p className="text-xs font-medium text-ink3 mb-2">
-                    Hours
-                  </p>
-                  <div className="flex items-center gap-3 overflow-visible">
-                    <div className="flex-1 overflow-visible">
-                      <label className="text-[10px] text-ink3 uppercase tracking-wide">
-                        Start
-                      </label>
-                      <TimePickerAmPm
-                        value={workStart}
-                        onChange={setWorkStart}
-                      />
-                    </div>
-                    <span className="text-ink3 mt-6 text-sm">to</span>
-                    <div className="flex-1 overflow-visible">
-                      <label className="text-[10px] text-ink3 uppercase tracking-wide">
-                        End
-                      </label>
-                      <TimePickerAmPm value={workEnd} onChange={setWorkEnd} />
-                    </div>
-                  </div>
-                </div>
-              </SectionCard>
-            </>
-          )}
-
-          {/* ---- BRIEFING ---- */}
-          {activeTab === "briefing" && (
-            <>
-              <SectionLabel>Daily Briefing Scope</SectionLabel>
-              <SectionCard>
-                <div className="px-4 pt-3 pb-2 border-b border-line">
-                  <p className="text-xs text-ink3">
-                    Choose which emails are included in your AI-generated daily
-                    briefing.
-                  </p>
-                </div>
-                {(
-                  [
-                    {
-                      id: "today_new",
-                      icon: "today",
-                      label: "Today",
-                      desc: "New emails from today only.",
-                    },
-                    {
-                      id: "past_2_days",
-                      icon: "calendar_view_day",
-                      label: "2 days",
-                      desc: "Everything from the last 2 days; good for catching up after a day off.",
-                    },
-                    {
-                      id: "past_week",
-                      icon: "date_range",
-                      label: "Week",
-                      desc: "Emails from the last 7 days for a broader overview.",
-                    },
-                    {
-                      id: "all_recent",
-                      icon: "inbox",
-                      label: "Full inbox",
-                      desc: "Your 40 most recent emails regardless of date.",
-                    },
-                  ] as const
-                ).map((opt, i, arr) => (
-                  <button
-                    key={opt.id}
-                    onClick={() => setBriefingScope(opt.id)}
-                    className={`w-full text-left flex items-center gap-3 p-4 transition-colors ${
-                      i < arr.length - 1
-                        ? "border-b border-line"
-                        : ""
-                    } ${briefingScope === opt.id ? "bg-wax-soft" : "hover:bg-hover"}`}
-                  >
-                    <Icon name={opt.icon} size={20} className={`${briefingScope === opt.id ? "text-wax" : "text-ink3"}`} />
-                    <div className="flex-1">
-                      <p
-                        className={`text-sm font-medium ${briefingScope === opt.id ? "text-wax" : "text-ink"}`}
-                      >
-                        {opt.label}
-                      </p>
-                      <p className="text-xs text-ink3 mt-0.5">
-                        {opt.desc}
-                      </p>
-                    </div>
-                    <div
-                      className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${briefingScope === opt.id ? "border-wax" : "border-line"}`}
-                    >
-                      {briefingScope === opt.id && (
-                        <div className="w-2 h-2 rounded-full bg-wax" />
-                      )}
-                    </div>
-                  </button>
-                ))}
-              </SectionCard>
-
-              <SectionLabel>Calendar</SectionLabel>
-              <SectionCard>
-                <SettingRow
-                  label="Send calendar invites to attendees"
-                  description="When enabled, attendees receive Google Calendar notification emails when you create or update meetings."
+                  }
                 >
-                  <Toggle
-                    value={calendarSendInvites}
-                    onChange={setCalendarSendInvites}
-                  />
-                </SettingRow>
-              </SectionCard>
-            </>
-          )}
+                  {!accountsLoaded
+                    ? loadingLines
+                    : gmailAccounts.length === 0
+                      ? emptyLine("No Gmail account is connected. Connect one and Tabellar starts fetching your mail.")
+                      : gmailAccounts.map((acc) => (
+                          <Row key={acc.id} name={acc.gmail_address || "Connected account"} text="Tabellar reads this mailbox and acts on it at the level you set under Engine.">
+                            <button className="btn" onClick={() => connectGmail(false)}>
+                              Reconnect
+                            </button>
+                            <button className="btn btn-danger" disabled={removingAccount === acc.id} onClick={() => removeGmailAccount(acc.id, acc.gmail_address)}>
+                              {removingAccount === acc.id ? "Removing" : "Remove"}
+                            </button>
+                          </Row>
+                        ))}
+                </Group>
 
-          {/* ---- AUTOMATION ---- */}
-          {activeTab === "automation" && (
-            <>
-              <SectionLabel>Delegation Rules</SectionLabel>
-              <SectionCard>
-                <div className="p-4 border-b border-line bg-hover space-y-3">
-                  <p className="text-xs text-ink3">
-                    When an email matches the pattern, it will be flagged for
-                    forwarding to the target address.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <input
-                      type="text"
-                      value={newPattern}
-                      onChange={(e) => setNewPattern(e.target.value)}
-                      placeholder="Pattern (e.g. invoice, support request)"
-                      className="flex-1 min-w-[150px] px-3 py-1.5 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:ring-1 focus:ring-wax"
+                <Group title="Appearance">
+                  <Row name="Theme" text="How this window looks. Notifications follow macOS.">
+                    <Seg
+                      value={theme}
+                      onChange={chooseTheme}
+                      options={[
+                        { id: "light", label: "Light" },
+                        { id: "dark", label: "Dark" },
+                      ]}
                     />
-                    <EmailField
-                      value={newTargetEmail}
-                      onChange={setNewTargetEmail}
-                      contacts={contacts}
-                      placeholder="Forward to email"
-                      multi={false}
-                      className="flex-1 min-w-[150px]"
-                    />
-                    <button
-                      onClick={addDelegation}
-                      disabled={!newPattern.trim() || !newTargetEmail.trim()}
-                      className="px-4 py-1.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-50"
-                    >
-                      Add
+                  </Row>
+                </Group>
+
+                <Group title="Your data" note="Everything Tabellar keeps is in one file on this Mac. Keys and sign-in tokens are in the macOS Keychain.">
+                  <Row name="Knowledge" text="The people and facts Tabellar has noted from your mail. Drafts and Ask draw on them.">
+                    <button className="btn" onClick={() => setView("relationships")}>
+                      Open Knowledge
                     </button>
-                  </div>
-                </div>
-                {!delegationsLoaded ? (
-                  <div className="p-4 text-sm text-ink3">
-                    Loading...
-                  </div>
-                ) : delegations.length === 0 ? (
-                  <div className="p-8 text-center text-sm text-ink3">
-                    <Icon name="alt_route" size={32} className="block mx-auto mb-2 text-ink4" />
-                    No delegation rules yet.
-                  </div>
-                ) : (
-                  <div className="divide-y divide-line">
-                    {delegations.map((d) => (
-                      <div
-                        key={d.id}
-                        className="flex items-center gap-3 p-3 group"
-                      >
-                        <button
-                          onClick={() => toggleDelegation(d.id, d.is_enabled)}
-                        >
-                          <Icon name="toggle_on" size={22} fill={d.is_enabled} className={`${d.is_enabled ? "text-ok" : "text-ink3"}`} />
-                        </button>
-                        <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
-                          <span className="text-sm text-ink">
-                            &ldquo;{d.pattern}&rdquo;
-                          </span>
-                          <Icon name="arrow_forward" size={16} className="text-ink3" />
-                          <span className="text-sm text-wax">
-                            {d.target_email}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => deleteDelegation(d.id)}
-                          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-danger-soft text-danger transition-opacity"
-                        >
-                          <Icon name="delete" size={18} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </SectionCard>
-            </>
-          )}
+                  </Row>
+                </Group>
+              </>
+            )}
 
-          {activeTab === "templates" && (
-            <>
-              <div className="flex items-center justify-between mb-2">
-                <SectionLabel className="mb-0">Email Templates</SectionLabel>
-                <button
-                  onClick={openNewTemplate}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
-                >
-                  <Icon name="add" size={15} />
-                  New Template
-                </button>
-              </div>
+            {activeTab === "background" && <EngineSettings />}
 
-              {/* Template editor */}
-              {showTemplateEditor && (
-                <SectionCard className="mb-4 border-wax shadow-sm">
-                  <div className="p-4 border-b border-line flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-wax flex items-center justify-center">
-                        <Icon name="description" size={15} fill className="text-white" />
-                      </div>
-                      <p className="text-sm font-semibold text-ink">
-                        {editingTemplate ? "Edit Template" : "New Template"}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setShowTemplateEditor(false)}
-                      className="p-1 rounded hover:bg-field text-ink3 cursor-pointer"
-                    >
-                      <Icon name="close" size={18} />
-                    </button>
-                  </div>
-
-                  <div className="p-4 space-y-4">
-                    {/* Name */}
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
-                        Template Name
-                      </label>
-                      <input
-                        type="text"
-                        value={templateForm.name}
-                        onChange={(e) =>
-                          setTemplateForm((f) => ({
-                            ...f,
-                            name: e.target.value,
-                          }))
-                        }
-                        placeholder="e.g. Follow-up, Introduction, Thank you"
-                        className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-wax transition-colors"
-                      />
-                    </div>
-
-                    {/* Subject */}
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
-                        Subject{" "}
-                        <span className="normal-case font-normal opacity-60">
-                          (optional)
-                        </span>
-                      </label>
-                      <input
-                        type="text"
-                        value={templateForm.subject}
-                        onChange={(e) =>
-                          setTemplateForm((f) => ({
-                            ...f,
-                            subject: e.target.value,
-                          }))
-                        }
-                        placeholder="Pre-fill the subject line when applied"
-                        className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-wax transition-colors"
-                      />
-                    </div>
-
-                    {/* Body */}
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
-                        Body
-                      </label>
-                      <textarea
-                        value={templateForm.body_html}
-                        onChange={(e) =>
-                          setTemplateForm((f) => ({
-                            ...f,
-                            body_html: e.target.value,
-                          }))
-                        }
-                        placeholder="Write your template content here..."
-                        rows={8}
-                        className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-wax transition-colors resize-y font-mono leading-relaxed"
-                      />
-                      <p className="text-[11px] text-ink3 mt-1.5">
-                        This template can only be applied when composing an
-                        email.
-                      </p>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-3 pt-1">
-                      <button
-                        onClick={saveTemplate}
-                        disabled={
-                          savingTemplate ||
-                          !templateForm.name.trim() ||
-                          !templateForm.body_html.trim()
-                        }
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-wax text-on-wax text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
-                      >
-                        {savingTemplate && (
-                          <Icon name="progress_activity" size={15} className="animate-spin" />
-                        )}
-                        {editingTemplate ? "Save Changes" : "Create Template"}
-                      </button>
-                      <button
-                        onClick={() => setShowTemplateEditor(false)}
-                        className="px-4 py-2 rounded-lg border border-line text-sm text-ink3 hover:text-ink hover:bg-field transition-colors cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                </SectionCard>
-              )}
-
-              {/* Template list */}
-              <SectionCard>
-                {!templatesLoaded ? (
-                  <div className="p-6 flex justify-center">
-                    <Icon name="progress_activity" size={20} className="animate-spin text-ink3" />
-                  </div>
-                ) : emailTemplates.length === 0 ? (
-                  <div className="p-8 flex flex-col items-center gap-3 text-center">
-                    <div className="w-12 h-12 rounded-2xl bg-field flex items-center justify-center">
-                      <Icon name="description" size={24} fill className="text-ink3" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-ink opacity-60">
-                        No templates yet
-                      </p>
-                      <p className="text-xs text-ink3 mt-1">
-                        Create one above, or save your current message as a
-                        template while composing.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-line">
-                    {emailTemplates.map((t) => {
-                      const bodyText = t.body_html
-                        .replace(/<[^>]+>/g, " ")
-                        .replace(/\s+/g, " ")
-                        .trim()
-                        .slice(0, 120);
-                      const isEditing =
-                        editingTemplate?.id === t.id && showTemplateEditor;
-                      return (
-                        <div
-                          key={t.id}
-                          className={`flex items-start gap-3 px-4 py-3 transition-colors group ${isEditing ? "bg-wax-soft" : "hover:bg-field"}`}
-                        >
-                          <div className="w-8 h-8 rounded-lg bg-wax-soft flex items-center justify-center shrink-0 mt-0.5">
-                            <Icon name="description" size={16} fill className="text-wax" />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-ink truncate">
-                              {t.name}
-                            </p>
-                            {t.subject && (
-                              <p className="text-xs text-ink3 truncate mt-0.5">
-                                Subject: {t.subject}
-                              </p>
-                            )}
-                            {bodyText && (
-                              <p className="text-xs text-ink3 truncate mt-0.5 opacity-70">
-                                {bodyText}
-                                {bodyText.length === 120 ? "..." : ""}
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1 shrink-0 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                              onClick={() =>
-                                isEditing
-                                  ? setShowTemplateEditor(false)
-                                  : openEditTemplate(t)
-                              }
-                              className="p-1 rounded hover:bg-field text-ink3 hover:text-wax transition-colors"
-                              title={
-                                isEditing ? "Close editor" : "Edit template"
-                              }
-                            >
-                              <Icon name={isEditing ? "close" : "edit"} size={16} />
-                            </button>
-                            <button
-                              onClick={() => deleteTemplate(t.id)}
-                              className="p-1 rounded hover:bg-danger-soft text-ink3 hover:text-danger transition-colors"
-                              title="Delete template"
-                            >
-                              <Icon name="delete" size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </SectionCard>
-            </>
-          )}
-
-          {activeTab === "signatures" && (
-            <>
-              <div className="flex items-center justify-between mb-2">
-                <SectionLabel className="mb-0">Email Signatures</SectionLabel>
-                <button
-                  onClick={openNewSignature}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
-                >
-                  <Icon name="add" size={15} />
-                  New Signature
-                </button>
-              </div>
-
-              {/* Editor / form */}
-              {showSigEditor && (
-                <SectionCard className="mb-4 border-wax shadow-sm">
-                  <div className="p-4 border-b border-line flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-wax flex items-center justify-center">
-                        <Icon name="draw" size={15} fill className="text-white" />
-                      </div>
-                      <p className="text-sm font-semibold text-ink">
-                        {editingSignature ? "Edit Signature" : "New Signature"}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setShowSigEditor(false)}
-                      className="p-1 rounded hover:bg-field text-ink3 cursor-pointer"
-                    >
-                      <Icon name="close" size={18} />
-                    </button>
-                  </div>
-
-                  <div className="p-4 space-y-4">
-                    {/* Name + account row */}
-                    <div className="flex gap-3">
-                      <div className="flex-1">
-                        <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
-                          Name
-                        </label>
-                        <input
-                          type="text"
-                          value={sigForm.name}
-                          onChange={(e) =>
-                            setSigForm((f) => ({ ...f, name: e.target.value }))
-                          }
-                          placeholder="e.g. Work Signature"
-                          className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-wax transition-colors"
-                        />
-                      </div>
-                      {gmailAccounts.length > 1 && (
-                        <div className="flex-1">
-                          <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
-                            Account
-                          </label>
-                          <select
-                            value={sigForm.gmail_account_id}
-                            onChange={(e) =>
-                              setSigForm((f) => ({
-                                ...f,
-                                gmail_account_id: e.target.value,
-                              }))
-                            }
-                            className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-wax transition-colors cursor-pointer"
-                          >
-                            <option value="">All accounts</option>
-                            {gmailAccounts.map((a) => (
-                              <option key={a.id} value={a.id}>
-                                {a.gmail_address}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Rich HTML body */}
-                    <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
-                        Signature Content
-                      </label>
-                      {/* Simple contenteditable-backed rich area */}
-                      <div className="rounded-xl border border-line overflow-hidden">
-                        {/* Mini toolbar */}
-                        <div className="flex items-center gap-1 px-3 py-2 bg-field border-b border-line">
-                          {[
-                            { cmd: "bold", icon: "format_bold", title: "Bold" },
-                            {
-                              cmd: "italic",
-                              icon: "format_italic",
-                              title: "Italic",
-                            },
-                            {
-                              cmd: "underline",
-                              icon: "format_underlined",
-                              title: "Underline",
-                            },
-                          ].map(({ cmd, icon, title }) => (
-                            <button
-                              key={cmd}
-                              type="button"
-                              title={title}
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                document.execCommand(cmd, false);
-                              }}
-                              className="p-1.5 rounded hover:bg-line text-ink transition-colors cursor-pointer"
-                            >
-                              <Icon name={icon} size={16} />
-                            </button>
-                          ))}
-                          <div className="w-px h-5 bg-line mx-1" />
-                          <button
-                            type="button"
-                            title="Insert link"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              const url = prompt("Link URL:");
-                              if (url)
-                                document.execCommand("createLink", false, url);
-                            }}
-                            className="p-1.5 rounded hover:bg-line text-ink transition-colors cursor-pointer"
-                          >
-                            <Icon name="link" size={16} />
-                          </button>
-                          <button
-                            type="button"
-                            title="Clear formatting"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              document.execCommand("removeFormat", false);
-                            }}
-                            className="p-1.5 rounded hover:bg-line text-ink transition-colors cursor-pointer"
-                          >
-                            <Icon name="format_clear" size={16} />
-                          </button>
-                        </div>
-                        <div
-                          contentEditable
-                          suppressContentEditableWarning
-                          dangerouslySetInnerHTML={{
-                            __html: sanitizeSignatureHtml(sigForm.html),
-                          }}
-                          onInput={(e) =>
-                            setSigForm((f) => ({
-                              ...f,
-                              html: (e.target as HTMLDivElement).innerHTML,
-                            }))
-                          }
-                          className="min-h-[120px] p-4 text-sm text-ink focus:outline-none"
-                          style={{ lineHeight: "1.6" }}
-                        />
-                      </div>
-                      <p className="text-[11px] text-ink3 mt-1.5">
-                        Your signature is your contact block, appended after
-                        your closing (e.g. "Best regards,"). Include your name,
-                        title, company, phone, or a link.
-                      </p>
-                    </div>
-
-                    {/* Default toggle */}
-                    <div className="flex items-center justify-between py-3 px-4 rounded-xl bg-field">
-                      <div>
-                        <p className="text-sm font-medium text-ink">
-                          Set as default
-                        </p>
-                        <p className="text-xs text-ink3 mt-0.5">
-                          Auto-append to new emails
-                          {gmailAccounts.length > 1
-                            ? " for the selected account"
-                            : ""}
-                        </p>
-                      </div>
-                      <Toggle
-                        value={sigForm.is_default}
-                        onChange={(v) =>
-                          setSigForm((f) => ({ ...f, is_default: v }))
-                        }
-                      />
-                    </div>
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-3 pt-1">
-                      <button
-                        onClick={saveSignature}
-                        disabled={savingSignature || !sigForm.name.trim()}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-wax text-on-wax text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-all cursor-pointer"
-                      >
-                        {savingSignature ? (
-                          <Icon name="progress_activity" size={16} className="animate-spin" />
-                        ) : (
-                          <Icon name="save" size={16} />
-                        )}
-                        {savingSignature
-                          ? "Saving..."
-                          : editingSignature
-                            ? "Save Changes"
-                            : "Create Signature"}
-                      </button>
-                      <button
-                        onClick={() => setShowSigEditor(false)}
-                        className="px-4 py-2 rounded-lg border border-line text-sm font-medium text-ink hover:bg-field transition-colors cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                </SectionCard>
-              )}
-
-              {/* Signature list */}
-              <SectionCard>
-                {!signaturesLoaded ? (
-                  <div className="p-6 flex justify-center">
-                    <Icon name="progress_activity" size={20} className="animate-spin text-ink3" />
-                  </div>
-                ) : signatures.length === 0 ? (
-                  <div className="p-10 flex flex-col items-center gap-4 text-center">
-                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-wax-soft to-field flex items-center justify-center shadow-sm">
-                      <Icon name="draw" size={28} fill className="text-wax" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-ink">
-                        No signatures yet
-                      </p>
-                      <p className="text-xs text-ink3 mt-1 max-w-xs">
-                        Create a signature with your name, title, company, and
-                        contact info. It appears after your email closing.
-                      </p>
-                    </div>
-                    <button
-                      onClick={openNewSignature}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-wax text-on-wax text-sm font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
-                    >
-                      <Icon name="add" size={16} />
-                      Create your first signature
-                    </button>
-                  </div>
-                ) : (
-                  <div className="divide-y divide-line">
-                    {signatures.map((sig) => {
-                      const accountLabel = sig.gmail_account_id
-                        ? (gmailAccounts.find(
-                            (a) => a.id === sig.gmail_account_id,
-                          )?.gmail_address ?? "Specific account")
-                        : "All accounts";
-                      const preview = sig.html
-                        .replace(/<[^>]+>/g, " ")
-                        .replace(/\s+/g, " ")
-                        .trim()
-                        .slice(0, 100);
-                      return (
-                        <div
-                          key={sig.id}
-                          className="group flex items-start gap-4 px-5 py-4 hover:bg-field transition-colors"
-                        >
-                          {/* Icon */}
-                          <div className="w-9 h-9 rounded-xl bg-wax-soft flex items-center justify-center shrink-0 mt-0.5">
-                            <Icon name="draw" size={18} fill className="text-wax" />
-                          </div>
-
-                          {/* Content */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-sm font-semibold text-ink truncate">
-                                {sig.name}
-                              </p>
-                              {sig.is_default && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-wax text-on-wax text-[10px] font-bold uppercase tracking-wide">
-                                  <Icon name="star" size={10} fill />
-                                  Default
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-xs text-ink3 mt-0.5 flex items-center gap-1">
-                              <Icon name="mail" size={12} />
-                              {accountLabel}
-                            </p>
-                            {preview && (
-                              <p className="text-xs text-ink3 mt-1.5 opacity-70 leading-relaxed line-clamp-2">
-                                {preview}
-                                {preview.length >= 100 ? "..." : ""}
-                              </p>
-                            )}
-                          </div>
-
-                          {/* Actions */}
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                            <button
-                              onClick={() => openEditSignature(sig)}
-                              className="p-1.5 rounded-lg hover:bg-line text-ink3 hover:text-ink transition-all cursor-pointer"
-                              title="Edit signature"
-                            >
-                              <Icon name="edit" size={16} />
-                            </button>
-                            <button
-                              onClick={() => deleteSignature(sig.id)}
-                              className="p-1.5 rounded-lg hover:bg-danger-soft text-ink3 hover:text-danger transition-all cursor-pointer"
-                              title="Delete signature"
-                            >
-                              <Icon name="delete" size={16} />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </SectionCard>
-
-              {/* Info callout */}
-              <div className="mt-3 flex items-start gap-3 px-4 py-3 rounded-xl bg-field border border-line">
-                <Icon name="info" size={16} fill className="text-ink2 mt-0.5" />
-                <p className="text-xs text-ink2 leading-relaxed">
-                  Your signature is appended after the email closing and
-                  contains your contact details. It is added automatically when
-                  you open a new email; you can switch or remove it inside the
-                  Compose window.
+            {activeTab === "ai" && (
+              <section>
+                <p className="mb-4 text-xs leading-normal text-ink2">
+                  Tabellar uses two models. The careful one writes and plans; the fast one reads each new email. Both can run on this Mac or with a cloud provider.
                 </p>
-              </div>
-            </>
-          )}
+                <ModelSettings />
+              </section>
+            )}
+
+            {activeTab === "style" && (
+              <>
+                <Group
+                  title="How you write"
+                  right={
+                    <button className="btn btn-sm" onClick={handleDetectStyle} disabled={detectingStyle}>
+                      {detectingStyle ? "Reading sent mail" : detectedStyle ? "Learn again" : "Learn from sent mail"}
+                    </button>
+                  }
+                  note={
+                    detectedStyle?.last_learned_at
+                      ? `Learned from your sent mail on ${new Date(detectedStyle.last_learned_at).toLocaleDateString([], { day: "numeric", month: "long" })}. Change any of it here.`
+                      : "Tabellar can learn these from your recent sent mail, or you can fill them in."
+                  }
+                >
+                  {(
+                    [
+                      ["Greeting", "How you open an email", styleGreeting, setStyleGreeting, "Such as Hi"],
+                      ["Closing", "How you sign off, before your signature", styleClosing, setStyleClosing, "Such as Best regards"],
+                      ["Tone", "How you sound", styleTone, setStyleTone, "Such as warm and direct"],
+                      ["Length", "How long your replies usually are", styleLength, setStyleLength, "Such as short"],
+                    ] as const
+                  ).map(([name, text, value, set, placeholder]) => (
+                    <Row key={name} name={name} text={text}>
+                      <input className="input w-[200px]" value={value} onChange={(e) => set(e.target.value)} placeholder={placeholder} aria-label={name} />
+                    </Row>
+                  ))}
+                </Group>
+
+                <Group title="Notes for drafts">
+                  <div className="py-3">
+                    <p className="mb-2 text-xs text-ink2">Anything the fields above miss. Tabellar reads this every time it drafts a reply.</p>
+                    <textarea className="input resize-none" rows={3} value={styleNotes} onChange={(e) => setStyleNotes(e.target.value)} placeholder="Such as: Always sign off with 'Best, George'. Never use bullet points." aria-label="Notes for drafts" />
+                  </div>
+                </Group>
+              </>
+            )}
+
+            {activeTab === "signatures" && (
+              <Group
+                title="Signatures"
+                right={
+                  <button className="btn btn-sm" onClick={openNewSignature}>
+                    New signature
+                  </button>
+                }
+                note="The default signature is added when you open a new email. You can switch or remove it while composing."
+              >
+                {showSigEditor && !editingSignature && signatureEditor}
+                {!signaturesLoaded
+                  ? loadingLines
+                  : !signatures.length && !showSigEditor
+                    ? emptyLine("No signatures yet. Make one with your name, title and contact details; it goes after your closing line.")
+                    : signatures.map((sig) =>
+                        showSigEditor && editingSignature?.id === sig.id ? (
+                          <div key={sig.id}>{signatureEditor}</div>
+                        ) : (
+                          <Row
+                            key={sig.id}
+                            name={
+                              <>
+                                {sig.name}
+                                {sig.is_default && <span className="ml-2 text-xs text-ink3">Default</span>}
+                              </>
+                            }
+                            text={
+                              <span className="block truncate">
+                                {sig.gmail_account_id ? (gmailAccounts.find((a) => a.id === sig.gmail_account_id)?.gmail_address ?? "One account") : "All accounts"}, {plainText(sig.html).slice(0, 100) || "empty"}
+                              </span>
+                            }
+                          >
+                            <button className="btn btn-sm" onClick={() => openEditSignature(sig)}>
+                              Edit
+                            </button>
+                          </Row>
+                        ),
+                      )}
+              </Group>
+            )}
+
+            {activeTab === "templates" && (
+              <Group
+                title="Templates"
+                right={
+                  <button className="btn btn-sm" onClick={openNewTemplate}>
+                    New template
+                  </button>
+                }
+                note="Templates are applied while composing an email. You can also save a message you are writing as a template."
+              >
+                {showTemplateEditor && !editingTemplate && templateEditor}
+                {!templatesLoaded
+                  ? loadingLines
+                  : !emailTemplates.length && !showTemplateEditor
+                    ? emptyLine("No templates yet. Make one here for replies you write again and again.")
+                    : emailTemplates.map((t) =>
+                        showTemplateEditor && editingTemplate?.id === t.id ? (
+                          <div key={t.id}>{templateEditor}</div>
+                        ) : (
+                          <Row key={t.id} name={t.name} text={<span className="block truncate">{[t.subject && `Subject: ${t.subject}`, plainText(t.body_html).slice(0, 120)].filter(Boolean).join(". ")}</span>}>
+                            <button className="btn btn-sm" onClick={() => openEditTemplate(t)}>
+                              Edit
+                            </button>
+                          </Row>
+                        ),
+                      )}
+              </Group>
+            )}
+
+            {activeTab === "schedule" && (
+              <Group title="Working hours" note={`Meetings proposes free times inside these hours, in your time zone (${Intl.DateTimeFormat().resolvedOptions().timeZone}).`}>
+                <Row name="Work days">
+                  <div className="seg" role="group" aria-label="Work days">
+                    {WEEK.map(([n, label]) => (
+                      <button key={n} type="button" aria-pressed={workDays.includes(n)} onClick={() => setWorkDays((prev) => (prev.includes(n) ? prev.filter((d) => d !== n) : [...prev, n]))}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </Row>
+                <Row name="Day starts">
+                  <input type="time" className="input w-[120px]" value={workStart} onChange={(e) => e.target.value && setWorkStart(e.target.value)} aria-label="Day starts" />
+                </Row>
+                <Row name="Day ends">
+                  <input type="time" className="input w-[120px]" value={workEnd} onChange={(e) => e.target.value && setWorkEnd(e.target.value)} aria-label="Day ends" />
+                </Row>
+                {workEnd <= workStart && <p className="py-2 text-xs text-warn">The day ends before it starts, so no free time can be proposed.</p>}
+              </Group>
+            )}
+
+            {activeTab === "briefing" && (
+              <>
+                <Group title="What the briefing covers">
+                  <div role="radiogroup" aria-label="What the briefing covers" className="divide-y divide-line-soft">
+                    {(
+                      [
+                        ["today_new", "Today", "New emails from today only."],
+                        ["past_2_days", "Two days", "Everything from the last two days, for catching up after a day off."],
+                        ["past_week", "A week", "Emails from the last seven days, for a broader overview."],
+                        ["all_recent", "Latest 40", "Your 40 most recent emails, whatever their date."],
+                      ] as const
+                    ).map(([id, name, text]) => (
+                      <ChoiceRow key={id} on={briefingScope === id} onClick={() => setBriefingScope(id)} name={name} text={text} />
+                    ))}
+                  </div>
+                </Group>
+
+                <Group title="Calendar">
+                  <Row name="Send invitations to attendees" text="When Tabellar creates or moves a meeting, Google Calendar emails the people invited.">
+                    <Switch label="Send invitations to attendees" on={calendarSendInvites} onChange={setCalendarSendInvites} />
+                  </Row>
+                </Group>
+              </>
+            )}
+
+            {activeTab === "automation" && (
+              <Group title="Forwarding rules" note="When an email matches a rule, Tabellar marks it to be forwarded to that address.">
+                <form
+                  className="flex flex-wrap items-center gap-2 py-2.5"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    addDelegation();
+                  }}
+                >
+                  <input className="input min-w-[150px] flex-1" value={newPattern} onChange={(e) => setNewPattern(e.target.value)} placeholder="Mail about, such as invoices" aria-label="Mail the rule matches" />
+                  <EmailField value={newTargetEmail} onChange={setNewTargetEmail} contacts={contacts} placeholder="Forward to" multi={false} className="min-w-[150px] flex-1" />
+                  <button type="submit" className="btn" disabled={!newPattern.trim() || !newTargetEmail.trim()}>
+                    Add rule
+                  </button>
+                </form>
+                {!delegationsLoaded
+                  ? loadingLines
+                  : !delegations.length
+                    ? emptyLine("No forwarding rules yet.")
+                    : delegations.map((d) => (
+                        <Row key={d.id} name={`"${d.pattern}"`} text={`To ${d.target_email}${d.is_enabled ? "" : ", turned off"}`}>
+                          <Switch label={`Rule for ${d.pattern}`} on={d.is_enabled} onChange={() => toggleDelegation(d.id, d.is_enabled)} />
+                          <button className="iconbtn" aria-label="Remove rule" title="Remove rule" onClick={() => deleteDelegation(d)}>
+                            <Icon name="close" size={15} />
+                          </button>
+                        </Row>
+                      ))}
+              </Group>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

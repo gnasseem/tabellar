@@ -38,7 +38,8 @@ type Filter = "all" | "need" | "going" | "handled" | "filed";
 type Group = "day" | "sender" | "outcome";
 
 const CHUNK = 300;
-const COLUMNS = "!grid grid-cols-[26px_164px_minmax(0,1fr)_172px_46px]";
+// Narrow windows drop the subject column; the status stays.
+const COLUMNS = "!grid grid-cols-[26px_minmax(0,1fr)_minmax(0,auto)_44px] md:grid-cols-[26px_164px_minmax(0,1fr)_172px_46px]";
 const SELECT =
   "id, user_id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, snippet, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed!inner(*)";
 const CATEGORY: Record<string, string> = { important: "Important", "action-required": "Action required", promotions: "Promotions", updates: "Updates" };
@@ -404,7 +405,7 @@ export default function InboxView() {
           {senderName(e)}
           {t.count > 1 && <span className="ml-[5px] text-xs font-normal text-ink3">{t.count}</span>}
         </span>
-        <span className="flex min-w-0 items-center gap-2 pr-4">
+        <span className="hidden min-w-0 items-center gap-2 pr-4 md:flex">
           <b className={`shrink truncate ${filed ? "font-normal text-ink3" : need ? "font-medium text-ink" : "font-normal text-ink"}`}>{e.subject || "(no subject)"}</b>
           {e.has_attachments && <Icon name="attachment" size={13} className="text-ink3" />}
           {!filed && <span className="min-w-0 flex-1 truncate text-ink3">{e.email_processed?.summary || e.snippet}</span>}

@@ -1,67 +1,42 @@
-
 import { SHORTCUT_GROUPS } from "@/lib/shortcuts";
 import Icon from "@/components/Icon";
 
-export default function ShortcutsHelp({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
+export default function ShortcutsHelp({ open, onClose }: { open: boolean; onClose: () => void }) {
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-      onClick={onClose}
-    >
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={onClose}>
       <div
-        className="bg-raised border border-line rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Keyboard shortcuts"
+        className="flex max-h-[85vh] w-full max-w-[820px] flex-col rounded-[12px] bg-raised shadow-pop"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-line shrink-0">
-          <h3 className="text-sm font-semibold text-ink">
-            Keyboard shortcuts
-          </h3>
-          <button
-            onClick={onClose}
-            className="text-ink3 hover:text-ink cursor-pointer"
-            aria-label="Close"
-          >
-            <Icon name="close" size={18} />
+        <div className="flex h-11 flex-none items-center justify-between border-b border-line-soft pl-5 pr-2">
+          <h2 className="bar-title">Keyboard shortcuts</h2>
+          <button className="iconbtn" onClick={onClose} aria-label="Close" title="Close">
+            <Icon name="close" size={16} />
           </button>
         </div>
 
-        <div className="overflow-y-auto px-6 py-4 grid gap-5 sm:grid-cols-2">
+        <div className="columns-1 gap-9 overflow-y-auto px-5 pb-1 pt-4 sm:columns-2 lg:columns-3">
           {SHORTCUT_GROUPS.map((group) => (
-            <div key={group.title}>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-ink3 mb-2">
-                {group.title}
-              </div>
-              <div className="space-y-1.5 text-xs">
-                {group.shortcuts.map((s) => (
-                  <div
-                    key={s.keys}
-                    className="flex items-center justify-between gap-3"
-                  >
-                    <span className="flex gap-1 shrink-0">
-                      {s.keys.split(" ").map((k, i) => (
-                        <kbd
-                          key={i}
-                          className="px-1.5 py-0.5 bg-field border border-line rounded text-ink font-mono text-[11px]"
-                        >
-                          {k}
-                        </kbd>
-                      ))}
-                    </span>
-                    <span className="text-ink3 text-right">
-                      {s.description}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <section key={group.title} className="mb-4 break-inside-avoid">
+              <h3 className="label mb-1">{group.title}</h3>
+              {group.shortcuts.map((s) => (
+                <div key={s.keys} className="flex min-h-7 items-center justify-between gap-3 py-1">
+                  <span className="text-ink2">{s.description}</span>
+                  <span className="flex flex-none gap-1">
+                    {s.keys.split(" ").map((k, i) => (
+                      <kbd key={i} className="kbd">
+                        {k}
+                      </kbd>
+                    ))}
+                  </span>
+                </div>
+              ))}
+            </section>
           ))}
         </div>
       </div>

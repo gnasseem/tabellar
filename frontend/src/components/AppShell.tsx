@@ -179,7 +179,8 @@ export default function AppShell({
   const updateProfile = useCallback((patch: Partial<Profile>) => {
     setProfileState((prev) => ({ ...prev, ...patch }));
   }, []);
-  const [viewRaw, setViewRaw] = useState("inbox");
+  // The view is kept in the address (#todos), so a reload stays where it was.
+  const [viewRaw, setViewRaw] = useState(() => window.location.hash.slice(1) || "inbox");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(
     profile?.theme || "light",
@@ -193,8 +194,14 @@ export default function AppShell({
   const setView = useCallback((v: string) => {
     setViewRaw(v);
     setSearch("");
+    window.history.pushState(null, "", v === "inbox" ? window.location.pathname : `#${v}`);
   }, []);
   const view = viewRaw;
+  useEffect(() => {
+    const follow = () => setViewRaw(window.location.hash.slice(1) || "inbox");
+    window.addEventListener("hashchange", follow);
+    return () => window.removeEventListener("hashchange", follow);
+  }, []);
   const [syncing, setSyncing] = useState(false);
   const [inboxFilters, setInboxFilters] = useState<Set<string>>(new Set());
   const [inboxSort, setInboxSort] = useState<"newest" | "smart">(() => {
@@ -942,7 +949,7 @@ export default function AppShell({
     >
       <div
         className="flex h-screen overflow-hidden bg-canvas text-ink"
-        style={{ marginRight: assistantOpen ? "380px" : "0", transition: "margin-right 0.2s ease" }}
+        style={{ marginRight: assistantOpen ? "380px" : "0" }}
       >
         <Sidebar />
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>

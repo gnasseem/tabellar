@@ -1,4 +1,5 @@
-
+// A field that opens a small calendar popover: pick a day, then the time in
+// quarter hours. The value is local "YYYY-MM-DDTHH:MM".
 import { useState, useEffect, useRef } from "react";
 import Icon from "@/components/Icon";
 
@@ -71,8 +72,13 @@ export default function DateTimePicker({ value, onChange, placeholder = "Select 
         dropRef.current && !dropRef.current.contains(e.target as Node)
       ) setOpen(false);
     };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", esc);
+    };
   }, []);
 
   function emit(day: typeof selDay, h12: number, m: number, ap: "AM" | "PM") {
@@ -89,7 +95,8 @@ export default function DateTimePicker({ value, onChange, placeholder = "Select 
       const spaceBelow = window.innerHeight - rect.bottom;
       const popH = 280;
       const top = spaceBelow >= popH ? rect.bottom + 6 : rect.top - popH - 6;
-      setDropStyle({ position: "fixed", top, left: rect.left, width: Math.max(rect.width, 248) });
+      const width = Math.min(Math.max(rect.width, 248), 280);
+      setDropStyle({ position: "fixed", top, left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)), width });
     }
     setOpen(o => !o);
   }
@@ -143,110 +150,86 @@ export default function DateTimePicker({ value, onChange, placeholder = "Select 
     ? new Date(value).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
     : "";
 
+  const step = "grid h-5 w-5 place-items-center rounded text-ink3 transition-colors duration-150 hover:bg-sel hover:text-ink";
+
   return (
     <div className="relative">
       <button
         ref={btnRef}
         type="button"
         onClick={openPicker}
-        className={`flex items-center gap-2 w-full px-3 py-2.5 rounded-lg border bg-transparent text-sm focus:outline-none transition-colors ${
-          showWarning
-            ? "border-warn-line"
-            : "border-line hover:border-wax"
-        } ${className}`}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className={`flex h-7 w-full items-center gap-2 rounded-[7px] bg-field px-2.5 text-[13px] ${showWarning ? "ring-1 ring-warn-line" : ""} ${className}`}
       >
-        <Icon name="calendar_month" size={15} className="text-wax" />
-        <span className={`flex-1 text-left text-sm ${label ? "text-ink" : "text-ink3"}`}>
-          {label || placeholder}
-        </span>
-        <Icon name={open ? "expand_less" : "expand_more"} size={14} className="text-ink3" />
+        <Icon name="calendar_month" size={15} className="text-ink3" />
+        <span className={`flex-1 truncate text-left ${label ? "text-ink" : "text-ink3"}`}>{label || placeholder}</span>
+        <Icon name={open ? "expand_less" : "expand_more"} size={13} className="text-ink3" />
       </button>
 
       {open && (
-        <div
-          ref={dropRef}
-          style={{ ...dropStyle, zIndex: 9999 }}
-          className="bg-canvas border border-line rounded-xl shadow-xl p-3"
-        >
-          {/* Month nav */}
-          <div className="flex items-center justify-between mb-2">
-            <button type="button" onClick={prevMonth}
-              className="p-0.5 rounded hover:bg-field text-ink3">
-              <Icon name="chevron_left" size={16} />
+        <div ref={dropRef} style={{ ...dropStyle, zIndex: 9999 }} className="pop p-3" role="dialog" aria-label="Pick date and time">
+          {/* Month */}
+          <div className="mb-2 flex items-center justify-between">
+            <button type="button" onClick={prevMonth} className="iconbtn h-6 w-6" aria-label="Previous month">
+              <Icon name="chevron_left" size={15} />
             </button>
-            <span className="text-xs font-semibold text-ink">
+            <span className="font-semibold text-ink">
               {MONTH_NAMES[viewMonth]} {viewYear}
             </span>
-            <button type="button" onClick={nextMonth}
-              className="p-0.5 rounded hover:bg-field text-ink3">
-              <Icon name="chevron_right" size={16} />
+            <button type="button" onClick={nextMonth} className="iconbtn h-6 w-6" aria-label="Next month">
+              <Icon name="chevron_right" size={15} />
             </button>
           </div>
 
-          {/* Day headers */}
-          <div className="grid grid-cols-7 mb-0.5">
-            {DAY_LABELS.map(d => (
-              <div key={d} className="text-center text-[9px] font-bold text-ink3 py-0.5">{d}</div>
+          {/* Days: the chosen one is filled, today is ringed. */}
+          <div className="mb-0.5 grid grid-cols-7">
+            {DAY_LABELS.map((d) => (
+              <div key={d} className="py-0.5 text-center text-[11px] text-ink3">
+                {d}
+              </div>
             ))}
           </div>
-
-          {/* Calendar grid  -  compact circles */}
-          <div className="grid grid-cols-7 gap-0.5 mb-3">
+          <div className="mb-3 grid grid-cols-7 gap-0.5">
             {cells.map((cell, i) => {
               const isSel = selDay && cell.year === selDay.year && cell.month === selDay.month && cell.day === selDay.day;
               const isToday = cell.cur && cell.year === today.getFullYear() && cell.month === today.getMonth() && cell.day === today.getDate();
               return (
-                <button key={i} type="button"
+                <button
+                  key={i}
+                  type="button"
+                  aria-pressed={!!isSel}
+                  aria-current={isToday ? "date" : undefined}
                   onClick={() => selectDay(cell.year, cell.month, cell.day)}
-                  className={`h-7 w-full rounded-md text-[11px] font-medium transition-all ${
-                    isSel
-                      ? "bg-wax text-on-wax"
-                      : isToday
-                      ? "ring-1 ring-wax text-wax font-bold"
-                      : cell.cur
-                      ? "text-ink hover:bg-field"
-                      : "text-ink4"
+                  className={`h-7 w-full rounded-md text-xs transition-colors duration-150 ${
+                    isSel ? "bg-ink font-medium text-canvas" : `${isToday ? "font-medium text-ink ring-1 ring-inset ring-ink3" : cell.cur ? "text-ink" : "text-ink4"} hover:bg-sel`
                   }`}
-                >{cell.day}</button>
+                >
+                  {cell.day}
+                </button>
               );
             })}
           </div>
 
-          {/* Time row  -  compact single horizontal line */}
-          <div className="border-t border-line pt-2.5 flex items-center gap-1.5">
-            <span className="text-[9px] font-bold text-ink3 uppercase tracking-wider mr-auto">Time</span>
-
-            {/* Hour stepper */}
-            <button type="button" onClick={() => stepHour(-1)}
-              className="p-0.5 rounded hover:bg-field text-ink3">
+          {/* Time, in steps of a quarter of an hour */}
+          <div className="flex items-center gap-1 border-t border-line-soft pt-2.5">
+            <span className="label mr-auto">Time</span>
+            <button type="button" onClick={() => stepHour(-1)} className={step} aria-label="Earlier hour">
               <Icon name="chevron_left" size={13} />
             </button>
-            <span className="text-sm font-bold text-ink w-6 text-center tabular-nums">{pad(hour12)}</span>
-            <button type="button" onClick={() => stepHour(1)}
-              className="p-0.5 rounded hover:bg-field text-ink3">
+            <span className="w-6 text-center font-semibold text-ink">{pad(hour12)}</span>
+            <button type="button" onClick={() => stepHour(1)} className={step} aria-label="Later hour">
               <Icon name="chevron_right" size={13} />
             </button>
-
-            <span className="text-sm font-bold text-ink3">:</span>
-
-            {/* Minute stepper */}
-            <button type="button" onClick={() => stepMinute(-1)}
-              className="p-0.5 rounded hover:bg-field text-ink3">
+            <span className="text-ink3">:</span>
+            <button type="button" onClick={() => stepMinute(-1)} className={step} aria-label="Earlier minute">
               <Icon name="chevron_left" size={13} />
             </button>
-            <span className="text-sm font-bold text-ink w-6 text-center tabular-nums">{pad(minute)}</span>
-            <button type="button" onClick={() => stepMinute(1)}
-              className="p-0.5 rounded hover:bg-field text-ink3">
+            <span className="w-6 text-center font-semibold text-ink">{pad(minute)}</span>
+            <button type="button" onClick={() => stepMinute(1)} className={step} aria-label="Later minute">
               <Icon name="chevron_right" size={13} />
             </button>
-
-            {/* AM/PM toggle */}
-            <button type="button" onClick={toggleAmPm}
-              className={`ml-1 px-2 py-1 rounded-lg text-xs font-bold transition-all ${
-                ampm === "AM"
-                  ? "bg-field text-ink2"
-                  : "bg-warn-soft text-warn"
-              }`}>
+            <button type="button" onClick={toggleAmPm} className="btn btn-sm ml-1.5 w-10 justify-center px-0" aria-label={`${ampm}, switch to ${ampm === "AM" ? "PM" : "AM"}`}>
               {ampm}
             </button>
           </div>

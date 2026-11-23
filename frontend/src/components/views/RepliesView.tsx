@@ -310,7 +310,7 @@ export default function RepliesView() {
         />
       )}
       <div className="flex min-h-0 flex-1">
-        <div ref={listRef} className={`w-full flex-none overflow-y-auto border-line md:w-[440px] md:border-r ${cursor ? "hidden md:block" : ""}`} role="listbox" aria-label="Replies">
+        <div ref={listRef} className={`w-full flex-none overflow-y-auto border-line md:w-[440px] md:border-r ${cursorId && cursor ? "hidden md:block" : ""}`} role="listbox" aria-label="Replies">
           {replies === null ? (
             <div className="pt-9">
               <SkeletonRows count={9} tall />
@@ -362,7 +362,10 @@ export default function RepliesView() {
           )}
         </div>
         {cursor ? (
-          <div className="flex min-w-0 flex-1 flex-col">
+          <div className={`min-w-0 flex-1 flex-col ${cursorId ? "flex" : "hidden md:flex"}`}>
+            <button className="btn btn-plain mx-4 mt-2 self-start md:hidden" onClick={() => setCursorId(null)}>
+              <Icon name="arrow_back" size={14} /> All replies
+            </button>
             <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-[22px] md:px-10">
               <div className="max-w-[580px]">
                 <dl className="grid grid-cols-[58px_1fr] gap-y-[5px] border-b border-line-soft pb-4 text-[12.5px] text-ink2">

@@ -263,3 +263,16 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
     undo: (id) => run("/actions/undo", { id }),
   };
 }
+
+// Archive or mark unread from a reader opened outside the Inbox (Todos,
+// Meetings, Briefing). Returns the undo.
+export async function setEmailFlag(emailId: string, flag: "archive" | "unread"): Promise<() => Promise<void>> {
+  const db = createClient();
+  const patch = flag === "archive" ? { is_archived: true } : { is_read: false };
+  const back = flag === "archive" ? { is_archived: false } : { is_read: true };
+  const { error } = await db.from("emails").update(patch).eq("id", emailId);
+  if (error) throw new Error(error.message);
+  return async () => {
+    await db.from("emails").update(back).eq("id", emailId);
+  };
+}

@@ -1,17 +1,15 @@
-
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/Icon";
 import { useApp } from "../AppShell";
 import { normalizeAgentSessionError } from "@/lib/agentClient";
-import type {
-  AgentAction,
-  AgentAnswer,
-  AgentBucket,
-  AgentQuestion,
-  AgentTurnRow,
-} from "@/lib/agentTypes";
+import type { AgentAction, AgentAnswer, AgentBucket, AgentQuestion, AgentTurnRow } from "@/lib/agentTypes";
+import { Glyph } from "../ui";
 import QuestionCard from "./QuestionCard";
 import AgentActionCard from "./AgentActionCard";
+
+// The cleanup plan: the steps Tabellar took to work it out, the questions it
+// needs answered, and the actions it proposes. Nothing is carried out until
+// the user ticks what to include and runs it.
 
 type StepStatus = "done" | "running" | "queued";
 
@@ -21,64 +19,43 @@ interface ProgressStep {
   label: string;
   detail?: string;
   status: StepStatus;
-  icon: string;
-  /** For read tools  -  a short string gleaned from arguments (e.g. sender name). */
+  /** For read tools: a short string taken from the arguments (a sender name, a query). */
   suffix?: string;
   bucket?: AgentBucket;
-  /** Attached to assistant turns: MiniMax reasoning for the planning round. */
+  /** The model's reasoning for the round this step belongs to, when it gave one. */
   reasoning?: string;
 }
 
-const TOOL_META: Record<string, { icon: string; label: string }> = {
-  get_briefing_context: {
-    icon: "inbox_customize",
-    label: "Reading the briefing",
-  },
-  get_thread: { icon: "mail", label: "Reading thread" },
-  search_emails: { icon: "search", label: "Searching inbox" },
-  past_replies_by_me: { icon: "history", label: "Checking past replies" },
-  calendar_freebusy: {
-    icon: "event_available",
-    label: "Checking your calendar",
-  },
-  user_style_profile: { icon: "edit_note", label: "Learning your voice" },
-  ask_user: { icon: "help", label: "Asking you to decide" },
-  propose_action: { icon: "add_task", label: "Drafting action" },
-  revise_action: { icon: "edit", label: "Revising action" },
-  discard_action: { icon: "delete_sweep", label: "Dropping action" },
-  finalize: { icon: "check_circle", label: "Plan ready" },
+const TOOL_LABEL: Record<string, string> = {
+  get_briefing_context: "Read the briefing",
+  get_thread: "Read a thread",
+  search_emails: "Searched the inbox",
+  past_replies_by_me: "Checked your past replies",
+  calendar_freebusy: "Checked your calendar",
+  user_style_profile: "Looked at how you write",
+  ask_user: "Asked you to decide",
+  propose_action: "Proposed an action",
+  revise_action: "Revised an action",
+  discard_action: "Dropped an action",
+  finalize: "Finished the plan",
 };
 
-const BUCKET_META: Record<
-  AgentBucket,
-  { label: string; icon: string; color: string }
-> = {
-  replies: {
-    label: "Replies",
-    icon: "send",
-    color: "text-ok bg-ok/10",
-  },
-  meetings: {
-    label: "Meetings",
-    icon: "event",
-    color: "text-ink2 bg-wax/10",
-  },
-  todos: {
-    label: "Todos",
-    icon: "task_alt",
-    color: "text-ink2 bg-wax/10",
-  },
-  noise: {
-    label: "Noise",
-    icon: "archive",
-    color: "text-ink2 bg-ink3/10",
-  },
-  single: {
-    label: "Agent",
-    icon: "auto_awesome",
-    color: "text-ok bg-ok/10",
-  },
-};
+const BUCKET_LABEL: Record<AgentBucket, string> = { replies: "Replies", meetings: "Meetings", todos: "Todos", noise: "Non-essential", single: "Plan" };
+
+const KINDS: [AgentAction["type"], string][] = [
+  ["reply", "Replies"],
+  ["todo", "Todos"],
+  ["meeting", "Meetings"],
+  ["archive", "Archive"],
+];
+
+function actionLine(a: AgentAction): string {
+  const n = (a.payload.email_ids ?? []).length;
+  if (a.type === "reply") return `Reply to ${a.payload.to ?? "the sender"}`;
+  if (a.type === "todo") return a.payload.title ?? "Todo";
+  if (a.type === "meeting") return a.payload.meeting_title ?? "Meeting";
+  return `Archive ${n} ${n === 1 ? "email" : "emails"}`;
+}
 
 function parseArgs(raw: string): Record<string, unknown> {
   try {
@@ -163,7 +140,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
           typeof x.subject === "string" ? shortSubject(x.subject, 28) : "";
         const label =
           sender && subj
-            ? `${sender} · ${subj}`
+            ? `${sender}: ${subj}`
             : sender || subj || "this thread";
         map.set(id, { label, bucket });
       }
@@ -213,10 +190,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
       const bucket = (t as AgentTurnRow & { bucket?: AgentBucket | null })
         .bucket as AgentBucket | undefined;
       tools.forEach((tc) => {
-        const meta = TOOL_META[tc.function.name] ?? {
-          icon: "bolt",
-          label: tc.function.name,
-        };
+        const label = TOOL_LABEL[tc.function.name] ?? tc.function.name;
         const args = parseArgs(tc.function.arguments || "{}");
         let suffix = "";
         let detail = "";
@@ -256,9 +230,8 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
         items.push({
           key: tc.id,
           tool: tc.function.name,
-          label: meta.label,
+          label,
           detail,
-          icon: meta.icon,
           suffix,
           status: resolved.has(tc.id) ? "done" : "running",
           bucket,
@@ -272,7 +245,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
         if (it.status === "running") it.status = "done";
       }
     } else {
-      // Only the latest "running" step per bucket should pulse; earlier ones
+      // Only the latest "running" step per bucket shows as working; earlier ones
       // within the same bucket are demoted to done because the backend has
       // moved on for that lane.
       const lastRunningByBucket: Record<string, number> = {};
@@ -306,7 +279,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
   const bucketKeys = Object.keys(stepsByBucket);
   const hasMultipleBuckets = bucketKeys.length > 1;
 
-  // Track when turns last arrived; show a "Generating..." indicator after 8s of silence.
+  // Track when turns last arrived; after 8s of silence, say it is still working.
   useEffect(() => {
     const count = agentTurns?.length ?? 0;
     if (count !== lastTurnCountRef.current) {
@@ -362,41 +335,25 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
 
   const status = agentSession.status;
 
-  const statusLabel =
-    solveAgentCancelInFlight
-      ? "Cancelling plan"
-      : status === "planning"
-      ? "Resolving in the background"
+  const statusLabel = solveAgentCancelInFlight
+    ? "Cancelling"
+    : status === "planning"
+      ? "Working out a plan"
       : status === "asking"
-        ? "Needs your input"
+        ? "Needs an answer from you"
         : status === "ready" && localActions.length === 0
-          ? "No actions to run"
+          ? "Nothing to do"
           : status === "ready"
-            ? "Plan ready for review"
+            ? "Ready for you to review"
             : status === "executing"
-              ? "Executing"
+              ? "Running what you approved"
               : status === "done"
-                ? "All actions complete"
+                ? "Finished"
                 : status === "cancelled"
                   ? "Cancelled"
                   : status === "error"
-                    ? "Error"
+                    ? "Stopped on an error"
                     : "";
-
-  const statusTone =
-    solveAgentCancelInFlight
-      ? "bg-warn/15 text-warn border-warn-line"
-      : status === "asking"
-      ? "bg-warn/15 text-warn border-warn-line"
-      : status === "ready" && localActions.length === 0
-        ? "bg-warn/15 text-warn border-warn-line"
-        : status === "ready"
-          ? "bg-ok/15 text-ok border-ok-line"
-          : status === "error"
-            ? "bg-danger/15 text-danger border-danger-line"
-            : status === "done"
-              ? "bg-ok/15 text-ok border-ok-line"
-              : "bg-ok/10 text-ok border-ok-line";
 
   const toggleAction = (id: string, selected: boolean) => {
     setLocalActions((prev) =>
@@ -414,7 +371,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
   const onExecute = async () => {
     const approved = localActions.filter((a) => a.selected);
     if (!approved.length) {
-      addToast("info", "Select at least one action to execute.");
+      addToast("info", "Tick at least one action to run.");
       return;
     }
     setExecuting(true);
@@ -471,229 +428,107 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
     return null;
   })();
 
+  const included = localActions.filter((a) => a.selected).length;
+  const reviewing = status === "ready" || status === "executing" || status === "done";
+  const lane = (list: ProgressStep[]) => list.map((step) => <StepRow key={step.key} step={step} showReasoning={showReasoning} />);
+
   return (
     <div
-      className="fixed inset-0 z-50 flex justify-end bg-ink/35 backdrop-blur-[3px] solve-fade-in"
+      className="fixed inset-0 z-50 flex justify-end bg-black/30"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div
-        className="solve-grain solve-panel-bg relative flex h-full w-full max-w-[min(880px,100%)] flex-col border-l border-line shadow-[0_20px_80px_-20px_rgba(0,0,0,0.45)]"
-        role="dialog"
-        aria-label="Auto-Resolve agent"
-      >
-        {/* Header */}
-        <div className="relative flex items-center justify-between border-b border-line/70 px-6 py-4 backdrop-blur-sm">
-          <div className="flex items-center gap-3.5">
-            <div className="relative flex h-11 w-11 items-center justify-center rounded-2xl bg-ok text-white shadow-[0_4px_14px_-4px_rgba(5,150,105,0.55)]">
-              <Icon name="auto_awesome" size={22} />
-            </div>
-            <div>
-              <h2 className="font-semibold leading-tight text-ink tracking-tight text-[18px]">
-                Auto-Resolve
-              </h2>
-              <div className="mt-1 flex items-center gap-2">
-                <span
-                  className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] ${statusTone}`}
-                >
-                  {status === "planning" && (
-                    <span className="inline-flex solve-dot-wave">
-                      <span />
-                      <span />
-                      <span />
-                    </span>
-                  )}
-                  {status !== "planning" && (
-                    <Icon name={status === "asking"
-                        ? "help"
-                        : status === "ready"
-                          ? "check_circle"
-                          : status === "error"
-                            ? "error"
-                            : status === "executing"
-                              ? "bolt"
-                              : status === "done"
-                                ? "done_all"
-                                : "auto_awesome"} size={12} />
-                  )}
-                  {statusLabel}
-                </span>
-                {steps.length > 0 && (
-                  <span className="text-[10.5px] text-ink3">
-                    {doneCount}/{steps.length} steps
-                  </span>
-                )}
-                {anyReasoning && (
-                  <button
-                    onClick={() => setShowReasoning((v) => !v)}
-                    className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[10.5px] font-medium text-ink3 hover:border-ink hover:text-ink transition-colors"
-                    title="Toggle reasoning"
-                  >
-                    <Icon name="psychology" size={12} />
-                    {showReasoning ? "Hide thinking" : "Show thinking"}
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {showCancelControl && (
-              <button
-                type="button"
-                onClick={() => void cancelSolveAgent()}
-                disabled={solveAgentCancelInFlight}
-                className="inline-flex items-center gap-1.5 rounded-full border border-line px-3.5 py-1.5 text-[11.5px] font-medium text-ink3 transition-colors hover:border-danger-line hover:text-danger disabled:cursor-wait disabled:opacity-70 disabled:hover:border-line disabled:hover:text-ink3"
-                title={
-                  solveAgentCancelInFlight
-                    ? "Cancelling"
-                    : "Cancel current plan"
-                }
-              >
-                {solveAgentCancelInFlight && (
-                  <Icon name="progress_activity" size={14} className="animate-spin" />
-                )}
-                {solveAgentCancelInFlight ? "Cancelling…" : "Cancel plan"}
-              </button>
+      <div className="solve-panel-bg flex h-full w-full max-w-[720px] flex-col shadow-pop" role="dialog" aria-label="Cleanup plan">
+        <header className="bar">
+          <h2 className="bar-title">Cleanup plan</h2>
+          <span className={`flex min-w-0 items-center gap-1.5 text-xs ${status === "asking" && !solveAgentCancelInFlight ? "count-need" : status === "error" ? "text-danger" : "text-ink3"}`}>
+            <span className="truncate">{statusLabel}</span>
+            {status === "planning" && !solveAgentCancelInFlight && (
+              <span className="solve-dot-wave inline-flex" aria-hidden>
+                <span />
+                <span />
+                <span />
+              </span>
             )}
-            {(status === "done" ||
-              status === "cancelled" ||
-              status === "error") && (
-              <button
-                onClick={onClearSession}
-                className="cursor-pointer rounded-full border border-line px-3.5 py-1.5 text-[11.5px] font-medium text-ink3 transition-colors hover:border-ink hover:text-ink"
-              >
-                Clear
-              </button>
-            )}
-            <button
-              onClick={onClose}
-              className="ml-1 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-ink3 transition-colors hover:bg-field hover:text-ink"
-              aria-label="Close"
-            >
-              <Icon name="close" size={20} />
+          </span>
+          <span className="flex-1" />
+          {showCancelControl && (
+            <button type="button" className="btn" onClick={() => void cancelSolveAgent()} disabled={solveAgentCancelInFlight}>
+              {solveAgentCancelInFlight ? "Cancelling" : "Cancel plan"}
             </button>
-          </div>
-        </div>
+          )}
+          {(status === "done" || status === "cancelled" || status === "error") && (
+            <button className="btn" onClick={onClearSession}>
+              Clear
+            </button>
+          )}
+          <button className="iconbtn" onClick={onClose} aria-label="Close" title="Close. The plan keeps going in the background.">
+            <Icon name="close" size={16} />
+          </button>
+        </header>
 
-        {/* Stream body */}
-        <div
-          ref={streamRef}
-          className="flex-1 overflow-auto px-6 py-5 scroll-smooth"
-        >
-          {/* Hero explanation */}
+        <div ref={streamRef} className="min-h-0 flex-1 overflow-y-auto pb-8">
           {steps.length === 0 && status === "planning" && (
-            <div className="mx-auto mt-6 max-w-md text-center">
-              <div className="mx-auto mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-ok/15">
-                <Icon name="hourglass_top" size={28} className="text-ok" />
-              </div>
-              <h3 className="text-[15px] font-semibold text-ink">
-                Starting Auto-Resolve
-              </h3>
-              <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink3">
-                Feel free to keep working. The agent splits your inbox into
-                parallel lanes and runs in the background. You&apos;ll be
-                notified the moment it needs your input.
-              </p>
-            </div>
+            <p className="max-w-[calc(68ch+40px)] px-5 pt-5 leading-normal text-ink2">
+              Tabellar is reading your briefing and working out what to propose. You can close this panel and keep working: the plan continues in the background and tells you when it needs an answer. Nothing is carried out
+              until you approve it.
+            </p>
           )}
 
-          {/* Progress (bucketed lanes when multiple) */}
           {steps.length > 0 && (
-            <div className="mb-5">
-              <div className="mb-2.5 flex items-center justify-between">
-                <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink3">
-                  Progress
-                </span>
+            <section className="pt-4">
+              <div className="flex items-baseline gap-3 px-5 pb-1">
+                <h3 className="label">
+                  Steps <span className="font-normal">{doneCount} of {steps.length}</span>
+                </h3>
+                <span className="flex-1" />
+                {anyReasoning && (
+                  <button className="link" aria-expanded={showReasoning} onClick={() => setShowReasoning((v) => !v)}>
+                    {showReasoning ? "Hide reasoning" : "Show reasoning"}
+                  </button>
+                )}
                 {steps.length > 4 && (
-                  <button
-                    onClick={() => setShowAdvanced((v) => !v)}
-                    className="cursor-pointer text-[10.5px] font-medium text-ink3 hover:text-ink transition-colors"
-                  >
-                    {showAdvanced ? "Hide all" : "Show all"}
+                  <button className="link" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((v) => !v)}>
+                    {showAdvanced ? "Show the latest only" : "Show every step"}
                   </button>
                 )}
               </div>
 
               {hasMultipleBuckets ? (
-                <div className="space-y-3">
-                  {bucketKeys.map((bk) => {
-                    const meta =
-                      BUCKET_META[bk as AgentBucket] ?? BUCKET_META.single;
-                    const list = stepsByBucket[bk] ?? [];
-                    const shown = showAdvanced
-                      ? list.filter(
-                          (s) => showAdvanced || s.tool !== "ask_user",
-                        )
-                      : list.filter((s) => s.tool !== "ask_user").slice(-4);
-                    const laneDone = list.filter(
-                      (s) => s.status === "done",
-                    ).length;
-                    return (
-                      <div
-                        key={bk}
-                        className="rounded-xl border border-line/60 bg-raised/50 p-3"
-                      >
-                        <div className="mb-2 flex items-center gap-2">
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold ${meta.color}`}
-                          >
-                            <Icon name={meta.icon} size={12} />
-                            {meta.label}
-                          </span>
-                          <span className="text-[10.5px] text-ink3">
-                            {laneDone}/{list.length}
-                          </span>
-                        </div>
-                        <ol className="space-y-1.5">
-                          {shown.map((step) => (
-                            <StepRow
-                              key={step.key}
-                              step={step}
-                              showReasoning={showReasoning}
-                            />
-                          ))}
-                        </ol>
-                      </div>
-                    );
-                  })}
-                </div>
+                bucketKeys.map((bk) => {
+                  const list = stepsByBucket[bk] ?? [];
+                  const shown = showAdvanced ? list : list.filter((s) => s.tool !== "ask_user").slice(-4);
+                  return (
+                    <div key={bk} className="pb-2">
+                      <p className="px-5 pb-0.5 pt-1.5 text-xs text-ink3">
+                        <b className="font-semibold text-ink2">{BUCKET_LABEL[bk as AgentBucket] ?? BUCKET_LABEL.single}</b> {list.filter((s) => s.status === "done").length} of {list.length}
+                      </p>
+                      <ol>{lane(shown)}</ol>
+                    </div>
+                  );
+                })
               ) : (
-                <ol className="relative space-y-1.5">
-                  {(showAdvanced ? visibleSteps : visibleSteps.slice(-6)).map(
-                    (step) => (
-                      <StepRow
-                        key={step.key}
-                        step={step}
-                        showReasoning={showReasoning}
-                      />
-                    ),
-                  )}
-                </ol>
+                <ol>{lane(showAdvanced ? visibleSteps : visibleSteps.slice(-6))}</ol>
               )}
 
-              {assistantStatusLine && (
-                <p className="mt-3 pl-8 text-[12px] italic leading-snug text-ink3">
-                  &ldquo;{assistantStatusLine}&rdquo;
-                </p>
-              )}
+              {assistantStatusLine && <p className="max-w-[calc(68ch+40px)] px-5 pt-2 leading-normal text-ink2">{assistantStatusLine}</p>}
 
               {showThinking && (
-                <div className="mt-3 flex items-center gap-2 pl-1 text-[12px] text-ink3">
-                  <span className="inline-flex solve-dot-wave">
+                <p className="flex items-center gap-1.5 px-5 pt-2 text-xs text-ink3" role="status">
+                  Working on the next step
+                  <span className="solve-dot-wave inline-flex" aria-hidden>
                     <span />
                     <span />
                     <span />
                   </span>
-                  Generating next step
-                </div>
+                </p>
               )}
-            </div>
+            </section>
           )}
 
-          {/* Question area  -  batched grid when multiple */}
           {status === "asking" && pendingQuestions.length > 0 && (
-            <div className="my-5">
+            <section className="px-5 pt-6">
               {pendingQuestions.length === 1 ? (
                 <QuestionCard
                   question={pendingQuestions[0]}
@@ -707,270 +542,149 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                     })
                   }
                   onAnswer={async (a) => {
-                    await answerSolveAgent({
-                      ...a,
-                      question_id: pendingQuestions[0].id,
-                    });
+                    await answerSolveAgent({ ...a, question_id: pendingQuestions[0].id });
                   }}
                 />
               ) : (
-                <div>
-                  <div className="mb-3 flex items-center gap-2">
-                    <Icon name="help" size={18} className="text-warn" />
-                    <h3 className="text-[14px] font-semibold text-ink">
-                      {pendingQuestions.length} quick decisions
-                    </h3>
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                    {pendingQuestions.map((q) => (
-                      <QuestionCard
-                        key={q.id}
-                        question={q}
-                        compact
-                        initialAnswer={batchAnswers[q.id]}
-                        hideContinue
-                        onChange={(a) =>
-                          setBatchAnswers((prev) => {
-                            const next = { ...prev };
-                            if (a) next[q.id] = a;
-                            else delete next[q.id];
-                            return next;
-                          })
-                        }
-                      />
-                    ))}
-                  </div>
-                  <div className="sticky bottom-0 mt-4 -mx-6 border-t border-line bg-raised/95 px-6 py-3 backdrop-blur-sm flex items-center justify-between">
-                    <div className="text-[11.5px] text-ink3">
-                      {answeredCount} of {totalQuestions} answered
-                      {answeredCount < totalQuestions
-                        ? " (unanswered will be skipped)"
-                        : ""}
-                    </div>
-                    <button
-                      onClick={() => void submitBatch()}
-                      disabled={answeredCount === 0}
-                      className="cursor-pointer rounded-full bg-ok px-4 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-ok disabled:opacity-40 disabled:hover:bg-ok"
-                    >
-                      Continue
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Error */}
-          {status === "error" && (
-            <div className="my-4 rounded-xl border border-danger-line bg-danger-soft p-3.5 text-[12.5px] text-danger">
-              {normalizeAgentSessionError(agentSession.error) ??
-                "Unknown error"}
-            </div>
-          )}
-
-          {/* In-progress draft summary */}
-          {localActions.length > 0 &&
-            status !== "ready" &&
-            status !== "done" && (
-              <div className="mt-2 rounded-2xl border border-ok-line bg-ok-soft p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <Icon name="list_alt" size={16} className="text-ok" />
-                  <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ok">
-                    Drafted so far · {localActions.length} action
-                    {localActions.length === 1 ? "" : "s"}
-                  </span>
-                </div>
-                <ul className="space-y-1">
-                  {localActions.map((a) => (
-                    <li
-                      key={a.id}
-                      className="flex items-center gap-2 text-[12px] text-ink"
-                    >
-                      <Icon name={a.type === "reply"
-                          ? "send"
-                          : a.type === "todo"
-                            ? "task_alt"
-                            : a.type === "meeting"
-                              ? "event"
-                              : "archive"} size={14} className="text-ink3" />
-                      <span className="truncate">
-                        {a.type === "reply"
-                          ? `Reply to ${a.payload.to}`
-                          : a.type === "todo"
-                            ? (a.payload.title ?? "Todo")
-                            : a.type === "meeting"
-                              ? (a.payload.meeting_title ?? "Meeting")
-                              : `Archive ${(a.payload.email_ids ?? []).length} email${
-                                  (a.payload.email_ids ?? []).length === 1
-                                    ? ""
-                                    : "s"
-                                }`}
-                      </span>
-                    </li>
+                <>
+                  <h3 className="label">{pendingQuestions.length} questions for you</h3>
+                  {pendingQuestions.map((q) => (
+                    <QuestionCard
+                      key={q.id}
+                      question={q}
+                      compact
+                      initialAnswer={batchAnswers[q.id]}
+                      hideContinue
+                      onChange={(a) =>
+                        setBatchAnswers((prev) => {
+                          const next = { ...prev };
+                          if (a) next[q.id] = a;
+                          else delete next[q.id];
+                          return next;
+                        })
+                      }
+                    />
                   ))}
-                </ul>
-              </div>
-            )}
-
-          {/* Final review */}
-          {(status === "ready" ||
-            status === "executing" ||
-            status === "done") && (
-            <div className="mt-5 rounded-2xl border border-line bg-raised/90 backdrop-blur-sm p-5 solve-fade-in shadow-[0_8px_30px_-12px_rgba(0,0,0,0.12)]">
-              <div className="mb-3 flex items-center gap-2">
-                <Icon name="verified" size={20} className="text-ok" />
-                <h3 className="text-[15px] font-semibold text-ink tracking-tight">
-                  {status === "done"
-                    ? "Execution complete"
-                    : "Review and execute"}
-                </h3>
-              </div>
-              {agentSession.summary && (
-                <p className="mb-3 text-[12.5px] leading-relaxed text-ink">
-                  {agentSession.summary}
-                </p>
+                </>
               )}
+            </section>
+          )}
+
+          {status === "error" && (
+            <p className="max-w-[calc(68ch+40px)] px-5 pt-5 leading-normal text-danger" role="alert">
+              The plan stopped: {normalizeAgentSessionError(agentSession.error) ?? "the reason was not reported"}. Nothing was carried out. Clear it, then start a new plan from Briefing.
+            </p>
+          )}
+
+          {localActions.length > 0 && !reviewing && (
+            <section className="pt-5">
+              <h3 className="label px-5 pb-1">
+                Proposed so far <span className="font-normal">{localActions.length}</span>
+              </h3>
+              <ul>
+                {localActions.map((a) => (
+                  <li key={a.id} className="row">
+                    <span className="w-[26px] flex-none" />
+                    <span className="truncate">{actionLine(a)}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {reviewing && (
+            <section className="pt-6">
+              <h3 className="px-5 text-[15px] font-[650] tracking-[-0.01em] text-ink">{status === "done" ? "What was done" : status === "executing" ? "Running what you approved" : "Review the plan"}</h3>
+              {agentSession.summary && <p className="max-w-[calc(68ch+40px)] px-5 pt-1.5 text-sm leading-[1.6] text-ink">{agentSession.summary}</p>}
               {finalReasoning && status === "ready" && (
-                <details className="mb-4 rounded-lg border border-line/50 bg-field/40 px-3 py-2">
-                  <summary className="cursor-pointer text-[11px] font-medium text-ink2 hover:text-ink">
-                    <Icon name="psychology" size={13} className="align-middle mr-1" />
-                    Plan rationale
-                  </summary>
-                  <p className="mt-2 whitespace-pre-wrap text-[11.5px] italic leading-relaxed text-ink2">
-                    {finalReasoning}
-                  </p>
+                <details className="px-5 pt-2">
+                  <summary className="link inline cursor-default">Why this plan</summary>
+                  <p className="mt-1.5 max-w-[68ch] whitespace-pre-wrap text-[12.5px] leading-normal text-ink2">{finalReasoning}</p>
                 </details>
               )}
               {localActions.length === 0 ? (
-                <p className="py-6 text-center text-[12px] text-ink2">
-                  No actions proposed.
-                </p>
+                <p className="px-5 pt-3 leading-normal text-ink2">Tabellar found nothing to propose from this briefing. Clear the plan, or refresh the briefing and plan again.</p>
               ) : (
-                <div className="space-y-2.5">
-                  {localActions.map((a) => (
-                    <AgentActionCard
-                      key={a.id}
-                      action={a}
-                      onToggle={(s) => toggleAction(a.id, s)}
-                      onEdit={(patch) => editAction(a.id, patch)}
-                      result={agentSession.results?.[a.id]}
-                      locked={status === "executing" || status === "done"}
-                    />
-                  ))}
-                </div>
+                KINDS.map(([type, name]) => {
+                  const group = localActions.filter((a) => a.type === type);
+                  if (!group.length) return null;
+                  const on = group.filter((a) => a.selected).length;
+                  return (
+                    <div key={type} className="pt-4">
+                      <h4 className="label px-5 pb-0.5">
+                        {name} <span className="font-normal">{status === "ready" ? `${on} of ${group.length}` : group.length}</span>
+                      </h4>
+                      {group.map((a) => (
+                        <AgentActionCard
+                          key={a.id}
+                          action={a}
+                          onToggle={(s) => toggleAction(a.id, s)}
+                          onEdit={(patch) => editAction(a.id, patch)}
+                          result={agentSession.results?.[a.id]}
+                          locked={status === "executing" || status === "done"}
+                        />
+                      ))}
+                    </div>
+                  );
+                })
               )}
-
-              {status === "ready" && (
-                <div className="mt-5 flex items-center justify-between gap-2">
-                  <div className="text-[11.5px] text-ink2">
-                    {localActions.filter((a) => a.selected).length} of{" "}
-                    {localActions.length} selected
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => {
-                        setLocalActions((prev) =>
-                          prev.map((a) => ({ ...a, selected: true })),
-                        );
-                      }}
-                      className="cursor-pointer rounded-full border border-line px-3.5 py-1.5 text-[11.5px] font-medium text-ink transition-colors hover:border-ink hover:text-ink"
-                    >
-                      Select all
-                    </button>
-                    <button
-                      onClick={onExecute}
-                      disabled={
-                        executing ||
-                        !localActions.some((a) => a.selected) ||
-                        status !== "ready"
-                      }
-                      className="group cursor-pointer relative inline-flex items-center gap-1.5 rounded-full bg-ok px-4 py-1.5 text-[12px] font-semibold text-white shadow-[0_2px_8px_-2px_rgba(5,150,105,0.45)] transition-colors hover:bg-ok disabled:bg-ok/55 disabled:text-white/90 disabled:shadow-none disabled:hover:bg-ok/55"
-                    >
-                      <Icon name={executing ? "progress_activity" : "bolt"} size={14} />
-                      {executing ? "Executing..." : "Execute plan"}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+            </section>
           )}
         </div>
+
+        {status === "asking" && totalQuestions > 1 && (
+          <footer className="flex flex-none items-center gap-2 border-t border-line py-2.5 pl-5 pr-3.5">
+            <span className="text-xs text-ink3">
+              {answeredCount} of {totalQuestions} answered{answeredCount < totalQuestions ? ". The rest are skipped." : ""}
+            </span>
+            <span className="flex-1" />
+            <button className="btn btn-pri" onClick={() => void submitBatch()} disabled={answeredCount === 0}>
+              Continue
+            </button>
+          </footer>
+        )}
+        {status === "ready" && localActions.length > 0 && (
+          <footer className="flex flex-none items-center gap-2 border-t border-line py-2.5 pl-5 pr-3.5">
+            <span className="text-xs text-ink3">
+              {included} of {localActions.length} included
+            </span>
+            <span className="flex-1" />
+            <button className="btn" onClick={() => setLocalActions((prev) => prev.map((a) => ({ ...a, selected: true })))}>
+              Include all
+            </button>
+            <button className="btn btn-pri" onClick={onExecute} disabled={executing || included === 0}>
+              {executing ? "Running" : `Run ${included} approved`}
+            </button>
+          </footer>
+        )}
       </div>
     </div>
   );
 }
 
-function StepRow({
-  step,
-  showReasoning,
-}: {
-  step: ProgressStep;
-  showReasoning?: boolean;
-}) {
-  const isDone = step.status === "done";
-  const isRunning = step.status === "running";
+// One step of the planning: a check once finished, moving dots while it runs.
+function StepRow({ step, showReasoning }: { step: ProgressStep; showReasoning?: boolean }) {
+  const running = step.status === "running";
+  const extra = step.detail || step.suffix;
   return (
-    <li className="solve-fade-in">
-      <div className="flex items-center gap-3 text-[12.5px]">
-        <div
-          className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${
-            isDone
-              ? "bg-ok text-white"
-              : isRunning
-                ? "bg-ok/15 text-ok"
-                : "bg-field text-ink3"
-          }`}
-        >
-          {isRunning && (
-            <span
-              className="absolute inset-0 rounded-full"
-              style={{
-                animation: "solvePulseRing 1.8s ease-out infinite",
-                boxShadow: "0 0 0 0 rgba(5,150,105,0.35)",
-              }}
-            />
-          )}
-          <Icon name={isDone ? "check" : step.icon} size={13} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <span
-            className={`${
-              isDone
-                ? "text-ink/90"
-                : isRunning
-                  ? "text-ink"
-                  : "text-ink2"
-            }`}
-          >
-            {step.label}
-          </span>
-          {step.detail && (
-            <span className="ml-1.5 text-ink3">· {step.detail}</span>
-          )}
-          {step.suffix && !step.detail && (
-            <span className="ml-1.5 rounded-md bg-field px-1.5 py-0.5 text-[10.5px] text-ink3">
-              {step.suffix}
-            </span>
-          )}
-        </div>
-        {isRunning && (
-          <span className="text-[10.5px] font-medium text-ok">
-            Working
+    <li className="mx-2 grid min-h-7 grid-cols-[26px_minmax(0,1fr)] items-center pl-1.5 pr-3">
+      <span className="grid place-items-center">
+        <Glyph state={step.status === "done" ? "done" : "filed"} />
+      </span>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className={`truncate ${running ? "text-ink" : "text-ink2"}`}>
+          {step.label}
+          {extra && <span className="text-ink3">, {extra}</span>}
+        </span>
+        {running && (
+          <span className="solve-dot-wave inline-flex flex-none text-ink3" aria-label="Working">
+            <span />
+            <span />
+            <span />
           </span>
         )}
-      </div>
-      {showReasoning && step.reasoning && (
-        <div className="ml-9 mt-1 rounded-md border border-line/40 bg-field/40 px-2.5 py-1.5">
-          <p className="whitespace-pre-wrap text-[11px] italic leading-snug text-ink3">
-            {step.reasoning}
-          </p>
-        </div>
-      )}
+      </span>
+      {showReasoning && step.reasoning && <p className="col-start-2 whitespace-pre-wrap pb-1.5 text-[12.5px] leading-snug text-ink3">{step.reasoning}</p>}
     </li>
   );
-}
-
-// Kept in case we ever want to render raw turns  -  unused by default.
-export function _TurnRowDebug({ turn }: { turn: AgentTurnRow }) {
-  return <div>{turn.role}</div>;
 }

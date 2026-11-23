@@ -65,8 +65,18 @@ frontend/    React + Tailwind, built with Vite to frontend/dist, served by the s
 
 - `src/main.tsx` loads `/session`, then renders `AppShell` + `EmailDashboard` when a Google account is connected, otherwise `Welcome` (the three-step onboarding). `ModelSetup.tsx` is the model picker shared by onboarding and Settings > AI.
 - `src/lib/db.ts`: `createClient()` returns an object shaped like the supabase-js client the views were written against: `from()` posts the query to `/db`, `auth.getSession()` returns the local user and access token, `channel().on("postgres_changes", ...)` listens on `/events`. Views keep calling `supabase.from(...)`.
-- Global state lives in `AppShell.tsx` via React context (`useApp()`): `user`, `profile`, `view`, `addToast`, compose, agent state.
+- Global state lives in `AppShell.tsx` via React context (`useApp()`): `user`, `profile`, `view`, `addToast`, compose, agent state, and `mail` (below). The shell is a sidebar plus the current view; there is no global top bar, each view renders its own `ViewBar`.
+- `src/lib/outcomes.ts`: `useOverview()` loads the action log, drafts, todos, meetings and pending sends once and derives what Tabellar made of each email (`mail.byEmail`), the sidebar counts, the outgoing replies and the engine state, plus `approve`, `dismiss`, `undo`. Inbox rows, the details panel and the sidebar all read from it.
+- `src/lib/useInboxSync.ts`: the window's own fetch (first-run overlay, catch-up on open).
 - API calls are `fetch("/api/...")` with `Authorization: Bearer ${session.access_token}`.
+
+### Design system
+
+`frontend/DESIGN.md` describes it. The rules that matter when editing a view:
+
+- Colours are tokens defined in `src/index.css` and exposed as Tailwind classes in `tailwind.config.cjs` (`ink`, `ink2`, `ink3`, `canvas`, `side`, `raised`, `hover`, `sel`, `field`, `line`, `wax`, `warn`, `danger`, `ok`, ...). No Tailwind palette classes, hex values or `dark:` variants in components; the tokens follow the theme. Wax red is kept for what needs the user, the one primary action in a region, and outgoing countdowns.
+- Shared parts: the component classes in `src/index.css` (`.btn`, `.row`, `.row2`, `.day`, `.bar`, `.pop`, ...) and `src/components/ui.tsx` (`ViewBar`, `Seg`, `Menu`, `Tick`, `Glyph`, `Empty`, `SkeletonRows`, `KeyHints`, `VirtualList`). Long lists go through `VirtualList`.
+- Icons come from `src/components/Icon.tsx` (Lucide, bundled); the logo from `Logo.tsx`. Fonts are bundled in `src/assets/fonts`; nothing is loaded from the network.
 
 ### Data
 

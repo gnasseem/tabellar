@@ -1,13 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
-import Icon from "@/components/Icon";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createClient } from "@/lib/db";
+import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { engineFetch } from "./ActivityView";
+import { Empty, KeyHints, Kbd, Seg, SkeletonRows, Tick, ViewBar, shortWhen } from "../ui";
 
 // Newsletter cleanup: senders of bulk mail, the ones filling the inbox first.
 // Unsubscribe follows the sender's own unsubscribe header (the server reads it
-// fresh from Gmail); an unsubscribe that sends an email is shown and confirmed
-// first. Archiving a sender is one action, undone from Activity.
+// fresh from Gmail); an unsubscribe that sends an email shows the address and
+// is confirmed first, and one that needs the sender's web page hands over the
+// link. Archiving a sender is one action that can be undone.
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
 type Sender = {
   sender_email: string;
   name: string;
@@ -21,42 +25,45 @@ type Sender = {
 };
 
 type Tab = "clean" | "kept" | "unsubscribed";
+type Ask = { name: string; to: string; subject: string; answer: (send: boolean) => void };
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "clean", label: "To clean up" },
-  { id: "unsubscribed", label: "Unsubscribed" },
-  { id: "kept", label: "Kept" },
-];
+const COLUMNS = "!grid grid-cols-[26px_minmax(0,1fr)_88px] md:grid-cols-[26px_minmax(0,220px)_minmax(0,1fr)_88px_252px]";
+const METHOD: Record<string, string> = { "one-click": "Unsubscribed by their link", mailto: "Unsubscribed by email", web: "Finish on their page if you have not" };
 
-function shortDate(iso: string): string {
-  const d = new Date(iso);
-  const days = (Date.now() - d.getTime()) / 86_400_000;
-  if (days < 1) return "today";
-  if (days < 2) return "yesterday";
-  if (days < 7) return `${Math.floor(days)} days ago`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+function emails(n: number): string {
+  return `${n.toLocaleString()} email${n === 1 ? "" : "s"}`;
 }
 
 export default function NewslettersView() {
-  const { addToast } = useApp();
+  const { user, addToast, search, mail } = useApp();
+  const supabase = createClient();
   const [senders, setSenders] = useState<Sender[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("clean");
   const [busy, setBusy] = useState<Set<string>>(new Set());
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [cursorAddr, setCursorAddr] = useState<string | null>(null);
   // Unsubscribes that have to be finished on the sender's own page.
-  const [pages, setPages] = useState<{ sender: string; url: string }[]>([]);
+  const [pages, setPages] = useState<{ addr: string; sender: string; url: string }[]>([]);
+  // The unsubscribe email waiting for the user's yes or no.
+  const [ask, setAsk] = useState<Ask | null>(null);
+  const anchor = useRef<string | null>(null);
+  const lastUndo = useRef<(() => Promise<void>) | null>(null);
+  const goKey = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     try {
       const r = await engineFetch("/newsletters");
       setSenders(r.senders || []);
+      setError(null);
     } catch (e) {
-      addToast("error", (e as Error).message);
+      setError((e as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [addToast]);
+  }, []);
 
   useEffect(() => {
     load();
@@ -79,211 +86,385 @@ export default function NewslettersView() {
     }
   };
 
-  // Returns false when the user declined to send an unsubscribe email.
-  const doUnsubscribe = async (s: Sender): Promise<boolean> => {
+  // Shows the address the unsubscribe email would go to; resolves with the answer.
+  const confirmEmail = (name: string, to: string, subject: string) =>
+    new Promise<boolean>((resolve) =>
+      setAsk({
+        name,
+        to,
+        subject,
+        answer: (send) => {
+          setAsk(null);
+          resolve(send);
+        },
+      }),
+    );
+
+  // Returns false when the user declined to send an unsubscribe email, "web"
+  // when it has to be finished on the sender's page, else "done".
+  const doUnsubscribe = async (s: Sender): Promise<false | "web" | "done"> => {
     let r = await engineFetch("/newsletters/unsubscribe", { sender: s.sender_email });
     if (r.confirm) {
-      const yes = window.confirm(
-        `${s.name} unsubscribes by email.\n\nTabellar will send an email to ${r.confirm.to} with the subject "${r.confirm.subject}" from your account. Send it?`,
-      );
-      if (!yes) return false;
+      if (!(await confirmEmail(s.name, r.confirm.to, r.confirm.subject))) return false;
       r = await engineFetch("/newsletters/unsubscribe", { sender: s.sender_email, confirm: r.confirm.to });
     }
-    if (r.open) setPages((p) => [...p.filter((x) => x.sender !== s.sender_email), { sender: s.name, url: r.open }]);
+    if (r.open) setPages((p) => [...p.filter((x) => x.addr !== s.sender_email), { addr: s.sender_email, sender: s.name, url: r.open }]);
     patch(s.sender_email, { status: "unsubscribed", method: r.method ?? (r.open ? "web" : null) });
-    return true;
+    return r.open ? "web" : "done";
   };
 
-  const doArchive = async (s: Sender) => {
+  // Archives the sender's inbox mail and returns how many, with the id of the
+  // logged action so it can be undone from here.
+  const doArchive = async (s: Sender): Promise<{ archived: number; actionId: string | null }> => {
     const r = await engineFetch("/newsletters/archive", { sender: s.sender_email });
     patch(s.sender_email, { inbox: 0 });
-    return r.archived as number;
+    if (!r.archived) return { archived: 0, actionId: null };
+    const { data } = await supabase.from("action_log").select("id, detail").eq("user_id", user.id).eq("kind", "archive").eq("source", "user").eq("status", "done").order("created_at", { ascending: false }).limit(10);
+    const row = ((data || []) as any[]).find((x) => x.detail?.sender === s.sender_email);
+    return { archived: r.archived as number, actionId: row?.id ?? null };
+  };
+
+  const archivedToast = (text: string, actionIds: (string | null)[]) => {
+    const ids = actionIds.filter((x): x is string => !!x);
+    if (!ids.length) return addToast("success", `${text} Undo it in Activity.`);
+    const undo = async () => {
+      for (const id of ids) await mail.undo(id).catch(() => {});
+      await load();
+      addToast("info", "Back in your inbox");
+    };
+    lastUndo.current = undo;
+    addToast("success", text, { action: { label: "Undo", onClick: undo } });
   };
 
   const unsubscribe = (s: Sender) =>
     withBusy([s.sender_email], async () => {
-      if (await doUnsubscribe(s)) addToast("success", `Unsubscribed from ${s.name}`);
+      const how = await doUnsubscribe(s);
+      if (how === "done") addToast("success", `Unsubscribed from ${s.name}`);
+      if (how === "web") addToast("info", `${s.name} only unsubscribes on its own page. The link is at the top of the list.`);
     });
 
-  const archive = (s: Sender) =>
-    withBusy([s.sender_email], async () => {
-      const n = await doArchive(s);
-      addToast("success", `Archived ${n} email${n === 1 ? "" : "s"} from ${s.name}. Undo it in Activity.`);
-    });
-
-  const keep = (s: Sender, on: boolean) =>
-    withBusy([s.sender_email], async () => {
-      await engineFetch("/newsletters/keep", { sender: s.sender_email, keep: on });
-      patch(s.sender_email, { status: on ? "kept" : null });
-    });
-
-  const cleanSelected = () => {
-    const list = senders.filter((s) => selected.has(s.sender_email));
-    withBusy(list.map((s) => s.sender_email), async () => {
-      let unsubscribed = 0;
-      let archived = 0;
+  const archive = (list: Sender[]) => {
+    list = list.filter((s) => s.inbox > 0);
+    if (!list.length) return;
+    return withBusy(list.map((s) => s.sender_email), async () => {
+      let n = 0;
+      const ids: (string | null)[] = [];
       for (const s of list) {
         try {
-          if (s.can_unsubscribe && s.status !== "unsubscribed" && (await doUnsubscribe(s))) unsubscribed++;
-          if (s.inbox > 0) archived += await doArchive(s);
+          const r = await doArchive(s);
+          n += r.archived;
+          ids.push(r.actionId);
         } catch (e) {
           addToast("error", `${s.name}: ${(e as Error).message}`);
         }
       }
-      setSelected(new Set());
-      addToast("success", `Unsubscribed from ${unsubscribed} sender${unsubscribed === 1 ? "" : "s"} and archived ${archived} email${archived === 1 ? "" : "s"}`);
+      setPicked(new Set());
+      if (n) archivedToast(list.length === 1 ? `Archived ${emails(n)} from ${list[0].name}.` : `Archived ${emails(n)} from ${list.length} senders.`, ids);
     });
   };
 
-  const shown = senders.filter((s) => (tab === "clean" ? s.status === null : s.status === tab));
-  const counts = { clean: 0, kept: 0, unsubscribed: 0 } as Record<Tab, number>;
-  for (const s of senders) counts[s.status ?? "clean"]++;
-  const inboxTotal = senders.filter((s) => s.status === null).reduce((n, s) => n + s.inbox, 0);
+  const keep = (list: Sender[], on: boolean) =>
+    withBusy(list.map((s) => s.sender_email), async () => {
+      for (const s of list) {
+        await engineFetch("/newsletters/keep", { sender: s.sender_email, keep: on });
+        patch(s.sender_email, { status: on ? "kept" : null });
+      }
+      setPicked(new Set());
+    });
 
-  if (loading) {
+  const cleanSelected = (list: Sender[]) =>
+    withBusy(list.map((s) => s.sender_email), async () => {
+      let unsubscribed = 0;
+      let archived = 0;
+      const ids: (string | null)[] = [];
+      for (const s of list) {
+        try {
+          if (s.can_unsubscribe && s.status !== "unsubscribed" && (await doUnsubscribe(s))) unsubscribed++;
+          if (s.inbox > 0) {
+            const r = await doArchive(s);
+            archived += r.archived;
+            ids.push(r.actionId);
+          }
+        } catch (e) {
+          addToast("error", `${s.name}: ${(e as Error).message}`);
+        }
+      }
+      setPicked(new Set());
+      archivedToast(`Unsubscribed from ${unsubscribed} sender${unsubscribed === 1 ? "" : "s"} and archived ${emails(archived)}.`, ids);
+    });
+
+  const counts = useMemo(() => {
+    const c = { clean: 0, kept: 0, unsubscribed: 0 } as Record<Tab, number>;
+    for (const s of senders) c[s.status ?? "clean"]++;
+    return c;
+  }, [senders]);
+
+  // The heaviest senders first: most mail in the inbox, then most mail in all.
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return senders
+      .filter((s) => (tab === "clean" ? s.status === null : s.status === tab))
+      .filter((s) => !q || `${s.name} ${s.sender_email}`.toLowerCase().includes(q))
+      .sort((a, b) => b.inbox - a.inbox || b.total - a.total);
+  }, [senders, tab, search]);
+
+  const cursor = rows.find((s) => s.sender_email === cursorAddr) || rows[0] || null;
+  const selected = rows.filter((s) => picked.has(s.sender_email));
+  const inboxTotal = rows.reduce((n, s) => n + s.inbox, 0);
+  const targets = (): Sender[] => (selected.length ? selected : cursor ? [cursor] : []);
+  const canUnsubscribe = (s: Sender) => s.status === null && s.can_unsubscribe;
+
+  useEffect(() => {
+    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [cursor?.sender_email]);
+
+  const move = (delta: number) => {
+    if (!rows.length) return;
+    const at = cursor ? rows.indexOf(cursor) : -1;
+    setCursorAddr(rows[Math.min(rows.length - 1, Math.max(0, at + delta))].sender_email);
+  };
+
+  const pick = (s: Sender, range = false) => {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (range && anchor.current) {
+        const a = rows.findIndex((r) => r.sender_email === anchor.current);
+        const b = rows.indexOf(s);
+        if (a >= 0) for (let i = Math.min(a, b); i <= Math.max(a, b); i++) next.add(rows[i].sender_email);
+      } else if (next.has(s.sender_email)) next.delete(s.sender_email);
+      else next.add(s.sender_email);
+      return next;
+    });
+    anchor.current = s.sender_email;
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // While the unsubscribe email is being confirmed, only Escape does anything.
+      if (ask) {
+        if (e.key === "Escape") ask.answer(false);
+        return;
+      }
+      if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.querySelector("[data-compose-modal]")) return;
+      // "g" then a letter goes to another view; that letter is not an action here.
+      if (Date.now() - goKey.current < 1500) return void (goKey.current = 0);
+      const k = e.key.toLowerCase();
+      if (k === "g") return void (goKey.current = Date.now());
+      if (k === "j" || e.key === "ArrowDown") move(1);
+      else if (k === "k" || e.key === "ArrowUp") move(-1);
+      else if (k === "x" && cursor) pick(cursor, e.shiftKey);
+      else if (k === "u" && cursor && canUnsubscribe(cursor) && !busy.has(cursor.sender_email)) unsubscribe(cursor);
+      else if (k === "e") archive(targets().filter((s) => !busy.has(s.sender_email)));
+      else if (k === "y" && tab === "clean") keep(targets().filter((s) => !busy.has(s.sender_email)), true);
+      else if (k === "z" && lastUndo.current) {
+        const undo = lastUndo.current;
+        lastUndo.current = null;
+        undo();
+      } else if (e.key === "Escape" && picked.size) setPicked(new Set());
+      else return;
+      e.preventDefault();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
+
+  const change = (t: Tab) => {
+    setTab(t);
+    setPicked(new Set());
+  };
+
+  // The actions for one sender, shown on its row and, in a narrow window, in
+  // the strip under the list.
+  const actions = (s: Sender) => {
+    const off = busy.has(s.sender_email);
     return (
-      <div className="h-full flex items-center justify-center">
-        <Icon name="progress_activity" size={24} className="animate-spin text-ink3" />
-      </div>
+      <>
+        {canUnsubscribe(s) && (
+          <button className="btn btn-sm" disabled={off} onClick={(e) => (e.stopPropagation(), unsubscribe(s))}>
+            Unsubscribe
+          </button>
+        )}
+        {s.inbox > 0 && (
+          <button className="btn btn-sm" disabled={off} title={`Archive all ${s.inbox} from this sender`} onClick={(e) => (e.stopPropagation(), archive([s]))}>
+            Archive {s.inbox.toLocaleString()}
+          </button>
+        )}
+        <button className="btn btn-plain btn-sm" disabled={off} onClick={(e) => (e.stopPropagation(), keep([s], s.status === null))}>
+          {s.status === null ? "Keep" : "Move back"}
+        </button>
+      </>
     );
-  }
+  };
 
   return (
-    <div className="h-full overflow-auto bg-canvas">
-      <div className="max-w-2xl mx-auto px-4 py-6">
-        <h1 className="text-xl font-bold text-ink">Newsletters</h1>
-        <p className="text-sm text-ink3 mt-0.5 mb-5">
-          {counts.clean
-            ? `${counts.clean} sender${counts.clean === 1 ? "" : "s"} of bulk mail, with ${inboxTotal} email${inboxTotal === 1 ? "" : "s"} in your inbox.`
-            : "No bulk mail left to clean up."}
-        </p>
-
-        {pages.length > 0 && (
-          <div className="rounded-xl border border-line bg-raised p-3 mb-5">
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-sm font-medium text-ink">Finish on their page</p>
-              <button onClick={() => setPages([])} className="text-xs text-ink3 hover:text-ink cursor-pointer">
-                Done
-              </button>
-            </div>
-            <p className="text-xs text-ink3 mb-2">These senders only unsubscribe through their website.</p>
-            <ul className="space-y-1">
-              {pages.map((p) => (
-                <li key={p.url}>
-                  <a href={p.url} target="_blank" rel="noopener noreferrer" className="text-xs text-wax hover:underline">
-                    Unsubscribe from {p.sender}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <div className="flex items-center justify-between gap-3 mb-3">
-          <div className="flex gap-1 p-1 rounded-xl bg-field">
-            {TABS.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => {
-                  setTab(t.id);
-                  setSelected(new Set());
-                }}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
-                  tab === t.id ? "bg-canvas text-ink shadow-sm" : "text-ink3 hover:text-ink"
-                }`}
-              >
-                {t.label} {counts[t.id] > 0 && <span className="opacity-60">{counts[t.id]}</span>}
-              </button>
-            ))}
-          </div>
-          {tab === "clean" && selected.size > 0 && (
-            <button
-              onClick={cleanSelected}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-wax text-on-wax hover:opacity-90 cursor-pointer"
-            >
-              Unsubscribe and archive {selected.size}
+    <>
+      {selected.length ? (
+        <header className="bar">
+          <b className="bar-title mr-1.5">{selected.length} selected</b>
+          {tab === "clean" && (
+            <button className="btn btn-pri" onClick={() => cleanSelected(selected)}>
+              Unsubscribe and archive
             </button>
           )}
+          <button className="btn" disabled={!selected.some((s) => s.inbox > 0)} onClick={() => archive(selected)}>
+            Archive <Kbd>E</Kbd>
+          </button>
+          {tab === "clean" ? (
+            <button className="btn" onClick={() => keep(selected, true)}>
+              Keep <Kbd>Y</Kbd>
+            </button>
+          ) : (
+            <button className="btn" onClick={() => keep(selected, false)}>
+              Move back
+            </button>
+          )}
+          <button className="btn btn-plain" onClick={() => setPicked(new Set())}>
+            Clear <Kbd>esc</Kbd>
+          </button>
+        </header>
+      ) : (
+        <ViewBar title="Newsletters" search="Search senders">
+          <Seg
+            value={tab}
+            onChange={change}
+            options={[
+              { id: "clean", label: "In your inbox", count: counts.clean },
+              { id: "unsubscribed", label: "Unsubscribed", count: counts.unsubscribed },
+              { id: "kept", label: "Kept", count: counts.kept },
+            ]}
+          />
+        </ViewBar>
+      )}
+      {pages.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 border-b border-line py-2 pl-5 pr-3.5 text-xs text-ink2">
+          <b className="font-semibold text-ink">Finish on their page</b>
+          <span>These senders only unsubscribe through their own website:</span>
+          {pages.map((p) => (
+            <a key={p.addr} href={p.url} target="_blank" rel="noopener noreferrer" className="link">
+              {p.sender}
+            </a>
+          ))}
+          <span className="flex-1" />
+          <button className="btn btn-plain btn-sm" onClick={() => setPages([])}>
+            Done
+          </button>
         </div>
-
-        {shown.length === 0 ? (
-          <div className="text-center py-12 text-ink3">
-            <Icon name="mark_email_read" size={40} className="mb-2" />
-            <p className="text-sm">{tab === "clean" ? "Nothing to clean up." : tab === "kept" ? "Senders you keep show up here." : "Senders you unsubscribe from show up here."}</p>
+      )}
+      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto" role="listbox" aria-label="Newsletter senders">
+        <p className="px-5 pb-0.5 pt-3 text-xs leading-normal text-ink2">Unsubscribing uses the sender's own unsubscribe link, and only when you choose it here. Tabellar never unsubscribes on its own.</p>
+        {loading ? (
+          <div className="pt-9">
+            <SkeletonRows count={18} />
           </div>
+        ) : error ? (
+          <p className="px-5 py-4 text-danger" role="alert">
+            Could not load the senders: {error}.{" "}
+            <button className="link !text-danger" onClick={() => (setLoading(true), load())}>
+              Try again
+            </button>
+          </p>
+        ) : !rows.length ? (
+          search ? (
+            <Empty icon="search" title="No senders match that search">
+              Try part of the sender's name or address.
+            </Empty>
+          ) : tab === "clean" ? (
+            <Empty icon="newspaper" title="No bulk mail to clean up">
+              Senders of newsletters and promotions appear here as their mail arrives, the heaviest first, to unsubscribe from, archive or keep.
+            </Empty>
+          ) : (
+            <Empty icon="newspaper" title={tab === "kept" ? "No senders kept yet" : "No unsubscribes yet"}>
+              {tab === "kept" ? "Senders you choose to keep are listed here and left alone." : "Senders you unsubscribe from are listed here, with how it was done."}{" "}
+              <button className="link" onClick={() => change("clean")}>
+                Show senders in your inbox
+              </button>
+            </Empty>
+          )
         ) : (
-          <div className="divide-y divide-line">
-            {shown.map((s) => {
+          <>
+            <div className="day">
+              <b>{tab === "clean" ? "In your inbox" : tab === "kept" ? "Kept" : "Unsubscribed"}</b>
+              <span className="truncate">{tab === "clean" ? "Heaviest first" : tab === "kept" ? "Left alone" : "Mail may take a few days to stop"}</span>
+              <span className="flex-1" />
+              <span className="whitespace-nowrap">
+                {rows.length.toLocaleString()} sender{rows.length === 1 ? "" : "s"}, {emails(inboxTotal)} in your inbox
+              </span>
+            </div>
+            {rows.map((s) => {
+              const isCursor = cursor === s;
+              const isPicked = picked.has(s.sender_email);
               const isBusy = busy.has(s.sender_email);
               return (
-                <div key={s.sender_email} className="flex items-center gap-3 py-2.5">
-                  {tab === "clean" && (
-                    <input
-                      type="checkbox"
-                      checked={selected.has(s.sender_email)}
-                      onChange={(e) =>
-                        setSelected((sel) => {
-                          const n = new Set(sel);
-                          if (e.target.checked) n.add(s.sender_email);
-                          else n.delete(s.sender_email);
-                          return n;
-                        })
-                      }
-                      className="accent-wax cursor-pointer"
-                    />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-ink truncate">{s.name}</p>
-                    <p className="text-xs text-ink3 truncate">
-                      {s.sender_email} · {s.inbox} in inbox · {s.total} in all · last {shortDate(s.last_at)}
-                      {s.status === "unsubscribed" && s.method === "web" ? " · finished on their page?" : ""}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {isBusy && <Icon name="progress_activity" size={16} className="animate-spin text-ink3" />}
-                    {s.status !== "kept" && s.can_unsubscribe && s.status !== "unsubscribed" && (
-                      <button
-                        onClick={() => unsubscribe(s)}
-                        disabled={isBusy}
-                        className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-wax text-on-wax hover:opacity-90 disabled:opacity-50 cursor-pointer"
-                      >
-                        Unsubscribe
-                      </button>
-                    )}
-                    {s.inbox > 0 && (
-                      <button
-                        onClick={() => archive(s)}
-                        disabled={isBusy}
-                        className="px-2.5 py-1 rounded-lg text-xs font-medium border border-line text-ink hover:bg-field disabled:opacity-50 cursor-pointer"
-                      >
-                        Archive {s.inbox}
-                      </button>
-                    )}
-                    {s.status === null && (
-                      <button
-                        onClick={() => keep(s, true)}
-                        disabled={isBusy}
-                        className="px-2.5 py-1 rounded-lg text-xs font-medium text-ink3 hover:bg-field disabled:opacity-50 cursor-pointer"
-                      >
-                        Keep
-                      </button>
-                    )}
-                    {s.status !== null && (
-                      <button
-                        onClick={() => keep(s, false)}
-                        disabled={isBusy}
-                        className="px-2.5 py-1 rounded-lg text-xs font-medium text-ink3 hover:bg-field disabled:opacity-50 cursor-pointer"
-                      >
-                        Move back
-                      </button>
-                    )}
-                  </div>
+                <div
+                  key={s.sender_email}
+                  role="option"
+                  aria-selected={isCursor}
+                  aria-busy={isBusy}
+                  className={`row group scroll-mt-[34px] ${COLUMNS} ${isPicked && !isCursor ? "bg-hover" : ""}`}
+                  onClick={(e) => (e.shiftKey ? pick(s, true) : setCursorAddr(s.sender_email))}
+                >
+                  <span className="grid place-items-center">
+                    <span className={isPicked || isCursor ? "" : "hidden group-hover:block"}>
+                      <Tick checked={isPicked} onChange={(_, e) => pick(s, e.shiftKey)} label={`Select ${s.name}`} />
+                    </span>
+                  </span>
+                  <span className={`truncate pr-3 ${s.inbox > 0 ? "text-ink" : "text-ink2"}`}>{s.name}</span>
+                  <span className="hidden truncate pr-4 text-ink3 md:block">{s.sender_email}</span>
+                  <span className={`whitespace-nowrap text-right ${s.inbox > 0 ? "text-ink" : "text-ink3"}`}>{isBusy ? "Working" : s.inbox > 0 ? `${s.inbox.toLocaleString()} in inbox` : "None in inbox"}</span>
+                  <span className="hidden min-w-0 items-center justify-end gap-1.5 md:flex">
+                    <span className={`truncate text-xs text-ink3 ${isCursor ? "hidden" : "group-hover:hidden"}`}>
+                      {s.status === "unsubscribed" ? METHOD[s.method || ""] || "Unsubscribed" : `${s.total.toLocaleString()} in all${s.can_unsubscribe ? "" : ", no unsubscribe link"}`}, last {shortWhen(s.last_at)}
+                    </span>
+                    <span className={`items-center gap-1.5 ${isCursor ? "flex" : "hidden group-hover:flex"}`}>{actions(s)}</span>
+                  </span>
                 </div>
               );
             })}
-          </div>
+          </>
         )}
       </div>
-    </div>
+      {cursor && !selected.length && (
+        <div className="flex flex-none items-center gap-1.5 border-t border-line py-2 pl-5 pr-3.5 md:hidden">
+          <span className="min-w-0 flex-1 truncate text-xs text-ink2">{cursor.name}</span>
+          {actions(cursor)}
+        </div>
+      )}
+      <KeyHints
+        left={loading || error ? "" : `${counts.clean.toLocaleString()} sender${counts.clean === 1 ? "" : "s"} still in your inbox`}
+        keys={[
+          ["J K", "Move"],
+          ["X", "Select"],
+          ["U", "Unsubscribe"],
+          ["E", "Archive all"],
+          ["Y", "Keep"],
+          ["Z", "Undo archive"],
+        ]}
+      />
+      {ask && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onClick={() => ask.answer(false)}>
+          <div className="w-full max-w-[440px] rounded-[12px] bg-raised p-5 shadow-pop" role="alertdialog" aria-modal="true" aria-labelledby="unsubscribe-title" onClick={(e) => e.stopPropagation()}>
+            <h2 id="unsubscribe-title" className="text-[15px] font-[650] tracking-[-0.01em]">
+              {ask.name} unsubscribes by email
+            </h2>
+            <p className="mt-1.5 leading-normal text-ink2">To unsubscribe, Tabellar has to send this one email from your account. The address was supplied by the sender, so check it before anything goes.</p>
+            <dl className="inset mt-3.5 grid grid-cols-[58px_1fr] gap-y-1 text-[12.5px]">
+              <dt className="text-ink3">To</dt>
+              <dd className="min-w-0 break-all font-medium text-ink">{ask.to}</dd>
+              <dt className="text-ink3">Subject</dt>
+              <dd className="min-w-0 break-words text-ink2">{ask.subject}</dd>
+            </dl>
+            <div className="mt-[18px] flex justify-end gap-2">
+              <button className="btn" autoFocus onClick={() => ask.answer(false)}>
+                Do not send
+              </button>
+              <button className="btn btn-pri" onClick={() => ask.answer(true)}>
+                Send unsubscribe email
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

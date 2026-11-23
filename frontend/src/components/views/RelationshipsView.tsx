@@ -1,8 +1,11 @@
-
-import { useState, useEffect, useCallback } from "react";
-import Icon from "@/components/Icon";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
+import { Empty, KeyHints, Menu, Seg, SkeletonRows, ViewBar, shortWhen } from "../ui";
+import KnowledgeView from "./KnowledgeView";
+
+// Knowledge, people: everyone Tabellar has seen mail from, how often and how
+// recently, and the notes kept about them. The Facts tab shows KnowledgeView.
 
 type Contact = {
   sender_email: string;
@@ -13,206 +16,196 @@ type Contact = {
   last_interaction_at: string | null;
 };
 
+const COLS = "grid grid-cols-[minmax(0,180px)_minmax(0,1fr)_52px] gap-x-3 lg:grid-cols-[minmax(0,180px)_minmax(0,1fr)_52px_52px]";
+
 function daysSince(isoStr: string | null): number {
   if (!isoStr) return 9999;
   return Math.floor((Date.now() - new Date(isoStr).getTime()) / 86400000);
 }
 
-function healthLabel(contact: Contact): { label: string; color: string } {
+// How current the correspondence is, as one word.
+function healthLabel(contact: Contact): string {
   const days = daysSince(contact.last_interaction_at);
-  if (days <= 7) return { label: "Active", color: "text-ok bg-ok-soft" };
-  if (days <= 30) return { label: "Recent", color: "text-ink2 bg-field" };
-  if (days <= 90) return { label: "Fading", color: "text-warn bg-warn-soft" };
-  return { label: "Dormant", color: "text-ink3 bg-field" };
+  if (days <= 7) return "Active";
+  if (days <= 30) return "Recent";
+  if (days <= 90) return "Fading";
+  return "Dormant";
+}
+
+function nameOf(c: Contact): string {
+  return c.sender_name || c.sender_email.split("@")[0];
 }
 
 export default function RelationshipsView() {
-  const { user } = useApp();
+  const { getViewCache, setViewCache } = useApp();
+  const [tab, setTab] = useState<"people" | "facts">(() => (getViewCache("knowledge:tab") === "facts" ? "facts" : "people"));
+  const show = (t: "people" | "facts") => {
+    setViewCache("knowledge:tab", t);
+    setTab(t);
+  };
+  return tab === "facts" ? <KnowledgeView onPeople={() => show("people")} /> : <People onFacts={() => show("facts")} />;
+}
+
+function People({ onFacts }: { onFacts: () => void }) {
+  const { user, search, addToast } = useApp();
   const supabase = createClient();
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<"all" | "quiet">("all");
   const [selected, setSelected] = useState<Contact | null>(null);
   const [notes, setNotes] = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
 
+  // Whole rows are kept so a forgotten person can be put back as they were.
   const fetch = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from("email_memory")
-      .select("sender_email, sender_name, interaction_count, relationship_notes, last_subject, last_interaction_at")
-      .eq("user_id", user.id)
-      .order("interaction_count", { ascending: false })
-      .limit(100);
+    const { data } = await supabase.from("email_memory").select("*").eq("user_id", user.id).order("interaction_count", { ascending: false }).limit(500);
     setContacts((data as Contact[]) ?? []);
     setLoading(false);
   }, [user.id]);
 
-  useEffect(() => { fetch(); }, [fetch]);
+  useEffect(() => {
+    fetch();
+  }, [fetch]);
 
-  const filtered = contacts.filter((c) => {
-    const q = search.toLowerCase();
-    return !q || c.sender_email.includes(q) || (c.sender_name ?? "").toLowerCase().includes(q);
-  });
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return contacts.filter((c) => (filter === "all" || daysSince(c.last_interaction_at) > 30) && (!q || `${c.sender_email} ${c.sender_name ?? ""} ${c.relationship_notes ?? ""}`.toLowerCase().includes(q)));
+  }, [contacts, filter, search]);
+
+  const open = (c: Contact) => {
+    setSelected(c);
+    setNotes(c.relationship_notes ?? "");
+  };
 
   const saveNotes = async () => {
     if (!selected) return;
     setSavingNotes(true);
     await supabase.from("email_memory").update({ relationship_notes: notes }).eq("user_id", user.id).eq("sender_email", selected.sender_email);
-    setContacts((prev) => prev.map((c) => c.sender_email === selected.sender_email ? { ...c, relationship_notes: notes } : c));
-    setSelected((prev) => prev ? { ...prev, relationship_notes: notes } : prev);
+    setContacts((prev) => prev.map((c) => (c.sender_email === selected.sender_email ? { ...c, relationship_notes: notes } : c)));
+    setSelected((prev) => (prev ? { ...prev, relationship_notes: notes } : prev));
     setSavingNotes(false);
   };
 
-  return (
-    <div className="h-full flex overflow-hidden">
-      {/* Contact list */}
-      <div className={`flex flex-col border-r border-line bg-canvas flex-shrink-0 w-80 lg:w-96 ${selected ? "hidden md:flex" : "flex"}`}>
-        <div className="px-3 pt-3 pb-2 border-b border-line shrink-0">
-          <h2 className="text-sm font-semibold text-ink mb-2">Relationship Health</h2>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search contacts..."
-            className="w-full px-3 py-1.5 rounded-lg bg-field border border-line text-xs text-ink placeholder:text-ink3 focus:outline-none focus:border-wax"
-          />
-        </div>
+  const forget = async (c: Contact) => {
+    await supabase.from("email_memory").delete().eq("user_id", user.id).eq("sender_email", c.sender_email);
+    setContacts((prev) => prev.filter((x) => x.sender_email !== c.sender_email));
+    setSelected(null);
+    const undo = async () => {
+      const { error } = await supabase.from("email_memory").insert(c);
+      if (!error) setContacts((prev) => [...prev, c].sort((a, b) => b.interaction_count - a.interaction_count));
+    };
+    addToast("info", `Forgot what Tabellar knew about ${nameOf(c)}`, { action: { label: "Undo", onClick: undo } });
+  };
 
-        <div className="flex-1 overflow-auto">
+  const days = selected ? daysSince(selected.last_interaction_at) : 0;
+
+  return (
+    <>
+      <ViewBar
+        title="Knowledge"
+        search="Search people"
+        right={
+          <Menu
+            label="Show"
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { id: "all", label: "Everyone" },
+              { id: "quiet", label: "Quiet for a month" },
+            ]}
+          />
+        }
+      >
+        <Seg
+          value="people"
+          onChange={(v) => v === "facts" && onFacts()}
+          options={[
+            { id: "people", label: "People", count: contacts.length },
+            { id: "facts", label: "Facts" },
+          ]}
+        />
+      </ViewBar>
+      <div className="flex min-h-0 flex-1">
+        <div className={`min-w-0 flex-1 overflow-y-auto pb-3 ${selected ? "hidden md:block" : ""}`} role="listbox" aria-label="People">
           {loading ? (
-            <div className="space-y-0">
-              {Array.from({ length: 8 }).map((_, i) => (
-                <div key={i} className="px-4 py-3 border-b border-line animate-pulse">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-field shrink-0" />
-                    <div className="flex-1 space-y-1.5">
-                      <div className="h-3 w-28 rounded bg-field" />
-                      <div className="h-2.5 w-40 rounded bg-field" />
-                    </div>
-                  </div>
+            <div className="pt-9">
+              <SkeletonRows />
+            </div>
+          ) : !filtered.length ? (
+            <Empty icon="group" title={contacts.length ? "Nobody matches" : "No people yet"}>
+              {contacts.length
+                ? "Try another name or address, or set Show back to Everyone."
+                : "Everyone who writes to you appears here once Tabellar has read their mail, with how often you hear from them and any notes you keep."}
+            </Empty>
+          ) : (
+            <>
+              <div className={`${COLS} sticky top-0 z-[2] mx-2 h-[34px] items-end bg-canvas pb-[7px] pl-3 pr-3 text-xs text-ink3`}>
+                <span>Person</span>
+                <span>What is known</span>
+                <span className="hidden text-right lg:block">Emails</span>
+                <span className="text-right">Last</span>
+              </div>
+              {filtered.map((c) => (
+                <div key={c.sender_email} role="option" aria-selected={selected?.sender_email === c.sender_email} className={`row ${COLS} !pl-3`} onClick={() => open(c)}>
+                  <b className="truncate font-medium text-ink">{nameOf(c)}</b>
+                  <span className="truncate">{c.relationship_notes || <span className="text-ink3">{c.last_subject ? `Last wrote about: ${c.last_subject}` : c.sender_email}</span>}</span>
+                  <span className="hidden text-right text-xs text-ink3 lg:block">{c.interaction_count.toLocaleString()}</span>
+                  <span className="text-right text-xs text-ink3">{c.last_interaction_at ? shortWhen(c.last_interaction_at) : ""}</span>
                 </div>
               ))}
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-ink3">
-              <Icon name="person_off" size={32} className="mb-2" />
-              <p className="text-xs">No contacts yet. Send some emails to build your network.</p>
-            </div>
-          ) : (
-            filtered.map((c) => {
-              const health = healthLabel(c);
-              const days = daysSince(c.last_interaction_at);
-              const initials = (c.sender_name ?? c.sender_email).slice(0, 2).toUpperCase();
-              return (
-                <button
-                  key={c.sender_email}
-                  onClick={() => { setSelected(c); setNotes(c.relationship_notes ?? ""); }}
-                  className={`w-full text-left px-4 py-3 border-b border-line flex items-center gap-3 hover:bg-field transition-colors ${selected?.sender_email === c.sender_email ? "bg-wax-soft" : ""}`}
-                >
-                  <div className="w-9 h-9 rounded-full bg-wax-soft flex items-center justify-center shrink-0">
-                    <span className="text-xs font-bold text-wax">{initials}</span>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5 mb-0.5">
-                      <span className="text-[13px] font-medium text-ink truncate flex-1">
-                        {c.sender_name || c.sender_email.split("@")[0]}
-                      </span>
-                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold shrink-0 ${health.color}`}>{health.label}</span>
-                    </div>
-                    <p className="text-[11px] text-ink3 truncate">{c.sender_email}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-ink3">{c.interaction_count} emails</span>
-                      {days < 9999 && <span className="text-[10px] text-ink3">{days === 0 ? "Today" : `${days}d ago`}</span>}
-                    </div>
-                  </div>
-                </button>
-              );
-            })
+            </>
           )}
         </div>
-      </div>
 
-      {/* Detail pane */}
-      <div className={`flex-1 overflow-y-auto ${selected ? "flex" : "hidden md:flex"} flex-col`}>
-        {selected ? (
-          <div className="p-5 max-w-xl">
-            <button onClick={() => setSelected(null)} className="md:hidden mb-4 flex items-center gap-1 text-xs text-ink3 hover:text-ink">
-              <Icon name="arrow_back" size={14} />
-              Back
-            </button>
-
-            <div className="flex items-center gap-4 mb-5">
-              <div className="w-14 h-14 rounded-2xl bg-wax-soft flex items-center justify-center">
-                <span className="text-xl font-bold text-wax">
-                  {(selected.sender_name ?? selected.sender_email).slice(0, 2).toUpperCase()}
-                </span>
-              </div>
-              <div>
-                <h2 className="text-base font-semibold text-ink">{selected.sender_name || selected.sender_email.split("@")[0]}</h2>
-                <p className="text-xs text-ink3">{selected.sender_email}</p>
-                <div className={`mt-1 inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-semibold ${healthLabel(selected).color}`}>
-                  {healthLabel(selected).label}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-3 gap-3 mb-5">
-              {[
-                { label: "Total emails", value: selected.interaction_count, icon: "email" },
-                { label: "Last contact", value: daysSince(selected.last_interaction_at) === 9999 ? "Never" : `${daysSince(selected.last_interaction_at)}d ago`, icon: "schedule" },
-                { label: "Status", value: healthLabel(selected).label, icon: "favorite" },
-              ].map((stat) => (
-                <div key={stat.label} className="bg-field rounded-xl p-3 text-center">
-                  <Icon name={stat.icon} size={18} fill className="text-wax block mb-1" />
-                  <p className="text-sm font-semibold text-ink">{stat.value}</p>
-                  <p className="text-[10px] text-ink3 mt-0.5">{stat.label}</p>
-                </div>
-              ))}
-            </div>
-
-            {selected.last_subject && (
-              <div className="mb-4 px-3 py-2 rounded-xl bg-field border border-line">
-                <p className="text-[10px] text-ink3 mb-0.5">Last email subject</p>
-                <p className="text-xs text-ink">{selected.last_subject}</p>
-              </div>
-            )}
-
-            {daysSince(selected.last_interaction_at) > 30 && (
-              <div className="mb-4 px-3 py-2 rounded-xl bg-warn-soft border border-warn-line flex items-center gap-2">
-                <Icon name="notifications_active" size={16} fill className="text-warn shrink-0" />
-                <p className="text-[11px] text-warn">
-                  You haven't emailed {selected.sender_name || "this person"} in {daysSince(selected.last_interaction_at)} days. Consider reaching out.
-                </p>
-              </div>
-            )}
-
-            <div>
-              <label className="text-xs font-medium text-ink block mb-1.5">Notes about this contact</label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={4}
-                placeholder="Add notes: role, company, relationship context..."
-                className="w-full px-3 py-2 rounded-xl bg-field border border-line text-xs text-ink placeholder:text-ink3 focus:outline-none focus:border-wax resize-none"
-              />
-              <button
-                onClick={saveNotes}
-                disabled={savingNotes}
-                className="mt-2 px-4 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                {savingNotes ? "Saving..." : "Save notes"}
+        {selected && (
+          <div className="flex w-full flex-none flex-col border-line md:w-[360px] md:border-l">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-[18px]">
+              <button className="link mb-3 md:hidden" onClick={() => setSelected(null)}>
+                Back to people
               </button>
+              <h2 className="text-[15px] font-[650] tracking-[-0.01em] text-ink">{nameOf(selected)}</h2>
+              <p className="truncate text-xs text-ink3">{selected.sender_email}</p>
+
+              <dl className="mt-4 grid grid-cols-[92px_minmax(0,1fr)] gap-y-1 border-y border-line-soft py-3 text-xs text-ink2">
+                <dt className="text-ink3">Emails</dt>
+                <dd>{selected.interaction_count.toLocaleString()}</dd>
+                <dt className="text-ink3">Last heard</dt>
+                <dd>{days === 9999 ? "Never" : days === 0 ? "Today" : `${new Date(selected.last_interaction_at!).toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" })}, ${days} ${days === 1 ? "day" : "days"} ago`}</dd>
+                <dt className="text-ink3">In touch</dt>
+                <dd>{healthLabel(selected)}</dd>
+                {selected.last_subject && (
+                  <>
+                    <dt className="text-ink3">Last subject</dt>
+                    <dd>{selected.last_subject}</dd>
+                  </>
+                )}
+              </dl>
+
+              <label className="mt-4 grid gap-1">
+                <span className="label">Notes</span>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={6}
+                  placeholder="Role, company, how you know them. Tabellar reads these when it drafts a reply to this person."
+                  className="input resize-none"
+                />
+              </label>
             </div>
-          </div>
-        ) : (
-          <div className="flex-1 flex items-center justify-center text-ink3">
-            <div className="text-center">
-              <Icon name="people" size={40} fill className="block mb-2" />
-              <p className="text-sm opacity-50">Select a contact to see details</p>
+            <div className="flex flex-none items-center gap-2 border-t border-line px-5 py-[11px]">
+              <button className="btn btn-pri" onClick={saveNotes} disabled={savingNotes || notes === (selected.relationship_notes ?? "")}>
+                {savingNotes ? "Saving" : "Save notes"}
+              </button>
+              <span className="flex-1" />
+              <button className="btn btn-danger" onClick={() => forget(selected)}>
+                Forget
+              </button>
             </div>
           </div>
         )}
       </div>
-    </div>
+      <KeyHints left={loading ? "" : filtered.length === contacts.length ? `${contacts.length} ${contacts.length === 1 ? "person" : "people"}` : `${filtered.length} of ${contacts.length} people`} keys={[]} />
+    </>
   );
 }

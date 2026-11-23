@@ -1,8 +1,11 @@
-
 import { useState, useRef, useEffect, useCallback } from "react";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
+
+// Ask: questions about the inbox, and small things done on request (a todo,
+// a draft, a meeting). The user's messages sit on a quiet field, Tabellar's
+// answers are plain text, and what it did is one line under its answer.
 
 type Action = { type: string; data: Record<string, unknown> };
 
@@ -29,19 +32,22 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   actions?: Action[];
+  error?: boolean;
 };
 
 const MAX_MESSAGES = 16;
-const GREETING = "Hi! I'm your email assistant. I can search emails, send messages, create meetings, manage todos, and answer questions about your inbox. What can I help with?";
 
-// ── Component ───────────────────────────────────────────────────────
+// Questions shown before the first message, each sent as written.
+const STARTERS = ["What needs a reply from me today?", "Which emails have a deadline this week?", "Who have I not answered in a while?"];
+
+function noDash(s: string): string {
+  return s.replace(/\s*\u2014\s*/g, ", ");
+}
 
 export default function AssistantChat({ className, visible }: { className?: string; visible?: boolean }) {
-  const { addToast, setView, notifySent } = useApp();
+  const { setView, notifySent, addToast } = useApp();
   const supabase = createClient();
-  const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: GREETING },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -49,6 +55,8 @@ export default function AssistantChat({ className, visible }: { className?: stri
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const stoppedRef = useRef(false);
+  const prevVisible = useRef(visible);
+  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
 
   const stopGenerating = () => {
     stoppedRef.current = true;
@@ -56,31 +64,36 @@ export default function AssistantChat({ className, visible }: { className?: stri
     abortControllerRef.current = null;
     setLoading(false);
   };
-  const prevVisible = useRef(visible);
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
 
+  // Each time the panel opens it starts a new conversation.
   useEffect(() => {
     if (visible && !prevVisible.current) {
-      setMessages([{ role: "assistant", content: GREETING }]);
+      setMessages([]);
       setInput("");
     }
+    if (visible) textareaRef.current?.focus();
     prevVisible.current = visible;
   }, [visible]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    bottomRef.current?.scrollIntoView({ block: "end" });
+  }, [messages, loading]);
 
-  const resetConversation = useCallback(() => {
-    setMessages([{ role: "assistant", content: "Starting fresh. What can I help with?" }]);
-  }, []);
+  const resetConversation = useCallback(() => setMessages([]), []);
+
+  const fitInput = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 160) + "px";
+  };
 
   const toggleMic = useCallback(() => {
     const w = window as unknown as { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor };
     const SpeechRecognition = w.SpeechRecognition || w.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      addToast("error", "Voice input is not supported in this browser.");
+      addToast("error", "Voice input does not work in this browser. Type the question instead.");
       return;
     }
 
@@ -107,10 +120,7 @@ export default function AssistantChat({ className, visible }: { className?: stri
     recognition.onresult = (e: SpeechRecognitionResultEvent) => {
       const transcript = e.results[0][0].transcript;
       setInput((prev) => (prev ? prev + " " + transcript : transcript));
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-        textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 160) + "px";
-      }
+      requestAnimationFrame(fitInput);
     };
 
     recognition.start();
@@ -136,15 +146,9 @@ export default function AssistantChat({ className, visible }: { className?: stri
         }
       }
       setMessages((prev) => {
-        const updated = [
-          ...prev,
-          { role: "assistant" as const, content: result.reply, actions: result.actions },
-        ];
+        const updated = [...prev, { role: "assistant" as const, content: result.reply, actions: result.actions }];
         if (updated.length >= MAX_MESSAGES) {
-          return [
-            ...updated,
-            { role: "assistant" as const, content: "This conversation is getting long. Start fresh anytime with the button below." },
-          ];
+          return [...updated, { role: "assistant" as const, content: "This conversation is getting long, so answers may lose track of earlier messages. Start a new one below." }];
         }
         return updated;
       });
@@ -154,19 +158,17 @@ export default function AssistantChat({ className, visible }: { className?: stri
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      const apiUrl = "/api";
-      const recentMessages = messages.slice(-10);
-      const history = recentMessages.map((m) => ({ role: m.role, content: m.content }));
+      const history = messages.filter((m) => !m.error).slice(-10).map((m) => ({ role: m.role, content: m.content }));
 
-      // 180s timeout to handle multi-step tasks.
-      // The controller is also stored on a ref so the Stop button can abort.
+      // 180s timeout to handle multi-step tasks. The controller is also kept
+      // on a ref so Stop can abort it.
       const chatController = new AbortController();
       abortControllerRef.current = chatController;
       const chatTimeoutId = setTimeout(() => chatController.abort(), 180_000);
 
       let res: Response;
       try {
-        res = await fetch(`${apiUrl}/chat`, {
+        res = await fetch("/api/chat", {
           method: "POST",
           signal: chatController.signal,
           headers: {
@@ -182,7 +184,7 @@ export default function AssistantChat({ className, visible }: { className?: stri
             stoppedRef.current = false;
             return;
           }
-          throw new Error("Request timed out. The AI service is taking longer than usual; please try again.");
+          throw new Error("No answer after three minutes. The model may be busy or stopped; check Settings, under AI, and ask again.");
         }
         throw fetchErr;
       }
@@ -190,305 +192,186 @@ export default function AssistantChat({ className, visible }: { className?: stri
 
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.error || `Request failed (${res.status})`);
+        throw new Error(errBody.error || `The request failed (${res.status}). Check that the model in Settings, under AI, is running.`);
       }
 
       const data = await res.json();
-      if (!data.reply?.trim()) throw new Error("Empty response from assistant");
+      if (!data.reply?.trim()) throw new Error("The model returned an empty answer. Ask again, or try another model in Settings, under AI.");
       displayResult({ reply: data.reply, actions: data.actions });
     } catch (err) {
       if (stoppedRef.current) {
         stoppedRef.current = false;
         return;
       }
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      addToast("error", `Assistant error: ${msg}`);
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `Error: ${msg}` },
-      ]);
+      const msg = err instanceof Error ? err.message : "Something went wrong.";
+      setMessages((prev) => [...prev, { role: "assistant", content: msg, error: true }]);
     } finally {
       abortControllerRef.current = null;
       setLoading(false);
     }
   };
 
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+
   return (
     <div className={`flex flex-col ${className ?? ""}`}>
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        {messages.map((msg, i) => (
-          <div
-            key={`${msg.role}-${i}-${msg.content.slice(0, 16)}`}
-            className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-          >
-            <div className={`flex flex-col gap-1.5 ${msg.role === "user" ? "items-end max-w-[80%]" : "items-start w-full"}`}>
-              <div
-                className={`text-[13px] leading-relaxed whitespace-pre-wrap ${
-                  msg.role === "user"
-                    ? "px-3.5 py-2 rounded-2xl rounded-br-sm bg-wax text-on-wax"
-                    : "text-ink py-0.5"
-                }`}
-              >
-                {msg.content.replace(/ - /g, " - ")}
-              </div>
-              {msg.actions?.map((action, j) => (
-                <ActionChip
-                  key={`action-${i}-${j}`}
-                  action={action}
-                  onViewDrafts={() => setView("drafts")}
-                  onViewMeetings={() => setView("meetings")}
-                  onViewSent={() => setView("sent")}
-                  onViewTodos={() => setView("todos")}
-                  onViewInbox={() => setView("inbox")}
-                  onViewCategories={() => setView("categories")}
-                  onViewFollowups={() => setView("followups")}
-                  onSelectOption={(text) => sendMessage(text)}
-                />
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        {messages.length === 0 && !loading ? (
+          <div>
+            <p className="leading-normal text-ink2">Ask about your mail, or tell Tabellar to add a todo, save a draft or set up a meeting.</p>
+            <p className="label mb-1 mt-5">For example</p>
+            <div className="-mx-2 flex flex-col">
+              {STARTERS.map((q) => (
+                <button key={q} className="btn btn-plain justify-start" onClick={() => sendMessage(q)}>
+                  {q}
+                </button>
               ))}
             </div>
           </div>
-        ))}
-
-        {loading && (
-          <div className="flex items-center gap-1.5 py-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-wax animate-bounce" style={{ animationDelay: "0ms" }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-wax animate-bounce" style={{ animationDelay: "150ms" }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-wax animate-bounce" style={{ animationDelay: "300ms" }} />
+        ) : (
+          <div className="flex flex-col gap-4">
+            {messages.map((msg, i) =>
+              msg.role === "user" ? (
+                <p key={i} className="max-w-[85%] self-end whitespace-pre-wrap rounded-[10px] bg-field px-3 py-2 leading-normal text-ink">
+                  {msg.content}
+                </p>
+              ) : (
+                <div key={i} className="flex flex-col gap-2">
+                  {msg.error ? (
+                    <p className="leading-normal text-danger" role="alert">
+                      {msg.content}{" "}
+                      {lastUser && i === messages.length - 1 && (
+                        <button className="link" onClick={() => (setMessages((prev) => prev.slice(0, -2)), sendMessage(lastUser.content))}>
+                          Ask again
+                        </button>
+                      )}
+                    </p>
+                  ) : (
+                    <p className="whitespace-pre-wrap text-sm leading-[1.6] tracking-[-0.006em] text-ink">{noDash(msg.content)}</p>
+                  )}
+                  {msg.actions?.map((action, j) => <ActionLine key={j} action={action} setView={setView} onSelectOption={(text) => sendMessage(text)} />)}
+                </div>
+              ),
+            )}
+            {loading && (
+              <p className="flex items-center gap-1.5 text-xs text-ink3" role="status">
+                Working on it
+                <span className="solve-dot-wave inline-flex" aria-hidden>
+                  <span />
+                  <span />
+                  <span />
+                </span>
+              </p>
+            )}
           </div>
         )}
         <div ref={bottomRef} />
       </div>
 
-      {/* New conversation button */}
-      {messages.length > 2 && (
-        <div className="px-3 pb-1">
-          <button
-            onClick={resetConversation}
-            className="w-full text-[11px] py-1.5 rounded-lg text-ink3 hover:text-wax hover:bg-field transition-colors flex items-center justify-center gap-1 cursor-pointer"
-          >
-            <Icon name="refresh" size={13} />
+      <div className="flex-none border-t border-line px-3.5 pb-3 pt-2.5">
+        {messages.length > 0 && !loading && (
+          <button className="link mb-2 block" onClick={resetConversation}>
             New conversation
           </button>
-        </div>
-      )}
-
-      {/* Input */}
-      <div className="border-t border-line p-3 flex gap-2 items-end">
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => {
-            setInput(e.target.value);
-            e.target.style.height = "auto";
-            e.target.style.height = Math.min(e.target.scrollHeight, 160) + "px";
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              sendMessage(undefined);
-            }
-          }}
-          placeholder="Ask anything or tell me what to do..."
-          rows={1}
-          className="flex-1 px-3 py-2 rounded-xl border border-line bg-field text-[13px] placeholder:text-ink3 focus:outline-none focus:ring-2 focus:ring-wax/20 focus:border-wax/50 resize-none overflow-y-hidden leading-relaxed transition-all"
-          style={{ minHeight: "38px", maxHeight: "160px" }}
-          disabled={loading}
-        />
-        <button
-          onClick={toggleMic}
-          disabled={loading}
-          aria-label={recording ? "Stop recording" : "Start voice input"}
-          className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 cursor-pointer transition-all ${
-            recording
-              ? "bg-danger text-white animate-pulse hover:opacity-90"
-              : "bg-field text-ink3 border border-line hover:text-wax hover:border-wax/50"
-          } disabled:opacity-40`}
-        >
-          <Icon name={recording ? "stop" : "mic"} size={17} />
-        </button>
-        {loading ? (
-          <button
-            onClick={stopGenerating}
-            aria-label="Stop generating"
-            className="w-9 h-9 rounded-xl bg-danger text-white hover:opacity-90 transition-all flex items-center justify-center shrink-0 cursor-pointer"
-          >
-            <Icon name="stop" size={17} />
-          </button>
-        ) : (
-          <button
-            onClick={() => sendMessage(undefined)}
-            disabled={!input.trim()}
-            aria-label="Send message"
-            className="w-9 h-9 rounded-xl bg-wax text-on-wax hover:opacity-90 disabled:opacity-40 transition-all flex items-center justify-center shrink-0 cursor-pointer"
-          >
-            <Icon name="send" size={17} />
-          </button>
         )}
+        <div className="flex items-end gap-1.5">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              fitInput();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage(undefined);
+              }
+            }}
+            placeholder="Ask about your mail"
+            aria-label="Ask Tabellar"
+            rows={1}
+            className="input max-h-40 min-h-[28px] flex-1 resize-none overflow-y-auto !py-[5px]"
+            disabled={loading}
+          />
+          <button className={`iconbtn ${recording ? "!text-danger" : ""}`} onClick={toggleMic} disabled={loading} aria-label={recording ? "Stop recording" : "Speak the question"} title={recording ? "Stop recording" : "Speak the question"}>
+            <Icon name={recording ? "stop" : "mic"} size={16} />
+          </button>
+          {loading ? (
+            <button className="btn" onClick={stopGenerating}>
+              Stop
+            </button>
+          ) : (
+            <button className="btn btn-pri" onClick={() => sendMessage(undefined)} disabled={!input.trim()}>
+              Send
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-/* ── Action card color maps ──────────────────────────────────────── */
-const CARD_ICON_STYLES = {
-  green:  "bg-ok-soft text-ok",
-  blue:   "bg-field text-ink2",
-  red:    "bg-danger-soft text-danger",
-  purple: "bg-field text-ink2",
-  slate:  "bg-field text-ink2",
-};
+// What Tabellar did while answering, as one quiet line with a way to see it.
+function ActionLine({ action, setView, onSelectOption }: { action: Action; setView: (v: string) => void; onSelectOption: (text: string) => void }) {
+  const d = action.data;
 
-function ActionCard({ color, icon, title, subtitle, onClick }: {
-  color: keyof typeof CARD_ICON_STYLES;
-  icon: string;
-  title: string;
-  subtitle?: string;
-  onClick?: () => void;
-}) {
-  const base = "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-line bg-field text-left transition-all";
-  const inner = (
-    <>
-      <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${CARD_ICON_STYLES[color]}`}>
-        <Icon name={icon} size={16} />
-      </div>
-      <div className="flex-1 min-w-0">
-        <p className="text-[12px] font-semibold text-ink leading-tight truncate">{title}</p>
-        {subtitle && <p className="text-[11px] text-ink3 leading-tight mt-0.5 truncate">{subtitle}</p>}
-      </div>
-      {onClick && (
-        <Icon name="chevron_right" size={16} className="text-ink3 shrink-0 opacity-50 group-hover:opacity-100 transition-opacity" />
-      )}
-    </>
-  );
-  if (onClick) {
-    return (
-      <button onClick={onClick} className={`${base} cursor-pointer hover:bg-wax/5 hover:border-wax/30 group`}>
-        {inner}
-      </button>
-    );
-  }
-  return <div className={base}>{inner}</div>;
-}
-
-function ActionChip({
-  action,
-  onViewDrafts,
-  onViewMeetings,
-  onViewSent,
-  onViewTodos,
-  onViewInbox,
-  onViewCategories,
-  onViewFollowups,
-  onSelectOption,
-}: {
-  action: Action;
-  onViewDrafts: () => void;
-  onViewMeetings: () => void;
-  onViewSent: () => void;
-  onViewTodos: () => void;
-  onViewInbox: () => void;
-  onViewCategories: () => void;
-  onViewFollowups: () => void;
-  onSelectOption: (text: string) => void;
-}) {
+  // A choice Tabellar wants made before it acts: each option is an answer.
   if (action.type === "suggest_options") {
-    const { options, recommended, context } = action.data as {
-      options: { label: string; description: string }[];
-      recommended: number;
-      context?: string;
-    };
+    const { options, recommended, context } = d as { options: { label: string; description: string }[]; recommended: number; context?: string };
     return (
-      <div className="w-full space-y-2 mt-0.5">
-        {context && (
-          <p className="text-[11px] text-ink3 px-0.5">{context}</p>
-        )}
+      <div className="flex flex-col gap-2">
+        {context && <p className="text-xs text-ink3">{context}</p>}
         {options.map((opt, idx) => (
-          <button
-            key={idx}
-            onClick={() => onSelectOption(`Execute: ${opt.label} - ${opt.description}`)}
-            className={`w-full text-left px-3 py-2.5 rounded-xl border-2 transition-all cursor-pointer group ${
-              idx === recommended
-                ? "border-wax bg-wax/8"
-                : "border-line hover:border-wax/50 bg-field"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <span
-                className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
-                  idx === recommended
-                    ? "bg-wax text-on-wax"
-                    : "bg-line text-ink3 group-hover:bg-wax/20 group-hover:text-wax"
-                }`}
-              >
-                {idx + 1}
-              </span>
-              <span className={`text-[12px] font-semibold leading-tight ${
-                idx === recommended ? "text-wax" : "text-ink"
-              }`}>
+          <div key={idx}>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <button className="btn !h-auto min-h-7 max-w-full !whitespace-normal py-1 text-left" onClick={() => onSelectOption(`Execute: ${opt.label} - ${opt.description}`)}>
                 {opt.label}
-              </span>
-              {idx === recommended && (
-                <span className="ml-auto text-[10px] font-medium text-wax opacity-70 shrink-0">recommended</span>
-              )}
+              </button>
+              {idx === recommended && <span className="text-xs text-ink3">Suggested</span>}
             </div>
-            <p className="text-[11px] text-ink3 mt-1 ml-7 leading-relaxed">{opt.description}</p>
-          </button>
+            {opt.description && <p className="mt-1 text-[12.5px] leading-snug text-ink3">{opt.description}</p>}
+          </div>
         ))}
       </div>
     );
   }
-  if (action.type === "create_todo") {
-    return <ActionCard color="green" icon="check_circle" title="Todo created" subtitle={action.data.text as string} onClick={onViewTodos} />;
-  }
-  if (action.type === "save_draft") {
-    return <ActionCard color="blue" icon="draft" title="Draft saved" subtitle={`To: ${action.data.to as string}`} onClick={onViewDrafts} />;
-  }
-  if (action.type === "send_email") {
-    return <ActionCard color="green" icon="send" title={`Email sent to ${action.data.to as string}`} subtitle={action.data.subject as string | undefined} onClick={onViewSent} />;
-  }
-  if (action.type === "send_email_failed") {
-    return <ActionCard color="red" icon="error" title="Failed to send email" subtitle={action.data.error as string | undefined} />;
-  }
-  if (action.type === "create_meeting") {
-    return <ActionCard color="purple" icon="event" title={`Meeting created: ${action.data.title as string}`} subtitle={action.data.start_time ? new Date(action.data.start_time as string).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : undefined} onClick={onViewMeetings} />;
-  }
-  if (action.type === "paused") {
-    return <ActionCard color="red" icon="pause_circle" title="Tabellar is paused" subtitle={action.data.message as string | undefined} />;
-  }
-  if (action.type === "create_meeting_failed") {
-    return <ActionCard color="red" icon="error" title="Failed to create meeting" />;
-  }
-  if (action.type === "update_todo") {
-    const isCompleted = action.data.is_completed === true;
-    return <ActionCard color="green" icon={isCompleted ? "check_circle" : "edit"} title={isCompleted ? "Todo marked complete" : "Todo updated"} onClick={onViewTodos} />;
-  }
-  if (action.type === "delete_todo") {
-    return <ActionCard color="slate" icon="delete" title="Todo deleted" />;
-  }
-  if (action.type === "update_meeting") {
-    return <ActionCard color="blue" icon="edit_calendar" title="Meeting updated" onClick={onViewMeetings} />;
-  }
-  if (action.type === "delete_meeting") {
-    return <ActionCard color="slate" icon="event_busy" title="Meeting deleted" />;
-  }
-  if (action.type === "delete_draft") {
-    return <ActionCard color="slate" icon="delete" title="Draft deleted" />;
-  }
-  if (action.type === "archive_email") {
-    return <ActionCard color="slate" icon="archive" title="Email archived" onClick={onViewInbox} />;
-  }
-  if (action.type === "add_knowledge") {
-    return <ActionCard color="purple" icon="psychology" title={`Saved: ${action.data.entity as string}`} subtitle={action.data.entity_type as string | undefined} />;
-  }
-  if (action.type === "create_tag") {
-    return <ActionCard color="slate" icon="label" title={`Tag created: ${action.data.display_name as string}`} onClick={onViewCategories} />;
-  }
-  if (action.type === "set_follow_up") {
-    const remindDate = action.data.remind_at
-      ? new Date(action.data.remind_at as string).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
-      : undefined;
-    return <ActionCard color="blue" icon="schedule_send" title={`Follow-up set: ${action.data.subject as string}`} subtitle={remindDate ? `Remind: ${remindDate}` : undefined} onClick={onViewFollowups} />;
-  }
-  return null;
+
+  const when = (iso: unknown) => (typeof iso === "string" ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+
+  let text = "";
+  let view = "";
+  let viewName = "";
+  let failed = false;
+  if (action.type === "create_todo") [text, view, viewName] = [`Added a todo: ${String(d.text ?? "")}`, "todos", "Todos"];
+  else if (action.type === "save_draft") [text, view, viewName] = [`Saved a draft to ${String(d.to ?? "")}`, "replies", "Replies"];
+  else if (action.type === "send_email") [text, view, viewName] = [`Sent an email to ${String(d.to ?? "")}${d.subject ? `, ${String(d.subject)}` : ""}`, "sent", "Sent"];
+  else if (action.type === "send_email_failed") [text, failed] = [`The email was not sent${d.error ? `: ${String(d.error)}` : "."}`, true];
+  else if (action.type === "create_meeting") [text, view, viewName] = [`Proposed a meeting: ${String(d.title ?? "")}${d.start_time ? `, ${when(d.start_time)}` : ""}`, "meetings", "Meetings"];
+  else if (action.type === "create_meeting_failed") [text, failed] = ["The meeting could not be created.", true];
+  else if (action.type === "paused") [text, failed] = [`Nothing was done because Tabellar is paused${d.message ? `: ${String(d.message)}` : "."}`, true];
+  else if (action.type === "update_todo") [text, view, viewName] = [d.is_completed === true ? "Marked a todo done" : "Changed a todo", "todos", "Todos"];
+  else if (action.type === "delete_todo") text = "Deleted a todo";
+  else if (action.type === "update_meeting") [text, view, viewName] = ["Changed a meeting", "meetings", "Meetings"];
+  else if (action.type === "delete_meeting") text = "Deleted a meeting";
+  else if (action.type === "delete_draft") text = "Deleted a draft";
+  else if (action.type === "archive_email") [text, view, viewName] = ["Archived an email", "inbox", "Inbox"];
+  else if (action.type === "add_knowledge") text = `Remembered: ${String(d.entity ?? "")}${d.entity_type ? ` (${String(d.entity_type)})` : ""}`;
+  else if (action.type === "create_tag") [text, view, viewName] = [`Created the label ${String(d.display_name ?? "")}`, "categories", "Labels"];
+  else if (action.type === "set_follow_up") [text, view, viewName] = [`Set a follow-up: ${String(d.subject ?? "")}${d.remind_at ? `, reminds ${when(d.remind_at)}` : ""}`, "followups", "Follow-ups"];
+  else return null;
+
+  return (
+    <p className={`text-xs leading-normal ${failed ? "text-danger" : "text-ink3"}`}>
+      {text}
+      {view && (
+        <>
+          {" "}
+          <button className="link" onClick={() => setView(view)}>
+            Open {viewName}
+          </button>
+        </>
+      )}
+    </p>
+  );
 }

@@ -1,20 +1,67 @@
-
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import DOMPurify from "dompurify";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
-import { useApp } from "../AppShell";
-import DOMPurify from "dompurify";
-import DateTimePicker from "../DateTimePicker";
 import { measureEmailIframeBodyHeight } from "@/lib/emailIframe";
+import { isTypingTarget } from "@/lib/shortcuts";
+import { useApp } from "../AppShell";
+import { Empty, Glyph, KeyHints, SkeletonRows, ViewBar, VirtualList, dayLabel, shortWhen } from "../ui";
 
+// Sent: everything that went out, one line each, grouped by day. A line ends
+// in whether a follow-up is waiting on it. Opening one shows it on the right.
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type Sent = {
+  id: string;
+  thread_id?: string | null;
+  subject: string;
+  recipients: string;
+  received_at: string;
+  snippet?: string;
+  has_attachments?: boolean;
+  body_html?: string; // only on an email sent a moment ago, before Gmail has it
+};
+type Body = { body_text: string | null; body_html: string | null; attachments: { filename: string; mime_type: string; size: number; attachment_id: string }[] | null };
+type FollowUp = { thread_id: string; status: string; remind_at: string; snooze_until: string | null };
+type Head = { head: true; key: string; name: string; note: string; count: number };
+type Item = Head | Sent;
+
+const CHUNK = 300;
+const LIST = "id, thread_id, subject, recipients, received_at, snippet, has_attachments";
+const COLUMNS = "!grid grid-cols-[26px_128px_minmax(0,1fr)_46px] md:grid-cols-[26px_164px_minmax(0,1fr)_132px_46px]";
+const COLUMNS_BESIDE_READER = "!grid grid-cols-[26px_128px_minmax(0,1fr)_46px]";
+
+// "Ann Lee <ann@x.org>, bo@y.org" to the names to show: Ann Lee, bo@y.org.
+function people(recipients: string): string[] {
+  const out: string[] = [];
+  for (const m of (recipients || "").matchAll(/(?:"([^"]*)"|([^,<"]*))\s*<([^>]+)>|([^\s,<>"]+@[^\s,<>"]+)/g)) out.push((m[1] || m[2] || "").trim() || m[3] || m[4]);
+  return out.length ? out : [recipients || "No recipient"];
+}
+function daysAgo(iso: string): number {
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+}
+function size(bytes: number): string {
+  return bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`;
+}
+
+// What became of a sent email, from its follow-up: red only once the reminder is due.
+function followState(e: Sent, f: FollowUp | undefined): { text: string; due: boolean; answered: boolean } {
+  if (!f || f.status === "dismissed") return { text: "", due: false, answered: false };
+  if (f.status === "replied") return { text: "Answered", due: false, answered: true };
+  const n = daysAgo(e.received_at);
+  const text = n <= 0 ? "Waiting" : `Waiting ${n} day${n === 1 ? "" : "s"}`;
+  if (f.status === "snoozed" && f.snooze_until && new Date(f.snooze_until) > new Date()) return { text: "Snoozed", due: false, answered: false };
+  return { text, due: new Date(f.remind_at) <= new Date(), answered: false };
+}
+
+// The email itself, in a frame of its own so its markup cannot touch the window.
 function SentEmailFrame({ html, isDark }: { html: string; isDark: boolean }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(200);
   const srcDoc = useMemo(() => {
-    const lightCss = `<style>html,body{margin:0;padding:8px;box-sizing:border-box;min-height:0!important;height:auto!important;overflow-x:hidden}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;word-break:break-word;position:relative}img,table{max-width:100%!important;height:auto!important}</style>`;
-    const darkCss = isDark
-      ? `<style>html,body{background:#202124!important;color:#e5e7eb!important}a{color:#60a5fa}img{opacity:.85}</style>`
-      : "";
+    const lightCss = `<style>html,body{margin:0;padding:0;box-sizing:border-box;min-height:0!important;height:auto!important;overflow-x:hidden}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;word-break:break-word;position:relative}img,table{max-width:100%!important;height:auto!important}</style>`;
+    // In dark, the frame takes the system's dark colours and lets the window's ground show through.
+    const darkCss = isDark ? `<style>:root{color-scheme:dark}html,body{background:transparent!important;color:CanvasText!important}img{opacity:.85}</style>` : "";
     const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
     return `<base target="_blank">` + lightCss + darkCss + safe;
   }, [html, isDark]);
@@ -22,29 +69,23 @@ function SentEmailFrame({ html, isDark }: { html: string; isDark: boolean }) {
   useEffect(() => {
     const iframe = iframeRef.current;
     if (!iframe) return;
-
     let detach: (() => void) | undefined;
 
     const bind = () => {
       const doc = iframe.contentDocument;
       const body = doc?.body;
       if (!body) return;
-
       const measureNow = () => {
         const b = iframe.contentDocument?.body;
-        if (!b) return;
-        setHeight(measureEmailIframeBodyHeight(b));
+        if (b) setHeight(measureEmailIframeBodyHeight(b));
       };
-
       measureNow();
       requestAnimationFrame(measureNow);
       requestAnimationFrame(() => requestAnimationFrame(measureNow));
       const t1 = window.setTimeout(measureNow, 60);
       const t2 = window.setTimeout(measureNow, 280);
       const fontWait = doc.fonts?.ready?.then(measureNow);
-
-      const roMeasure = () => requestAnimationFrame(measureNow);
-      const ro = new ResizeObserver(roMeasure);
+      const ro = new ResizeObserver(() => requestAnimationFrame(measureNow));
       ro.observe(body);
       const rootEl = iframe.contentDocument?.documentElement;
       if (rootEl) ro.observe(rootEl);
@@ -63,559 +104,309 @@ function SentEmailFrame({ html, isDark }: { html: string; isDark: boolean }) {
       detach?.();
       bind();
     };
-
     iframe.addEventListener("load", onLoad);
-
     return () => {
       iframe.removeEventListener("load", onLoad);
       detach?.();
     };
   }, [srcDoc]);
 
-  return (
-    <iframe
-      ref={iframeRef}
-      srcDoc={srcDoc}
-      sandbox="allow-same-origin allow-popups"
-      title="Email content"
-      style={{ width: "100%", height, border: "none", display: "block" }}
-    />
-  );
-}
-
-function isoToDatetimeLocal(iso: string) {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return <iframe ref={iframeRef} srcDoc={srcDoc} sandbox="allow-same-origin allow-popups" title="Email content" style={{ width: "100%", height, border: "none", display: "block" }} />;
 }
 
 export default function SentView() {
-  const { user, pendingSentEmail, search, liveChanges, theme } =
-    useApp();
+  const { user, pendingSentEmail, search, liveChanges, theme, setView } = useApp();
   const supabase = createClient();
-  const [tab, setTab] = useState<"sent" | "scheduled">("sent");
-  const [emails, setEmails] = useState<any[]>([]);
-  const [scheduled, setScheduled] = useState<any[]>([]);
+  const [emails, setEmails] = useState<Sent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedEmail, setSelectedEmail] = useState<any | null>(null);
-  const [selectedScheduled, setSelectedScheduled] = useState<any | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [total, setTotal] = useState<number | null>(null);
+  const [followUps, setFollowUps] = useState<Map<string, FollowUp>>(new Map());
+  const [bodies, setBodies] = useState<Record<string, Body>>({});
+  const [cursorId, setCursorId] = useState<string | null>(null);
+  const [reading, setReading] = useState(false);
+  const loaded = useRef(0);
+  const busy = useRef(false);
+  const goKey = useRef(0);
 
-  // Edit state for selected scheduled email
-  const [editSubject, setEditSubject] = useState("");
-  const [editTo, setEditTo] = useState("");
-  const [editSendAt, setEditSendAt] = useState("");
-  const [editBody, setEditBody] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const loadSent = useCallback(async () => {
-    setError(null);
-    setLoading(true);
-    try {
-      const { data, error: dbError } = await supabase
-        .from("emails")
-        .select(
-          "id, subject, recipients, received_at, snippet, body_text, body_html, attachments",
-        )
-        .eq("user_id", user.id)
-        .contains("label_ids", ["SENT"])
-        .order("received_at", { ascending: false })
-        .limit(50);
-      if (dbError) throw dbError;
-      setEmails(data || []);
-    } catch {
-      setError("Could not load sent emails.");
-    }
-    setLoading(false);
-  }, [user.id, supabase]);
-
-  const loadScheduled = useCallback(async () => {
-    const { data, error: dbError } = await supabase
-      .from("scheduled_emails")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("send_at", { ascending: true });
-    if (dbError) {
-      setError("Could not load scheduled emails.");
-      return;
-    }
-    setScheduled(data || []);
-  }, [user.id, supabase]);
+  const loadSent = useCallback(
+    async (more = false) => {
+      if (busy.current) return;
+      busy.current = true;
+      try {
+        const want = more ? loaded.current + CHUNK : Math.max(CHUNK, loaded.current);
+        let query = supabase.from("emails").select(LIST).eq("user_id", user.id).contains("label_ids", ["SENT"]).order("received_at", { ascending: false }).range(0, want);
+        // The search matches the recipient as well as the words of the email.
+        const q = search.trim().replace(/[,()"\\%]/g, " ").trim();
+        if (q) query = query.or(`search_vector.fts.${q},recipients.ilike.%${q}%`);
+        const { data, error: dbError } = await query;
+        if (dbError) throw dbError;
+        let rows = (data || []) as Sent[];
+        const extra = rows.length > want;
+        if (extra) rows = rows.slice(0, want);
+        loaded.current = rows.length;
+        setHasMore(extra);
+        setEmails(rows);
+        setError(null);
+      } catch {
+        setError("Could not load your sent mail.");
+      } finally {
+        busy.current = false;
+        setLoading(false);
+      }
+    },
+    [user.id, search],
+  );
 
   useEffect(() => {
     loadSent();
-    loadScheduled();
-  }, [loadSent, loadScheduled]);
+  }, [loadSent, liveChanges.emails]);
 
-  const tabMountedRef = useRef(false);
   useEffect(() => {
-    if (!tabMountedRef.current) { tabMountedRef.current = true; return; }
-    if (tab === "sent") loadSent();
-    else loadScheduled();
-  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+    supabase
+      .from("emails")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .contains("label_ids", ["SENT"])
+      .then(({ count }: { count: number | null }) => setTotal(count));
+    supabase
+      .from("follow_up_reminders")
+      .select("thread_id, status, remind_at, snooze_until")
+      .eq("user_id", user.id)
+      .then(({ data }: { data: FollowUp[] | null }) => setFollowUps(new Map((data || []).map((f) => [f.thread_id, f]))));
+  }, [user.id, liveChanges.emails]);
 
-  // Live updates when scheduled_emails table changes
-  const prevScheduledChange = useRef(liveChanges.scheduled_emails);
-  useEffect(() => {
-    if (liveChanges.scheduled_emails !== prevScheduledChange.current) {
-      prevScheduledChange.current = liveChanges.scheduled_emails;
-      loadScheduled();
-    }
-  }, [liveChanges.scheduled_emails, loadScheduled]);
-
-  // Optimistically prepend a just-sent email, then refresh from DB
+  // Show a just-sent email at once, then load the copy Gmail has.
   useEffect(() => {
     if (!pendingSentEmail) return;
-    const optimistic = {
-      id: pendingSentEmail.id,
-      subject: pendingSentEmail.subject,
-      recipients: pendingSentEmail.to,
-      body_html: pendingSentEmail.body_html,
-      received_at: pendingSentEmail.date,
-    };
-    setEmails((prev) => {
-      if (prev.some((e) => e.id === optimistic.id)) return prev;
-      return [optimistic, ...prev];
-    });
-    setTimeout(() => loadSent(), 2000);
+    const optimistic: Sent = { id: pendingSentEmail.id, subject: pendingSentEmail.subject, recipients: pendingSentEmail.to, body_html: pendingSentEmail.body_html, received_at: pendingSentEmail.date };
+    setEmails((prev) => (prev.some((e) => e.id === optimistic.id) ? prev : [optimistic, ...prev]));
+    const timer = setTimeout(() => loadSent(), 2000);
+    return () => clearTimeout(timer);
   }, [pendingSentEmail]);
 
-  // Populate edit fields whenever selected scheduled email changes
-  useEffect(() => {
-    if (selectedScheduled) {
-      setEditSubject(selectedScheduled.subject || "");
-      setEditTo((selectedScheduled.to_addresses || []).join(", "));
-      setEditSendAt(isoToDatetimeLocal(selectedScheduled.send_at));
-      const bodyText =
-        selectedScheduled.body_text ||
-        (selectedScheduled.body_html
-          ? selectedScheduled.body_html
-              .replace(/<br\s*\/?>/gi, "\n")
-              .replace(/<[^>]+>/g, "")
-              .trim()
-          : "");
-      setEditBody(bodyText);
+  const items = useMemo(() => {
+    const out: Item[] = [];
+    let run: Sent[] = [];
+    let day = { name: "", date: "", key: "" };
+    const flush = () => run.length && out.push({ head: true, key: `head:${day.key}`, name: day.name, note: day.date, count: run.length }, ...run);
+    for (const e of emails) {
+      const d = dayLabel(e.received_at);
+      if (d.key !== day.key) {
+        flush();
+        run = [];
+        day = d;
+      }
+      run.push(e);
     }
-  }, [selectedScheduled?.id]);
+    flush();
+    return out;
+  }, [emails]);
 
-  const cancelScheduled = async (id: string) => {
-    await supabase
-      .from("scheduled_emails")
-      .update({ status: "cancelled" })
-      .eq("id", id);
-    const updated = (s: any) =>
-      s.id === id ? { ...s, status: "cancelled" } : s;
-    setScheduled((prev) => prev.map(updated));
-    if (selectedScheduled?.id === id)
-      setSelectedScheduled((prev: any) => ({ ...prev, status: "cancelled" }));
+  const rows = emails;
+  const cursor = rows.find((e) => e.id === cursorId) || rows[0] || null;
+  const cursorIndex = cursor ? items.indexOf(cursor) : -1;
+  const heightOf = useCallback((i: Item) => ("head" in i ? 34 : 32), []);
+  const beside = reading && !!cursor;
+
+  // The full text is fetched only for the email being read.
+  const body: Body | null = cursor ? bodies[cursor.id] || (cursor.body_html ? { body_html: cursor.body_html, body_text: null, attachments: null } : null) : null;
+  useEffect(() => {
+    if (!reading || !cursor || bodies[cursor.id] || cursor.body_html) return;
+    const id = cursor.id;
+    supabase
+      .from("emails")
+      .select("id, body_text, body_html, attachments")
+      .eq("id", id)
+      .limit(1)
+      .then(({ data }: { data: any[] | null }) => setBodies((prev) => ({ ...prev, [id]: (data?.[0] as Body) || { body_text: null, body_html: null, attachments: null } })));
+  }, [reading, cursor?.id]);
+
+  const move = (delta: number) => {
+    if (!rows.length) return;
+    const at = cursor ? rows.indexOf(cursor) : -1;
+    setCursorId(rows[Math.min(rows.length - 1, Math.max(0, at + delta))].id);
   };
 
-  const saveScheduled = async () => {
-    if (!selectedScheduled) return;
-    setSaving(true);
-    const toAddresses = editTo
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const sendAt = new Date(editSendAt).toISOString();
-    const body_html = editBody.replace(/\n/g, "<br>");
-    const updates = {
-      subject: editSubject,
-      to_addresses: toAddresses,
-      send_at: sendAt,
-      body_text: editBody,
-      body_html,
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.querySelector("[data-compose-modal]")) return;
+      // "g" then a letter goes to another view; that letter is not an action here.
+      if (Date.now() - goKey.current < 1500) return void (goKey.current = 0);
+      const k = e.key.toLowerCase();
+      if (k === "g") return void (goKey.current = Date.now());
+      if (k === "j" || e.key === "ArrowDown") move(1);
+      else if (k === "k" || e.key === "ArrowUp") move(-1);
+      else if ((e.key === "Enter" || k === "o" || e.key === " ") && cursor) setReading(e.key === " " ? !reading : true);
+      else if (e.key === "Escape" && reading) setReading(false);
+      else return;
+      e.preventDefault();
     };
-    await supabase
-      .from("scheduled_emails")
-      .update(updates)
-      .eq("id", selectedScheduled.id);
-    const updated = { ...selectedScheduled, ...updates };
-    setScheduled((prev) =>
-      prev.map((s) => (s.id === selectedScheduled.id ? updated : s)),
-    );
-    setSelectedScheduled(updated);
-    setSaving(false);
-  };
-
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return "";
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return "";
-    return d.toLocaleDateString([], {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  };
-
-  const scheduledStatusColors: Record<string, string> = {
-    pending: "bg-field text-ink2",
-    sent: "bg-ok-soft text-ok",
-    failed: "bg-danger-soft text-danger",
-    cancelled: "bg-field text-ink2",
-  };
-
-  const hasRightContent =
-    tab === "sent" ? !!selectedEmail : !!selectedScheduled;
-
-  const filteredScheduled = scheduled.filter((s) => {
-    if (!search.trim()) return true;
-    const q = search.toLowerCase();
-    const bodyText = s.body_html ? s.body_html.replace(/<[^>]+>/g, " ") : "";
-    return (
-      (s.subject || "").toLowerCase().includes(q) ||
-      (s.to_addresses || []).join(" ").toLowerCase().includes(q) ||
-      bodyText.toLowerCase().includes(q)
-    );
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
   });
 
-  return (
-    <div className="h-full flex overflow-hidden">
-      {/* Left pane: list */}
+  const renderItem = (item: Item) => {
+    if ("head" in item) return <GroupHead key={item.key} head={item} />;
+    const e = item;
+    const to = people(e.recipients);
+    const follow = followState(e, e.thread_id ? followUps.get(e.thread_id) : undefined);
+    return (
       <div
-        className={`flex flex-col border-r border-line flex-shrink-0 w-80 lg:w-96 ${hasRightContent ? "hidden md:flex" : "flex"}`}
+        key={e.id}
+        role="option"
+        aria-selected={cursor === e}
+        className={`row ${beside ? COLUMNS_BESIDE_READER : COLUMNS}`}
+        onClick={() => (setCursorId(e.id), setReading(true))}
       >
-        <div className="px-3 py-2.5 border-b border-line flex flex-col gap-2 flex-shrink-0">
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => {
-                setTab("sent");
-                setSelectedEmail(null);
-              }}
-              className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === "sent" ? "bg-wax-soft text-wax" : "text-ink3 hover:bg-field"}`}
-            >
-              Sent
-            </button>
-            <button
-              onClick={() => {
-                setTab("scheduled");
-                setSelectedEmail(null);
-              }}
-              className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === "scheduled" ? "bg-wax-soft text-wax" : "text-ink3 hover:bg-field"}`}
-            >
-              Scheduled
-              {scheduled.filter((s) => s.status === "pending").length > 0 && (
-                <span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-wax text-on-wax text-[9px]">
-                  {scheduled.filter((s) => s.status === "pending").length}
-                </span>
-              )}
-            </button>
-          </div>
-        </div>
+        <span className="grid place-items-center">
+          <Glyph state={follow.due ? "need" : follow.answered ? "done" : "filed"} />
+        </span>
+        <span className="truncate pr-3 text-ink">
+          {to[0]}
+          {to.length > 1 && <span className="ml-[5px] text-xs text-ink3">+{to.length - 1}</span>}
+        </span>
+        <span className="flex min-w-0 items-center gap-2 pr-4">
+          <b className="shrink truncate font-normal text-ink">{e.subject || "(no subject)"}</b>
+          {e.has_attachments && <Icon name="attachment" size={13} className="flex-none text-ink3" />}
+          <span className="min-w-0 flex-1 truncate text-ink3">{e.snippet}</span>
+        </span>
+        {!beside && <span className={`hidden truncate text-[12.5px] md:block ${follow.due ? "font-semibold text-wax-ink" : "text-ink3"}`}>{follow.text}</span>}
+        <time className="text-right text-xs text-ink3">{shortWhen(e.received_at)}</time>
+      </div>
+    );
+  };
 
-        <div className="flex-1 overflow-auto">
-          {tab === "sent" ? (
-            loading ? (
-              <div className="flex items-center justify-center h-32">
-                <div className="animate-pulse text-ink3 text-sm">
-                  Loading...
-                </div>
-              </div>
-            ) : error ? (
-              <div className="flex flex-col items-center justify-center h-48 px-4 text-center text-ink3">
-                <Icon name="error_outline" size={40} className="mb-2 text-danger" />
-                <p className="text-sm text-danger">{error}</p>
-              </div>
-            ) : emails.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-ink3 px-4">
-                <Icon name="send" size={40} className="mb-2" />
-                <p className="text-sm text-center">No sent emails to show.</p>
-              </div>
-            ) : (
-              emails
-                .filter((e) => {
-                  if (!search.trim()) return true;
-                  const q = search.toLowerCase();
-                  const bodyText = e.body_html
-                    ? e.body_html.replace(/<[^>]+>/g, " ")
-                    : e.body_text || "";
-                  return (
-                    (e.subject || "").toLowerCase().includes(q) ||
-                    (e.recipients || "").toLowerCase().includes(q) ||
-                    (e.snippet || "").toLowerCase().includes(q) ||
-                    bodyText.toLowerCase().includes(q)
-                  );
-                })
-                .map((e: any) => (
-                  <button
-                    key={e.id}
-                    onClick={() => setSelectedEmail(e)}
-                    className={`w-full text-left px-3 py-2.5 border-b border-line hover:bg-hover transition-colors ${selectedEmail?.id === e.id ? "bg-wax-soft border-l-2 border-l-wax" : ""}`}
-                  >
-                    <p className="text-sm font-medium text-ink truncate">
-                      {e.subject || "(no subject)"}
-                    </p>
-                    <p className="text-xs text-ink3 truncate mt-0.5">
-                      To: {e.recipients}
-                    </p>
-                    {e.received_at && (
-                      <p className="text-[10px] text-ink3 mt-0.5">
-                        {formatDate(e.received_at)}
-                      </p>
-                    )}
-                  </button>
-                ))
-            )
-          ) : filteredScheduled.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-ink3 px-4">
-              <Icon name="schedule_send" size={40} className="mb-2" />
-              <p className="text-sm text-center">No scheduled emails.</p>
+  const firstHead = (first: number): Head | null => {
+    for (let i = Math.min(first, items.length - 1); i >= 0; i--) if ("head" in items[i]) return items[i] as Head;
+    return null;
+  };
+
+  const follow = cursor ? followState(cursor, cursor.thread_id ? followUps.get(cursor.thread_id) : undefined) : null;
+
+  return (
+    <>
+      <ViewBar title="Sent" search="Search sent mail" />
+      <div className="flex min-h-0 flex-1">
+        <div className={`min-w-0 flex-1 flex-col ${beside ? "hidden md:flex" : "flex"}`} role="listbox" aria-label="Sent">
+          {loading && !emails.length ? (
+            <div className="pt-9">
+              <SkeletonRows count={22} />
             </div>
-          ) : (
-            filteredScheduled.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => setSelectedScheduled(s)}
-                className={`w-full text-left px-3 py-2.5 border-b border-line hover:bg-hover transition-colors ${selectedScheduled?.id === s.id ? "bg-wax-soft border-l-2 border-l-wax" : ""}`}
-              >
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-ink truncate flex-1">
-                    {s.subject || "(no subject)"}
-                  </p>
-                  <span
-                    className={`px-2 py-0.5 rounded text-xs font-medium shrink-0 ${scheduledStatusColors[s.status] || ""}`}
-                  >
-                    {s.status}
-                  </span>
-                </div>
-                <p className="text-xs text-ink3 truncate mt-0.5">
-                  To: {s.to_addresses?.join(", ")}
-                </p>
-                <p className="text-[10px] text-ink3 mt-0.5">
-                  Sends: {new Date(s.send_at).toLocaleString()}
-                </p>
+          ) : error && !emails.length ? (
+            <p className="px-5 py-4 text-danger" role="alert">
+              {error} Check that Tabellar is still running, then{" "}
+              <button className="link !text-danger" onClick={() => (setLoading(true), loadSent())}>
+                try again
               </button>
-            ))
+              .
+            </p>
+          ) : !rows.length ? (
+            search ? (
+              <Empty icon="search" title="No sent mail matches that search">
+                Try the name or address of the person you wrote to, or a word from the subject.
+              </Empty>
+            ) : (
+              <Empty icon="send" title="Nothing has been sent yet">
+                Mail you send, from here or from Gmail, and the replies Autopilot sends for you are listed here, newest first.
+              </Empty>
+            )
+          ) : (
+            <VirtualList
+              items={items}
+              heightOf={heightOf}
+              render={renderItem}
+              cursor={cursorIndex}
+              onEnd={hasMore ? () => loadSent(true) : undefined}
+              sticky={(first) => {
+                const h = firstHead(first);
+                return h ? <GroupHead head={h} /> : null;
+              }}
+            />
           )}
         </div>
-      </div>
-
-      {/* Right pane */}
-      <div
-        className={`flex-1 overflow-hidden flex flex-col ${hasRightContent ? "flex" : "hidden md:flex"}`}
-      >
-        {tab === "scheduled" ? (
-          selectedScheduled ? (
-            <div className="flex-1 overflow-auto flex flex-col">
-              {/* Header */}
-              <div className="px-5 py-4 border-b border-line flex items-center gap-3 flex-shrink-0">
-                <button
-                  onClick={() => setSelectedScheduled(null)}
-                  className="p-1.5 rounded-lg hover:bg-field md:hidden shrink-0"
-                >
-                  <Icon name="arrow_back" size={20} />
-                </button>
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-base font-semibold text-ink truncate">
-                    {selectedScheduled.subject || "(no subject)"}
-                  </h2>
-                  <p className="text-xs text-ink3 mt-0.5">
-                    To: {selectedScheduled.to_addresses?.join(", ")}
+        {beside && cursor && (
+          <article className="flex w-full min-w-0 flex-none flex-col border-line md:w-[54%] md:min-w-[380px] md:max-w-[720px] md:border-l" aria-label="Sent email">
+            <header className="flex flex-none items-start gap-1 border-b border-line-soft pb-3.5 pl-6 pr-3 pt-4">
+              <button className="iconbtn -ml-2 md:hidden" aria-label="Back to Sent" onClick={() => setReading(false)}>
+                <Icon name="arrow_back" size={16} />
+              </button>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-[15px] font-[650] leading-snug tracking-[-0.01em]">{cursor.subject || "(no subject)"}</h2>
+                <p className="mt-1 break-words text-xs leading-normal text-ink3">
+                  To {people(cursor.recipients).join(", ")}, {dayLabel(cursor.received_at).name.toLowerCase()} {shortWhen(cursor.received_at)}
+                </p>
+                {follow?.text && (
+                  <p className={`mt-1 text-xs ${follow.due ? "font-semibold text-wax-ink" : "text-ink2"}`}>
+                    {follow.answered ? "Answered." : follow.due ? `${follow.text}, a follow-up is due.` : `${follow.text} for an answer.`}{" "}
+                    <button className="link" onClick={() => setView("followups")}>
+                      Open Follow-ups
+                    </button>
                   </p>
-                </div>
-                <span
-                  className={`px-2 py-0.5 rounded text-xs font-medium shrink-0 ${scheduledStatusColors[selectedScheduled.status] || ""}`}
-                >
-                  {selectedScheduled.status}
-                </span>
-                {selectedScheduled.status === "pending" && (
-                  <button
-                    onClick={() => cancelScheduled(selectedScheduled.id)}
-                    className="p-1.5 rounded-lg hover:bg-danger-soft text-danger shrink-0"
-                    title="Cancel scheduled email"
-                  >
-                    <Icon name="close" size={18} />
-                  </button>
                 )}
               </div>
-
-              {selectedScheduled.status === "pending" ? (
-                /* Edit form */
-                <div className="flex-1 overflow-auto p-6">
-                  <div className="w-full max-w-md mx-auto space-y-4">
-                    <div>
-                      <label className="block text-xs font-medium text-ink3 mb-1.5">
-                        Subject
-                      </label>
-                      <input
-                        type="text"
-                        value={editSubject}
-                        onChange={(e) => setEditSubject(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-wax/30 text-ink"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-ink3 mb-1.5">
-                        To
-                      </label>
-                      <input
-                        type="text"
-                        value={editTo}
-                        onChange={(e) => setEditTo(e.target.value)}
-                        placeholder="Comma-separated emails"
-                        className="w-full px-3 py-2.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-wax/30 text-ink"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-ink3 mb-1.5">
-                        Send at
-                      </label>
-                      <DateTimePicker
-                        value={editSendAt}
-                        onChange={setEditSendAt}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-ink3 mb-1.5">
-                        Body
-                      </label>
-                      <textarea
-                        value={editBody}
-                        onChange={(e) => setEditBody(e.target.value)}
-                        rows={10}
-                        className="w-full px-3 py-2.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-wax/30 text-ink resize-y"
-                      />
-                    </div>
-                    <button
-                      onClick={saveScheduled}
-                      disabled={
-                        saving ||
-                        !editSubject.trim() ||
-                        !editTo.trim() ||
-                        !editSendAt
-                      }
-                      className="w-full px-4 py-2.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
-                    >
-                      {saving ? (
-                        <Icon name="progress_activity" size={16} className="animate-spin" />
-                      ) : (
-                        <Icon name="save" size={16} />
-                      )}
-                      {saving ? "Saving..." : "Save changes"}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* Read-only view for sent/failed/cancelled */
-                <div className="p-5 space-y-3 max-w-xl">
-                  <div className="flex items-center gap-2 text-sm text-ink">
-                    <Icon name="schedule" size={16} className="text-ink3" />
-                    {new Date(selectedScheduled.send_at).toLocaleString()}
-                  </div>
-                  {selectedScheduled.error_message && (
-                    <p className="text-sm text-danger">
-                      {selectedScheduled.error_message}
-                    </p>
-                  )}
-                  <div className="rounded-lg border border-line overflow-hidden mt-3">
-                    {selectedScheduled.body_html ? (
-                      <SentEmailFrame
-                        html={selectedScheduled.body_html}
-                        isDark={theme === "dark"}
-                      />
-                    ) : (
-                      <p className="p-3 text-sm text-ink whitespace-pre-wrap">
-                        {selectedScheduled.body_text || "(no content)"}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-ink3 gap-2">
-              <Icon name="schedule_send" size={56} />
-              <p className="text-sm">
-                Select a scheduled email to view or edit
-              </p>
-            </div>
-          )
-        ) : selectedEmail ? (
-          <div className="flex-1 overflow-auto flex flex-col">
-            <div className="px-5 py-4 border-b border-line flex items-start gap-3 flex-shrink-0">
-              <button
-                onClick={() => setSelectedEmail(null)}
-                className="p-1.5 rounded-lg hover:bg-field md:hidden shrink-0"
-              >
-                <Icon name="arrow_back" size={20} />
+              <button className="iconbtn" aria-label="Previous email" title="Previous (K)" onClick={() => move(-1)}>
+                <Icon name="expand_less" size={16} />
               </button>
-              <div className="flex-1 min-w-0">
-                <h2 className="text-base font-semibold text-ink mb-1">
-                  {selectedEmail.subject || "(no subject)"}
-                </h2>
-                <p className="text-xs text-ink3">
-                  To: {selectedEmail.recipients}
-                  {selectedEmail.received_at && (
-                    <span className="ml-3">
-                      {formatDate(selectedEmail.received_at)}
-                    </span>
-                  )}
-                </p>
-              </div>
-            </div>
-            <div className="flex-1 px-5 py-4">
-              {selectedEmail.body_html ? (
-                <SentEmailFrame
-                  html={selectedEmail.body_html}
-                  isDark={theme === "dark"}
-                />
+              <button className="iconbtn" aria-label="Next email" title="Next (J)" onClick={() => move(1)}>
+                <Icon name="expand_more" size={16} />
+              </button>
+              <button className="iconbtn hidden md:grid" aria-label="Close" title="Close (Esc)" onClick={() => setReading(false)}>
+                <Icon name="close" size={16} />
+              </button>
+            </header>
+            <div className="email-reader-pane min-h-0 flex-1 overflow-y-auto px-6 py-5">
+              {!body ? (
+                <div aria-busy="true" aria-label="Loading" className="space-y-3">
+                  <div className="skel h-3 w-3/4" />
+                  <div className="skel h-3 w-full" />
+                  <div className="skel h-3 w-5/6" />
+                  <div className="skel h-3 w-2/3" />
+                </div>
+              ) : body.body_html ? (
+                <SentEmailFrame html={body.body_html} isDark={theme === "dark"} />
               ) : (
-                <p className="text-sm text-ink whitespace-pre-wrap">
-                  {selectedEmail.body_text ||
-                    selectedEmail.snippet ||
-                    "(no content)"}
-                </p>
+                <p className="whitespace-pre-wrap text-sm leading-[1.6]">{body.body_text || cursor.snippet || "This email has no text."}</p>
               )}
-            </div>
-            {Array.isArray(selectedEmail.attachments) &&
-              selectedEmail.attachments.length > 0 && (
-                <div className="px-5 pb-4 flex-shrink-0 border-t border-line">
-                  <p className="text-[10px] font-semibold text-ink3 uppercase tracking-wider mb-2 pt-2.5">
-                    Attachments ({selectedEmail.attachments.length})
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {(
-                      selectedEmail.attachments as {
-                        filename: string;
-                        mime_type: string;
-                        size: number;
-                        attachment_id: string;
-                      }[]
-                    ).map((att, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-line bg-raised"
-                      >
-                        <Icon name={att.mime_type?.startsWith("image/")
-                            ? "image"
-                            : att.mime_type?.includes("pdf")
-                              ? "picture_as_pdf"
-                              : "attach_file"} size={15} className="text-ink3" />
-                        <div className="min-w-0">
-                          <p className="text-[11px] font-medium text-ink truncate max-w-[160px]">
-                            {att.filename}
-                          </p>
-                          <p className="text-[9px] text-ink3">
-                            {att.size > 1024 * 1024
-                              ? `${(att.size / 1024 / 1024).toFixed(1)} MB`
-                              : `${Math.ceil(att.size / 1024)} KB`}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+              {body && Array.isArray(body.attachments) && body.attachments.length > 0 && (
+                <div className="mt-6 border-t border-line-soft pt-3.5">
+                  <h3 className="label mb-1.5">
+                    {body.attachments.length} attachment{body.attachments.length === 1 ? "" : "s"}
+                  </h3>
+                  {body.attachments.map((att, i) => (
+                    <div key={i} className="flex h-7 items-center gap-2 text-ink2">
+                      <Icon name={att.mime_type?.startsWith("image/") ? "image" : att.mime_type?.includes("pdf") ? "picture_as_pdf" : "attach_file"} size={15} className="flex-none text-ink3" />
+                      <span className="min-w-0 truncate text-ink">{att.filename}</span>
+                      <span className="flex-none text-xs text-ink3">{size(att.size)}</span>
+                    </div>
+                  ))}
                 </div>
               )}
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-ink3 gap-2">
-            <Icon name="send" size={56} />
-            <p className="text-sm">Select a sent email to view</p>
-          </div>
+            </div>
+          </article>
         )}
       </div>
+      <KeyHints
+        left={total === null ? "" : `${total.toLocaleString()} sent${hasMore ? `, ${emails.length.toLocaleString()} loaded` : ""}`}
+        keys={[
+          ["J K", "Move"],
+          ["↵", "Open"],
+          ["esc", "Close"],
+        ]}
+      />
+    </>
+  );
+}
+
+function GroupHead({ head }: { head: Head }) {
+  return (
+    <div className="day !static">
+      <b>{head.name}</b>
+      <span className="truncate">{head.note}</span>
+      <span className="flex-1" />
+      <span className="whitespace-nowrap">{head.count.toLocaleString()} sent</span>
     </div>
   );
 }

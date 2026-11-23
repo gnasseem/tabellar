@@ -1,6 +1,6 @@
-
 import { useEffect, useState } from "react";
 import Icon from "@/components/Icon";
+import { useApp } from "./AppShell";
 
 export type ToastItem = {
   id: string;
@@ -10,37 +10,11 @@ export type ToastItem = {
   duration?: number;
 };
 
-const TYPE_CONFIG = {
-  success: {
-    icon: "check_circle",
-    barClass: "bg-ok",
-    iconClass: "text-ok",
-    actionClass:
-      "text-ok bg-ok/10 hover:bg-ok/20",
-  },
-  error: {
-    icon: "error",
-    barClass: "bg-danger",
-    iconClass: "text-danger",
-    actionClass:
-      "text-danger bg-danger/10 hover:bg-danger/20",
-  },
-  info: {
-    icon: "info",
-    barClass: "bg-wax",
-    iconClass: "text-wax",
-    actionClass:
-      "text-wax bg-wax/10 hover:bg-wax/20",
-  },
-};
+// The toast sits on an ink ground, which is dark in the light theme and light
+// in the dark one. Mixing danger with the canvas gives a red that reads on both.
+const DANGER_ON_INK = "color-mix(in oklch, var(--danger) 45%, var(--bg))";
 
-function SingleToast({
-  toast,
-  onRemove,
-}: {
-  toast: ToastItem;
-  onRemove: () => void;
-}) {
+function SingleToast({ toast, onRemove }: { toast: ToastItem; onRemove: () => void }) {
   const duration = toast.duration ?? 3500;
   const [timeLeft, setTimeLeft] = useState(duration);
 
@@ -56,67 +30,57 @@ function SingleToast({
     return () => clearInterval(interval);
   }, []);
 
-  const cfg = TYPE_CONFIG[toast.type];
-  const progress = timeLeft / duration;
+  const failed = toast.type === "error";
 
   return (
-    <div className="pointer-events-auto relative overflow-hidden rounded-lg bg-side border border-line shadow-md">
-      {/* Left accent strip */}
-      <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${cfg.barClass}`} />
-
-      <div className="pl-4 pr-3 pt-2.5 pb-2.5">
-        {/* Icon + message + close */}
-        <div className="flex items-start gap-2">
-          <Icon name={cfg.icon} size={15} className={`shrink-0 mt-px ${cfg.iconClass}`} />
-          <span className="flex-1 text-[12px] font-medium text-ink leading-snug">
-            {toast.message}
-          </span>
+    <div
+      role={failed ? "alert" : "status"}
+      className="pointer-events-auto relative flex min-h-9 max-w-full items-center gap-2.5 overflow-hidden rounded-[9px] bg-ink pl-3 pr-1 text-[13px] text-canvas shadow-pop"
+    >
+      {failed && <Icon name="error" size={15} style={{ color: DANGER_ON_INK }} />}
+      <span className="min-w-0 py-2 leading-snug">{toast.message}</span>
+      {toast.action && (
+        <>
+          <span className="flex-none text-xs text-canvas/60">{Math.ceil(timeLeft / 1000)}s</span>
           <button
-            onClick={onRemove}
-            className="shrink-0 opacity-40 hover:opacity-80 transition-opacity -mt-0.5 -mr-0.5"
+            className="flex-none font-medium underline decoration-canvas/50 underline-offset-[2.5px] hover:decoration-canvas"
+            onClick={() => {
+              toast.action!.onClick();
+              onRemove();
+            }}
           >
-            <Icon name="close" size={14} />
+            {toast.action.label}
           </button>
-        </div>
-
-        {/* Action row */}
-        {toast.action && (
-          <div className="mt-2 flex items-center justify-between">
-            <span className="text-[11px] opacity-40 text-ink tabular-nums">
-              {Math.ceil(timeLeft / 1000)}s
-            </span>
-            <button
-              onClick={() => {
-                toast.action!.onClick();
-                onRemove();
-              }}
-              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-md transition-colors ${cfg.actionClass}`}
-            >
-              {toast.action.label}
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Draining progress bar */}
-      <div
-        className={`absolute bottom-0 left-0 h-[2px] ${cfg.barClass} opacity-50`}
-        style={{ width: `${progress * 100}%`, transition: "width 50ms linear" }}
-      />
+        </>
+      )}
+      <button className="iconbtn !text-canvas/70 hover:!bg-canvas/15 hover:!text-canvas" onClick={onRemove} aria-label="Dismiss">
+        <Icon name="close" size={14} />
+      </button>
+      {/* Time left to use the action, drawn as a thin bar that runs out. */}
+      {toast.action && (
+        <span
+          className="absolute bottom-0 left-0 h-0.5 w-full origin-left bg-canvas/45"
+          style={{ transform: `scaleX(${timeLeft / duration})`, transition: "transform 50ms linear" }}
+        />
+      )}
     </div>
   );
 }
 
-export function ToastContainer({
-  toasts,
-  removeToast,
-}: {
-  toasts: ToastItem[];
-  removeToast: (id: string) => void;
-}) {
+export function ToastContainer({ toasts, removeToast }: { toasts: ToastItem[]; removeToast: (id: string) => void }) {
+  const { assistantOpen } = useApp();
+  // An open compose window has its Send row along the bottom: stay above it.
+  const [overCompose, setOverCompose] = useState(false);
+  useEffect(() => {
+    setOverCompose(!!document.querySelector("[data-compose-modal]"));
+  }, [toasts]);
+
   if (!toasts.length) return null;
   return (
-    <div className="fixed bottom-4 left-0 z-[200] flex flex-col gap-2 pointer-events-none w-52 px-2">
+    <div
+      className="pointer-events-none fixed left-0 z-[200] flex flex-col items-center gap-2 px-4 lg:left-56"
+      style={{ right: assistantOpen ? 380 : 0, bottom: overCompose ? 76 : 16 }}
+    >
       {toasts.map((t) => (
         <SingleToast key={t.id} toast={t} onRemove={() => removeToast(t.id)} />
       ))}

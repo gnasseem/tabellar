@@ -1,22 +1,33 @@
-
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { setEmailFlag } from "@/lib/outcomes";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
+import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import DateTimePicker from "../DateTimePicker";
+import EmailDetail from "../EmailDetail";
 import { EmailField, useContacts } from "../EmailAutocomplete";
+import { Empty, Glyph, KeyHints, Kbd, Seg, SkeletonRows, ViewBar, clock, dayLabel } from "../ui";
 
+// Meetings: the ones Tabellar proposed from mail and that wait to be confirmed,
+// the ones coming up, and the ones that have passed. The list is on the left;
+// the pane on the right shows one meeting, or the form that schedules a new one
+// against the free time in the user's Google Calendar.
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 type Meeting = {
   id: string;
+  email_id?: string | null;
   title: string;
   start_time: string;
   end_time: string;
-  attendees: string[];
+  attendees: string[] | null;
   location: string | null;
   calendar_event_id: string | null;
   status: "proposed" | "confirmed" | "cancelled";
 };
 
+// A meeting the analysis noticed in an email, not yet a meeting here.
 type SuggestedMeeting = {
   email_id: string;
   email_subject: string;
@@ -29,68 +40,78 @@ type SuggestedMeeting = {
   duration?: number;
 };
 
+type Source = { id: string; sender: string; sender_email: string; subject: string; received_at: string; summary?: string };
 type FreeSlot = { start: string; end: string };
 type SchedulerStep = "form" | "slots";
 type SchedulingMode = "find" | "specific";
+type WorkingHours = { start?: string; end?: string; days?: number[] } | null;
+type Filter = "confirm" | "upcoming" | "past";
+type Head = { head: true; key: string; name: string; note: string; count: number };
+type Row = { key: string; meeting?: Meeting; suggestion?: SuggestedMeeting };
 
-const statusColors: Record<string, string> = {
-  proposed: "bg-field text-ink2",
-  confirmed: "bg-ok-soft text-ok",
-  cancelled: "bg-field text-ink2",
-};
+const DURATIONS = [
+  { id: "15", label: "15 min" },
+  { id: "30", label: "30 min" },
+  { id: "45", label: "45 min" },
+  { id: "60", label: "1 hour" },
+  { id: "90", label: "1.5 hours" },
+  { id: "120", label: "2 hours" },
+];
 
-const statusIcons: Record<string, string> = {
-  proposed: "event_upcoming",
-  confirmed: "event_available",
-  cancelled: "event_busy",
-};
+const pad = (n: number) => String(n).padStart(2, "0");
 
 function dateKey(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// The value a DateTimePicker holds: local "YYYY-MM-DDTHH:MM".
+function toLocalInput(d: Date): string {
+  return `${dateKey(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function nameOf(s: string): string {
+  return (s || "").replace(/<.*>/, "").replace(/"/g, "").trim();
 }
 
 function nextWorkingDay(d: Date, wh: WorkingHours): Date {
-  const days = (wh as any)?.days || [1, 2, 3, 4, 5];
+  const days = wh?.days || [1, 2, 3, 4, 5];
   const next = new Date(d);
-  do { next.setDate(next.getDate() + 1); } while (!days.includes(next.getDay()));
+  do {
+    next.setDate(next.getDate() + 1);
+  } while (!days.includes(next.getDay()));
   return next;
 }
 
 function prevWorkingDay(d: Date, min: Date, wh: WorkingHours): Date | null {
-  const days = (wh as any)?.days || [1, 2, 3, 4, 5];
+  const days = wh?.days || [1, 2, 3, 4, 5];
   const prev = new Date(d);
-  do { prev.setDate(prev.getDate() - 1); } while (!days.includes(prev.getDay()));
-  if (dateKey(prev) < dateKey(min)) return null;
-  return prev;
-}
-
-function groupSlotsByDay(slots: FreeSlot[]): Record<string, FreeSlot[]> {
-  const groups: Record<string, FreeSlot[]> = {};
-  for (const slot of slots) {
-    const day = new Date(slot.start).toLocaleDateString([], {
-      weekday: "long",
-      month: "short",
-      day: "numeric",
-    });
-    if (!groups[day]) groups[day] = [];
-    groups[day].push(slot);
-  }
-  return groups;
+  do {
+    prev.setDate(prev.getDate() - 1);
+  } while (!days.includes(prev.getDay()));
+  return dateKey(prev) < dateKey(min) ? null : prev;
 }
 
 function groupSlotsByHour(slots: FreeSlot[]): Record<string, FreeSlot[]> {
   const groups: Record<string, FreeSlot[]> = {};
   for (const slot of slots) {
-    const h = new Date(slot.start).getHours();
-    const label = `${h % 12 || 12} ${h >= 12 ? "PM" : "AM"}`;
+    const label = `${new Date(slot.start).getHours()}:00`;
     if (!groups[label]) groups[label] = [];
     groups[label].push(slot);
   }
   return groups;
 }
 
-type WorkingHours = { start?: string; end?: string; days?: number[] } | null;
+// Quarter-hour slots joined into the stretches of free time they cover.
+function freeRanges(slots: FreeSlot[]): FreeSlot[] {
+  const out: FreeSlot[] = [];
+  for (const s of [...slots].sort((a, b) => a.start.localeCompare(b.start))) {
+    const last = out[out.length - 1];
+    if (last && new Date(s.start).getTime() <= new Date(last.end).getTime()) {
+      if (new Date(s.end).getTime() > new Date(last.end).getTime()) last.end = s.end;
+    } else out.push({ ...s });
+  }
+  return out;
+}
 
 function isOutsideWorkingHours(isoStr: string, wh: WorkingHours): boolean {
   if (!isoStr) return false;
@@ -103,6 +124,7 @@ function isOutsideWorkingHours(isoStr: string, wh: WorkingHours): boolean {
   return minutes < startH * 60 + startM || minutes >= endH * 60 + endM;
 }
 
+// The start of the next working day that is still ahead, as a picker value.
 function getNextWorkingSlot(wh: WorkingHours): string {
   const now = new Date();
   const days = wh?.days || [1, 2, 3, 4, 5];
@@ -111,153 +133,285 @@ function getNextWorkingSlot(wh: WorkingHours): string {
     const candidate = new Date(now);
     candidate.setDate(now.getDate() + d);
     candidate.setHours(startH, startM, 0, 0);
-    if (!days.includes(candidate.getDay())) continue;
-    if (candidate > now) {
-      const pad = (n: number) => String(n).padStart(2, "0");
-      return `${candidate.getFullYear()}-${pad(candidate.getMonth() + 1)}-${pad(candidate.getDate())}T${pad(candidate.getHours())}:${pad(candidate.getMinutes())}`;
-    }
+    if (days.includes(candidate.getDay()) && candidate > now) return toLocalInput(candidate);
   }
   const tomorrow = new Date(now);
   tomorrow.setDate(now.getDate() + 1);
   tomorrow.setHours(9, 0, 0, 0);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${tomorrow.getFullYear()}-${pad(tomorrow.getMonth() + 1)}-${pad(tomorrow.getDate())}T09:00`;
+  return toLocalInput(tomorrow);
+}
+
+function minutesOf(m: Meeting): number {
+  return Math.round((new Date(m.end_time).getTime() - new Date(m.start_time).getTime()) / 60000);
+}
+
+function durationLabel(min: string | number): string {
+  const m = Number(min);
+  if (m < 60) return `${m} min`;
+  if (m === 60) return "1 hour";
+  return `${m / 60} hours`;
+}
+
+function longDate(iso: string | Date): string {
+  return new Date(iso).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+}
+
+// Group header for a day that may lie ahead: Today, Tomorrow, then the weekday.
+function dayHead(iso: string): { key: string; name: string; note: string } {
+  const d = new Date(iso);
+  const now = new Date();
+  const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86400000);
+  const weekday = d.toLocaleDateString([], { weekday: "long" });
+  const date = d.toLocaleDateString([], { day: "numeric", month: "long", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
+  const near = days === 0 ? "Today" : days === 1 ? "Tomorrow" : days === -1 ? "Yesterday" : "";
+  return { key: dateKey(d), name: near || weekday, note: near ? `${weekday} ${date}` : date };
+}
+
+// When an email arrived, in words: "today 12:31", "Monday 17 November".
+function wroteWhen(iso: string): string {
+  const d = dayLabel(iso);
+  return d.name === "Today" || d.name === "Yesterday" ? `${d.name.toLowerCase()} ${clock(iso)}` : `${d.name} ${d.date}`;
+}
+
+// The free times of one day, a line per hour. The chosen one is filled.
+function SlotGrid({ slots, failed, selected, onPick, onRetry }: { slots: FreeSlot[] | null; failed: boolean; selected: string | null; onPick: (s: FreeSlot) => void; onRetry: () => void }) {
+  if (slots === null)
+    return (
+      <div className="space-y-2.5 py-3" aria-busy="true" aria-label="Checking your calendar">
+        {[72, 64, 55, 68].map((w) => (
+          <div key={w} className="skel h-4" style={{ width: `${w}%` }} />
+        ))}
+      </div>
+    );
+  if (failed)
+    return (
+      <p className="py-3 leading-normal text-danger" role="alert">
+        Your Google Calendar could not be read. Reconnect the account in Settings, under Accounts, or set the time yourself.{" "}
+        <button type="button" className="link" onClick={onRetry}>
+          Try again
+        </button>
+      </p>
+    );
+  if (!slots.length) return <p className="py-3 text-ink3">Nothing is free on this day within your working hours. Try the next working day.</p>;
+  return (
+    <div>
+      {Object.entries(groupSlotsByHour(slots)).map(([hour, list]) => (
+        <div key={hour} className="flex flex-wrap items-center gap-1 border-b border-line-soft py-1 last:border-0">
+          <span className="w-12 flex-none text-xs text-ink3">{hour}</span>
+          {list.map((slot) => {
+            const on = selected === slot.start;
+            return (
+              <button
+                key={slot.start}
+                type="button"
+                aria-pressed={on}
+                aria-label={clock(slot.start)}
+                onClick={() => onPick(slot)}
+                className={`h-6 rounded-md px-2 text-xs transition-colors duration-150 ${on ? "bg-ink font-medium text-canvas" : "text-ink hover:bg-sel"}`}
+              >
+                {on ? clock(slot.start) : `:${pad(new Date(slot.start).getMinutes())}`}
+              </button>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function MeetingsView() {
-  const { user, profile, addToast, getViewCache, setViewCache, liveChanges, pendingMeetingSchedule, setPendingMeetingSchedule } = useApp();
+  const { user, profile, addToast, search, getViewCache, setViewCache, liveChanges, pendingMeetingSchedule, setPendingMeetingSchedule } = useApp();
   const { contacts, primaryAccountId } = useContacts(user?.id ?? "");
   const supabase = createClient();
+  const wh = profile?.working_hours as WorkingHours;
   const [meetings, setMeetings] = useState<Meeting[]>([]);
+  const [sources, setSources] = useState<Map<string, Source>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
-  const [showScheduler, setShowScheduler] = useState(false);
-  const [filter, setFilter] = useState<"all" | "upcoming" | "past">("upcoming");
+  const [loadError, setLoadError] = useState("");
+  const [chosen, setChosen] = useState<Filter | null>(null);
+  const [cursorKey, setCursorKey] = useState<string | null>(null);
+  const [paneOpen, setPaneOpen] = useState(false); // narrow windows show the list or the pane
+  const [reading, setReading] = useState<any | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Free time, per day and meeting length, as the calendar reported it.
   const [dayCache, setDayCache] = useState<Record<string, FreeSlot[]>>({});
   const dayCacheRef = useRef<Record<string, FreeSlot[]>>({});
   const inflightRef = useRef<Set<string>>(new Set());
-  const [loadingDates, setLoadingDates] = useState<Set<string>>(new Set());
+  const [slotsFailed, setSlotsFailed] = useState<Set<string>>(new Set());
+
+  // Meetings noticed in recent mail
+  const [suggestedMeetings, setSuggestedMeetings] = useState<SuggestedMeeting[]>([]);
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const [schedulingFromSuggestion, setSchedulingFromSuggestion] = useState<SuggestedMeeting | null>(null);
+
+  // New meeting form
+  const [showScheduler, setShowScheduler] = useState(false);
+  const [schedulerStep, setSchedulerStep] = useState<SchedulerStep>("form");
+  const [schedulingMode, setSchedulingMode] = useState<SchedulingMode>("find");
+  const [newTitle, setNewTitle] = useState("");
+  const [newDuration, setNewDuration] = useState("30");
+  const [newAttendees, setNewAttendees] = useState("");
+  const [newLocation, setNewLocation] = useState("");
+  const [specificDateTime, setSpecificDateTime] = useState(() => getNextWorkingSlot(null));
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
+  const [selectedSlot, setSelectedSlot] = useState<FreeSlot | null>(null);
   const [creating, setCreating] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
+
+  // Changing a meeting
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editStartTime, setEditStartTime] = useState("");
   const [editDuration, setEditDuration] = useState("30");
   const [editAttendees, setEditAttendees] = useState("");
   const [saving, setSaving] = useState(false);
-  const [schedulerStep, setSchedulerStep] = useState<SchedulerStep>("form");
-  const [selectedSlot, setSelectedSlot] = useState<FreeSlot | null>(null);
-  const [schedulingMode, setSchedulingMode] = useState<SchedulingMode>("find");
-  const [specificDateTime, setSpecificDateTime] = useState(() => getNextWorkingSlot(null));
-
-  // Suggested meetings from email analysis
-  const [suggestedMeetings, setSuggestedMeetings] = useState<SuggestedMeeting[]>([]);
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-  const [schedulingFromSuggestion, setSchedulingFromSuggestion] = useState<SuggestedMeeting | null>(null);
-
-  // New meeting form
-  const [newTitle, setNewTitle] = useState("");
-  const [newDuration, setNewDuration] = useState("30");
-  const [newAttendees, setNewAttendees] = useState("");
-  const [newLocation, setNewLocation] = useState("");
 
   const loadMeetings = useCallback(async () => {
-    const cacheKey = `meetings_${filter}`;
-    const cached = getViewCache(cacheKey);
+    const cached = getViewCache("meetings");
     if (cached) {
       setMeetings(cached);
       setLoading(false);
-    } else {
-      setLoading(true);
     }
-
-    let query = supabase
-      .from("meetings")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("start_time", { ascending: true });
-
-    const now = new Date().toISOString();
-    if (filter === "upcoming") query = query.gte("start_time", now);
-    else if (filter === "past") query = query.lt("start_time", now);
-
-    const { data } = await query.limit(200);
+    const { data, error } = await supabase.from("meetings").select("*").eq("user_id", user.id).order("start_time", { ascending: false }).limit(500);
+    setLoading(false);
+    if (error) return setLoadError(error.message || "the database did not answer");
+    setLoadError("");
     const result = (data || []) as Meeting[];
     setMeetings(result);
-    setViewCache(cacheKey, result);
-    setLoading(false);
-  }, [user.id, filter]);
+    setViewCache("meetings", result);
+    // The emails the meetings came from.
+    const ids = [...new Set(result.map((m) => m.email_id).filter(Boolean))] as string[];
+    if (!ids.length) return;
+    const [e, p] = await Promise.all([
+      supabase.from("emails").select("id, sender, sender_email, subject, received_at").in("id", ids),
+      supabase.from("email_processed").select("email_id, summary").in("email_id", ids),
+    ]);
+    const summary = new Map(((p.data || []) as any[]).map((x) => [x.email_id, x.summary]));
+    setSources(new Map(((e.data || []) as any[]).map((x) => [x.id, { ...x, summary: summary.get(x.id) }])));
+  }, [user.id]);
 
-  useEffect(() => { loadMeetings(); }, [loadMeetings]);
-
-  // Live updates: re-fetch when meetings table changes
-  const prevMeetingsChange = useRef(liveChanges.meetings);
   useEffect(() => {
-    if (liveChanges.meetings !== prevMeetingsChange.current) {
-      prevMeetingsChange.current = liveChanges.meetings;
-      loadMeetings();
-    }
-  }, [liveChanges.meetings, loadMeetings]);
+    loadMeetings();
+  }, [loadMeetings, liveChanges.meetings]);
 
+  // Meetings the analysis of the last three days of mail noticed.
   const loadSuggestedMeetings = useCallback(async () => {
-    setLoadingSuggestions(true);
-    try {
-      // Use pre-computed quick_actions from email_processed  -  no on-demand AI
-      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
-      const { data: processed } = await supabase
-        .from("email_processed")
-        .select("email_id, quick_actions, emails!inner(subject, sender, sender_email, received_at, user_id)")
-        .eq("emails.user_id", user.id)
-        .filter("emails.received_at", "gte", threeDaysAgo)
-        .not("quick_actions", "is", null)
-        .limit(30);
-
-      const suggestions: SuggestedMeeting[] = [];
-      if (processed) {
-        for (const p of processed) {
-          const email = (p as any).emails;
-          const actions = Array.isArray(p.quick_actions) ? p.quick_actions : [];
-          const meetingAction = actions.find((a: any) => a.action === "schedule_meeting");
-          if (meetingAction) {
-            const details = meetingAction.meetingDetails;
-            const rawTitle = details?.title
-              || meetingAction.text?.trim()
-              || meetingAction.label?.replace(/^Schedule:\s*/i, "").replace(/^Add to Calendar:\s*/i, "")
-              || `Meeting re: ${email?.subject?.slice(0, 40) || ""}`;
-            suggestions.push({
-              email_id: p.email_id,
-              email_subject: email?.subject || "(no subject)",
-              email_sender: email?.sender || email?.sender_email || "",
-              title: rawTitle,
-              attendees: details?.attendees || (email?.sender_email ? [email.sender_email] : []),
-              suggested_time: details?.dateTime || undefined,
-              dateTime: details?.dateTime || undefined,
-              location: details?.location || undefined,
-              duration: details?.duration || undefined,
-            });
-          }
-        }
-      }
-      setSuggestedMeetings(suggestions);
-    } catch {
-      // silently fail
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: processed } = await supabase
+      .from("email_processed")
+      .select("email_id, quick_actions, emails!inner(subject, sender, sender_email, received_at, user_id)")
+      .eq("emails.user_id", user.id)
+      .filter("emails.received_at", "gte", threeDaysAgo)
+      .not("quick_actions", "is", null)
+      .limit(30);
+    if (!processed) return;
+    const suggestions: SuggestedMeeting[] = [];
+    for (const p of processed as any[]) {
+      const email = p.emails;
+      const actions = Array.isArray(p.quick_actions) ? p.quick_actions : [];
+      const meetingAction = actions.find((a: any) => a.action === "schedule_meeting");
+      if (!meetingAction) continue;
+      const details = meetingAction.meetingDetails;
+      suggestions.push({
+        email_id: p.email_id,
+        email_subject: email?.subject || "(no subject)",
+        email_sender: email?.sender || email?.sender_email || "",
+        title:
+          details?.title ||
+          meetingAction.text?.trim() ||
+          meetingAction.label?.replace(/^Schedule:\s*/i, "").replace(/^Add to Calendar:\s*/i, "") ||
+          `Meeting about ${email?.subject?.slice(0, 40) || "an email"}`,
+        attendees: details?.attendees || (email?.sender_email ? [email.sender_email] : []),
+        suggested_time: details?.dateTime || undefined,
+        dateTime: details?.dateTime || undefined,
+        location: details?.location || undefined,
+        duration: details?.duration || undefined,
+      });
     }
-    setLoadingSuggestions(false);
-  }, [user.id, supabase]);
+    setSuggestedMeetings(suggestions);
+  }, [user.id]);
 
-  useEffect(() => { loadSuggestedMeetings(); }, [loadSuggestedMeetings]);
-
-  // Open scheduler pre-filled when navigating from a quick action
   useEffect(() => {
-    if (!pendingMeetingSchedule) return;
-    const p = pendingMeetingSchedule;
+    loadSuggestedMeetings();
+  }, [loadSuggestedMeetings, liveChanges.email_processed]);
+
+  const slotKey = (date: Date, duration: string | number) => `${dateKey(date)}|${duration}`;
+
+  const clearSlots = () => {
+    dayCacheRef.current = {};
+    setDayCache({});
+    setSlotsFailed(new Set());
+  };
+
+  // Ask the calendar for the free times of one day, for a meeting of a length.
+  const fetchSlots = async (date: Date, duration: string | number = newDuration, again = false) => {
+    const key = slotKey(date, duration);
+    if (inflightRef.current.has(key) || (key in dayCacheRef.current && !again)) return;
+    inflightRef.current.add(key);
+    if (again) {
+      delete dayCacheRef.current[key];
+      setDayCache((prev) => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
+    let slots: FreeSlot[] = [];
+    let failed = false;
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const res = await fetch(`/api/calendar/free-slots?duration=${duration}&date=${dateKey(date)}&timezone=${encodeURIComponent(tz)}`, { headers: { Authorization: `Bearer ${session?.access_token}` } });
+      const body = await res.json().catch(() => ({}));
+      failed = !res.ok || !!body.error;
+      slots = body.slots || [];
+    } catch {
+      failed = true;
+    }
+    inflightRef.current.delete(key);
+    dayCacheRef.current[key] = slots;
+    setDayCache((prev) => ({ ...prev, [key]: slots }));
+    setSlotsFailed((prev) => {
+      const next = new Set(prev);
+      if (failed) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  };
+
+  const resetScheduler = () => {
+    setNewTitle("");
+    setNewAttendees("");
+    setNewDuration("30");
+    setNewLocation("");
+    clearSlots();
+    inflightRef.current.clear();
+    setSelectedSlot(null);
+    setSchedulerStep("form");
+    setSchedulingMode("find");
+    setSpecificDateTime(getNextWorkingSlot(wh));
+    setShowScheduler(false);
+    setSchedulingFromSuggestion(null);
+    setPaneOpen(false);
+  };
+
+  const newMeeting = () => {
+    resetScheduler();
+    setEditingId(null);
+    setShowScheduler(true);
+    setPaneOpen(true);
+  };
+
+  // Open the form filled in, from a suggestion here or a quick action elsewhere.
+  const prefillScheduler = (p: { title?: string; attendees?: string[]; duration?: number; location?: string; dateTime?: string }) => {
     setNewTitle(p.title || "");
     setNewAttendees((p.attendees || []).join(", "));
     setNewDuration(p.duration ? String(p.duration) : "30");
     setNewLocation(p.location || "");
     setSchedulerStep("form");
-    dayCacheRef.current = {};
-    setDayCache({});
+    clearSlots();
     setSelectedSlot(null);
     if (p.dateTime) {
       setSchedulingMode("specific");
@@ -265,70 +419,62 @@ export default function MeetingsView() {
     } else {
       setSchedulingMode("find");
     }
+    setEditingId(null);
     setShowScheduler(true);
-    setSelectedMeeting(null);
+    setPaneOpen(true);
+  };
+
+  const openSchedulerFromSuggestion = (s: SuggestedMeeting) => {
+    prefillScheduler(s);
+    setSchedulingFromSuggestion(s);
+  };
+
+  // Arriving from a "schedule meeting" quick action on an email.
+  useEffect(() => {
+    if (!pendingMeetingSchedule) return;
+    prefillScheduler(pendingMeetingSchedule);
     setSchedulingFromSuggestion(null);
     setPendingMeetingSchedule(null);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingMeetingSchedule]);
-
-  // Live updates: re-fetch suggestions when new emails are processed
-  const prevProcessedChange = useRef(liveChanges.email_processed);
-  useEffect(() => {
-    if (liveChanges.email_processed !== prevProcessedChange.current) {
-      prevProcessedChange.current = liveChanges.email_processed;
-      loadSuggestedMeetings();
-    }
-  }, [liveChanges.email_processed, loadSuggestedMeetings]);
-
-  const fetchSlotsForDate = async (date: Date) => {
-    const key = dateKey(date);
-    if (key in dayCacheRef.current || inflightRef.current.has(key)) return;
-    inflightRef.current.add(key);
-    setLoadingDates(prev => new Set([...prev, key]));
-    try {
-      const apiUrl = "/api";
-      const { data: { session } } = await supabase.auth.getSession();
-      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const res = await fetch(
-        `${apiUrl}/calendar/free-slots?duration=${newDuration}&date=${key}&timezone=${encodeURIComponent(tz)}`,
-        { headers: { Authorization: `Bearer ${session?.access_token}` } },
-      );
-      const slots = res.ok ? (await res.json()).slots || [] : [];
-      dayCacheRef.current[key] = slots;
-      setDayCache(prev => ({ ...prev, [key]: slots }));
-    } catch {
-      dayCacheRef.current[key] = [];
-      setDayCache(prev => ({ ...prev, [key]: [] }));
-    } finally {
-      inflightRef.current.delete(key);
-      setLoadingDates(prev => { const s = new Set(prev); s.delete(key); return s; });
-    }
-  };
 
   const startFindAvailable = () => {
     if (!newTitle.trim()) return;
-    const wh = profile?.working_hours as WorkingHours;
-    const workDays = (wh as any)?.days || [1, 2, 3, 4, 5];
-    let first = new Date();
+    const workDays = wh?.days || [1, 2, 3, 4, 5];
+    const first = new Date();
     while (!workDays.includes(first.getDay())) first.setDate(first.getDate() + 1);
     setCurrentDate(first);
     setSelectedSlot(null);
     setSchedulerStep("slots");
-    const next = nextWorkingDay(first, wh);
-    fetchSlotsForDate(first);
-    fetchSlotsForDate(next);
+    fetchSlots(first);
+    fetchSlots(nextWorkingDay(first, wh));
   };
 
+  const goNextDay = () => {
+    const next = nextWorkingDay(currentDate, wh);
+    setCurrentDate(next);
+    setSelectedSlot(null);
+    fetchSlots(next);
+    fetchSlots(nextWorkingDay(next, wh));
+  };
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const prevDay = prevWorkingDay(currentDate, today, wh);
+  const goPrevDay = () => {
+    if (!prevDay) return;
+    setCurrentDate(prevDay);
+    setSelectedSlot(null);
+  };
+
+  // Puts the event on Google Calendar, which invites the people added, then
+  // keeps the meeting here. If the calendar refuses, it is kept as a proposal.
   const createMeeting = async () => {
-    if (!newTitle) return;
+    if (!newTitle || creating) return;
     if (schedulingMode === "find" && !selectedSlot) return;
     if (schedulingMode === "specific" && !specificDateTime) return;
     setCreating(true);
     const durationMin = parseInt(newDuration, 10) || 30;
-    const startTime = schedulingMode === "specific"
-      ? new Date(specificDateTime)
-      : new Date(selectedSlot!.start);
+    const startTime = schedulingMode === "specific" ? new Date(specificDateTime) : new Date(selectedSlot!.start);
     const endTime = new Date(startTime.getTime() + durationMin * 60000);
     const attendees = newAttendees.split(",").map((s) => s.trim()).filter(Boolean);
 
@@ -340,12 +486,14 @@ export default function MeetingsView() {
       attendees,
       status: "proposed",
       ...(newLocation ? { location: newLocation } : {}),
+      ...(schedulingFromSuggestion ? { email_id: schedulingFromSuggestion.email_id } : {}),
     };
 
     try {
-      const apiUrl = "/api";
-      const { data: { session } } = await supabase.auth.getSession();
-      const calRes = await fetch(`${apiUrl}/calendar/create-event`, {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const calRes = await fetch("/api/calendar/create-event", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
         body: JSON.stringify({
@@ -363,801 +511,688 @@ export default function MeetingsView() {
         const cal = await calRes.json();
         meetingData.calendar_event_id = cal.event_id;
         meetingData.status = "confirmed";
-        addToast("success", "Meeting created and added to Calendar");
+        addToast("success", "Meeting scheduled and added to your Google Calendar");
       } else {
         const errBody = await calRes.json().catch(() => ({}));
-        const errMsg = errBody?.error ?? "calendar sync failed";
+        const errMsg = String(errBody?.error ?? "calendar sync failed");
         console.error("[MeetingsView] calendar sync error:", errMsg);
         if (errMsg.includes("insufficient_scope") || errMsg.includes("No calendar access") || errMsg.includes("token refresh failed")) {
-          addToast("info", "Meeting saved. Reconnect your Google account in Settings to enable Calendar sync.");
+          addToast("info", "Meeting kept in Tabellar only. Reconnect your Google account in Settings to add meetings to your calendar.");
         } else {
-          addToast("info", "Meeting saved (calendar sync failed)");
+          addToast("info", "Meeting kept in Tabellar only: Google Calendar did not accept it.");
         }
       }
     } catch {
-      addToast("info", "Meeting saved (calendar unavailable)");
+      addToast("info", "Meeting kept in Tabellar only: Google Calendar could not be reached.");
     }
 
-    const { error: insertErr } = await supabase.from("meetings").insert(meetingData);
-    if (!insertErr && schedulingFromSuggestion) {
-      setSuggestedMeetings((prev) => prev.filter((s) => s.email_id !== schedulingFromSuggestion.email_id));
-    }
+    const { data, error } = await supabase.from("meetings").insert(meetingData).select("id").single();
+    setCreating(false);
+    if (error) return addToast("error", `The meeting was not saved: ${error.message}. Try again.`);
     resetScheduler();
+    setChosen(meetingData.status === "proposed" ? "confirm" : "upcoming");
+    if (data?.id) setCursorKey(data.id);
     loadMeetings();
   };
 
-  const resetScheduler = () => {
-    setNewTitle("");
-    setNewAttendees("");
-    setNewDuration("30");
-    setNewLocation("");
-    dayCacheRef.current = {};
-    setDayCache({});
-    inflightRef.current.clear();
-    setLoadingDates(new Set());
-    setSelectedSlot(null);
-    setSchedulerStep("form");
-    setSchedulingMode("find");
-    setSpecificDateTime(getNextWorkingSlot(profile?.working_hours as WorkingHours));
-    setShowScheduler(false);
-    setSchedulingFromSuggestion(null);
-  };
-
-  const openSchedulerFromSuggestion = (s: SuggestedMeeting) => {
-    setNewTitle(s.title);
-    setNewAttendees(s.attendees.join(", "));
-    setNewDuration(s.duration ? String(s.duration) : "30");
-    setNewLocation(s.location || "");
-    setSchedulerStep("form");
-    dayCacheRef.current = {};
-    setDayCache({});
-    setSelectedSlot(null);
-    if (s.dateTime) {
-      setSchedulingMode("specific");
-      setSpecificDateTime(s.dateTime);
-    } else {
-      setSchedulingMode("find");
+  const setStatus = async (m: Meeting, status: Meeting["status"]) => {
+    const { error } = await supabase.from("meetings").update({ status }).eq("id", m.id);
+    if (error) {
+      addToast("error", `That was not saved: ${error.message}. Try again.`);
+      return false;
     }
-    setShowScheduler(true);
-    setSelectedMeeting(null);
-    setSchedulingFromSuggestion(s);
-  };
-
-  const cancelMeeting = async (id: string) => {
-    await supabase.from("meetings").update({ status: "cancelled" }).eq("id", id);
-    setMeetings((prev) => prev.map((m) => m.id === id ? { ...m, status: "cancelled" as const } : m));
-    if (selectedMeeting?.id === id) setSelectedMeeting((prev) => prev ? { ...prev, status: "cancelled" as const } : prev);
-    addToast("info", "Meeting cancelled");
-  };
-
-  const confirmMeeting = async (id: string) => {
-    await supabase.from("meetings").update({ status: "confirmed" }).eq("id", id);
-    setMeetings((prev) => prev.map((m) => m.id === id ? { ...m, status: "confirmed" as const } : m));
-    if (selectedMeeting?.id === id) setSelectedMeeting((prev) => prev ? { ...prev, status: "confirmed" as const } : prev);
-    addToast("success", "Meeting confirmed");
-  };
-
-  const deleteMeeting = async (id: string) => {
-    await supabase.from("meetings").delete().eq("id", id);
-    setMeetings((prev) => prev.filter((m) => m.id !== id));
-    if (selectedMeeting?.id === id) setSelectedMeeting(null);
-    addToast("info", "Meeting deleted");
+    setMeetings((prev) => prev.map((x) => (x.id === m.id ? { ...x, status } : x)));
+    return true;
   };
 
   const openEdit = (m: Meeting) => {
     setEditTitle(m.title);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const s = new Date(m.start_time);
-    setEditStartTime(`${s.getFullYear()}-${pad(s.getMonth() + 1)}-${pad(s.getDate())}T${pad(s.getHours())}:${pad(s.getMinutes())}`);
-    const durMin = Math.round((new Date(m.end_time).getTime() - new Date(m.start_time).getTime()) / 60000);
-    setEditDuration(String(durMin));
+    setEditStartTime(toLocalInput(new Date(m.start_time)));
+    setEditDuration(String(minutesOf(m)));
     setEditAttendees((m.attendees || []).join(", "));
-    setIsEditing(true);
+    setShowScheduler(false);
+    setEditingId(m.id);
+    setPaneOpen(true);
   };
 
-  const saveMeeting = async () => {
-    if (!selectedMeeting || !editTitle) return;
+  const saveMeeting = async (m: Meeting) => {
+    if (!editTitle || !editStartTime) return;
     setSaving(true);
     const startTime = new Date(editStartTime);
-    const durationMin = parseInt(editDuration, 10) || 30;
-    const endTime = new Date(startTime.getTime() + durationMin * 60000);
+    const endTime = new Date(startTime.getTime() + (parseInt(editDuration, 10) || 30) * 60000);
     const attendees = editAttendees.split(",").map((s) => s.trim()).filter(Boolean);
+    const updates = { title: editTitle, start_time: startTime.toISOString(), end_time: endTime.toISOString(), attendees };
 
-    const updates = {
-      title: editTitle,
-      start_time: startTime.toISOString(),
-      end_time: endTime.toISOString(),
-      attendees,
-    };
+    await supabase.from("meetings").update(updates).eq("id", m.id);
 
-    await supabase.from("meetings").update(updates).eq("id", selectedMeeting.id);
-
-    if (selectedMeeting.calendar_event_id) {
+    if (m.calendar_event_id) {
       try {
-        const apiUrl = "/api";
-        const { data: { session } } = await supabase.auth.getSession();
-        const res = await fetch(`${apiUrl}/calendar/update-event`, {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        const res = await fetch("/api/calendar/update-event", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-          body: JSON.stringify({
-            event_id: selectedMeeting.calendar_event_id,
-            title: editTitle,
-            start_time: startTime.toISOString(),
-            end_time: endTime.toISOString(),
-            attendees,
-          }),
+          body: JSON.stringify({ event_id: m.calendar_event_id, ...updates }),
         });
-        if (res.ok) {
-          addToast("success", "Meeting updated and participants notified");
-        } else {
-          addToast("info", "Meeting saved (calendar update failed)");
-        }
+        if (res.ok) addToast("success", "Meeting updated. The people invited have been told.");
+        else addToast("info", "Saved in Tabellar, but Google Calendar did not accept the change.");
       } catch {
-        addToast("info", "Meeting saved (calendar unavailable)");
+        addToast("info", "Saved in Tabellar, but Google Calendar could not be reached.");
       }
+      clearSlots();
     } else {
       addToast("success", "Meeting updated");
     }
 
-    const updated = { ...selectedMeeting, ...updates };
-    setMeetings((prev) => prev.map((m) => m.id === selectedMeeting.id ? updated : m));
-    setSelectedMeeting(updated);
-    setIsEditing(false);
+    setMeetings((prev) => prev.map((x) => (x.id === m.id ? { ...x, ...updates } : x)));
+    setEditingId(null);
     setSaving(false);
   };
 
-  const formatMeetingTime = (start: string, end: string) => {
-    const s = new Date(start);
-    const e = new Date(end);
-    return `${s.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })} · ${s.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })} – ${e.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })}`;
+  const openEmailById = async (emailId: string) => {
+    const { data } = await supabase.from("emails").select("*, email_processed(*)").eq("id", emailId).single();
+    if (data) setReading(data);
+    else addToast("error", "That email is no longer in Tabellar.");
   };
 
-  const durationLabel = (min: string) => {
-    const m = parseInt(min, 10);
-    if (m < 60) return `${m} min`;
-    if (m === 60) return "1 hour";
-    return `${m / 60} hours`;
+  // What the list shows: the chosen filter, the search, grouped by day.
+  const q = search.trim().toLowerCase();
+  const now = Date.now();
+  const matches = (text: string) => !q || text.toLowerCase().includes(q);
+  const sourceOf = (m: Meeting) => (m.email_id ? sources.get(m.email_id) : undefined);
+  const proposed = meetings.filter((m) => m.status === "proposed");
+  const upcomingCount = meetings.filter((m) => m.status !== "cancelled" && new Date(m.start_time).getTime() >= now).length;
+  const suggested = suggestedMeetings.filter((s) => !dismissed.has(s.email_id) && !meetings.some((m) => m.email_id === s.email_id) && matches(`${s.title} ${s.email_sender} ${s.email_subject}`));
+  const filter: Filter = chosen ?? (proposed.length || suggested.length ? "confirm" : "upcoming");
+
+  const listed = meetings
+    .filter((m) => (filter === "confirm" ? m.status === "proposed" : filter === "upcoming" ? new Date(m.start_time).getTime() >= now : new Date(m.start_time).getTime() < now))
+    .filter((m) => matches(`${m.title} ${(m.attendees || []).join(" ")} ${m.location || ""} ${sourceOf(m)?.sender || ""} ${sourceOf(m)?.subject || ""}`))
+    .sort((a, b) => (filter === "past" ? b.start_time.localeCompare(a.start_time) : a.start_time.localeCompare(b.start_time)));
+
+  const items: (Head | Row)[] = [];
+  for (const m of listed) {
+    const d = dayHead(m.start_time);
+    const head = items.findLast((i): i is Head => "head" in i);
+    if (head?.key === d.key) head.count++;
+    else items.push({ head: true, key: d.key, name: d.name, note: d.note, count: 1 });
+    items.push({ key: m.id, meeting: m });
+  }
+  if (filter === "confirm" && suggested.length) {
+    items.push({ head: true, key: "suggested", name: "Suggested by Tabellar", note: "From mail in the last 3 days", count: suggested.length });
+    for (const s of suggested) items.push({ key: `s:${s.email_id}`, suggestion: s });
+  }
+
+  const rows = items.filter((i): i is Row => !("head" in i));
+  const cursor = rows.find((r) => r.key === cursorKey) || rows[0] || null;
+  const current = cursor?.meeting || null;
+  const editing = !showScheduler && current && current.id === editingId ? current : null;
+  // The row to land on when the one at `key` leaves the list.
+  const after = (key: string) => {
+    const at = rows.findIndex((r) => r.key === key);
+    return (rows[at + 1] || rows[at - 1])?.key ?? null;
   };
 
-  // Invalidate cache when duration changes
+  const select = (key: string) => {
+    setCursorKey(key);
+    setShowScheduler(false);
+    setEditingId(null);
+    setPaneOpen(true);
+  };
+
+  const move = (delta: number) => {
+    if (!rows.length) return;
+    const at = cursor ? rows.indexOf(cursor) : -1;
+    setCursorKey(rows[Math.min(rows.length - 1, Math.max(0, at + delta))].key);
+  };
+
+  const confirmMeeting = async (m: Meeting) => {
+    if (filter === "confirm") setCursorKey(after(m.id));
+    if (await setStatus(m, "confirmed")) addToast("success", "Meeting confirmed", { action: { label: "Undo", onClick: () => setStatus(m, "proposed") } });
+  };
+
+  const cancelMeeting = async (m: Meeting) => {
+    if (filter === "confirm") setCursorKey(after(m.id));
+    if (await setStatus(m, "cancelled")) addToast("info", "Meeting cancelled", { action: { label: "Undo", onClick: () => setStatus(m, m.status) } });
+  };
+
+  const removeMeeting = async (m: Meeting) => {
+    setCursorKey(after(m.id));
+    const { error } = await supabase.from("meetings").delete().eq("id", m.id);
+    if (error) return addToast("error", `The meeting was not removed: ${error.message}. Try again.`);
+    setMeetings((prev) => prev.filter((x) => x.id !== m.id));
+    const undo = async () => {
+      await supabase.from("meetings").insert({ ...m, user_id: user.id });
+      loadMeetings();
+    };
+    addToast("info", m.calendar_event_id ? "Meeting removed from Tabellar. The event stays on your Google Calendar." : "Meeting removed", { action: { label: "Undo", onClick: undo } });
+  };
+
+  // Free time on the day of the meeting in the pane, and on the day being
+  // picked while its time is changed.
+  const upcoming = !showScheduler && current && current.status !== "cancelled" && new Date(current.start_time).getTime() > now ? current : null;
+  const upcomingKey = upcoming ? slotKey(new Date(upcoming.start_time), minutesOf(upcoming)) : "";
   useEffect(() => {
-    dayCacheRef.current = {};
-    setDayCache({});
-  }, [newDuration]);
+    if (upcoming && !(upcomingKey in dayCache)) fetchSlots(new Date(upcoming.start_time), minutesOf(upcoming));
+  }, [upcomingKey, upcomingKey in dayCache]);
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const wh = profile?.working_hours as WorkingHours;
-  const currentSlots = dayCache[dateKey(currentDate)] ?? null;
-  const isCurrentLoading = loadingDates.has(dateKey(currentDate));
-  const currentHourGroups = currentSlots ? groupSlotsByHour(currentSlots) : {};
-  const hasPrev = !!prevWorkingDay(currentDate, today, wh);
+  const editDate = editing && editStartTime && new Date(editStartTime).getTime() > today.getTime() ? new Date(editStartTime) : null;
+  const editKey = editDate ? slotKey(editDate, editDuration) : "";
+  useEffect(() => {
+    if (editDate && !(editKey in dayCache)) fetchSlots(editDate, editDuration);
+  }, [editKey, editKey in dayCache]);
 
-  const goNextDay = () => {
-    const next = nextWorkingDay(currentDate, wh);
-    setCurrentDate(next);
-    setSelectedSlot(null);
-    fetchSlotsForDate(next);
-    // Prefetch next+1
-    fetchSlotsForDate(nextWorkingDay(next, wh));
+  useEffect(() => {
+    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [cursor?.key]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // The forms keep the keyboard to themselves.
+      if (reading || showScheduler || editing || document.querySelector("[data-compose-modal]")) return;
+      if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === "j" || e.key === "ArrowDown") move(1);
+      else if (k === "k" || e.key === "ArrowUp") move(-1);
+      else if (k === "n") newMeeting();
+      else if (k === "e" && current && current.status !== "cancelled") openEdit(current);
+      else if (e.key === "Enter" && cursor) {
+        // A focused button or link takes its own Enter.
+        if ((e.target as HTMLElement).closest?.("button, a")) return;
+        if (current?.status === "proposed") confirmMeeting(current);
+        else if (cursor.suggestion) openSchedulerFromSuggestion(cursor.suggestion);
+        else return;
+      } else return;
+      e.preventDefault();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
+
+  if (reading)
+    return (
+      <EmailDetail
+        key={reading.id}
+        email={reading}
+        onBack={() => setReading(null)}
+        onArchive={() => {
+          const id = reading.id;
+          setReading(null);
+          setEmailFlag(id, "archive")
+            .then((undo) => addToast("success", "Archived", { action: { label: "Undo", onClick: () => void undo() } }))
+            .catch((e: Error) => addToast("error", `Could not archive: ${e.message}`));
+        }}
+        onReply={() => setReading(null)}
+        onMarkUnread={() => {
+          const id = reading.id;
+          setReading(null);
+          setEmailFlag(id, "unread").catch(() => {});
+        }}
+        onSnooze={() => setReading(null)}
+        onRethink={(updated: any) => setReading((prev: any) => (prev ? { ...prev, email_processed: updated } : prev))}
+        showBack
+      />
+    );
+
+  const who = (m: Meeting) => {
+    const people = m.attendees || [];
+    if (people.length) return people.length > 1 ? `${people[0]} and ${people.length - 1} more` : people[0];
+    return nameOf(sourceOf(m)?.sender || "");
   };
 
-  const goPrevDay = () => {
-    const prev = prevWorkingDay(currentDate, today, wh);
-    if (prev) { setCurrentDate(prev); setSelectedSlot(null); }
-  };
+  const schedulerSlotKey = slotKey(currentDate, newDuration);
+  const schedulerSlots = dayCache[schedulerSlotKey] ?? null;
+  const specificOutside = isOutsideWorkingHours(specificDateTime, wh);
+  const invited = newAttendees.split(",").filter((s) => s.trim()).length;
 
-  return (
-    <div className="h-full flex overflow-hidden">
-      {/* ── Left pane: suggestions + meetings list ── */}
-      <div className={`flex flex-col border-r border-line flex-shrink-0 w-80 lg:w-96 ${(selectedMeeting || showScheduler) ? "hidden md:flex" : "flex"}`}>
-        {/* Header */}
-        <div className="px-3 py-2.5 border-b border-line flex items-center justify-between flex-shrink-0">
-          <h1 className="text-base font-bold text-ink">Meetings</h1>
-          <button
-            onClick={() => { resetScheduler(); setShowScheduler(true); setSelectedMeeting(null); }}
-            className="flex items-center justify-center p-1.5 rounded-lg bg-wax text-on-wax hover:opacity-90"
-            title="New meeting"
-          >
-            <Icon name="add" size={18} />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-auto">
-          {/* ── Suggested from emails ── */}
-          <div className="border-b border-line">
-            <div className="px-3 py-2 flex items-center gap-1.5 bg-field">
-              <Icon name="auto_awesome" size={14} className="text-wax" />
-              <p className="text-xs font-semibold text-ink uppercase tracking-wide">Suggested from emails</p>
-              {loadingSuggestions && (
-                <span className="ml-auto text-[10px] text-ink3 animate-pulse">Scanning…</span>
-              )}
-            </div>
-
-            {loadingSuggestions ? (
-              <div className="space-y-0">
-                {[1, 2].map((i) => (
-                  <div key={i} className="px-3 py-3 border-b border-line animate-pulse">
-                    <div className="h-3 bg-sel rounded w-3/4 mb-2" />
-                    <div className="h-2.5 bg-field rounded w-1/2" />
-                  </div>
-                ))}
-              </div>
-            ) : suggestedMeetings.length === 0 ? (
-              <div className="px-3 py-4 text-center text-xs text-ink3">
-                No meeting requests detected in recent emails
-              </div>
-            ) : (
-              suggestedMeetings.map((s, i) => (
-                <div key={i} className="px-3 py-2.5 border-b border-line last:border-0 hover:bg-field transition-colors">
-                  <div className="flex items-start justify-between gap-1">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-ink truncate">{s.title}</p>
-                      <p className="text-xs text-ink3 truncate mt-0.5">{s.email_sender}</p>
-                    </div>
-                    <button
-                      onClick={() => setSuggestedMeetings((prev) => prev.filter((_, idx) => idx !== i))}
-                      className="p-0.5 rounded hover:bg-sel text-ink3 hover:text-ink2 flex-shrink-0 mt-0.5"
-                      title="Dismiss"
-                    >
-                      <Icon name="close" size={14} />
-                    </button>
-                  </div>
-                  {s.dateTime && (
-                    <p className="text-xs text-wax mt-0.5 flex items-center gap-1">
-                      <Icon name="schedule" size={12} />
-                      {new Date(s.dateTime).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
-                    </p>
-                  )}
-                  {!s.dateTime && s.suggested_time && (
-                    <p className="text-xs text-wax mt-0.5 flex items-center gap-1">
-                      <Icon name="schedule" size={12} />
-                      {s.suggested_time}
-                    </p>
-                  )}
-                  {s.location && (
-                    <p className="text-xs text-ink3 mt-0.5 flex items-center gap-1 truncate">
-                      <Icon name="location_on" size={12} />
-                      <span className="truncate">{s.location}</span>
-                    </p>
-                  )}
-                  <button
-                    onClick={() => openSchedulerFromSuggestion(s)}
-                    className="mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-wax text-on-wax text-xs font-medium hover:opacity-90"
-                  >
-                    <Icon name="calendar_add_on" size={13} />
-                    {s.dateTime ? "Add to Calendar" : "Schedule"}
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* ── Filter tabs ── */}
-          <div className="flex border-b border-line flex-shrink-0">
-            {(["upcoming", "all", "past"] as const).map((f) => (
-              <button
-                key={f}
-                onClick={() => setFilter(f)}
-                className={`flex-1 py-2 text-xs font-medium border-b-2 transition-colors capitalize ${filter === f ? "border-wax text-wax" : "border-transparent text-ink3"}`}
-              >
-                {f}
-              </button>
-            ))}
-          </div>
-
-          {/* ── Meeting list ── */}
-          {loading ? (
-            <div className="flex items-center justify-center h-32">
-              <div className="animate-pulse text-ink3 text-sm">Loading…</div>
-            </div>
-          ) : meetings.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-36 text-ink3 px-4">
-              <Icon name="event" size={32} className="mb-2" />
-              <p className="text-xs text-center">
-                {filter === "upcoming" ? "No upcoming meetings." : "No meetings found."}
-              </p>
-            </div>
-          ) : (
-            meetings.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => { setSelectedMeeting(m); setShowScheduler(false); }}
-                className={`w-full text-left px-3 py-2.5 border-b border-line hover:bg-hover transition-colors ${selectedMeeting?.id === m.id ? "bg-wax-soft border-l-2 border-l-wax" : ""}`}
-              >
-                <div className="flex items-start gap-2">
-                  <Icon name={statusIcons[m.status] || "event"} size={18} className={`mt-0.5 shrink-0 ${m.status === "confirmed" ? "text-ok" : m.status === "cancelled" ? "text-danger" : "text-ink2"}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium truncate ${m.status === "cancelled" ? "line-through text-ink3" : "text-ink"}`}>
-                      {m.title}
-                    </p>
-                    <p className="text-[11px] text-ink3 mt-0.5">
-                      {new Date(m.start_time).toLocaleDateString([], { month: "short", day: "numeric" })} · {new Date(m.start_time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })}
-                    </p>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${statusColors[m.status]}`}>{m.status}</span>
-                  </div>
-                </div>
-              </button>
-            ))
-          )}
-        </div>
-
-        {/* Google Calendar link */}
-        <div className="px-3 py-2 border-t border-line flex-shrink-0">
-          <a
-            href="https://calendar.google.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center justify-center gap-1.5 text-xs text-wax hover:underline py-1"
-          >
-            <Icon name="open_in_new" size={14} />
-            Open Google Calendar
-          </a>
-        </div>
+  // Shared by the pane's three layouts: a scrolling body over a bar of actions.
+  const pane = "flex min-w-0 flex-1 flex-col";
+  const paneBody = "min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-[22px] md:px-10";
+  const paneBar = "flex flex-none flex-wrap items-center gap-2 border-t border-line py-[11px] pl-6 pr-4 md:pl-10";
+  const paneTitle = "text-[15px] font-[650] leading-snug tracking-[-0.01em]";
+  const fieldLabel = "label mb-1.5 mt-4 block";
+  const back = (
+    <button className="iconbtn -ml-1.5 mb-2 md:hidden" aria-label="Back to the list" onClick={() => setPaneOpen(false)}>
+      <Icon name="arrow_back" size={16} />
+    </button>
+  );
+  const sourceInset = (emailId: string, sender: string, subject: string, receivedAt?: string, summary?: string) => (
+    <div className="inset mt-4">
+      <div className="mb-1 flex justify-between gap-3 text-xs text-ink3">
+        <b className="truncate font-semibold text-ink2">
+          {nameOf(sender) || "Someone"} wrote{receivedAt ? `, ${wroteWhen(receivedAt)}` : ""}
+        </b>
+        <button className="link flex-none" onClick={() => openEmailById(emailId)}>
+          Open the email
+        </button>
       </div>
+      <p className="font-medium leading-snug text-ink">{subject || "(no subject)"}</p>
+      {summary && <p className="mt-1 leading-normal text-ink2">{summary}</p>}
+    </div>
+  );
 
-      {/* ── Right pane: scheduler / detail / empty state ── */}
-      <div className={`flex-1 overflow-hidden flex flex-col ${!(selectedMeeting || showScheduler) ? "hidden md:flex" : "flex"}`}>
-        {showScheduler ? (
-          <div className="flex-1 overflow-auto">
-            {/* Scheduler header */}
-            <div className="px-5 py-3 border-b border-line flex items-center gap-2 flex-shrink-0">
-              <button
-                onClick={() => {
-                  if (schedulerStep === "slots") {
-                    setSchedulerStep("form");
-                    setSelectedSlot(null);
-                  } else {
-                    resetScheduler();
-                  }
-                }}
-                className="p-1.5 rounded-lg hover:bg-field text-ink"
-              >
-                <Icon name="arrow_back" size={20} />
-              </button>
-              <div>
-                <h2 className="text-base font-bold text-ink">
-                  {schedulerStep === "form" ? "Schedule a Meeting" : "Pick a Time"}
-                </h2>
-                {schedulerStep === "slots" && (
-                  <p className="text-xs text-ink3">
-                    {newTitle} · {durationLabel(newDuration)}
-                    {newAttendees && ` · ${newAttendees.split(",").length} attendee${newAttendees.split(",").length > 1 ? "s" : ""}`}
-                  </p>
-                )}
-              </div>
-              {schedulerStep === "slots" && currentSlots !== null && !isCurrentLoading && (
-                <span className="ml-auto text-xs text-ink3">{currentSlots.length} slots available</span>
-              )}
-            </div>
+  // On a narrow window the pane takes the place of the list, when it has something to show.
+  const paneShown = paneOpen && (showScheduler || !!cursor);
+  let paneContent: React.ReactNode = <div className="flex-1" />;
 
+  if (showScheduler) {
+    paneContent = (
+      <div className={pane}>
+        <div className={paneBody}>
+          <div className="max-w-[460px]">
+            {back}
             {schedulerStep === "form" ? (
-              /* ── Step 1: Meeting details ── */
-              <div className="p-5 max-w-lg mx-auto space-y-4">
-                {/* Title */}
-                <div>
-                  <label className="block text-xs font-medium text-ink3 mb-1.5">Meeting Title</label>
-                  <input
-                    type="text"
-                    value={newTitle}
-                    onChange={(e) => setNewTitle(e.target.value)}
-                    placeholder="e.g. Product sync with Alex"
-                    autoFocus
-                    className="w-full px-3 py-2.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-wax/30 text-ink"
+              <>
+                <h2 className={paneTitle}>{schedulingFromSuggestion ? "Schedule this meeting" : "New meeting"}</h2>
+                {schedulingFromSuggestion && <p className="mt-0.5 truncate text-xs text-ink3">From the email "{schedulingFromSuggestion.email_subject}"</p>}
+                <label className={fieldLabel} htmlFor="meeting-title">
+                  Title
+                </label>
+                <input id="meeting-title" className="input" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="Product sync with Alex" autoFocus />
+                <div className={fieldLabel}>Length</div>
+                <div className="[&>.seg]:flex-wrap">
+                  <Seg value={newDuration} onChange={setNewDuration} options={DURATIONS} />
+                </div>
+                <div className={fieldLabel}>People</div>
+                <EmailField value={newAttendees} onChange={setNewAttendees} contacts={contacts} accountId={primaryAccountId} placeholder="alex@example.com, sarah@example.com" multi />
+                <label className={fieldLabel} htmlFor="meeting-place">
+                  Place
+                </label>
+                <input id="meeting-place" className="input" value={newLocation} onChange={(e) => setNewLocation(e.target.value)} placeholder="A link, a room or an address" />
+                <div className={fieldLabel}>Time</div>
+                <div className="[&>.seg]:flex-wrap">
+                  <Seg
+                    value={schedulingMode}
+                    onChange={setSchedulingMode}
+                    options={[
+                      { id: "find", label: "Find a free time" },
+                      { id: "specific", label: "Set the time" },
+                    ]}
                   />
                 </div>
-
-                {/* Duration */}
-                <div>
-                  <label className="block text-xs font-medium text-ink3 mb-1.5">Duration</label>
-                  <div className="flex gap-2 flex-wrap">
-                    {[
-                      { label: "15 min", value: "15" },
-                      { label: "30 min", value: "30" },
-                      { label: "45 min", value: "45" },
-                      { label: "1 hour", value: "60" },
-                      { label: "1.5 hr", value: "90" },
-                      { label: "2 hours", value: "120" },
-                    ].map(({ label, value }) => (
-                      <button
-                        key={value}
-                        onClick={() => setNewDuration(value)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${newDuration === value ? "bg-wax text-on-wax border-wax" : "border-line text-ink hover:border-wax hover:text-wax"}`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Attendees */}
-                <div>
-                  <label className="block text-xs font-medium text-ink3 mb-1.5">
-                    Recipients
-                  </label>
-                  <EmailField
-                    value={newAttendees}
-                    onChange={setNewAttendees}
-                    contacts={contacts}
-                    accountId={primaryAccountId}
-                    placeholder="alex@example.com, sarah@example.com"
-                    multi={true}
-                  />
-                </div>
-
-                {/* Location */}
-                <div>
-                  <label className="block text-xs font-medium text-ink3 mb-1.5">Location (optional)</label>
-                  <input
-                    type="text"
-                    value={newLocation}
-                    onChange={(e) => setNewLocation(e.target.value)}
-                    placeholder="Meeting link, room number, or address"
-                    className="w-full px-3 py-2 text-sm border border-line rounded-lg bg-canvas text-ink placeholder-ink3 focus:outline-none focus:ring-2 focus:ring-wax/50"
-                  />
-                </div>
-
-                {/* Time selection mode */}
-                <div>
-                  <label className="block text-xs font-medium text-ink3 mb-1.5">Time</label>
-                  <div className="flex rounded-lg border border-line overflow-hidden mb-3">
-                    <button
-                      onClick={() => setSchedulingMode("find")}
-                      className={`flex-1 py-2 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 ${schedulingMode === "find" ? "bg-wax text-on-wax" : "text-ink hover:bg-hover"}`}
-                    >
-                      <Icon name="search" size={15} />
-                      Find available
-                    </button>
-                    <button
-                      onClick={() => setSchedulingMode("specific")}
-                      className={`flex-1 py-2 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 border-l border-line ${schedulingMode === "specific" ? "bg-wax text-on-wax" : "text-ink hover:bg-hover"}`}
-                    >
-                      <Icon name="edit_calendar" size={15} />
-                      Pick specific
-                    </button>
-                  </div>
-
-                  {schedulingMode === "find" ? (
-                    <>
-                      <button
-                        onClick={startFindAvailable}
-                        disabled={!newTitle.trim()}
-                        className="w-full px-4 py-2.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
-                      >
-                        <Icon name="calendar_month" size={16} />
-                        Find Available Times
-                      </button>
-                      <p className="text-xs text-ink3 text-center mt-1.5">
-                        Based on your working hours and existing calendar events
-                      </p>
-                    </>
-                  ) : (
-                    <>
-                      <DateTimePicker
-                        value={specificDateTime}
-                        onChange={setSpecificDateTime}
-                        placeholder="Pick date and time"
-                        showWarning={isOutsideWorkingHours(specificDateTime, profile?.working_hours as WorkingHours)}
-                      />
-                      {isOutsideWorkingHours(specificDateTime, profile?.working_hours as WorkingHours) && (
-                        <p className="flex items-center gap-1 text-[11px] text-warn mt-1.5 mb-2">
-                          <Icon name="warning" size={12} />
-                          Outside your working hours
-                        </p>
-                      )}
-                      {!isOutsideWorkingHours(specificDateTime, profile?.working_hours as WorkingHours) && <div className="mb-3" />}
-                      <button
-                        onClick={createMeeting}
-                        disabled={!newTitle.trim() || !specificDateTime || creating}
-                        className="w-full px-4 py-2.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
-                      >
-                        {creating ? (
-                          <>
-                            <Icon name="refresh" size={16} className="animate-spin" />
-                            Creating…
-                          </>
-                        ) : (
-                          <>
-                            <Icon name="event_available" size={16} />
-                            Schedule Meeting
-                          </>
-                        )}
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-            ) : (
-              /* ── Step 2: Day-by-day slot picker ── */
-              <div className="p-5 max-w-lg mx-auto">
-                {/* Day navigation header */}
-                <div className="flex items-center justify-between mb-4">
-                  <button
-                    onClick={goPrevDay}
-                    disabled={!hasPrev}
-                    className="p-1.5 rounded-lg hover:bg-field text-ink2 disabled:opacity-25"
-                  >
-                    <Icon name="chevron_left" size={20} />
-                  </button>
-                  <div className="text-center">
-                    <p className="text-sm font-semibold text-ink">
-                      {currentDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}
-                    </p>
-                    {currentSlots !== null && !isCurrentLoading && (
-                      <p className="text-[10px] text-ink3 mt-0.5">
-                        {currentSlots.length === 0 ? "No availability" : `${currentSlots.length} slot${currentSlots.length !== 1 ? "s" : ""} available`}
-                      </p>
-                    )}
-                  </div>
-                  <button
-                    onClick={goNextDay}
-                    className="p-1.5 rounded-lg hover:bg-field text-ink2"
-                  >
-                    <Icon name="chevron_right" size={20} />
-                  </button>
-                </div>
-
-                {isCurrentLoading ? (
-                  <div className="flex flex-col items-center justify-center py-10 text-ink3">
-                    <Icon name="refresh" size={24} className="animate-spin mb-2" />
-                    <p className="text-sm">Checking calendar…</p>
-                  </div>
-                ) : currentSlots === null ? (
-                  <div className="flex flex-col items-center justify-center py-10 text-ink3">
-                    <Icon name="refresh" size={24} className="animate-spin mb-2" />
-                    <p className="text-sm">Loading…</p>
-                  </div>
-                ) : currentSlots.length === 0 ? (
-                  <div className="text-center py-10 text-ink3">
-                    <Icon name="event_busy" size={36} className="mb-2" />
-                    <p className="text-sm">No available times this day.</p>
-                    <p className="text-xs mt-1">Try the next working day.</p>
-                  </div>
+                {schedulingMode === "find" ? (
+                  <p className="mt-2 text-xs leading-normal text-ink3">Tabellar looks at your working hours and what is already on your Google Calendar, one day at a time.</p>
                 ) : (
-                  <div className="space-y-1.5">
-                    {Object.entries(currentHourGroups).map(([hourLabel, hourSlots]) => (
-                      <div key={hourLabel} className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[10px] font-semibold text-ink3 w-12 shrink-0">{hourLabel}</span>
-                        {hourSlots.map((slot, i) => {
-                          const isSelected = selectedSlot?.start === slot.start;
-                          const mins = new Date(slot.start).getMinutes();
-                          return (
-                            <button
-                              key={i}
-                              onClick={() => setSelectedSlot(slot)}
-                              className={`px-2 py-1 rounded-md text-xs font-medium border transition-all ${
-                                isSelected
-                                  ? "bg-wax text-on-wax border-wax shadow-sm scale-105"
-                                  : "border-line text-ink hover:border-wax hover:text-wax"
-                              }`}
-                            >
-                              {isSelected
-                                ? new Date(slot.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })
-                                : `:${String(mins).padStart(2, "0")}`}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ))}
+                  <div className="mt-2">
+                    <DateTimePicker value={specificDateTime} onChange={setSpecificDateTime} placeholder="Pick date and time" showWarning={specificOutside} />
+                    {specificOutside && <p className="mt-1.5 text-xs text-warn">This is outside your working hours.</p>}
                   </div>
                 )}
-
-                {selectedSlot && (
-                  <div className="mt-5 p-3 rounded-xl bg-wax-soft border border-wax/20">
-                    <p className="text-xs font-medium text-wax mb-0.5">Selected time</p>
-                    <p className="text-sm font-semibold text-ink">
-                      {new Date(selectedSlot.start).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
-                    </p>
-                    <p className="text-sm text-ink">
-                      {new Date(selectedSlot.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      {" "}-{" "}
-                      {new Date(new Date(selectedSlot.start).getTime() + parseInt(newDuration) * 60000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      {" "}·{" "}{durationLabel(newDuration)}
-                    </p>
-                  </div>
-                )}
-
-                <button
-                  onClick={createMeeting}
-                  disabled={!selectedSlot || creating}
-                  className="mt-4 w-full px-4 py-2.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
-                >
-                  {creating ? (
-                    <>
-                      <Icon name="refresh" size={16} className="animate-spin" />
-                      Creating…
-                    </>
-                  ) : (
-                    <>
-                      <Icon name="event_available" size={16} />
-                      Schedule Meeting
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
-          </div>
-        ) : selectedMeeting ? (
-          /* ── Meeting detail ── */
-          <div className="flex-1 overflow-auto flex justify-center">
-          <div className="p-5 w-full max-w-xl">
-            <div className="flex items-center gap-2 mb-4">
-              <button
-                onClick={() => { setSelectedMeeting(null); setIsEditing(false); }}
-                className="p-1.5 rounded-lg hover:bg-field text-ink"
-              >
-                <Icon name="arrow_back" size={20} />
-              </button>
-              <Icon name={statusIcons[selectedMeeting.status]} size={28} className={`${selectedMeeting.status === "confirmed" ? "text-ok" : selectedMeeting.status === "cancelled" ? "text-danger" : "text-ink2"}`} />
-              <div className="flex-1 min-w-0">
-                <h2 className="text-lg font-bold text-ink truncate">{selectedMeeting.title}</h2>
-                <span className={`text-xs px-2 py-0.5 rounded font-medium ${statusColors[selectedMeeting.status]}`}>{selectedMeeting.status}</span>
-              </div>
-              {selectedMeeting.status !== "cancelled" && !isEditing && (
-                <button
-                  onClick={() => openEdit(selectedMeeting)}
-                  className="p-1.5 rounded-lg hover:bg-field text-ink2"
-                  title="Edit meeting"
-                >
-                  <Icon name="edit" size={20} />
-                </button>
-              )}
-            </div>
-
-            {isEditing ? (
-              /* ── Edit form ── */
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-ink3 mb-1.5">Title</label>
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    autoFocus
-                    className="w-full px-3 py-2.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-wax/30 text-ink"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink3 mb-1.5">Start time</label>
-                  <DateTimePicker
-                    value={editStartTime}
-                    onChange={setEditStartTime}
-                    placeholder="Pick date and time"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink3 mb-1.5">Duration</label>
-                  <div className="flex gap-2 flex-wrap">
-                    {[
-                      { label: "15 min", value: "15" },
-                      { label: "30 min", value: "30" },
-                      { label: "45 min", value: "45" },
-                      { label: "1 hour", value: "60" },
-                      { label: "1.5 hr", value: "90" },
-                      { label: "2 hours", value: "120" },
-                    ].map(({ label, value }) => (
-                      <button
-                        key={value}
-                        onClick={() => setEditDuration(value)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${editDuration === value ? "bg-wax text-on-wax border-wax" : "border-line text-ink hover:border-wax hover:text-wax"}`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-ink3 mb-1.5">
-                    Attendees
-                  </label>
-                  <EmailField
-                    value={editAttendees}
-                    onChange={setEditAttendees}
-                    contacts={contacts}
-                    accountId={primaryAccountId}
-                    placeholder="alex@example.com, sarah@example.com"
-                    multi={true}
-                  />
-                </div>
-                {selectedMeeting.calendar_event_id && (
-                  <p className="text-xs text-ink3 flex items-center gap-1">
-                    <Icon name="info" size={13} />
-                    Saving will update Google Calendar and notify all participants.
-                  </p>
-                )}
-                <div className="flex gap-2 pt-1">
-                  <button
-                    onClick={saveMeeting}
-                    disabled={!editTitle.trim() || !editStartTime || saving}
-                    className="flex-1 px-4 py-2.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
-                  >
-                    {saving ? (
-                      <>
-                        <Icon name="refresh" size={16} className="animate-spin" />
-                        Saving…
-                      </>
-                    ) : (
-                      <>
-                        <Icon name="save" size={16} />
-                        Save changes
-                      </>
-                    )}
-                  </button>
-                  <button
-                    onClick={() => setIsEditing(false)}
-                    className="px-4 py-2.5 rounded-lg border border-line text-sm text-ink hover:bg-hover"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
+              </>
             ) : (
               <>
-                <div className="space-y-3 mb-5">
-                  <div className="flex items-center gap-2 text-sm text-ink">
-                    <Icon name="schedule" size={18} className="text-ink3" />
-                    {formatMeetingTime(selectedMeeting.start_time, selectedMeeting.end_time)}
-                  </div>
-                  {selectedMeeting.location && (
-                    <div className="flex items-center gap-2 text-sm text-ink">
-                      <Icon name="location_on" size={18} className="text-ink3" />
-                      {selectedMeeting.location}
-                    </div>
-                  )}
-                  {selectedMeeting.attendees?.length > 0 && (
-                    <div className="flex items-start gap-2 text-sm text-ink">
-                      <Icon name="group" size={18} className="text-ink3 mt-0.5" />
-                      <span>{selectedMeeting.attendees.join(", ")}</span>
-                    </div>
-                  )}
-                  {selectedMeeting.calendar_event_id && (
-                    <div className="flex items-center gap-2 text-xs text-ink3">
-                      <Icon name="calendar_month" size={14} />
-                      Synced to Google Calendar
-                    </div>
-                  )}
+                <h2 className={paneTitle}>Pick a time</h2>
+                <p className="mt-0.5 truncate text-xs text-ink3">
+                  {newTitle}, {durationLabel(newDuration)}
+                  {invited > 0 && `, ${invited} ${invited === 1 ? "person" : "people"}`}
+                </p>
+                <div className="mt-4 flex items-center gap-0.5 border-b border-line pb-2">
+                  <b className="font-semibold">{longDate(currentDate)}</b>
+                  <span className="flex-1" />
+                  {schedulerSlots !== null && !slotsFailed.has(schedulerSlotKey) && <span className="mr-1.5 text-xs text-ink3">{schedulerSlots.length ? `${schedulerSlots.length} free` : "Nothing free"}</span>}
+                  <button className="iconbtn" disabled={!prevDay} onClick={goPrevDay} aria-label="Previous working day">
+                    <Icon name="chevron_left" size={16} />
+                  </button>
+                  <button className="iconbtn" onClick={goNextDay} aria-label="Next working day">
+                    <Icon name="chevron_right" size={16} />
+                  </button>
                 </div>
-
-                {selectedMeeting.status !== "cancelled" && (
-                  <div className="space-y-2">
-                    {selectedMeeting.status === "proposed" && (
-                      <button onClick={() => confirmMeeting(selectedMeeting.id)} className="w-full px-3 py-2.5 rounded-lg bg-ok text-white text-sm font-medium hover:opacity-90 flex items-center justify-center gap-2">
-                        <Icon name="event_available" size={16} />
-                        Confirm Meeting
-                      </button>
-                    )}
-                    <button onClick={() => cancelMeeting(selectedMeeting.id)} className="w-full px-3 py-2.5 rounded-lg border border-line text-sm text-ink hover:bg-hover flex items-center justify-center gap-2">
-                      <Icon name="event_busy" size={16} />
-                      Cancel Meeting
-                    </button>
-                  </div>
+                <SlotGrid slots={schedulerSlots} failed={slotsFailed.has(schedulerSlotKey)} selected={selectedSlot?.start ?? null} onPick={setSelectedSlot} onRetry={() => fetchSlots(currentDate, newDuration, true)} />
+                {selectedSlot && (
+                  <p className="inset mt-4 text-ink2">
+                    <b className="font-semibold text-ink">{longDate(selectedSlot.start)}</b>, {clock(selectedSlot.start)} to {clock(new Date(new Date(selectedSlot.start).getTime() + parseInt(newDuration, 10) * 60000).toISOString())}, {durationLabel(newDuration)}
+                  </p>
                 )}
-                <button onClick={() => deleteMeeting(selectedMeeting.id)} className="mt-2 w-full px-3 py-2.5 rounded-lg text-danger text-sm hover:bg-danger-soft border border-danger-line flex items-center justify-center gap-2">
-                  <Icon name="delete" size={16} />
-                  Delete
-                </button>
               </>
             )}
           </div>
-          </div>
-        ) : (
-          /* ── Empty state ── */
-          <div className="flex-1 flex flex-col items-center justify-center text-ink3 gap-3">
-            <Icon name="event" size={56} />
-            <div className="text-center">
-              <p className="text-sm font-medium text-ink2">Select a meeting or schedule a new one</p>
-              <p className="text-xs mt-1">Use the suggestions on the left to get started</p>
-            </div>
-            <button
-              onClick={() => { resetScheduler(); setShowScheduler(true); }}
-              className="mt-1 px-4 py-2 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 flex items-center gap-2"
-            >
-              <Icon name="add" size={16} />
-              New Meeting
+        </div>
+        <div className={paneBar}>
+          {schedulerStep === "form" && schedulingMode === "find" ? (
+            <button className="btn btn-pri" disabled={!newTitle.trim()} onClick={startFindAvailable}>
+              Find free times
             </button>
-          </div>
-        )}
+          ) : (
+            <button className="btn btn-pri" disabled={creating || !newTitle.trim() || (schedulerStep === "slots" ? !selectedSlot : !specificDateTime)} onClick={createMeeting}>
+              {creating ? "Scheduling" : "Schedule meeting"}
+            </button>
+          )}
+          {schedulerStep === "slots" ? (
+            <button className="btn" onClick={() => (setSchedulerStep("form"), setSelectedSlot(null))}>
+              Back
+            </button>
+          ) : (
+            <button className="btn" onClick={resetScheduler}>
+              Cancel
+            </button>
+          )}
+          {(schedulerStep === "slots" || schedulingMode === "specific") && <small className="ml-1.5 text-xs text-ink3">{invited > 0 ? "Google Calendar sends the invitations." : "It goes on your Google Calendar."}</small>}
+        </div>
       </div>
-    </div>
+    );
+  } else if (editing) {
+    const m = editing;
+    const slots = editDate ? (dayCache[editKey] ?? null) : null;
+    const picked = (slots || []).find((s) => new Date(s.start).getTime() === new Date(editStartTime).getTime())?.start ?? null;
+    paneContent = (
+      <div className={pane}>
+        <div className={paneBody}>
+          <div className="max-w-[460px]">
+            {back}
+            <h2 className={paneTitle}>Change this meeting</h2>
+            <label className={fieldLabel} htmlFor="edit-title">
+              Title
+            </label>
+            <input id="edit-title" className="input" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} autoFocus />
+            <div className={fieldLabel}>Starts</div>
+            <DateTimePicker value={editStartTime} onChange={setEditStartTime} placeholder="Pick date and time" showWarning={isOutsideWorkingHours(editStartTime, wh)} />
+            {isOutsideWorkingHours(editStartTime, wh) && <p className="mt-1.5 text-xs text-warn">This is outside your working hours.</p>}
+            <div className={fieldLabel}>Length</div>
+            <div className="[&>.seg]:flex-wrap">
+              <Seg value={editDuration} onChange={setEditDuration} options={DURATIONS.some((d) => d.id === editDuration) ? DURATIONS : [...DURATIONS, { id: editDuration, label: durationLabel(editDuration) }]} />
+            </div>
+            <div className={fieldLabel}>People</div>
+            <EmailField value={editAttendees} onChange={setEditAttendees} contacts={contacts} accountId={primaryAccountId} placeholder="alex@example.com, sarah@example.com" multi />
+            {editDate && (
+              <>
+                <div className={`${fieldLabel} border-b border-line pb-2`}>Free on {longDate(editDate)}</div>
+                <SlotGrid slots={slots} failed={slotsFailed.has(editKey)} selected={picked} onPick={(s) => setEditStartTime(toLocalInput(new Date(s.start)))} onRetry={() => fetchSlots(editDate, editDuration, true)} />
+              </>
+            )}
+          </div>
+        </div>
+        <div className={paneBar}>
+          <button className="btn btn-pri" disabled={!editTitle.trim() || !editStartTime || saving} onClick={() => saveMeeting(m)}>
+            {saving ? "Saving" : "Save changes"}
+          </button>
+          <button className="btn" onClick={() => setEditingId(null)}>
+            Cancel
+          </button>
+          {m.calendar_event_id && <small className="ml-1.5 text-xs text-ink3">Saving updates Google Calendar and tells the people invited.</small>}
+        </div>
+      </div>
+    );
+  } else if (current) {
+    const m = current;
+    const src = sourceOf(m);
+    const slots = upcoming ? (dayCache[upcomingKey] ?? null) : null;
+    const ranges = freeRanges(slots || []);
+    const start = new Date(m.start_time).getTime();
+    const end = new Date(m.end_time).getTime();
+    const free = ranges.some((r) => new Date(r.start).getTime() <= start && new Date(r.end).getTime() >= end);
+    paneContent = (
+      <div className={pane}>
+        <div className={paneBody}>
+          <div className="max-w-[580px]">
+            {back}
+            <h2 className={`${paneTitle} ${m.status === "cancelled" ? "text-ink3 line-through" : ""}`}>{m.title}</h2>
+            <p className="-ml-0.5 mt-1 flex items-center gap-1 text-xs">
+              {m.status === "proposed" ? (
+                <>
+                  <Glyph state="need" />
+                  <b className="font-semibold text-wax-ink">To confirm</b>
+                </>
+              ) : m.status === "confirmed" ? (
+                <>
+                  <Glyph state="done" />
+                  <span className="text-ink2">Confirmed{m.calendar_event_id ? ", on your Google Calendar" : ""}</span>
+                </>
+              ) : (
+                <span className="ml-0.5 text-ink3">Cancelled</span>
+              )}
+            </p>
+            <dl className="mt-4 grid grid-cols-[58px_1fr] gap-y-[5px] border-b border-line-soft pb-4 text-[12.5px] text-ink2">
+              <dt className="text-ink3">When</dt>
+              <dd>
+                <b className="font-medium text-ink">{longDate(m.start_time)}</b>, {clock(m.start_time)} to {clock(m.end_time)}, {durationLabel(minutesOf(m))}
+              </dd>
+              <dt className="text-ink3">Who</dt>
+              <dd>{(m.attendees || []).join(", ") || (src ? `${nameOf(src.sender) || src.sender_email}, who wrote the email. Nobody is invited yet.` : "Nobody is invited")}</dd>
+              <dt className="text-ink3">Where</dt>
+              <dd>{m.location || "No place given"}</dd>
+            </dl>
+            {src && sourceInset(src.id, src.sender || src.sender_email, src.subject, src.received_at, src.summary)}
+            {upcoming && (
+              <>
+                <h3 className="label mb-1 mt-5">Your calendar that day</h3>
+                {slots === null ? (
+                  <div className="skel mt-1.5 h-3 w-56" aria-busy="true" aria-label="Checking your calendar" />
+                ) : slotsFailed.has(upcomingKey) ? (
+                  <p className="text-[12.5px] leading-normal text-danger" role="alert">
+                    Your Google Calendar could not be read. Reconnect the account in Settings, under Accounts.{" "}
+                    <button className="link" onClick={() => fetchSlots(new Date(m.start_time), minutesOf(m), true)}>
+                      Try again
+                    </button>
+                  </p>
+                ) : (
+                  <p className="text-[12.5px] leading-normal text-ink2">
+                    {!m.calendar_event_id &&
+                      (isOutsideWorkingHours(m.start_time, wh) ? (
+                        <b className="font-medium text-warn">This is outside your working hours. </b>
+                      ) : free ? (
+                        <b className="font-medium text-ink">You are free at this time. </b>
+                      ) : (
+                        <b className="font-medium text-warn">Something is already on your calendar at this time. </b>
+                      ))}
+                    {ranges.length ? `Free within your working hours: ${ranges.map((r) => `${clock(r.start)} to ${clock(r.end)}`).join(", ")}.` : "Nothing else is free within your working hours."}
+                  </p>
+                )}
+              </>
+            )}
+            <div className="mt-[22px] grid grid-cols-[22px_1fr] border-t border-line-soft pt-3.5 text-[12.5px] leading-normal text-ink2">
+              <Glyph state="info" />
+              {m.status === "proposed" ? (
+                <p>
+                  <b className="font-semibold text-ink">Why this is waiting for you.</b> {src ? "Tabellar read this in an email and proposes the time." : "This is a proposal kept in Tabellar."} {m.calendar_event_id ? "" : "It is not on your Google Calendar and nobody has been invited. "}
+                  Confirm marks it as agreed.
+                </p>
+              ) : m.status === "confirmed" ? (
+                <p>{m.calendar_event_id ? "This is on your Google Calendar. Changing it updates the event and tells the people invited." : "Confirmed in Tabellar. It is not on your Google Calendar."}</p>
+              ) : (
+                <p>Cancelled in Tabellar.{m.calendar_event_id ? " The event is still on your Google Calendar; remove it there if it should go." : ""}</p>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className={paneBar}>
+          {m.status === "proposed" && (
+            <button className="btn btn-pri" onClick={() => confirmMeeting(m)}>
+              Confirm <Kbd>↵</Kbd>
+            </button>
+          )}
+          {m.status !== "cancelled" && (
+            <>
+              <button className="btn" onClick={() => openEdit(m)}>
+                Change time <Kbd>E</Kbd>
+              </button>
+              <button className="btn" onClick={() => cancelMeeting(m)}>
+                Cancel meeting
+              </button>
+            </>
+          )}
+          <span className="flex-1" />
+          <span className="hidden items-center gap-0.5 whitespace-nowrap text-xs text-ink3 lg:flex">
+            {rows.indexOf(cursor!) + 1} of {rows.length}
+            <button className="iconbtn" aria-label="Previous meeting" onClick={() => move(-1)}>
+              <Icon name="expand_less" size={16} />
+            </button>
+            <button className="iconbtn" aria-label="Next meeting" onClick={() => move(1)}>
+              <Icon name="expand_more" size={16} />
+            </button>
+          </span>
+          <button className="btn btn-plain" onClick={() => removeMeeting(m)}>
+            Remove
+          </button>
+        </div>
+      </div>
+    );
+  } else if (cursor?.suggestion) {
+    const s = cursor.suggestion;
+    paneContent = (
+      <div className={pane}>
+        <div className={paneBody}>
+          <div className="max-w-[580px]">
+            {back}
+            <h2 className={paneTitle}>{s.title}</h2>
+            <p className="mt-1 text-xs text-ink3">Suggested by Tabellar, not a meeting yet</p>
+            <dl className="mt-4 grid grid-cols-[58px_1fr] gap-y-[5px] border-b border-line-soft pb-4 text-[12.5px] text-ink2">
+              <dt className="text-ink3">When</dt>
+              <dd>
+                {s.dateTime && !isNaN(new Date(s.dateTime).getTime()) ? (
+                  <>
+                    <b className="font-medium text-ink">{longDate(s.dateTime)}</b>, {clock(s.dateTime)}
+                    {s.duration ? `, ${durationLabel(s.duration)}` : ""}
+                  </>
+                ) : (
+                  s.suggested_time || "The email gives no time"
+                )}
+              </dd>
+              <dt className="text-ink3">Who</dt>
+              <dd>{s.attendees.join(", ") || nameOf(s.email_sender) || "Nobody named"}</dd>
+              <dt className="text-ink3">Where</dt>
+              <dd>{s.location || "No place given"}</dd>
+            </dl>
+            {sourceInset(s.email_id, s.email_sender, s.email_subject)}
+            <div className="mt-[22px] grid grid-cols-[22px_1fr] border-t border-line-soft pt-3.5 text-[12.5px] leading-normal text-ink2">
+              <Glyph state="info" />
+              <p>Tabellar noticed a meeting in this email and has done nothing about it. {s.dateTime ? "Add to calendar" : "Find a time"} opens a new meeting with these details filled in, for you to check before anything is sent.</p>
+            </div>
+          </div>
+        </div>
+        <div className={paneBar}>
+          <button className="btn btn-pri" onClick={() => openSchedulerFromSuggestion(s)}>
+            {s.dateTime ? "Add to calendar" : "Find a time"} <Kbd>↵</Kbd>
+          </button>
+          <span className="flex-1" />
+          <button className="btn btn-plain" onClick={() => (setCursorKey(after(cursor.key)), setDismissed((prev) => new Set(prev).add(s.email_id)))}>
+            Dismiss
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <ViewBar
+        title="Meetings"
+        search="Search meetings"
+        right={
+          <button className="btn" onClick={newMeeting}>
+            New meeting <Kbd>N</Kbd>
+          </button>
+        }
+      >
+        <Seg
+          value={filter}
+          onChange={(f) => {
+            setChosen(f);
+            setCursorKey(null);
+            setPaneOpen(false);
+          }}
+          options={[
+            { id: "confirm", label: "To confirm", count: proposed.length, need: true },
+            { id: "upcoming", label: "Upcoming" },
+            { id: "past", label: "Past" },
+          ]}
+        />
+      </ViewBar>
+      <div className="flex min-h-0 flex-1">
+        <div ref={listRef} className={`w-full flex-none overflow-y-auto border-line md:block md:w-[400px] md:border-r ${paneShown ? "hidden" : ""}`} role="listbox" aria-label="Meetings">
+          {loadError && (
+            <p className="px-5 pt-3 leading-normal text-danger" role="alert">
+              Your meetings could not be loaded: {loadError}.{" "}
+              <button className="link" onClick={loadMeetings}>
+                Try again
+              </button>
+            </p>
+          )}
+          {loading ? (
+            <div className="pt-9">
+              <SkeletonRows count={8} tall />
+            </div>
+          ) : loadError && !meetings.length ? null : !rows.length ? (
+            q ? (
+              <Empty icon="search" title="No meetings match that search">
+                Try the title, a person or the place.
+              </Empty>
+            ) : filter === "confirm" ? (
+              <Empty icon="event" title="Nothing to confirm">
+                When an email proposes a meeting, Tabellar puts it here with the time and the people, for you to confirm or change.
+              </Empty>
+            ) : filter === "upcoming" ? (
+              <Empty icon="event" title="No upcoming meetings">
+                Meetings you confirm or schedule appear here. New meeting finds a free time in your Google Calendar.
+              </Empty>
+            ) : (
+              <Empty icon="event" title="No past meetings">
+                Meetings move here once their time has passed.
+              </Empty>
+            )
+          ) : (
+            items.map((item) => {
+              if ("head" in item)
+                return (
+                  <div key={item.key} className="day">
+                    <b>{item.name}</b>
+                    <span className="truncate">{item.note}</span>
+                    <span className="flex-1" />
+                    <span>{item.count}</span>
+                  </div>
+                );
+              const isCursor = !showScheduler && cursor === item;
+              const rowClass = "row2 grid scroll-mt-[34px] grid-cols-[26px_minmax(0,1fr)_auto] gap-y-[3px]";
+              if (item.suggestion) {
+                const s = item.suggestion;
+                const when = s.dateTime && !isNaN(new Date(s.dateTime).getTime()) ? `${longDate(s.dateTime)}, ${clock(s.dateTime)}` : s.suggested_time || "No time yet";
+                return (
+                  <div key={item.key} role="option" aria-selected={isCursor} className={rowClass} onClick={() => select(item.key)} onDoubleClick={() => openSchedulerFromSuggestion(s)}>
+                    <span className="row-span-2" />
+                    <b className="truncate font-semibold">{s.title}</b>
+                    <span className="pl-2.5 text-xs text-ink3">Suggested</span>
+                    <div className="col-span-2 truncate text-ink3">
+                      {when}
+                      {nameOf(s.email_sender) && `, ${nameOf(s.email_sender)}`}
+                    </div>
+                  </div>
+                );
+              }
+              const m = item.meeting!;
+              return (
+                <div key={item.key} role="option" aria-selected={isCursor} className={rowClass} onClick={() => select(item.key)}>
+                  <span className="row-span-2 grid place-items-start justify-center pt-px">
+                    <Glyph state={m.status === "proposed" ? "need" : m.status === "confirmed" ? "done" : "filed"} />
+                  </span>
+                  <b className={`truncate ${m.status === "cancelled" ? "font-normal text-ink3 line-through" : "font-semibold"}`}>{m.title}</b>
+                  <span className="pl-2.5 text-xs text-ink3">{m.status === "proposed" ? <b className="font-semibold text-wax-ink">To confirm</b> : m.status === "cancelled" ? "Cancelled" : ""}</span>
+                  <div className="col-span-2 truncate text-ink3">
+                    {clock(m.start_time)} to {clock(m.end_time)}
+                    {who(m) && `, ${who(m)}`}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+        <div className={`min-w-0 flex-1 md:flex ${paneShown ? "flex" : "hidden"}`}>{paneContent}</div>
+      </div>
+      <KeyHints
+        left={
+          <>
+            {loading ? "" : `${upcomingCount} upcoming, ${proposed.length} to confirm`}
+            <a className="link ml-3" href="https://calendar.google.com" target="_blank" rel="noopener noreferrer">
+              Open Google Calendar
+            </a>
+          </>
+        }
+        keys={[
+          ["J K", "Move"],
+          ["↵", "Confirm"],
+          ["E", "Change time"],
+          ["N", "New meeting"],
+        ]}
+      />
+    </>
   );
 }

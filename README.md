@@ -6,9 +6,9 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 
 ## What it does
 
-- **Inbox**: every new email gets a category, a summary and suggested actions (reply, todo, meeting).
+- **Inbox**: one line per conversation, ending in what Tabellar did with it: reply ready, todo added, on your calendar, replying in 3:12. Only what needs you stands out. Filter to what needs you, group by day, sender or outcome, select many at once, and open the details panel to see each action with its reason and Undo.
 - **Briefing**: a daily summary sorted into Reply needed, Deadlines, Crucial and Non-essential.
-- **Drafts**: replies and new emails written in your style, plus tone rephrasing in the compose window.
+- **Replies**: answers written in your style wait here. Read, edit, send, send later or discard, one or several at once, with 15 seconds to undo a send. Replies Autopilot is about to send are listed with their countdown and a Cancel. Tone rephrasing is in the compose window.
 - **Todos and meetings**: pulled from mail, with Google Calendar free slots and event creation.
 - **Follow-ups**: mail you sent that got no reply, with reminders and suggested nudges.
 - **Assistant**: ask about your inbox ("what did the registrar say about fees?") or tell it to act.
@@ -17,7 +17,7 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 - **Autopilot**: off until you turn it on. On top of Assist, it replies on its own to email that needs an answer it can give, only to the person who wrote and only inside the thread: nobody copied in, no forwarding, no attachments. Each reply waits (5 minutes by default) in Activity, where you can read and cancel it, and there is a daily limit. By default it only answers people you have written to before; everyone else gets a draft, and so does any email whose answer needs a decision only you can make.
 - **Newsletters**: senders of bulk mail, the ones filling your inbox first. Unsubscribe in one click (through the sender's own unsubscribe link; when that means sending an email, you see the address first) and archive everything a sender left in your inbox, with Undo.
 - **Notifications**: macOS notifications for important new mail.
-- **Also**: search operators, keyboard shortcuts, phishing warnings, signatures, templates, scheduled send and undo send, several Gmail accounts.
+- **Also**: search operators, full keyboard use (press `?` for the keys), light and dark, phishing warnings, signatures, templates, scheduled send and undo send, several Gmail accounts.
 
 ## Requirements
 

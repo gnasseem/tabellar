@@ -1,16 +1,14 @@
-
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
-import {
-  analyzeEmailPatterns,
-  getDismissedSlugs,
-  addDismissedSlug,
-  removeDismissedSlug,
-  type TagSuggestion,
-} from "@/lib/tagSuggestions";
+import { Empty, KeyHints, SkeletonRows, ViewBar } from "../ui";
+import { BUILT_IN_COLORS, LABEL_COLORS, addDismissedSlug, analyzeEmailPatterns, getDismissedSlugs, labelColor, removeDismissedSlug, type TagSuggestion } from "@/lib/tagSuggestions";
 
+// Labels: the four every email is sorted into, the user's own, and the rules
+// that tell Tabellar when to use each. A label's rules open beside the list.
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 type CategoryRule = {
   id: string;
   match_type: string;
@@ -29,99 +27,50 @@ type Tag = {
   rules: any[];
 };
 
+// One row of the list: a built-in label or one of the user's.
+type Label = { slug: string; name: string; color: string; description: string; tag: Tag | null };
+
 const MAIN_CATEGORIES = [
-  { slug: "important", display_name: "Important", color: "#ef4444" },
-  { slug: "action-required", display_name: "Action Required", color: "#f97316" },
-  { slug: "promotions", display_name: "Promotions", color: "#a855f7" },
-  { slug: "updates", display_name: "Updates", color: "#3b82f6" },
+  { slug: "important", display_name: "Important", description: "Mail from a person that is worth reading, with nothing to do." },
+  { slug: "action-required", display_name: "Action required", description: "Mail that needs an answer or a task from you." },
+  { slug: "promotions", display_name: "Promotions", description: "Marketing, offers and newsletters." },
+  { slug: "updates", display_name: "Updates", description: "Receipts, notifications and other automated mail." },
 ];
 
-const PRESET_COLORS = [
-  { hex: "#ef4444", name: "Red" },
-  { hex: "#f97316", name: "Orange" },
-  { hex: "#eab308", name: "Yellow" },
-  { hex: "#22c55e", name: "Green" },
-  { hex: "#10b981", name: "Emerald" },
-  { hex: "#06b6d4", name: "Cyan" },
-  { hex: "#3b82f6", name: "Blue" },
-  { hex: "#6366f1", name: "Indigo" },
-  { hex: "#a855f7", name: "Purple" },
-  { hex: "#ec4899", name: "Pink" },
-  { hex: "#6b7280", name: "Gray" },
-  { hex: "#1e293b", name: "Slate" },
-];
+const MATCH_TYPES: Record<string, string> = {
+  description: "Described as",
+  subject: "Subject contains",
+  sender: "Sender contains",
+  keyword: "Body mentions",
+  domain: "Sender domain",
+};
 
-function SuggestionCard({
-  suggestion,
-  onAdd,
-  onDismiss,
-}: {
-  suggestion: TagSuggestion;
-  onAdd: () => void;
-  onDismiss: () => void;
-}) {
-  return (
-    <div className="flex flex-col gap-2.5 p-3 rounded-xl border border-line bg-hover hover:border-wax/40 transition-colors">
-      <div className="flex items-center gap-2">
-        <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: suggestion.color }} />
-        <span className="text-sm font-semibold text-ink flex-1 truncate">
-          {suggestion.name}
-        </span>
-        <span className="text-xs px-1.5 py-0.5 rounded-full bg-sel text-ink2 font-medium shrink-0">
-          {suggestion.matchCount} emails
-        </span>
-      </div>
-      <p className="text-xs text-ink3 leading-relaxed line-clamp-2">
-        {suggestion.description}
-      </p>
-      {suggestion.examples.length > 0 && (
-        <div className="flex flex-col gap-0.5">
-          {suggestion.examples.slice(0, 2).map((ex, i) => (
-            <span
-              key={i}
-              className="text-xs text-ink3 font-mono truncate bg-field px-2 py-0.5 rounded"
-            >
-              {ex}
-            </span>
-          ))}
-        </div>
-      )}
-      <div className="flex items-center gap-2 mt-0.5">
-        <button
-          onClick={onAdd}
-          className="flex-1 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-medium hover:opacity-90 transition-opacity text-center"
-        >
-          Add Tag
-        </button>
-        <button
-          onClick={onDismiss}
-          className="px-3 py-1.5 rounded-lg border border-line text-ink3 text-xs font-medium hover:text-ink hover:border-ink4 transition-colors"
-        >
-          Dismiss
-        </button>
-      </div>
-    </div>
-  );
+function Dot({ color, className = "" }: { color: string; className?: string }) {
+  return <span aria-hidden className={`h-2 w-2 flex-none rounded-full ${className}`} style={{ background: color }} />;
 }
 
 export default function CategoriesView() {
-  const { user, addToast } = useApp();
+  const { user, addToast, search } = useApp();
   const supabase = createClient();
   const [rules, setRules] = useState<CategoryRule[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"rules" | "tags">("rules");
+  const [selected, setSelected] = useState<string | null>(null);
 
-  // New rule form
+  // The rule being typed for the selected label
   const [newMatchValue, setNewMatchValue] = useState("");
-  const [newRuleTarget, setNewRuleTarget] = useState("important");
 
-  // New tag form
+  // The inline row that creates a label
+  const [creating, setCreating] = useState(false);
   const [newTagName, setNewTagName] = useState("");
   const [newTagDescription, setNewTagDescription] = useState("");
-  const [newTagColor, setNewTagColor] = useState(PRESET_COLORS[4].hex);
+  const [newTagColor, setNewTagColor] = useState(LABEL_COLORS[3].hex);
 
-  // Smart suggestions
+  // Edits to the selected label, saved with Save
+  const [edit, setEdit] = useState({ name: "", description: "", color: "" });
+
+  // Labels Tabellar suggests from recent mail
   const [suggestions, setSuggestions] = useState<TagSuggestion[]>([]);
   const [suggestionsStatus, setSuggestionsStatus] = useState<"idle" | "loading" | "done">("idle");
 
@@ -131,24 +80,25 @@ export default function CategoriesView() {
 
   const loadData = async () => {
     setLoading(true);
-    const [rulesRes, tagsRes] = await Promise.all([
-      supabase
-        .from("category_rules")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("hits", { ascending: false }),
-      supabase
-        .from("categories")
-        .select("*")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: true }),
+    const [rulesRes, tagsRes, sortedRes] = await Promise.all([
+      supabase.from("category_rules").select("*").eq("user_id", user.id).order("hits", { ascending: false }),
+      supabase.from("categories").select("*").eq("user_id", user.id).order("created_at", { ascending: true }),
+      supabase.from("email_processed").select("category, extra_labels").eq("user_id", user.id).limit(50000),
     ]);
     setRules(rulesRes.data || []);
     setTags(tagsRes.data || []);
+    // How many emails carry each label: its one main label plus any others.
+    const n: Record<string, number> = {};
+    for (const row of (sortedRes.data || []) as { category: string; extra_labels: string[] | null }[]) {
+      n[row.category] = (n[row.category] || 0) + 1;
+      if (Array.isArray(row.extra_labels)) for (const slug of row.extra_labels) n[slug] = (n[slug] || 0) + 1;
+    }
+    setCounts(n);
     setLoading(false);
+    analyzeSuggestions(tagsRes.data || []);
   };
 
-  const addRule = async () => {
+  const addRule = async (slug: string) => {
     if (!newMatchValue.trim()) return;
     const { data } = await supabase
       .from("category_rules")
@@ -156,19 +106,24 @@ export default function CategoriesView() {
         user_id: user.id,
         match_type: "description",
         match_value: newMatchValue.trim(),
-        category_slug: newRuleTarget,
+        category_slug: slug,
       })
       .select();
     if (data?.[0]) {
       setRules((prev) => [data[0], ...prev]);
-      addToast("info", "Rule saved. It will apply to upcoming mail, not previous emails.");
-    }
+      addToast("info", "Rule saved. It applies to new mail, not mail already sorted.");
+    } else addToast("error", "Could not save that rule. It may already exist.");
     setNewMatchValue("");
   };
 
-  const deleteRule = async (id: string) => {
-    await supabase.from("category_rules").delete().eq("id", id);
-    setRules((prev) => prev.filter((r) => r.id !== id));
+  const deleteRule = async (rule: CategoryRule) => {
+    await supabase.from("category_rules").delete().eq("id", rule.id);
+    setRules((prev) => prev.filter((r) => r.id !== rule.id));
+    const undo = async () => {
+      const { data } = await supabase.from("category_rules").insert(rule).select();
+      if (data?.[0]) setRules((prev) => [data[0], ...prev]);
+    };
+    addToast("info", "Rule removed", { action: { label: "Undo", onClick: undo } });
   };
 
   const addTag = async () => {
@@ -186,378 +141,301 @@ export default function CategoriesView() {
       .select();
     if (data?.[0]) {
       setTags((prev) => [...prev, data[0]]);
-      addToast("info", "Tag created. It will apply to upcoming mail, not previous emails.");
-    }
-    setNewTagName("");
-    setNewTagDescription("");
-    setNewTagColor(PRESET_COLORS[4].hex);
+      setSelected(data[0].slug);
+      addToast("info", "Label created. Tabellar applies it to new mail, not mail already sorted.");
+      setNewTagName("");
+      setNewTagDescription("");
+      setNewTagColor(LABEL_COLORS[3].hex);
+      setCreating(false);
+    } else addToast("error", `Could not create "${newTagName.trim()}". A label with that name may already exist.`);
   };
 
-  const deleteTag = async (id: string) => {
-    await supabase.from("categories").delete().eq("id", id);
-    setTags((prev) => prev.filter((t) => t.id !== id));
+  const saveTag = async (tag: Tag) => {
+    const patch = { display_name: edit.name.trim() || tag.display_name, description: edit.description.trim(), color: edit.color };
+    const { error } = await supabase.from("categories").update(patch).eq("id", tag.id);
+    if (error) return addToast("error", "Could not save the label. Try again.");
+    setTags((prev) => prev.map((t) => (t.id === tag.id ? { ...t, ...patch } : t)));
   };
 
-  const analyzeSuggestions = async () => {
+  const deleteTag = async (tag: Tag) => {
+    await supabase.from("categories").delete().eq("id", tag.id);
+    setTags((prev) => prev.filter((t) => t.id !== tag.id));
+    if (selected === tag.slug) setSelected(null);
+    const undo = async () => {
+      const { data } = await supabase.from("categories").insert(tag).select();
+      if (data?.[0]) setTags((prev) => [...prev, data[0]]);
+    };
+    addToast("info", `Label "${tag.display_name}" deleted`, { action: { label: "Undo", onClick: undo } });
+  };
+
+  const analyzeSuggestions = async (current: Tag[] = tags) => {
     setSuggestionsStatus("loading");
-    const { data: emailRows } = await supabase
-      .from("emails")
-      .select("subject, sender_email")
-      .eq("user_id", user.id)
-      .order("received_at", { ascending: false })
-      .limit(300);
+    const { data: emailRows } = await supabase.from("emails").select("subject, sender_email").eq("user_id", user.id).order("received_at", { ascending: false }).limit(300);
     const dismissedSlugs = getDismissedSlugs(user.id);
-    const existingSlugs = tags.map((t) => t.slug);
-    const results = analyzeEmailPatterns(emailRows ?? [], existingSlugs, dismissedSlugs);
-    setSuggestions(results);
+    const existingSlugs = current.map((t) => t.slug);
+    setSuggestions(analyzeEmailPatterns(emailRows ?? [], existingSlugs, dismissedSlugs));
     setSuggestionsStatus("done");
   };
 
   const addTagFromSuggestion = async (s: TagSuggestion) => {
-    const { data } = await supabase
-      .from("categories")
-      .insert({ user_id: user.id, slug: s.slug, display_name: s.name, color: s.color, description: s.description })
-      .select();
+    const { data } = await supabase.from("categories").insert({ user_id: user.id, slug: s.slug, display_name: s.name, color: s.color, description: s.description }).select();
     if (data?.[0]) {
       setTags((prev) => [...prev, data[0]]);
       setSuggestions((prev) => prev.filter((x) => x.id !== s.id));
-      addToast("success", `Tag "${s.name}" added.`);
-    }
+      addToast("success", `Label "${s.name}" added. Tabellar applies it to new mail.`);
+    } else addToast("error", `Could not add "${s.name}". Try again.`);
   };
 
   const dismissSuggestion = (s: TagSuggestion) => {
     addDismissedSlug(user.id, s.slug);
     setSuggestions((prev) => prev.filter((x) => x.id !== s.id));
-    addToast("info", `"${s.name}" suggestion dismissed.`);
+    const undo = () => {
+      removeDismissedSlug(user.id, s.slug);
+      setSuggestions((prev) => [...prev, s].sort((a, b) => b.matchCount - a.matchCount));
+    };
+    addToast("info", `"${s.name}" will not be suggested again`, { action: { label: "Undo", onClick: undo } });
   };
 
-  const matchTypeLabels: Record<string, string> = {
-    description: "AI rule",
-    subject: "Subject contains",
-    sender: "Sender contains",
-    keyword: "Body keyword",
-    domain: "Sender domain",
+  const q = search.trim().toLowerCase();
+  const matches = (name: string, description: string) => !q || `${name} ${description}`.toLowerCase().includes(q);
+  const builtIn: Label[] = useMemo(() => MAIN_CATEGORIES.map((c) => ({ slug: c.slug, name: c.display_name, color: BUILT_IN_COLORS[c.slug], description: c.description, tag: null })), []);
+  const own: Label[] = useMemo(() => tags.map((t) => ({ slug: t.slug, name: t.display_name, color: labelColor(t.color), description: t.description || "", tag: t })), [tags]);
+  const current = [...builtIn, ...own].find((l) => l.slug === selected) || null;
+  const currentRules = current ? rules.filter((r) => r.category_slug === current.slug) : [];
+  const shownSuggestions = suggestions.filter((s) => matches(s.name, s.description));
+
+  // Opening a label loads its details into the edit fields.
+  useEffect(() => {
+    setNewMatchValue("");
+    if (current) setEdit({ name: current.name, description: current.description, color: current.color });
+  }, [selected]);
+
+  const dirty = !!current?.tag && (edit.name.trim() !== current.name || edit.description.trim() !== current.description || edit.color !== current.color);
+
+  // What a row says after the name: the description, else its first rule.
+  const about = (l: Label) => {
+    const first = rules.find((r) => r.category_slug === l.slug);
+    return l.description || first?.match_value || "No description or rules yet";
   };
 
-  const getRuleTargetLabel = (slug: string) => {
-    const main = MAIN_CATEGORIES.find((c) => c.slug === slug);
-    if (main) return main.display_name;
-    const tag = tags.find((t) => t.slug === slug);
-    return tag?.display_name || slug;
-  };
-
-  const getRuleTargetColor = (slug: string) => {
-    const main = MAIN_CATEGORIES.find((c) => c.slug === slug);
-    if (main) return main.color;
-    const tag = tags.find((t) => t.slug === slug);
-    return tag?.color || "#6b7280";
-  };
+  const row = (l: Label) => (
+    <div key={l.slug} role="option" aria-selected={selected === l.slug} className="row gap-2.5" onClick={() => setSelected(l.slug)}>
+      <Dot color={l.color} className="ml-1.5 mr-0.5" />
+      <b className="flex-none font-medium text-ink">{l.name}</b>
+      <span className="min-w-0 flex-1 truncate text-ink3">{about(l)}</span>
+      <span className="flex-none text-xs text-ink3">{(counts[l.slug] || 0).toLocaleString()}</span>
+    </div>
+  );
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
-      <h1 className="text-xl font-bold text-ink mb-1">
-        Categories & Tags
-      </h1>
-      <p className="text-sm text-ink3 mb-5">
-        Every email gets one main category. Tags are optional labels you define; an email can have multiple tags.
-      </p>
-
-      {/* Tabs */}
-      <div className="flex gap-1 mb-5 border-b border-line">
-        {(["rules", "tags"] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              tab === t
-                ? "border-wax text-wax"
-                : "border-transparent text-ink3 hover:text-ink"
-            }`}
-          >
-            {t === "rules" ? "Categorization Rules" : "Tags"}
+    <>
+      <ViewBar
+        title="Labels"
+        search="Search labels"
+        right={
+          <button className="btn" onClick={() => setCreating(true)}>
+            <Icon name="add" size={14} className="text-ink3" />
+            New label
           </button>
-        ))}
-      </div>
-
-      {loading ? (
-        <p className="text-sm text-ink3">Loading…</p>
-      ) : tab === "rules" ? (
-        <div className="space-y-4">
-          {/* Add rule form */}
-          <div className="p-4 rounded-xl border border-line bg-hover space-y-3">
-            <div>
-              <span className="text-sm font-medium text-ink">
-                Add Rule
-              </span>
-              <p className="text-xs text-ink3 mt-0.5">
-                Describe in plain language what emails belong in this category. The AI reads your description and applies it automatically.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <input
-                type="text"
-                value={newMatchValue}
-                onChange={(e) => setNewMatchValue(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addRule()}
-                placeholder="e.g. emails from my bank, anything about invoices and payments"
-                className="flex-1 min-w-[160px] px-3 py-1.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none"
-              />
-              <select
-                value={newRuleTarget}
-                onChange={(e) => setNewRuleTarget(e.target.value)}
-                className="px-3 py-1.5 rounded-lg border border-line bg-raised text-sm"
-              >
-                <optgroup label="Main Categories">
-                  {MAIN_CATEGORIES.map((c) => (
-                    <option key={c.slug} value={c.slug}>
-                      {c.display_name}
-                    </option>
-                  ))}
-                </optgroup>
-                {tags.length > 0 && (
-                  <optgroup label="Tags">
-                    {tags.map((t) => (
-                      <option key={t.id} value={t.slug}>
-                        {t.display_name}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-              <button
-                onClick={addRule}
-                disabled={!newMatchValue.trim()}
-                className="px-4 py-1.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-
-          {/* Main categories reference */}
-          <div>
-            <p className="text-xs font-semibold text-ink3 uppercase tracking-wide mb-2">Main Categories</p>
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              {MAIN_CATEGORIES.map((c) => (
-                <div key={c.slug} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-line">
-                  <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
-                  <span className="text-sm font-medium text-ink">{c.display_name}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Rules list */}
-          {rules.length === 0 ? (
-            <div className="text-center py-12 text-ink3">
-              <Icon name="rule" size={48} className="mb-2" />
-              <p className="text-sm">
-                No categorization rules yet. Add an AI rule above by describing what emails belong in a category.
-              </p>
+        }
+      />
+      <div className="flex min-h-0 flex-1">
+        <div className={`w-full flex-none overflow-y-auto border-line pb-3 md:w-[480px] md:border-r ${current ? "hidden md:block" : ""}`} role="listbox" aria-label="Labels">
+          {loading ? (
+            <div className="pt-9">
+              <SkeletonRows count={8} />
             </div>
           ) : (
-            <div className="space-y-2">
-              {rules.map((rule) => (
-                <div
-                  key={rule.id}
-                  className="flex items-center gap-3 p-3 rounded-xl border border-line group"
+            <>
+              <div className="day">
+                <b>Sorted by Tabellar</b>
+                <span className="truncate">Every email gets exactly one</span>
+                <span className="flex-1" />
+                <span>Emails</span>
+              </div>
+              {builtIn.filter((l) => matches(l.name, l.description)).map(row)}
+
+              <div className="day">
+                <b>Your labels</b>
+                <span className="truncate">An email can carry several</span>
+                <span className="flex-1" />
+                <span>{own.length ? "Emails" : ""}</span>
+              </div>
+              {creating && (
+                <form
+                  className="mx-2 flex min-h-8 flex-wrap items-center gap-1.5 rounded-md bg-hover py-1 pl-1.5 pr-1.5"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    addTag();
+                  }}
+                  onKeyDown={(e) => e.key === "Escape" && setCreating(false)}
                 >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${rule.match_type === "description" ? "bg-wax/10 text-wax" : "bg-field text-ink2"}`}>
-                        {matchTypeLabels[rule.match_type] || rule.match_type}
-                      </span>
-                      <span className="text-sm text-ink truncate max-w-[260px]">
-                        {rule.match_type === "description" ? rule.match_value : <>&ldquo;{rule.match_value}&rdquo;</>}
-                      </span>
-                      <span className="text-xs text-ink3">→</span>
-                      <span
-                        className="text-xs px-2 py-0.5 rounded font-medium text-white shrink-0"
-                        style={{
-                          backgroundColor: getRuleTargetColor(rule.category_slug),
-                        }}
-                      >
-                        {getRuleTargetLabel(rule.category_slug)}
-                      </span>
-                    </div>
-                  </div>
                   <button
-                    onClick={() => deleteRule(rule.id)}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-danger-soft text-danger transition-opacity"
+                    type="button"
+                    className="grid h-6 w-6 flex-none place-items-center rounded-md hover:bg-sel"
+                    title="Change colour"
+                    aria-label="Change colour"
+                    onClick={() => setNewTagColor(LABEL_COLORS[(LABEL_COLORS.findIndex((c) => c.hex === newTagColor) + 1) % LABEL_COLORS.length].hex)}
                   >
-                    <Icon name="delete" size={18} />
+                    <Dot color={newTagColor} />
                   </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-5">
-          {/* Smart Suggestions */}
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div>
-                <h3 className="text-sm font-semibold text-ink">
-                  Smart Suggestions
-                </h3>
-                <p className="text-xs text-ink3">
-                  Analyzes your recent emails to suggest tags personalized to your inbox.
-                </p>
-              </div>
-              {suggestionsStatus !== "loading" && (
-                <button
-                  onClick={analyzeSuggestions}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-medium hover:opacity-90 transition-opacity shrink-0 ml-4"
-                >
-                  <Icon name={suggestionsStatus === "done" ? "refresh" : "auto_awesome"} size={15} />
-                  {suggestionsStatus === "done" ? "Refresh" : "Analyze Emails"}
-                </button>
-              )}
-            </div>
-
-            {suggestionsStatus === "loading" && (
-              <div className="flex flex-col items-center justify-center py-10 gap-3 rounded-xl border border-line bg-hover">
-                <div className="w-8 h-8 rounded-full border-2 border-line border-t-wax animate-spin" />
-                <p className="text-xs text-ink3 animate-pulse">Analyzing your email patterns...</p>
-              </div>
-            )}
-
-            {suggestionsStatus === "done" && suggestions.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {suggestions.map((s) => (
-                  <SuggestionCard
-                    key={s.id}
-                    suggestion={s}
-                    onAdd={() => addTagFromSuggestion(s)}
-                    onDismiss={() => dismissSuggestion(s)}
+                  <input autoFocus className="input !h-6 !w-[120px] bg-canvas" value={newTagName} onChange={(e) => setNewTagName(e.target.value)} placeholder="Name" aria-label="Label name" />
+                  <input
+                    className="input !h-6 min-w-[120px] flex-1 bg-canvas"
+                    value={newTagDescription}
+                    onChange={(e) => setNewTagDescription(e.target.value)}
+                    placeholder="Which mail gets it, in your words"
+                    aria-label="When Tabellar should use this label"
                   />
-                ))}
-              </div>
-            )}
+                  <button type="submit" className="btn btn-sm" disabled={!newTagName.trim()}>
+                    Add
+                  </button>
+                  <button type="button" className="btn btn-sm btn-plain" onClick={() => setCreating(false)}>
+                    Cancel
+                  </button>
+                </form>
+              )}
+              {own.filter((l) => matches(l.name, l.description)).map(row)}
+              {!own.length && !creating && <p className="px-5 py-1.5 text-ink3">None yet. Add one with New label, or take one of the suggestions below.</p>}
 
-            {suggestionsStatus === "done" && suggestions.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-8 gap-2 rounded-xl border border-line bg-hover">
-                <Icon name="check_circle" size={36} className="text-ink3" />
-                <p className="text-sm font-medium text-ink">You&apos;re all set</p>
-                <p className="text-xs text-ink3">No new suggestions right now.</p>
-              </div>
-            )}
-          </div>
-
-          {/* Create Tag form */}
-          <div>
-            <h3 className="text-sm font-semibold text-ink mb-1">
-              Create Tag
-            </h3>
-            <p className="text-xs text-ink3 mb-3">
-              Tags are optional; an email can have multiple tags. Add a description so the AI knows when to apply this tag.
-            </p>
-            <div className="p-4 rounded-xl border border-line bg-hover space-y-3">
-              <input
-                type="text"
-                value={newTagName}
-                onChange={(e) => setNewTagName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addTag()}
-                placeholder="Tag name"
-                className="w-full px-3 py-1.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none"
-              />
-              <textarea
-                value={newTagDescription}
-                onChange={(e) => setNewTagDescription(e.target.value)}
-                placeholder="Describe when this tag should be applied… (e.g. emails from my bank or about invoices and payments)"
-                rows={2}
-                className="w-full px-3 py-2 rounded-lg border border-line bg-transparent text-sm focus:outline-none resize-none"
-              />
-              <div>
-                <label className="text-xs text-ink3 block mb-1.5">Color</label>
-                <div className="flex flex-wrap gap-2">
-                  {PRESET_COLORS.map((c) => (
-                    <button
-                      key={c.hex}
-                      type="button"
-                      onClick={() => setNewTagColor(c.hex)}
-                      title={c.name}
-                      className={`w-6 h-6 rounded-full transition-all ${newTagColor === c.hex ? "ring-2 ring-offset-2 ring-wax scale-110" : "hover:scale-110"}`}
-                      style={{ backgroundColor: c.hex }}
-                    />
-                  ))}
-                </div>
-              </div>
-              <div className="flex items-center justify-between">
-                {newTagName && (
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="text-xs px-2 py-0.5 rounded font-medium text-white"
-                      style={{ backgroundColor: newTagColor }}
-                    >
-                      {newTagName}
-                    </span>
-                    <span className="text-xs text-ink3">preview</span>
-                  </div>
+              <div className="day">
+                <b>Suggested by Tabellar</b>
+                <span className="truncate">From your last 300 emails</span>
+                <span className="flex-1" />
+                {suggestionsStatus === "done" && (
+                  <button className="link" onClick={() => analyzeSuggestions()}>
+                    Look again
+                  </button>
                 )}
-                <button
-                  onClick={addTag}
-                  disabled={!newTagName.trim()}
-                  className="ml-auto px-4 py-1.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-50"
-                >
-                  Create Tag
-                </button>
               </div>
-            </div>
-          </div>
-
-          {/* Tags list */}
-          {tags.length > 0 && (
-            <div>
-              <h3 className="text-sm font-semibold text-ink mb-2">
-                Your Tags
-              </h3>
-              <div className="space-y-2">
-                {tags.map((tag) => (
-                  <div
-                    key={tag.id}
-                    className="flex items-start gap-3 p-3 rounded-xl border border-line group"
-                  >
-                    <div
-                      className="w-3 h-3 rounded-full shrink-0 mt-1"
-                      style={{ backgroundColor: tag.color }}
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-ink">
-                          {tag.display_name}
-                        </span>
-                        <span className="text-xs text-ink3 font-mono">
-                          {tag.slug}
-                        </span>
-                      </div>
-                      {tag.description && (
-                        <p className="text-xs text-ink3 mt-0.5 truncate">
-                          {tag.description}
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => deleteTag(tag.id)}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-danger-soft text-danger transition-opacity shrink-0"
-                    >
-                      <Icon name="delete" size={18} />
+              {suggestionsStatus !== "done" ? (
+                <SkeletonRows count={3} />
+              ) : !shownSuggestions.length ? (
+                <p className="px-5 py-1.5 text-ink3">{q ? "No suggestion matches that search." : "Nothing to suggest right now."}</p>
+              ) : (
+                shownSuggestions.map((s) => (
+                  <div key={s.id} className="row gap-2.5" title={s.examples.join("\n")}>
+                    <Dot color={labelColor(s.color)} className="ml-1.5 mr-0.5" />
+                    <span className="flex-none text-ink">{s.name}</span>
+                    <span className="min-w-0 flex-1 truncate text-ink3">{s.description}</span>
+                    <span className="flex-none text-xs text-ink3">{s.matchCount} emails</span>
+                    <button className="btn btn-sm" onClick={() => addTagFromSuggestion(s)}>
+                      Add
+                    </button>
+                    <button className="iconbtn !h-6 !w-6" aria-label={`Do not suggest ${s.name}`} title="Do not suggest this" onClick={() => dismissSuggestion(s)}>
+                      <Icon name="close" size={13} />
                     </button>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {tags.length === 0 && (
-            <div className="text-center py-8 text-ink3">
-              <Icon name="label" size={40} className="mb-2" />
-              <p className="text-sm">No tags yet. Create one above.</p>
-            </div>
+                ))
+              )}
+            </>
           )}
         </div>
-      )}
-    </div>
+
+        {current ? (
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-[18px] md:px-8">
+              <div className="max-w-[520px]">
+                <button className="link mb-3 md:hidden" onClick={() => setSelected(null)}>
+                  Back to labels
+                </button>
+                <div className="flex items-center gap-2.5">
+                  <Dot color={current.tag ? edit.color : current.color} />
+                  <h2 className="text-[15px] font-[650] tracking-[-0.01em] text-ink">{current.name}</h2>
+                  <span className="text-xs text-ink3">{(counts[current.slug] || 0).toLocaleString()} emails</span>
+                </div>
+
+                {current.tag ? (
+                  <div className="mt-4 grid grid-cols-[92px_minmax(0,1fr)] items-center gap-x-3 gap-y-2.5">
+                    <label htmlFor="label-name" className="text-ink3">
+                      Name
+                    </label>
+                    <input id="label-name" className="input" value={edit.name} onChange={(e) => setEdit({ ...edit, name: e.target.value })} />
+                    <label htmlFor="label-about" className="self-start pt-1.5 text-ink3">
+                      Used for
+                    </label>
+                    <textarea
+                      id="label-about"
+                      className="input resize-none"
+                      rows={2}
+                      value={edit.description}
+                      onChange={(e) => setEdit({ ...edit, description: e.target.value })}
+                      placeholder="Which mail gets this label, in your words. Tabellar reads this when it sorts."
+                    />
+                    <span className="text-ink3">Colour</span>
+                    <div className="flex gap-1" role="radiogroup" aria-label="Colour">
+                      {LABEL_COLORS.map((c) => (
+                        <button
+                          key={c.hex}
+                          type="button"
+                          role="radio"
+                          aria-checked={edit.color === c.hex}
+                          aria-label={c.name}
+                          title={c.name}
+                          className={`grid h-6 w-6 place-items-center rounded-md transition-colors duration-150 ${edit.color === c.hex ? "bg-sel" : "hover:bg-hover"}`}
+                          onClick={() => setEdit({ ...edit, color: c.hex })}
+                        >
+                          <Dot color={c.hex} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-2 leading-normal text-ink2">{current.description} Tabellar decides this for every email as it arrives; rules below steer it.</p>
+                )}
+
+                <h3 className="label mt-7">Rules</h3>
+                <p className="mt-0.5 text-xs text-ink2">Say in plain words which mail belongs under {current.name}. Rules apply to new mail, not mail already sorted.</p>
+                <div className="mt-2 border-t border-line-soft">
+                  {currentRules.map((rule) => (
+                    <div key={rule.id} className="flex min-h-9 items-center gap-3 border-b border-line-soft py-1.5">
+                      <span className="w-[104px] flex-none text-xs text-ink3">{MATCH_TYPES[rule.match_type] || rule.match_type}</span>
+                      <span className="min-w-0 flex-1 text-ink">{rule.match_value}</span>
+                      <span className="flex-none text-xs text-ink3">{rule.hits > 1 ? `used ${rule.hits} times` : ""}</span>
+                      <button className="iconbtn !h-6 !w-6" aria-label="Remove rule" title="Remove rule" onClick={() => deleteRule(rule)}>
+                        <Icon name="close" size={13} />
+                      </button>
+                    </div>
+                  ))}
+                  {!currentRules.length && <p className="border-b border-line-soft py-2 text-ink3">No rules. Tabellar goes by the label's name{current.tag ? " and what it is used for" : ""}.</p>}
+                </div>
+                <form
+                  className="mt-2.5 flex gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    addRule(current.slug);
+                  }}
+                >
+                  <input className="input" value={newMatchValue} onChange={(e) => setNewMatchValue(e.target.value)} placeholder="Such as: anything from my bank, or about invoices and payments" aria-label="New rule" />
+                  <button type="submit" className="btn flex-none" disabled={!newMatchValue.trim()}>
+                    Add rule
+                  </button>
+                </form>
+              </div>
+            </div>
+            {current.tag && (
+              <div className="flex flex-none items-center gap-2 border-t border-line py-[11px] pl-6 pr-4 md:pl-8">
+                <button className="btn btn-pri" disabled={!dirty} onClick={() => saveTag(current.tag!)}>
+                  Save
+                </button>
+                <span className="flex-1" />
+                <button className="btn btn-danger" onClick={() => deleteTag(current.tag!)}>
+                  Delete label
+                </button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="hidden min-w-0 flex-1 md:block">
+            {!loading && (
+              <Empty icon="label" title="Select a label to see its rules">
+                Rules tell Tabellar, in plain words, which mail belongs under a label. Your own labels can also be renamed, recoloured or deleted here.
+              </Empty>
+            )}
+          </div>
+        )}
+      </div>
+      <KeyHints left={loading ? "" : `${builtIn.length + own.length} labels, ${rules.length} ${rules.length === 1 ? "rule" : "rules"}`} keys={[]} />
+    </>
   );
 }

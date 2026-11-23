@@ -1,24 +1,26 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import Logo from "@/components/Logo";
+import { Glyph } from "@/components/ui";
 import type { Session } from "@/lib/db";
 import { setupPost, type SetupState } from "@/lib/setup";
-import ModelSetup, { ErrorLine, Icon, Spinner, modelLabel, ui, useSetupState } from "./ModelSetup";
+import ModelSetup, { ErrorLine, Icon, modelLabel, ui, useSetupState } from "./ModelSetup";
 
 // First run, shown until a Google account is connected: the Google sign-in
-// client, the AI model, then signing in to Gmail. Each step can be revisited
-// from the rail; the AI step can be skipped and finished in Settings later.
+// client, the model, then signing in to Gmail. Each step can be revisited
+// from the line of steps at the top; the model step can be skipped and
+// finished in Settings later.
 
 const SKIP_AI = "tabellar_setup_skip_ai";
 
-function usePrefersDark(): boolean {
-  const query = "(prefers-color-scheme: dark)";
-  const [dark, setDark] = useState(() => window.matchMedia(query).matches);
+// No profile exists yet, so light or dark follows the system.
+function useSystemTheme() {
   useEffect(() => {
-    const m = window.matchMedia(query);
-    const on = () => setDark(m.matches);
-    m.addEventListener("change", on);
-    return () => m.removeEventListener("change", on);
+    const m = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => document.documentElement.classList.toggle("dark", m.matches);
+    apply();
+    m.addEventListener("change", apply);
+    return () => m.removeEventListener("change", apply);
   }, []);
-  return dark;
 }
 
 function ago(ms: number): string {
@@ -32,7 +34,7 @@ function ago(ms: number): string {
 }
 
 export default function Welcome({ error }: { session?: Session; error?: string }) {
-  const dark = usePrefersDark();
+  useSystemTheme();
   const { state, error: stateError, refresh } = useSetupState();
   const [step, setStep] = useState<number | null>(null);
   const [skippedAi, setSkippedAi] = useState(() => {
@@ -71,98 +73,61 @@ export default function Welcome({ error }: { session?: Session; error?: string }
   const googleDone = !!state?.google.clientId;
   const modelDone = !!state?.model?.ready;
   const steps = [
-    { title: "Google client", detail: googleDone ? "Saved to your Keychain" : "Your own sign-in client", done: googleDone },
-    { title: "AI model", detail: modelDone && state ? modelLabel(state.model, state.providers) : skippedAi ? "Skipped for now" : "On this Mac or in the cloud", done: modelDone },
-    { title: "Gmail", detail: "Sign in and fetch your mail", done: false },
+    { title: "Google client", done: googleDone },
+    { title: "Model", done: modelDone },
+    { title: "Gmail", done: false },
   ];
   const reachable = (i: number) => i === 0 || googleDone;
 
   return (
-    <div className={dark ? "dark" : ""}>
-      <div className="ob flex min-h-screen flex-col bg-canvas text-ink md:flex-row">
-        {/* Rail */}
-        <aside className="ob-rail relative flex shrink-0 flex-col gap-8 px-5 pb-5 pt-5 md:sticky md:top-0 md:h-screen md:w-[360px] md:gap-12 md:px-10 md:pb-10 md:pt-10 lg:w-[400px]">
-          <div className="flex items-center gap-3">
-            <img src="/logo.svg" alt="" width={32} height={32} className="rounded-[9px] shadow-[0_2px_8px_rgba(0,0,0,0.25)]" />
-            <span className="text-[17px] font-semibold tracking-[-0.01em] text-[var(--ob-rail-fg)]">Tabellar</span>
-          </div>
+    <div className="min-h-screen bg-canvas text-ink">
+      <div className="mx-auto w-full max-w-[560px] px-5 pb-14 pt-10 sm:pt-16">
+        <Logo size={30} />
 
-          <div className="hidden space-y-3 md:block">
-            <h2 className="max-w-[13ch] text-balance text-[30px] font-semibold leading-[1.12] tracking-[-0.025em] text-[var(--ob-rail-fg)]">
-              Your inbox, sorted on your Mac.
-            </h2>
-            <p className="max-w-[30ch] text-[14px] leading-relaxed text-[var(--ob-rail-muted)]">Three steps, about five minutes, and only once.</p>
-          </div>
+        <ol className="mt-9 flex items-center gap-2.5 text-xs">
+          {steps.map((s, i) => (
+            <li key={s.title} className={`flex items-center gap-2.5 ${i ? "min-w-0 flex-1" : ""}`}>
+              {i > 0 && <span aria-hidden className="h-px min-w-3 flex-1 bg-line" />}
+              <button
+                type="button"
+                disabled={!reachable(i) || !!failure}
+                onClick={() => setStep(i)}
+                aria-current={step === i ? "step" : undefined}
+                className={`flex flex-none items-center gap-1.5 rounded-md py-0.5 transition-colors duration-150 ${step === i ? "font-semibold text-ink" : "text-ink3 enabled:hover:text-ink"}`}
+              >
+                {s.done ? <Glyph state="done" /> : <span className="w-4 text-center">{i + 1}</span>}
+                {s.title}
+              </button>
+            </li>
+          ))}
+        </ol>
 
-          {/* Steps: a vertical list on wide screens, a compact bar on phones */}
-          <ol className="hidden md:block">
-            {steps.map((s, i) => {
-              const active = step === i;
-              const can = reachable(i) && !failure;
-              return (
-                <li key={s.title} className="relative pb-7 last:pb-0">
-                  {i < steps.length - 1 && (
-                    <span aria-hidden className={`absolute left-[13px] top-8 h-[calc(100%-36px)] w-px ${s.done ? "bg-[color-mix(in_srgb,var(--ob-rail-accent)_55%,transparent)]" : "bg-[var(--ob-rail-line)]"}`} />
-                  )}
-                  <button
-                    type="button"
-                    disabled={!can}
-                    onClick={() => setStep(i)}
-                    aria-current={active ? "step" : undefined}
-                    className="group flex w-full items-start gap-4 rounded-lg text-left disabled:cursor-default"
-                  >
-                    <span
-                      className={`grid h-[27px] w-[27px] shrink-0 place-items-center rounded-full text-[13px] font-semibold tabular-nums transition-colors duration-300 ${
-                        s.done
-                          ? "bg-[var(--ob-rail-accent)] text-[var(--ob-rail)]"
-                          : active
-                            ? "bg-[var(--ob-rail-fg)] text-[var(--ob-rail)]"
-                            : "border border-[var(--ob-rail-line)] text-[var(--ob-rail-muted)]"
-                      }`}
-                    >
-                      {s.done ? <Icon name="check" size={16} className="font-bold" /> : i + 1}
-                    </span>
-                    <span className="min-w-0 pt-[3px]">
-                      <span className={`block text-[15px] font-medium leading-tight transition-colors ${active ? "text-[var(--ob-rail-fg)]" : "text-[color-mix(in_srgb,var(--ob-rail-fg)_80%,transparent)] group-enabled:group-hover:text-[var(--ob-rail-fg)]"}`}>
-                        {s.title}
-                      </span>
-                      <span className="mt-1 block truncate text-[13px] text-[var(--ob-rail-muted)]">{s.detail}</span>
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
-          <div className="flex gap-1.5 md:hidden" aria-hidden>
-            {steps.map((s, i) => (
-              <span key={s.title} className={`h-1 flex-1 rounded-full ${s.done || step === i ? "bg-[var(--ob-rail-accent)]" : "bg-[var(--ob-rail-line)]"}`} />
-            ))}
-          </div>
-
-          <p className="mt-auto hidden items-start gap-2.5 text-[13px] leading-relaxed text-[var(--ob-rail-muted)] md:flex">
-            <Icon name="lock" size={16} className="mt-0.5" />
-            Mail is kept in one file on this Mac. Keys and tokens go to the macOS Keychain.
-          </p>
-        </aside>
-
-        {/* Step */}
-        <main className="flex-1">
-          <div key={failure ? "error" : step ?? "loading"} className="ob-enter mx-auto w-full max-w-[620px] px-4 pb-16 pt-8 sm:px-8 md:px-12 md:pt-20">
-            {failure ? (
-              <ErrorScreen message={failure} />
-            ) : !state || step === null ? (
-              <p className="flex items-center gap-2 text-sm text-ink3">
-                <Spinner /> Loading
-              </p>
-            ) : step === 0 ? (
-              <GoogleStep state={state} refresh={refresh} onNext={() => setStep(1)} />
-            ) : step === 1 ? (
-              <ModelStep state={state} refresh={refresh} onBack={() => setStep(0)} onNext={() => setStep(2)} onSkip={skipAi} />
-            ) : (
-              <GmailStep state={state} goTo={setStep} />
-            )}
-          </div>
+        <main className="mt-9">
+          {failure ? (
+            <ErrorScreen message={failure} />
+          ) : !state || step === null ? (
+            <div className="space-y-3" aria-busy="true" aria-label="Loading">
+              <span className="skel block h-5 w-52" />
+              <span className="skel block h-3 w-full" />
+              <span className="skel block h-3 w-4/5" />
+            </div>
+          ) : step === 0 ? (
+            <GoogleStep state={state} refresh={refresh} onNext={() => setStep(1)} />
+          ) : step === 1 ? (
+            <ModelStep state={state} refresh={refresh} onBack={() => setStep(0)} onNext={() => setStep(2)} onSkip={skipAi} />
+          ) : (
+            <GmailStep state={state} goTo={setStep} />
+          )}
         </main>
+
+        <footer className="mt-12 border-t border-line-soft pt-4 text-xs leading-relaxed text-ink3">
+          <p>
+            <b className="font-semibold text-ink2">What stays on this Mac.</b> Your mail, in one file in your home folder. Keys and sign-in tokens, in the macOS Keychain. Nothing is hosted anywhere and there is no account to create.
+          </p>
+          <p className="mt-1.5">
+            <b className="font-semibold text-ink2">What leaves it.</b> Calls to Google, to read and act on your own Gmail and Calendar, and calls to the model you choose. With a model on this Mac, nothing else leaves at all.
+          </p>
+        </footer>
       </div>
     </div>
   );
@@ -170,50 +135,46 @@ export default function Welcome({ error }: { session?: Session; error?: string }
 
 function Heading({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <header className="mb-8 space-y-3">
-      <h1 className="text-balance text-[28px] font-semibold leading-[1.15] tracking-[-0.02em] text-ink sm:text-[32px]">{title}</h1>
-      <p className="max-w-[60ch] text-[15px] leading-relaxed text-ink3">{children}</p>
+    <header className="mb-6">
+      <h1 className="font-brand text-[24px] font-[650] leading-[1.2] text-ink">{title}</h1>
+      <p className="mt-2 text-sm leading-[1.6] text-ink2">{children}</p>
     </header>
   );
 }
 
-function Footer({ onBack, children }: { onBack?: () => void; children?: ReactNode }) {
+// The row of actions under a step: the way forward on the left, the way back after it.
+function Actions({ onBack, children }: { onBack?: () => void; children?: ReactNode }) {
   return (
-    <div className="mt-10 flex items-center justify-between gap-3 border-t border-line pt-6">
-      {onBack ? (
-        <button type="button" onClick={onBack} className="inline-flex h-10 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-ink3 transition-colors hover:text-ink">
-          <Icon name="arrow_back" size={18} /> Back
+    <div className="mt-8 flex items-center gap-2">
+      {children}
+      {onBack && (
+        <button type="button" onClick={onBack} className="btn btn-plain h-8">
+          Back
         </button>
-      ) : (
-        <span />
       )}
-      <div className="flex items-center gap-2">{children}</div>
     </div>
   );
 }
 
-// ── Step 1: the Google sign-in client ───────────────────────────────────────
+// Step 1: the Google sign-in client
 
 const CONSOLE = "https://console.cloud.google.com";
-const GOOGLE_STEPS: { title: string; detail: string; href: string; action: string }[] = [
-  { title: "Create a project", detail: "Any name works, Tabellar is fine.", href: `${CONSOLE}/projectcreate`, action: "Create" },
+const GOOGLE_STEPS: { title: string; detail: string; href: string }[] = [
+  { title: "Create a project", detail: "Any name works, Tabellar is fine.", href: `${CONSOLE}/projectcreate` },
   {
     title: "Turn on the Gmail, Calendar and People APIs",
     detail: "One page enables all three for the project.",
     href: `${CONSOLE}/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,people.googleapis.com`,
-    action: "Enable",
   },
   {
     title: "Set up the consent screen",
     detail: "Name it Tabellar. Choose External and add your own address as a test user, or Internal on a Workspace account.",
     href: `${CONSOLE}/auth/overview`,
-    action: "Open",
   },
   {
     title: "Create a Desktop app client",
     detail: "Pick Desktop app as the type, create it, then download the JSON file.",
     href: `${CONSOLE}/auth/clients/create`,
-    action: "Create",
   },
 ];
 
@@ -249,127 +210,95 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
     if (f) await save({ text: await f.text() });
   };
 
-  const checklist = (
-    <ol className="space-y-0 overflow-hidden rounded-xl border border-line bg-raised">
-      {GOOGLE_STEPS.map((s, i) => (
-        <li key={s.title} className={`flex items-start gap-4 px-5 py-4 ${i ? "border-t border-line" : ""}`}>
-          <span className="mt-px grid h-6 w-6 shrink-0 place-items-center rounded-full bg-field text-[12px] font-semibold tabular-nums text-ink">{i + 1}</span>
-          <div className="min-w-0 flex-1">
-            <p className="text-[14.5px] font-medium leading-snug text-ink">{s.title}</p>
-            <p className="mt-0.5 text-[13px] leading-relaxed text-ink3">{s.detail}</p>
-          </div>
-          <a
-            href={s.href}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-line px-2.5 text-[13px] font-medium text-ink transition-colors hover:border-wax hover:text-wax"
-          >
-            {s.action}
-            <Icon name="arrow_outward" size={15} />
-          </a>
-        </li>
-      ))}
-    </ol>
+  const chooseFile = (
+    <>
+      <button type="button" className={found ? "link" : ui.btnPrimary} disabled={busy} onClick={() => fileInput.current?.click()}>
+        {found ? "Choose a different file" : busy ? "Saving" : "Choose the file"}
+      </button>
+      <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" onChange={(e) => readFile(e.target.files?.[0])} />
+    </>
   );
 
   return (
     <>
       <Heading title="Add your Google client">
-        Tabellar reaches Gmail through a sign-in client that you create in your own Google Cloud project, so your mail never passes through anyone else's app.
+        Tabellar reaches Gmail through a sign-in client that you create in your own Google Cloud project, so your mail never passes through anyone else's app. It takes about five minutes, once.
       </Heading>
 
       {!showSetup ? (
-        <div className="flex items-start gap-4 rounded-xl border border-line bg-raised p-5">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-wax-soft text-wax">
-            <Icon name="check" size={20} />
-          </span>
-          <div className="min-w-0 flex-1 space-y-1">
-            <p className="text-[15px] font-semibold text-ink">Google client saved</p>
-            <p className="truncate font-mono text-[12.5px] text-ink3" title={state.google.clientId!}>
-              {state.google.clientId}
-            </p>
-            <p className="text-[13px] text-ink3">The secret is in your Keychain.</p>
-            {warning && <p className="pt-1 text-[13px] text-warn">{warning}</p>}
+        <>
+          <div className="grid grid-cols-[22px_minmax(0,1fr)_auto] items-start border-y border-line-soft py-3">
+            <Glyph state="done" className="mt-px" />
+            <div className="min-w-0">
+              <p className="font-medium text-ink">Google client saved</p>
+              <p className="truncate font-mono text-xs text-ink3" title={state.google.clientId!}>
+                {state.google.clientId}
+              </p>
+              <p className="text-xs text-ink2">The secret is in your Keychain.</p>
+              {warning && <p className="mt-1 text-xs text-warn">{warning}</p>}
+            </div>
+            <button type="button" onClick={() => setReplacing(true)} className="link">
+              Replace
+            </button>
           </div>
-          <button type="button" onClick={() => setReplacing(true)} className="shrink-0 text-[13px] font-medium text-wax underline-offset-2 hover:underline">
-            Replace
-          </button>
-        </div>
+          <Actions>
+            <button type="button" className={ui.btnPrimary} onClick={onNext}>
+              Continue
+            </button>
+          </Actions>
+        </>
       ) : (
-        <div className="space-y-6">
-          {!found && checklist}
-
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+            readFile(e.dataTransfer.files[0]);
+          }}
+          className={`-mx-3 rounded-[10px] px-3 transition-colors duration-150 ${dragging ? "bg-sel" : ""}`}
+        >
           {found ? (
-            <div className="space-y-4 rounded-xl border border-wax bg-wax-soft p-5">
-              <div className="flex items-start gap-3">
-                <Icon name="description" size={22} className="mt-px text-wax" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[15px] font-semibold text-ink">Found your client file</p>
-                  <p className="mt-0.5 truncate font-mono text-[12.5px] text-ink3" title={found.path}>
-                    {found.folder}/{found.name}
+            <>
+              <div className="border-y border-line-soft py-3">
+                <p className="font-medium text-ink">Found your client file</p>
+                <p className="truncate font-mono text-xs text-ink3" title={found.path}>
+                  {found.folder}/{found.name}
+                </p>
+                <p className="text-xs text-ink2">Saved {ago(found.modified)}</p>
+                <label className="mt-2.5 flex items-center gap-2 text-ink2">
+                  <input type="checkbox" checked={trash} onChange={(e) => setTrash(e.target.checked)} />
+                  Move the file to the Trash once it is saved to the Keychain
+                </label>
+              </div>
+              <Actions onBack={configured ? () => setReplacing(false) : undefined}>
+                <button type="button" className={ui.btnPrimary} disabled={busy} onClick={() => save({ path: found.path, trash })}>
+                  {busy ? "Saving" : "Use this file"}
+                </button>
+              </Actions>
+              <p className="mt-4 text-xs text-ink2">Not the right one? {chooseFile}, or drop it anywhere here.</p>
+              <details className="mt-3">
+                <summary className="link inline cursor-default list-none">How to make a new client</summary>
+                <GoogleList />
+              </details>
+            </>
+          ) : (
+            <>
+              <GoogleList />
+              <div className="grid grid-cols-[24px_minmax(0,1fr)] border-t border-line-soft py-2.5">
+                <span className="text-ink3">{GOOGLE_STEPS.length + 1}</span>
+                <div>
+                  <p className="font-medium text-ink">Give the downloaded file to Tabellar</p>
+                  <p className="mt-0.5 text-xs leading-normal text-ink2">
+                    Drop the client_secret file anywhere here, or choose it. Tabellar is also watching Downloads, Desktop and Documents and will pick it up when it appears.
                   </p>
-                  <p className="text-[13px] text-ink3">Saved {ago(found.modified)}</p>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-ink">
-                  <input type="checkbox" checked={trash} onChange={(e) => setTrash(e.target.checked)} className="h-4 w-4 accent-wax" />
-                  Move it to the Trash once saved
-                </label>
-                <button type="button" className={ui.btnPrimary} disabled={busy} onClick={() => save({ path: found.path, trash })}>
-                  {busy ? <Spinner /> : <Icon name="key" size={18} />}
-                  Use this file
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragging(false);
-              readFile(e.dataTransfer.files[0]);
-            }}
-            className={`flex flex-col items-center gap-3 rounded-xl border-2 border-dashed px-6 text-center transition-colors ${found ? "py-6" : "py-10"} ${
-              dragging ? "border-wax bg-wax-soft" : "border-line"
-            }`}
-          >
-            {!found && (
-              <span className="grid h-11 w-11 place-items-center rounded-full bg-field text-ink3">
-                {busy ? <Spinner size={20} /> : <Icon name="upload_file" size={22} />}
-              </span>
-            )}
-            <p className="text-[14px] text-ink">
-              {found ? "A different file? " : "Drop the downloaded client_secret file here, or "}
-              <button type="button" onClick={() => fileInput.current?.click()} className="font-medium text-wax underline-offset-2 hover:underline">
-                choose it
-              </button>
-            </p>
-            {!found && (
-              <p className="flex items-center gap-1.5 text-[13px] text-ink3">
-                <Spinner size={14} /> Watching Downloads, Desktop and Documents for it
-              </p>
-            )}
-            <input ref={fileInput} type="file" accept=".json,application/json" className="hidden" onChange={(e) => readFile(e.target.files?.[0])} />
-          </div>
-          {found && (
-            <details className="group">
-              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] font-medium text-ink3 hover:text-ink">
-                <Icon name="chevron_right" size={18} className="transition-transform duration-200 group-open:rotate-90" />
-                How to make a new client
-              </summary>
-              <div className="mt-3">{checklist}</div>
-            </details>
-          )}
-          {configured && (
-            <button type="button" onClick={() => setReplacing(false)} className="text-[13px] font-medium text-ink3 hover:text-ink">
-              Keep the current client
-            </button>
+              <Actions onBack={configured ? () => setReplacing(false) : undefined}>{chooseFile}</Actions>
+            </>
           )}
         </div>
       )}
@@ -377,96 +306,98 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
       <div className="mt-4">
         <ErrorLine text={error} />
       </div>
-
-      <Footer>
-        <button type="button" className={ui.btnPrimary} disabled={!configured || replacing} onClick={onNext}>
-          Continue <Icon name="arrow_forward" size={18} />
-        </button>
-      </Footer>
     </>
   );
 }
 
-// ── Step 2: the AI model ────────────────────────────────────────────────────
+function GoogleList() {
+  return (
+    <ol>
+      {GOOGLE_STEPS.map((s, i) => (
+        <li key={s.title} className={`grid grid-cols-[24px_minmax(0,1fr)] py-2.5 ${i ? "border-t border-line-soft" : ""}`}>
+          <span className="text-ink3">{i + 1}</span>
+          <div>
+            <a href={s.href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-ink underline decoration-ink4 underline-offset-[2.5px] hover:decoration-ink2">
+              {s.title}
+              <Icon name="arrow_outward" size={13} className="text-ink3" />
+            </a>
+            <p className="mt-0.5 text-xs leading-normal text-ink2">{s.detail}</p>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+// Step 2: the model
 
 function ModelStep({ state, refresh, onBack, onNext, onSkip }: { state: SetupState; refresh: () => Promise<void>; onBack: () => void; onNext: () => void; onSkip: () => void }) {
   return (
     <>
-      <Heading title="Choose where the AI runs">
-        Tabellar uses a language model to sort your mail, write the daily briefing and draft replies. Settings, under AI, can switch it later or give reading mail a smaller, faster model of its own.
+      <Heading title="Choose the model Tabellar uses">
+        A language model sorts your mail, writes the daily briefing and drafts replies. You can change it later in Settings, under Models, or give reading mail a smaller, faster model of its own.
       </Heading>
       <ModelSetup state={state} refresh={refresh} onSaved={onNext} />
-      <Footer onBack={onBack}>
+      <Actions onBack={onBack}>
         {state.model?.ready ? (
           <button type="button" className={ui.btnPrimary} onClick={onNext}>
-            Continue <Icon name="arrow_forward" size={18} />
+            Continue
           </button>
         ) : (
           <button type="button" className={ui.btnSecondary} onClick={onSkip}>
             Skip for now
           </button>
         )}
-      </Footer>
+      </Actions>
     </>
   );
 }
 
-// ── Step 3: sign in to Gmail ────────────────────────────────────────────────
-
-function GoogleMark() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden>
-      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z" />
-      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
-      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z" />
-      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z" />
-    </svg>
-  );
-}
+// Step 3: sign in to Gmail
 
 function GmailStep({ state, goTo }: { state: SetupState; goTo: (i: number) => void }) {
   const [going, setGoing] = useState(false);
   const rows = [
-    { label: "Google client", value: "Saved to your Keychain", ok: true, step: 0 },
-    { label: "AI model", value: state.model?.ready ? modelLabel(state.model, state.providers) : "Not chosen yet; mail syncs, sorting waits", ok: !!state.model?.ready, step: 1 },
+    { label: "Google client", value: "Saved to your Keychain", step: 0 },
+    { label: "Model", value: state.model?.ready ? modelLabel(state.model, state.providers) : "Not chosen yet. Mail syncs, sorting waits.", step: 1 },
+  ];
+  const notes = [
+    "Pick the Google account whose mail Tabellar should handle.",
+    "Google will say it has not verified the app. That is expected, because the client is your own. Choose Advanced, then Go to Tabellar.",
+    "Allow access to Gmail and Calendar. Tabellar then fetches your recent mail, sorts it and writes your first briefing.",
   ];
   return (
     <>
       <Heading title="Sign in to Gmail">
-        Tabellar fetches your recent mail, sorts it and writes your first briefing. Expect a minute or two{state.model?.format === "ollama" ? ", longer with a model on this Mac" : ""}.
+        The last step. Expect a minute or two before the Inbox fills{state.model?.format === "ollama" ? ", longer with a model on this Mac" : ""}.
       </Heading>
 
-      <dl className="overflow-hidden rounded-xl border border-line bg-raised">
+      <dl className="border-y border-line-soft">
         {rows.map((r, i) => (
-          <div key={r.label} className={`flex items-center gap-4 px-5 py-3.5 ${i ? "border-t border-line" : ""}`}>
-            <Icon name={r.ok ? "check_circle" : "radio_button_unchecked"} size={20} className={r.ok ? "text-wax" : "text-ink3"} />
-            <dt className="w-28 shrink-0 text-[13px] text-ink3">{r.label}</dt>
-            <dd className="min-w-0 flex-1 truncate text-[14px] text-ink">{r.value}</dd>
-            <button type="button" onClick={() => goTo(r.step)} className="shrink-0 text-[13px] font-medium text-wax underline-offset-2 hover:underline">
+          <div key={r.label} className={`flex items-baseline gap-3 py-2 ${i ? "border-t border-line-soft" : ""}`}>
+            <dt className="w-28 flex-none text-ink3">{r.label}</dt>
+            <dd className="min-w-0 flex-1 truncate text-ink">{r.value}</dd>
+            <button type="button" onClick={() => goTo(r.step)} className="link flex-none">
               Change
             </button>
           </div>
         ))}
       </dl>
 
-      <div className="mt-6 flex items-start gap-3 rounded-xl bg-field px-5 py-4">
-        <Icon name="info" size={20} className="mt-px text-ink3" />
-        <p className="text-[13.5px] leading-relaxed text-ink">
-          Google will say it hasn't verified the app. That is expected, since the client is your own. Choose <b className="font-semibold">Advanced</b>, then{" "}
-          <b className="font-semibold">Go to Tabellar</b>, and allow access to Gmail and Calendar.
-        </p>
-      </div>
+      <ol className="mt-4">
+        {notes.map((n, i) => (
+          <li key={i} className="grid grid-cols-[24px_minmax(0,1fr)] py-1.5 leading-normal text-ink2">
+            <span className="text-ink3">{i + 1}</span>
+            {n}
+          </li>
+        ))}
+      </ol>
 
-      <a
-        href="/oauth/start"
-        onClick={() => setGoing(true)}
-        className="mt-8 flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-line bg-raised text-[15px] font-semibold text-ink shadow-[0_1px_2px_rgba(16,24,40,0.06),0_8px_24px_-12px_rgba(16,24,40,0.25)] transition-[box-shadow,transform] hover:shadow-[0_2px_4px_rgba(16,24,40,0.08),0_12px_28px_-12px_rgba(16,24,40,0.35)] active:translate-y-px"
-      >
-        {going ? <Spinner size={18} /> : <GoogleMark />}
-        Continue with Google
-      </a>
-
-      <Footer onBack={() => goTo(1)} />
+      <Actions onBack={() => goTo(1)}>
+        <a href="/oauth/start" onClick={() => setGoing(true)} className={ui.btnPrimary} aria-busy={going}>
+          {going ? "Opening Google" : "Sign in with Google"}
+        </a>
+      </Actions>
     </>
   );
 }
@@ -474,14 +405,15 @@ function GmailStep({ state, goTo }: { state: SetupState; goTo: (i: number) => vo
 function ErrorScreen({ message }: { message: string }) {
   return (
     <>
-      <Heading title="Tabellar isn't answering">
-        The window couldn't reach the Tabellar server on this Mac. Make sure <code className="rounded bg-field px-1.5 py-0.5 font-mono text-[13px]">tabellar start</code> is still running in
-        Terminal, then try again.
+      <Heading title="Tabellar is not answering">
+        This window could not reach the Tabellar server on this Mac. Make sure <code className="rounded bg-field px-1 py-0.5 font-mono text-[12.5px]">tabellar start</code> is still running in Terminal, then try again.
       </Heading>
       <ErrorLine text={message} />
-      <button type="button" className={`${ui.btnPrimary} mt-6`} onClick={() => window.location.reload()}>
-        <Icon name="refresh" size={18} /> Try again
-      </button>
+      <Actions>
+        <button type="button" className={ui.btnPrimary} onClick={() => window.location.reload()}>
+          Try again
+        </button>
+      </Actions>
     </>
   );
 }

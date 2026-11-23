@@ -1,3 +1,62 @@
+// Label colours. A label's colour only ever shows as a small dot beside its
+// name, so the set is short and muted to sit with the neutral interface. This
+// is the one file where colour values are written out.
+const C = {
+  brick: "#b4604e",
+  ochre: "#b38a3e",
+  moss: "#72894c",
+  teal: "#3f8a86",
+  blue: "#5b7fa6",
+  plum: "#86699f",
+  rose: "#ad6784",
+  stone: "#8a857d",
+};
+
+export const LABEL_COLORS: { hex: string; name: string }[] = [
+  { hex: C.brick, name: "Brick" },
+  { hex: C.ochre, name: "Ochre" },
+  { hex: C.moss, name: "Moss" },
+  { hex: C.teal, name: "Teal" },
+  { hex: C.blue, name: "Blue" },
+  { hex: C.plum, name: "Plum" },
+  { hex: C.rose, name: "Rose" },
+  { hex: C.stone, name: "Stone" },
+];
+
+// The four labels every email is sorted into.
+export const BUILT_IN_COLORS: Record<string, string> = {
+  important: C.brick,
+  "action-required": C.ochre,
+  promotions: C.plum,
+  updates: C.blue,
+};
+
+// Labels saved before the palette was reduced carry brighter colours; each is
+// shown as its nearest muted one.
+const OLDER: Record<string, string> = {
+  "#ef4444": C.brick,
+  "#f97316": C.ochre,
+  "#eab308": C.ochre,
+  "#22c55e": C.moss,
+  "#10b981": C.moss,
+  "#06b6d4": C.teal,
+  "#14b8a6": C.teal,
+  "#3b82f6": C.blue,
+  "#6366f1": C.plum,
+  "#8b5cf6": C.plum,
+  "#a855f7": C.plum,
+  "#ec4899": C.rose,
+  "#6b7280": C.stone,
+  "#64748b": C.stone,
+  "#1e293b": C.stone,
+};
+
+export function labelColor(stored: string | null | undefined): string {
+  const hex = (stored || "").toLowerCase();
+  if (LABEL_COLORS.some((c) => c.hex === hex)) return hex;
+  return OLDER[hex] ?? C.stone;
+}
+
 export type TagSuggestion = {
   id: string;
   name: string;
@@ -32,103 +91,103 @@ type DismissedStore = {
   updatedAt: string;
 };
 
-// ── Domain → tag templates ────────────────────────────────────────────────────
+// Sender domain to label
 // Keyed by sender domain. Multiple domains can share a slug (counts are merged).
 const DOMAIN_TAG_MAP: Record<string, DomainTemplate> = {
-  "github.com":      { slug: "github",     name: "GitHub",     color: "#6366f1", description: "Notifications and activity from GitHub repositories" },
-  "gitlab.com":      { slug: "gitlab",     name: "GitLab",     color: "#f97316", description: "Notifications and activity from GitLab projects" },
-  "linear.app":      { slug: "linear",     name: "Linear",     color: "#8b5cf6", description: "Issue updates and project activity from Linear" },
-  "notion.so":       { slug: "notion",     name: "Notion",     color: "#64748b", description: "Comments, mentions, and updates from Notion" },
-  "slack.com":       { slug: "slack",      name: "Slack",      color: "#22c55e", description: "Notifications and digests from Slack" },
-  "atlassian.com":   { slug: "jira",       name: "Jira",       color: "#3b82f6", description: "Jira issue updates, assignments, and comments" },
-  "jira.com":        { slug: "jira",       name: "Jira",       color: "#3b82f6", description: "Jira issue updates, assignments, and comments" },
-  "figma.com":       { slug: "figma",      name: "Figma",      color: "#ec4899", description: "Figma file comments, shares, and updates" },
-  "asana.com":       { slug: "asana",      name: "Asana",      color: "#f97316", description: "Task assignments and project updates from Asana" },
-  "trello.com":      { slug: "trello",     name: "Trello",     color: "#3b82f6", description: "Trello card activity and board notifications" },
-  "monday.com":      { slug: "monday",     name: "Monday",     color: "#ef4444", description: "Updates and assignments from Monday.com" },
-  "zoom.us":         { slug: "zoom",       name: "Zoom",       color: "#3b82f6", description: "Zoom meeting invites, recordings, and webinar links" },
-  "loom.com":        { slug: "loom",       name: "Loom",       color: "#8b5cf6", description: "Loom video shares and comments" },
-  "vercel.com":      { slug: "vercel",     name: "Vercel",     color: "#14b8a6", description: "Vercel deployment status updates and alerts" },
-  "sentry.io":       { slug: "sentry",     name: "Sentry",     color: "#ef4444", description: "Error alerts and performance issues from Sentry" },
-  "pagerduty.com":   { slug: "pagerduty",  name: "PagerDuty",  color: "#ef4444", description: "Incident alerts and on-call notifications from PagerDuty" },
-  "hubspot.com":     { slug: "hubspot",    name: "HubSpot",    color: "#f97316", description: "CRM activity, deal updates, and contact notifications from HubSpot" },
-  "salesforce.com":  { slug: "salesforce", name: "Salesforce", color: "#3b82f6", description: "Salesforce CRM notifications and pipeline updates" },
-  "intercom.io":     { slug: "intercom",   name: "Intercom",   color: "#3b82f6", description: "Customer conversation notifications from Intercom" },
-  "stripe.com":      { slug: "stripe",     name: "Stripe",     color: "#8b5cf6", description: "Stripe payment notifications, disputes, and receipts" },
-  "clickup.com":     { slug: "clickup",    name: "ClickUp",    color: "#ec4899", description: "Task updates and notifications from ClickUp" },
-  "airtable.com":    { slug: "airtable",   name: "Airtable",   color: "#22c55e", description: "Record updates and base activity from Airtable" },
-  "datadog.com":     { slug: "datadog",    name: "Datadog",    color: "#8b5cf6", description: "Monitoring alerts and reports from Datadog" },
+  "github.com":      { slug: "github",     name: "GitHub",     color: C.plum, description: "Notifications and activity from GitHub repositories" },
+  "gitlab.com":      { slug: "gitlab",     name: "GitLab",     color: C.ochre, description: "Notifications and activity from GitLab projects" },
+  "linear.app":      { slug: "linear",     name: "Linear",     color: C.plum, description: "Issue updates and project activity from Linear" },
+  "notion.so":       { slug: "notion",     name: "Notion",     color: C.stone, description: "Comments, mentions, and updates from Notion" },
+  "slack.com":       { slug: "slack",      name: "Slack",      color: C.moss, description: "Notifications and digests from Slack" },
+  "atlassian.com":   { slug: "jira",       name: "Jira",       color: C.blue, description: "Jira issue updates, assignments, and comments" },
+  "jira.com":        { slug: "jira",       name: "Jira",       color: C.blue, description: "Jira issue updates, assignments, and comments" },
+  "figma.com":       { slug: "figma",      name: "Figma",      color: C.rose, description: "Figma file comments, shares, and updates" },
+  "asana.com":       { slug: "asana",      name: "Asana",      color: C.ochre, description: "Task assignments and project updates from Asana" },
+  "trello.com":      { slug: "trello",     name: "Trello",     color: C.blue, description: "Trello card activity and board notifications" },
+  "monday.com":      { slug: "monday",     name: "Monday",     color: C.brick, description: "Updates and assignments from Monday.com" },
+  "zoom.us":         { slug: "zoom",       name: "Zoom",       color: C.blue, description: "Zoom meeting invites, recordings, and webinar links" },
+  "loom.com":        { slug: "loom",       name: "Loom",       color: C.plum, description: "Loom video shares and comments" },
+  "vercel.com":      { slug: "vercel",     name: "Vercel",     color: C.teal, description: "Vercel deployment status updates and alerts" },
+  "sentry.io":       { slug: "sentry",     name: "Sentry",     color: C.brick, description: "Error alerts and performance issues from Sentry" },
+  "pagerduty.com":   { slug: "pagerduty",  name: "PagerDuty",  color: C.brick, description: "Incident alerts and on-call notifications from PagerDuty" },
+  "hubspot.com":     { slug: "hubspot",    name: "HubSpot",    color: C.ochre, description: "CRM activity, deal updates, and contact notifications from HubSpot" },
+  "salesforce.com":  { slug: "salesforce", name: "Salesforce", color: C.blue, description: "Salesforce CRM notifications and pipeline updates" },
+  "intercom.io":     { slug: "intercom",   name: "Intercom",   color: C.blue, description: "Customer conversation notifications from Intercom" },
+  "stripe.com":      { slug: "stripe",     name: "Stripe",     color: C.plum, description: "Stripe payment notifications, disputes, and receipts" },
+  "clickup.com":     { slug: "clickup",    name: "ClickUp",    color: C.rose, description: "Task updates and notifications from ClickUp" },
+  "airtable.com":    { slug: "airtable",   name: "Airtable",   color: C.moss, description: "Record updates and base activity from Airtable" },
+  "datadog.com":     { slug: "datadog",    name: "Datadog",    color: C.plum, description: "Monitoring alerts and reports from Datadog" },
 };
 
-// ── Keyword clusters ──────────────────────────────────────────────────────────
+// Keyword clusters
 const KEYWORD_CLUSTERS: KeywordCluster[] = [
   {
     slug: "finance",
     name: "Finance & Bills",
-    color: "#22c55e",
+    color: C.moss,
     description: "Invoices, bills, receipts, payment confirmations, and financial statements",
     keywords: ["invoice", "receipt", "payment", "billing", "bill", "statement", "transaction", "charge", "subscription", "renewal", "refund", "balance due", "overdue", "wire transfer", "bank statement"],
   },
   {
     slug: "travel",
     name: "Travel",
-    color: "#14b8a6",
+    color: C.teal,
     description: "Flight confirmations, hotel bookings, itineraries, and travel-related emails",
     keywords: ["flight", "booking confirmation", "itinerary", "hotel", "reservation", "check-in", "boarding pass", "airline", "your trip", "airbnb", "rental car", "e-ticket", "passport"],
   },
   {
     slug: "newsletters",
     name: "Newsletters",
-    color: "#8b5cf6",
+    color: C.plum,
     description: "Email newsletters, digests, and subscription-based content updates",
     keywords: ["newsletter", "digest", "weekly roundup", "unsubscribe", "this week in", "edition", "issue #", "weekly update", "monthly update", "curated", "briefing", "what's new"],
   },
   {
     slug: "shopping",
     name: "Shopping",
-    color: "#f97316",
+    color: C.ochre,
     description: "Order confirmations, shipping updates, and e-commerce notifications",
     keywords: ["order confirmed", "your order", "has shipped", "out for delivery", "delivered", "tracking number", "shipment", "purchase confirmation", "return request", "package", "amazon"],
   },
   {
     slug: "health",
     name: "Health",
-    color: "#ef4444",
+    color: C.brick,
     description: "Medical appointments, prescriptions, lab results, and health-related communications",
     keywords: ["appointment", "prescription", "lab result", "test result", "doctor", "clinic", "health", "medical", "insurance claim", "pharmacy", "patient portal", "your health"],
   },
   {
     slug: "security",
     name: "Security Alerts",
-    color: "#ef4444",
+    color: C.brick,
     description: "Login alerts, password resets, two-factor authentication, and account security notices",
     keywords: ["security alert", "new sign-in", "new login", "password reset", "two-factor", "2fa", "verify your", "verification code", "unusual activity", "account access", "confirm your email"],
   },
   {
     slug: "jobs",
     name: "Jobs & Recruiting",
-    color: "#eab308",
+    color: C.ochre,
     description: "Job applications, recruiter outreach, and hiring-related emails",
     keywords: ["application received", "job opportunity", "we reviewed your", "interview", "hiring", "open position", "recruiter", "linkedin recruiter", "offer letter", "candidate", "apply now"],
   },
   {
     slug: "events",
     name: "Events",
-    color: "#ec4899",
+    color: C.rose,
     description: "Event invitations, RSVPs, conference registrations, and webinar links",
     keywords: ["invitation", "rsvp", "conference", "webinar", "register now", "join us", "you're invited", "event registration", "meetup", "summit", "workshop", "virtual event"],
   },
   {
     slug: "social",
     name: "Social",
-    color: "#6366f1",
+    color: C.plum,
     description: "Notifications from social networks such as LinkedIn, Twitter, and similar platforms",
     keywords: ["linkedin", "mentioned you", "commented on your", "liked your", "followed you", "connection request", "twitter", "instagram", "reacted to", "tagged you", "new follower"],
   },
   {
     slug: "legal",
     name: "Legal & Compliance",
-    color: "#64748b",
+    color: C.stone,
     description: "Contracts, NDAs, privacy policy updates, terms of service, and compliance notices",
     keywords: ["agreement", "contract", "terms of service", "privacy policy", "nda", "compliance", "legal notice", "policy update", "gdpr", "data protection", "terms and conditions"],
   },
@@ -144,7 +203,7 @@ export function analyzeEmailPatterns(
   existingTagSlugs: string[],
   dismissedSlugs: string[],
 ): TagSuggestion[] {
-  // ── Domain pass ───────────────────────────────────────────────────────────
+  // Domain pass
   // Accumulate by template slug (multiple domains can share a slug, e.g. jira.com + atlassian.com)
   const domainAccum = new Map<string, { template: DomainTemplate; count: number; examples: string[] }>();
 
@@ -165,7 +224,7 @@ export function analyzeEmailPatterns(
     }
   }
 
-  // ── Keyword pass ──────────────────────────────────────────────────────────
+  // Keyword pass
   const keywordAccum = new Map<string, { cluster: KeywordCluster; count: number; examples: string[] }>();
 
   for (const email of emails) {
@@ -186,7 +245,7 @@ export function analyzeEmailPatterns(
     }
   }
 
-  // ── Build candidates ──────────────────────────────────────────────────────
+  // Build candidates
   const blocked = new Set([...existingTagSlugs, ...dismissedSlugs]);
   const candidates: TagSuggestion[] = [];
 
@@ -222,7 +281,7 @@ export function analyzeEmailPatterns(
   return candidates.slice(0, MAX_SUGGESTIONS);
 }
 
-// ── localStorage helpers ──────────────────────────────────────────────────────
+// localStorage helpers
 const DISMISSED_PREFIX = "tabellar:dismissed-tag-suggestions:";
 
 export function getDismissedSlugs(userId: string): string[] {
@@ -252,5 +311,7 @@ export function removeDismissedSlug(userId: string, slug: string): void {
     const current = getDismissedSlugs(userId);
     const store: DismissedStore = { userId, slugs: current.filter((s) => s !== slug), updatedAt: new Date().toISOString() };
     localStorage.setItem(`${DISMISSED_PREFIX}${userId}`, JSON.stringify(store));
-  } catch {}
+  } catch {
+    // private browsing
+  }
 }

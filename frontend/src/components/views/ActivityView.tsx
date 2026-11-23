@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
-import Icon from "@/components/Icon";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/db";
+import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
+import { Countdown, Empty, Glyph, KeyHints, Kbd, Menu, Seg, SkeletonRows, Tick, ViewBar, VirtualList, clock, dayLabel, shortWhen, type MailState } from "../ui";
 
-// Everything the background engine did or proposes, and what the agent and
-// assistant did for you. Proposals are approved exactly as shown (the server
-// checks a hash of the text); finished actions can be undone.
+// Everything Tabellar did or proposes, and what the agent and the assistant
+// did for you. Proposals are approved exactly as shown (the server checks a
+// hash of the content); finished actions can be undone. Every line says what
+// happened, why, and how to take it back.
+
+// The sidebar owns the level and pause controls; Settings imports these from here.
+export { LEVELS, confirmLevel } from "../Sidebar";
 
 type LogRow = {
   id: string;
@@ -21,82 +26,19 @@ type LogRow = {
   emails: { id: string; subject: string | null; sender: string | null } | null;
 };
 
-type EngineStatus = {
-  level: "observe" | "suggest" | "assist" | "autopilot";
-  paused: boolean;
-  lastCycleAt: string | null;
-  lastError: string | null;
-  running: boolean;
-  autostart: boolean;
-};
+type Head = { head: true; key: string; name: string; note: string; count: number; waiting?: boolean };
+type Item = Head | LogRow;
+type Filter = "waiting" | "done" | "notdone" | "all";
+type Group = "day" | "kind";
 
-const KIND_ICON: Record<string, string> = {
-  label: "label",
-  archive: "archive",
-  draft: "edit_note",
-  todo: "checklist",
-  meeting: "event",
-  send: "send",
-  unsubscribe: "unsubscribe",
-};
-
+const CHUNK = 1000;
+const HEAD = 34;
+const ROW = 32;
+const PROPOSAL = 62;
+const LINE = 20; // line height of detail text, so a block's height is known before it is drawn
 const UNDOABLE = new Set(["label", "archive", "draft", "todo", "meeting"]);
-
-export const LEVELS: { id: EngineStatus["level"]; label: string; text: string }[] = [
-  { id: "observe", label: "Observe", text: "Sorts and notifies. Changes nothing." },
-  { id: "suggest", label: "Suggest", text: "Proposes labels, drafts, todos and meetings for you to approve." },
-  { id: "assist", label: "Assist", text: "Does those on its own. Never sends, archives or deletes." },
-  {
-    id: "autopilot",
-    label: "Autopilot",
-    text: "As Assist, and also replies on its own to the person who wrote, inside the thread, after a wait you can cancel in. Never copies anyone in, forwards, archives or deletes.",
-  },
-];
-
-// Turning Autopilot on is the one change that lets Tabellar send mail, so it
-// is confirmed first.
-export function confirmLevel(level: string): boolean {
-  if (level !== "autopilot") return true;
-  return window.confirm(
-    "Turn on Autopilot?\n\nTabellar will reply on its own to emails that need an answer it can give, only to the person who wrote and only inside the thread. " +
-      "Each reply waits before sending so you can cancel it in Activity, and there is a daily limit. Pause stops everything at once.",
-  );
-}
-
-// An Autopilot reply that has not gone out yet can still be cancelled.
-function pendingSend(r: LogRow): boolean {
-  return r.kind === "send" && r.status === "done" && !r.detail.sentAt && typeof r.detail.sendAt === "string" && new Date(r.detail.sendAt).getTime() > Date.now();
-}
-
-function timeAgo(iso: string): string {
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function plain(html: string): string {
-  return html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>\s*<p>/gi, "\n\n").replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
-}
-
-const STATUS_STYLE: Record<string, string> = {
-  done: "text-ok",
-  undone: "text-ink3",
-  dismissed: "text-ink3",
-  blocked: "text-warn",
-  failed: "text-danger",
-  running: "text-wax",
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  done: "Done",
-  undone: "Undone",
-  dismissed: "Dismissed",
-  blocked: "Not allowed",
-  failed: "Failed",
-  running: "Working",
-};
+const KIND_NAME: Record<string, string> = { label: "Labels", draft: "Drafted replies", send: "Replies sent", todo: "Todos", meeting: "Meetings", archive: "Archived", unsubscribe: "Unsubscribes" };
+const SOURCE: Record<string, string> = { engine: "Tabellar, on its own", agent: "A cleanup plan you approved", assistant: "Ask, at your request", user: "You" };
 
 export async function engineFetch(path: string, body?: unknown) {
   const { data } = await createClient().auth.getSession();
@@ -110,303 +52,607 @@ export async function engineFetch(path: string, body?: unknown) {
   return json;
 }
 
-export default function ActivityView() {
-  const { user, addToast, liveChanges, updateProfile } = useApp();
-  const supabase = createClient();
-  const [rows, setRows] = useState<LogRow[]>([]);
-  const [status, setStatus] = useState<EngineStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<Set<string>>(new Set());
-  const [open, setOpen] = useState<Set<string>>(new Set());
+// An Autopilot reply that has not gone out yet can still be cancelled.
+function pendingSend(r: LogRow): boolean {
+  return r.kind === "send" && r.status === "done" && !r.detail.sentAt && typeof r.detail.sendAt === "string" && new Date(r.detail.sendAt).getTime() > Date.now();
+}
 
-  const load = useCallback(async () => {
-    const [{ data }, s] = await Promise.all([
-      supabase
-        .from("action_log")
-        .select("*, emails(id, subject, sender)")
-        .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(300),
-      engineFetch("/engine/status").catch(() => null),
-    ]);
-    setRows((data as LogRow[]) || []);
-    if (s) setStatus(s);
-    setLoading(false);
-  }, [supabase, user.id]);
+function plain(html: string): string {
+  return html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>\s*<p>/gi, "\n\n").replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").trim();
+}
+
+function recipients(r: LogRow): string {
+  return (r.detail.to as string[] | undefined)?.join(", ") || "the sender";
+}
+
+function emailLine(r: LogRow): string {
+  return r.emails ? `${r.emails.sender?.split("<")[0]?.replace(/"/g, "").trim() || "Unknown"}: ${r.emails.subject || "(no subject)"}` : "";
+}
+
+function dayTime(iso: string): string {
+  return `${new Date(iso).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" })} ${clock(iso)}`;
+}
+
+// The text a reply proposal or a logged reply carries.
+function bodyOf(r: LogRow): string {
+  return (r.kind === "draft" || r.kind === "send") && typeof r.detail.body === "string" ? plain(r.detail.body) : "";
+}
+
+// What approving a proposal does, in full, since approval is bound to it.
+function willDo(r: LogRow): string {
+  const d = r.detail;
+  if (r.kind === "label") return `Adds the Gmail label ${String(d.label ?? "")} to this email.`;
+  if (r.kind === "todo") return `Adds to Todos: ${String(d.text ?? "")}`;
+  if (r.kind === "meeting") {
+    const start = typeof d.start_time === "string" ? dayTime(d.start_time) : "";
+    const end = typeof d.end_time === "string" ? ` to ${clock(d.end_time)}` : "";
+    return `${start}${end}${d.location ? `, ${String(d.location)}` : ""}. Goes to Meetings for you to confirm, not onto your calendar yet.`;
+  }
+  if (r.kind === "draft") return `Saves this reply to ${recipients(r)} as a draft in Replies. Nothing is sent.`;
+  if (r.kind === "send") return `Sends this reply to ${recipients(r)}, inside the thread, after a wait you can cancel in.`;
+  if (r.kind === "archive") return Array.isArray(d.emailIds) ? `Archives ${d.emailIds.length} emails in Gmail. Nothing is deleted.` : "Archives this email in Gmail. Nothing is deleted.";
+  return "Unsubscribes from this sender.";
+}
+
+// The thing an action is about, for the detail of a finished or refused row.
+function about(r: LogRow): string {
+  const d = r.detail;
+  if (r.kind === "label") return `Gmail label ${String(d.label ?? "")}`;
+  if (r.kind === "todo") return String(d.text ?? r.summary);
+  if (r.kind === "meeting") return `${String(d.title ?? "Meeting")}${typeof d.start_time === "string" ? `, ${dayTime(d.start_time)}` : ""}${typeof d.end_time === "string" ? ` to ${clock(d.end_time)}` : ""}${d.location ? `, ${String(d.location)}` : ""}`;
+  if (r.kind === "draft" || r.kind === "send") return `To ${recipients(r)}${d.subject ? `, ${String(d.subject)}` : ""}`;
+  if (r.kind === "archive") return Array.isArray(d.emailIds) ? `${d.emailIds.length} emails, archived in Gmail` : "This email, archived in Gmail";
+  return r.summary;
+}
+
+// How to take a row back, or why there is nothing to take back.
+function undoNote(r: LogRow): string {
+  if (r.status === "blocked") return "Nothing was changed.";
+  if (r.status === "dismissed") return "You dismissed it. Nothing was changed.";
+  if (r.status === "undone") return r.kind === "send" ? "You cancelled it. It was not sent." : "Already undone.";
+  if (r.status !== "done") return "";
+  if (pendingSend(r)) return "Cancel stops it from being sent.";
+  if (r.kind === "send") return "A sent reply cannot be taken back.";
+  if (r.kind === "label") return "Undo removes the label in Gmail.";
+  if (r.kind === "archive") return "Undo returns it to the inbox.";
+  if (r.kind === "draft") return "Undo deletes the draft.";
+  if (r.kind === "todo") return "Undo removes the todo.";
+  if (r.kind === "meeting") return "Undo removes the proposed meeting. Once it is confirmed, change it in Meetings.";
+  return "An unsubscribe cannot be undone from here.";
+}
+
+function stateOf(r: LogRow): MailState {
+  if (r.status === "proposed") return "need";
+  if (r.status === "blocked") return "held";
+  if (r.status === "failed") return "failed";
+  if (r.status === "running" || (r.kind === "send" && r.status === "done" && !r.detail.sentAt)) return "going";
+  if (r.status === "done") return "done";
+  return "filed";
+}
+
+// The labelled lines shown when a finished or refused row is opened.
+function detailOf(r: LogRow): [string, string, boolean?][] {
+  const out: [string, string, boolean?][] = [["What", about(r)]];
+  if (r.error) out.push(["Error", r.error, true]);
+  if (r.reason) out.push(["Why", r.reason]);
+  out.push(["By", `${SOURCE[r.source] ?? r.source}, ${dayTime(r.created_at)}`]);
+  if (undoNote(r)) out.push(["Undo", undoNote(r)]);
+  return out;
+}
+
+// Lines a text takes at about `perLine` characters a line. Blocks get exactly
+// this height and scroll inside if the guess runs short.
+function linesOf(text: string, perLine: number): number {
+  return text.split("\n").reduce((n, l) => n + Math.max(1, Math.ceil(l.length / perLine)), 0);
+}
+function bodyHeight(body: string): number {
+  return Math.min(linesOf(body, 84), 12) * LINE + 20;
+}
+function detailHeight(r: LogRow): number {
+  const body = bodyOf(r);
+  const n = detailOf(r).reduce((sum, [, text]) => sum + linesOf(text, 72), 0) + (body ? linesOf(body, 72) + 1 : 0);
+  return Math.min(n, 16) * LINE + 20;
+}
+
+function ago(iso: string | null): string {
+  if (!iso) return "Tabellar checks Gmail every two minutes while it runs.";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "Checked Gmail just now.";
+  if (s < 3600) return `Checked Gmail ${Math.floor(s / 60)} min ago.`;
+  return `Checked Gmail ${Math.floor(s / 3600)} h ago.`;
+}
+
+export default function ActivityView() {
+  const { user, addToast, liveChanges, search, mail, setView } = useApp();
+  const supabase = createClient();
+  const [rows, setRows] = useState<LogRow[] | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [group, setGroup] = useState<Group>(() => (localStorage.getItem("tabellar_activity_group") as Group) || "day");
+  const [cursorId, setCursorId] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState<Set<string>>(new Set());
+  const [checking, setChecking] = useState<string | null>(null);
+  const searching = !!search.trim();
+  const loaded = useRef(0);
+  const loading = useRef(false);
+  const anchor = useRef<string | null>(null);
+  const lastUndo = useRef<(() => Promise<void>) | null>(null);
+
+  const load = useCallback(
+    async (more = false) => {
+      if (loading.current) return;
+      loading.current = true;
+      try {
+        // A search looks through the whole log, so it loads further back.
+        const want = more ? loaded.current + CHUNK : Math.max(searching ? 5 * CHUNK : CHUNK, loaded.current);
+        const { data } = await supabase.from("action_log").select("*, emails(id, subject, sender)").eq("user_id", user.id).order("created_at", { ascending: false }).range(0, want);
+        /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+        let list = ((data || []) as any[]).map((r) => ({ ...r, detail: r.detail || {}, emails: Array.isArray(r.emails) ? r.emails[0] ?? null : r.emails })) as LogRow[];
+        const extra = list.length > want;
+        if (extra) list = list.slice(0, want);
+        loaded.current = list.length;
+        setHasMore(extra);
+        setRows(list);
+      } finally {
+        loading.current = false;
+      }
+    },
+    [user.id, searching],
+  );
 
   useEffect(() => {
     load();
   }, [load, liveChanges.action_log]);
 
-  // The last-run time comes from the server, not the database.
+  // A reply leaves its cancel window at its send time even if no event arrives.
   useEffect(() => {
-    const id = setInterval(() => engineFetch("/engine/status").then(setStatus).catch(() => {}), 15_000);
-    return () => clearInterval(id);
-  }, []);
+    const next = (rows || []).filter(pendingSend).map((r) => new Date(String(r.detail.sendAt)).getTime()).sort((a, b) => a - b)[0];
+    if (!next) return;
+    const id = setTimeout(() => load(), next - Date.now() + 1500);
+    return () => clearTimeout(id);
+  }, [rows, load]);
 
-  const withBusy = async (ids: string[], fn: () => Promise<void>) => {
-    setBusy((b) => new Set([...b, ...ids]));
-    try {
-      await fn();
-    } catch (e) {
-      addToast("error", (e as Error).message);
-    } finally {
-      setBusy((b) => {
-        const n = new Set(b);
-        ids.forEach((id) => n.delete(id));
-        return n;
-      });
-      load();
-    }
-  };
-
-  const approve = (r: LogRow) => withBusy([r.id], () => engineFetch("/actions/approve", { id: r.id, hash: r.hash }));
-  const dismiss = (r: LogRow) => withBusy([r.id], () => engineFetch("/actions/dismiss", { id: r.id }));
-  const undo = (r: LogRow) =>
-    withBusy([r.id], async () => {
-      await engineFetch("/actions/undo", { id: r.id });
-      addToast("success", r.kind === "send" ? "Cancelled. The reply will not be sent." : "Undone");
-    });
-
-  // Oldest first, so proposals arriving while you read land at the bottom
-  // instead of shifting the one under your cursor.
-  const proposals = rows.filter((r) => r.status === "proposed").reverse();
-  const history = rows.filter((r) => r.status !== "proposed");
-  const labelProposals = proposals.filter((r) => r.kind === "label");
-
-  const approveAllLabels = () =>
-    withBusy(labelProposals.map((r) => r.id), async () => {
-      for (const r of labelProposals) await engineFetch("/actions/approve", { id: r.id, hash: r.hash });
-    });
-
-  const setLevel = async (level: EngineStatus["level"]) => {
-    if (!confirmLevel(level)) return;
-    await supabase.from("profiles").update({ autonomy_level: level }).eq("id", user.id);
-    updateProfile({ autonomy_level: level });
-    setStatus((s) => (s ? { ...s, level } : s));
-  };
-
-  const togglePause = async () => {
-    const paused = !status?.paused;
-    await supabase.from("profiles").update({ engine_paused: paused }).eq("id", user.id);
-    updateProfile({ engine_paused: paused });
-    setStatus((s) => (s ? { ...s, paused } : s));
-    addToast("info", paused ? "Paused. Tabellar will not act until you resume." : "Resumed");
-  };
+  // After "Check now", watch the engine until the check has finished.
+  const engine = mail.engine;
+  useEffect(() => {
+    if (checking === null) return;
+    if ((engine?.lastCycleAt ?? "") !== checking && !engine?.running) return setChecking(null);
+    const poll = setInterval(() => mail.refreshEngine(), 2000);
+    const stop = setTimeout(() => setChecking(null), 60_000);
+    return () => {
+      clearInterval(poll);
+      clearTimeout(stop);
+    };
+  }, [checking, engine?.lastCycleAt, engine?.running]);
 
   const checkNow = async () => {
     try {
+      setChecking(engine?.lastCycleAt ?? "");
       await engineFetch("/engine/run", {});
-      setStatus((s) => (s ? { ...s, running: true } : s));
+      mail.refreshEngine();
     } catch (e) {
-      addToast("error", (e as Error).message);
+      setChecking(null);
+      addToast("error", `Could not start a check: ${(e as Error).message}`);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <Icon name="progress_activity" size={24} className="animate-spin text-ink3" />
-      </div>
+  const shown = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return (rows || []).filter((r) => !q || `${r.summary} ${r.emails?.subject ?? ""} ${r.emails?.sender ?? ""}`.toLowerCase().includes(q));
+  }, [rows, search]);
+
+  // Proposals first, oldest at the top so new ones land below the one being
+  // read; then everything else, newest first, under day or kind headers.
+  const items = useMemo(() => {
+    const out: Item[] = [];
+    const proposals = filter === "all" || filter === "waiting" ? shown.filter((r) => r.status === "proposed").reverse() : [];
+    const rest = shown.filter((r) =>
+      filter === "waiting" ? false : filter === "done" ? r.status === "done" || r.status === "running" : filter === "notdone" ? r.status === "blocked" || r.status === "failed" : r.status !== "proposed",
     );
-  }
+    if (proposals.length) out.push({ head: true, key: "head:waiting", name: "Waiting for you", note: "Carried out exactly as shown once you approve", count: proposals.length, waiting: true }, ...proposals);
+    if (group === "kind") {
+      for (const kind of Object.keys(KIND_NAME)) {
+        const list = rest.filter((r) => r.kind === kind);
+        if (list.length) out.push({ head: true, key: `head:${kind}`, name: KIND_NAME[kind], note: "", count: list.length }, ...list);
+      }
+    } else {
+      let run: LogRow[] = [];
+      let day = { name: "", date: "", key: "" };
+      const flush = () => run.length && out.push({ head: true, key: `head:${day.key}`, name: day.name, note: day.date, count: run.length }, ...run);
+      for (const r of rest) {
+        const d = dayLabel(r.created_at);
+        if (d.key !== day.key) {
+          flush();
+          run = [];
+          day = d;
+        }
+        run.push(r);
+      }
+      flush();
+    }
+    return out;
+  }, [shown, filter, group]);
 
-  const emailLine = (r: LogRow) =>
-    r.emails ? `${r.emails.sender?.split("<")[0]?.trim() || "Unknown"}: ${r.emails.subject || "(no subject)"}` : null;
+  const list = useMemo(() => items.filter((i): i is LogRow => !("head" in i)), [items]);
+  const waiting = useMemo(() => list.filter((r) => r.status === "proposed"), [list]);
+  const cursor = list.find((r) => r.id === cursorId) || list[0] || null;
+  const cursorIndex = cursor ? items.indexOf(cursor) : -1;
+  const selected = waiting.filter((r) => picked.has(r.id));
+  const labelProposals = waiting.filter((r) => r.kind === "label");
 
-  return (
-    <div className="h-full overflow-auto bg-canvas">
-      <div className="max-w-2xl mx-auto px-4 py-6">
-        <div className="flex items-start justify-between gap-4 mb-5">
-          <div>
-            <h1 className="text-xl font-bold text-ink">Activity</h1>
-            <p className="text-sm text-ink3 mt-0.5">
-              {status?.paused
-                ? "Paused. Nothing happens until you resume."
-                : status?.running
-                  ? "Checking mail now..."
-                  : status?.lastCycleAt
-                    ? `Checked mail ${timeAgo(status.lastCycleAt)}`
-                    : "Checks mail every two minutes while Tabellar runs"}
+  const heightOf = useCallback(
+    (i: Item) => {
+      if ("head" in i) return HEAD;
+      if (i.status === "proposed") return PROPOSAL + (bodyOf(i) ? bodyHeight(bodyOf(i)) + 10 : 0);
+      return ROW + (open.has(i.id) ? detailHeight(i) + 8 : 0);
+    },
+    [open],
+  );
+
+  const move = (delta: number) => {
+    if (!list.length) return;
+    const at = cursor ? list.indexOf(cursor) : -1;
+    setCursorId(list[Math.min(list.length - 1, Math.max(0, at + delta))].id);
+  };
+
+  const pick = (r: LogRow, range = false) => {
+    if (r.status !== "proposed") return;
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (range && anchor.current) {
+        const a = waiting.findIndex((x) => x.id === anchor.current);
+        const b = waiting.indexOf(r);
+        if (a >= 0) for (let i = Math.min(a, b); i <= Math.max(a, b); i++) next.add(waiting[i].id);
+      } else if (next.has(r.id)) next.delete(r.id);
+      else next.add(r.id);
+      return next;
+    });
+    anchor.current = r.id;
+  };
+
+  const toggle = (r: LogRow) => {
+    if (r.status === "proposed") return;
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(r.id)) next.delete(r.id);
+      else next.add(r.id);
+      return next;
+    });
+  };
+
+  // Runs one request per row, marks the rows busy meanwhile, and returns the
+  // rows that went through and the first error.
+  const each = async (targets: LogRow[], run: (r: LogRow) => Promise<unknown>) => {
+    setBusy((b) => new Set([...b, ...targets.map((r) => r.id)]));
+    const ok: LogRow[] = [];
+    let error = "";
+    for (const r of targets) {
+      try {
+        await run(r);
+        ok.push(r);
+      } catch (e) {
+        error ||= (e as Error).message;
+      }
+    }
+    setBusy((b) => {
+      const next = new Set(b);
+      targets.forEach((r) => next.delete(r.id));
+      return next;
+    });
+    setPicked(new Set());
+    await load();
+    mail.reload();
+    return { ok, error };
+  };
+
+  const undoRows = async (targets: LogRow[]) => {
+    const { ok, error } = await each(targets, (r) => engineFetch("/actions/undo", { id: r.id }));
+    if (error) addToast("error", `${targets.length - ok.length === 1 ? "Could not undo that" : `${targets.length - ok.length} could not be undone`}: ${error}`);
+    else addToast("success", targets.length === 1 && targets[0].kind === "send" ? "Cancelled. The reply will not be sent." : targets.length === 1 ? "Undone" : `Undid ${ok.length}`);
+  };
+
+  const approve = async (targets: LogRow[]) => {
+    targets = targets.filter((r) => r.status === "proposed" && !busy.has(r.id));
+    if (!targets.length) return addToast("info", "Nothing here is waiting for approval");
+    const { ok, error } = await each(targets, (r) => engineFetch("/actions/approve", { id: r.id, hash: r.hash }));
+    if (error) addToast("error", `${targets.length - ok.length} of ${targets.length} could not be approved: ${error}`);
+    if (!ok.length) return;
+    const back = ok.filter((r) => UNDOABLE.has(r.kind)).map((r) => ({ ...r, status: "done" as const }));
+    const run = async () => {
+      lastUndo.current = null;
+      await undoRows(back);
+    };
+    lastUndo.current = back.length ? run : null;
+    addToast("success", ok.length === 1 ? "Approved" : `Approved ${ok.length}`, back.length ? { action: { label: "Undo", onClick: run } } : undefined);
+  };
+
+  const dismiss = async (targets: LogRow[]) => {
+    targets = targets.filter((r) => r.status === "proposed" && !busy.has(r.id));
+    if (!targets.length) return;
+    const { ok, error } = await each(targets, (r) => engineFetch("/actions/dismiss", { id: r.id }));
+    if (error) addToast("error", `${targets.length - ok.length} could not be dismissed: ${error}`);
+    else addToast("info", ok.length === 1 ? "Dismissed. Nothing was changed." : `Dismissed ${ok.length}. Nothing was changed.`);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.querySelector("[data-compose-modal]")) return;
+      const k = e.key.toLowerCase();
+      if (k === "j" || e.key === "ArrowDown") move(1);
+      else if (k === "k" || e.key === "ArrowUp") move(-1);
+      else if (k === "x" && cursor) pick(cursor, e.shiftKey);
+      else if (k === "a") approve(selected.length ? selected : cursor ? [cursor] : []);
+      else if (e.key === "Enter" && cursor) toggle(cursor);
+      else if (k === "z" && lastUndo.current) lastUndo.current();
+      else if (e.key === "Escape" && picked.size) setPicked(new Set());
+      else return;
+      e.preventDefault();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
+
+  const head = (h: Head) => (
+    <div key={h.key} className="day !static">
+      <b className={h.waiting ? "!text-wax-ink" : ""}>{h.name}</b>
+      <span className="truncate">{h.note}</span>
+      <span className="flex-1" />
+      {h.waiting && labelProposals.length > 1 && !picked.size && (
+        <button className="link whitespace-nowrap" onClick={() => approve(labelProposals)}>
+          Approve all {labelProposals.length} labels
+        </button>
+      )}
+      <span className="whitespace-nowrap">{h.count.toLocaleString()}</span>
+    </div>
+  );
+
+  const renderItem = (item: Item) => {
+    if ("head" in item) return head(item);
+    const r = item;
+    const isCursor = cursor === r;
+    const email = emailLine(r);
+
+    if (r.status === "proposed") {
+      const body = bodyOf(r);
+      const isPicked = picked.has(r.id);
+      return (
+        <div key={r.id} style={{ height: heightOf(r) }} className="group overflow-hidden">
+          <div
+            role="option"
+            aria-selected={isCursor}
+            className={`row2 grid h-[62px] grid-cols-[26px_minmax(0,1fr)_auto] content-center items-center gap-y-0.5 !py-0 after:hidden ${isPicked && !isCursor ? "bg-hover" : ""}`}
+            onClick={(e) => (e.shiftKey ? pick(r, true) : setCursorId(r.id))}
+          >
+            <span className="row-span-2 grid place-items-center self-start pt-[3px]">
+              <Tick checked={isPicked} onChange={(_, e) => pick(r, e.shiftKey)} label={`Select: ${r.summary}`} />
+            </span>
+            <div className="flex min-w-0 items-baseline gap-2">
+              <b className="shrink truncate font-semibold text-ink">{r.summary}</b>
+              {email && <span className="min-w-0 flex-1 truncate text-ink3">{email}</span>}
+            </div>
+            <time className="pl-3 text-right text-xs text-ink3">{shortWhen(r.created_at)}</time>
+            <p className="truncate text-ink2" title={willDo(r)}>
+              {willDo(r)}
             </p>
-            {status?.lastError && <p className="text-xs text-danger mt-1">Last check failed: {status.lastError}</p>}
+            <span className={`flex h-6 items-center justify-end gap-1.5 pl-3 ${isCursor ? "" : "invisible group-hover:visible"}`}>
+              <button className="btn btn-sm" disabled={busy.has(r.id)} onClick={(e) => (e.stopPropagation(), dismiss([r]))}>
+                Not this
+              </button>
+              <button className="btn btn-pri btn-sm" disabled={busy.has(r.id)} onClick={(e) => (e.stopPropagation(), approve([r]))}>
+                Approve
+              </button>
+            </span>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={checkNow}
-              disabled={status?.running}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-line text-xs font-medium text-ink3 hover:bg-field hover:text-ink disabled:opacity-50 cursor-pointer"
-            >
-              <Icon name={status?.running ? "progress_activity" : "refresh"} size={15} className={`${status?.running ? " animate-spin" : ""}`} />
-              Check now
-            </button>
-            <button
-              onClick={togglePause}
-              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
-                status?.paused ? "bg-wax text-on-wax hover:opacity-90" : "bg-danger-soft text-danger hover:bg-danger-soft"
-              }`}
-            >
-              <Icon name={status?.paused ? "play_arrow" : "pause"} size={15} fill />
-              {status?.paused ? "Resume" : "Pause"}
-            </button>
-          </div>
+          {body && (
+            <pre className="ml-10 mr-5 overflow-y-auto whitespace-pre-wrap rounded-[9px] bg-side px-3.5 py-2.5 font-sans text-[13px] leading-5 text-ink" style={{ height: bodyHeight(body) }}>
+              {body}
+            </pre>
+          )}
         </div>
+      );
+    }
 
-        {/* Level */}
-        <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-field mb-2">
-          {LEVELS.map((l) => (
-            <button
-              key={l.id}
-              onClick={() => setLevel(l.id)}
-              className={`py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                status?.level === l.id ? "bg-canvas text-ink shadow-sm" : "text-ink3 hover:text-ink"
-              }`}
-            >
-              {l.label}
-            </button>
-          ))}
-        </div>
-        <p className="text-xs text-ink3 mb-6 px-1">{LEVELS.find((l) => l.id === status?.level)?.text}</p>
-
-        {/* Proposals */}
-        {proposals.length > 0 && (
-          <section className="mb-8">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-xs font-semibold uppercase tracking-widest text-ink3">Waiting for you ({proposals.length})</h2>
-              {labelProposals.length > 1 && (
-                <button onClick={approveAllLabels} className="text-xs font-medium text-wax hover:underline cursor-pointer">
-                  Approve all {labelProposals.length} labels
+    const state = stateOf(r);
+    const going = pendingSend(r);
+    const quiet = r.status === "undone" || r.status === "dismissed";
+    const isOpen = open.has(r.id);
+    const why = r.error || (r.status === "blocked" ? r.reason : "") || (r.source !== "engine" ? SOURCE[r.source] : "");
+    return (
+      <div key={r.id} style={{ height: heightOf(r) }} className="overflow-hidden">
+        <div
+          role="option"
+          aria-selected={isCursor}
+          aria-expanded={isOpen}
+          className="row !grid grid-cols-[26px_minmax(0,1fr)_auto_46px]"
+          onClick={() => {
+            setCursorId(r.id);
+            toggle(r);
+          }}
+        >
+          <span className="grid place-items-center">
+            <Glyph state={state} />
+          </span>
+          <span className="flex min-w-0 items-center gap-2 pr-4">
+            <b className={`shrink truncate font-normal ${quiet ? "text-ink3" : "text-ink"}`}>{r.summary}</b>
+            {email && <span className="min-w-0 shrink-[2] truncate text-ink3">{email}</span>}
+            {why && <span className={`hidden min-w-0 flex-1 truncate sm:block ${r.status === "failed" ? "text-danger" : "text-ink3"}`}>{why}</span>}
+          </span>
+          <span className="flex items-center gap-2.5 whitespace-nowrap text-[12.5px]">
+            {going ? (
+              <>
+                <span className="font-medium text-wax-ink">
+                  Sends in <Countdown until={String(r.detail.sendAt)} />
+                </span>
+                <button className="link" disabled={busy.has(r.id)} onClick={(e) => (e.stopPropagation(), undoRows([r]))}>
+                  Cancel
                 </button>
-              )}
-            </div>
-            <div className="space-y-2">
-              {proposals.map((r) => {
-                const isOpen = open.has(r.id);
-                const body = r.kind === "draft" ? String(r.detail.body ?? "") : "";
-                return (
-                  <div key={r.id} className="rounded-xl border border-line bg-raised p-3">
-                    <div className="flex items-start gap-2.5">
-                      <Icon name={KIND_ICON[r.kind]} size={18} className="text-wax mt-0.5" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-ink">{r.summary}</p>
-                        {emailLine(r) && <p className="text-xs text-ink3 truncate">{emailLine(r)}</p>}
-                        {r.kind === "draft" && (
-                          <button
-                            onClick={() => setOpen((o) => { const n = new Set(o); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); return n; })}
-                            className="text-xs text-wax mt-1 hover:underline cursor-pointer"
-                          >
-                            {isOpen ? "Hide draft" : "Read draft"}
-                          </button>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          onClick={() => dismiss(r)}
-                          disabled={busy.has(r.id)}
-                          className="px-2.5 py-1 rounded-lg text-xs font-medium text-ink3 hover:bg-field disabled:opacity-50 cursor-pointer"
-                        >
-                          Dismiss
-                        </button>
-                        <button
-                          onClick={() => approve(r)}
-                          disabled={busy.has(r.id)}
-                          className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-wax text-on-wax hover:opacity-90 disabled:opacity-50 cursor-pointer"
-                        >
-                          {r.kind === "draft" ? "Save draft" : "Approve"}
-                        </button>
-                      </div>
-                    </div>
-                    {isOpen && (
-                      <div className="mt-2 ml-7 text-xs">
-                        <p className="text-ink3 mb-1">
-                          To {(r.detail.to as string[] | undefined)?.join(", ")} · {String(r.detail.subject ?? "")}
-                        </p>
-                        <pre className="whitespace-pre-wrap font-sans text-ink bg-field rounded-lg p-2.5">{plain(body)}</pre>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* History */}
-        <section>
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-ink3 mb-2">History</h2>
-          {history.length === 0 ? (
-            <div className="text-center py-12 text-ink3">
-              <Icon name="history" size={40} className="mb-2" />
-              <p className="text-sm">Nothing yet. New mail is checked every two minutes.</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-line">
-              {history.map((r) => (
-                <div key={r.id} className="flex items-start gap-2.5 py-2.5">
-                  <Icon name={KIND_ICON[r.kind]} size={17} className="text-ink3 mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm ${r.status === "undone" || r.status === "dismissed" ? "line-through text-ink3" : "text-ink"}`}>{r.summary}</p>
-                    {emailLine(r) && <p className="text-xs text-ink3 truncate">{emailLine(r)}</p>}
-                    {(r.status === "blocked" || r.status === "failed") && (r.reason || r.error) && (
-                      <p className="text-xs text-ink3 mt-0.5">{r.error || r.reason}</p>
-                    )}
-                    {r.kind === "send" && r.status === "done" && (
-                      <p className={`text-xs mt-0.5 ${pendingSend(r) ? "text-wax font-medium" : "text-ink3"}`}>
-                        {r.detail.sentAt
-                          ? `Sent ${timeAgo(String(r.detail.sentAt))}`
-                          : pendingSend(r)
-                            ? `Sends at ${new Date(String(r.detail.sendAt)).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} unless you cancel`
-                            : "Sending..."}
-                      </p>
-                    )}
-                    {r.kind === "send" && typeof r.detail.body === "string" && (
-                      <>
-                        <button
-                          onClick={() => setOpen((o) => { const n = new Set(o); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); return n; })}
-                          className="text-xs text-wax mt-0.5 hover:underline cursor-pointer"
-                        >
-                          {open.has(r.id) ? "Hide reply" : "Read reply"}
-                        </button>
-                        {open.has(r.id) && (
-                          <div className="mt-1.5 text-xs">
-                            <p className="text-ink3 mb-1">To {(r.detail.to as string[] | undefined)?.join(", ")} · {String(r.detail.subject ?? "")}</p>
-                            <pre className="whitespace-pre-wrap font-sans text-ink bg-field rounded-lg p-2.5">{String(r.detail.body)}</pre>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                  <div className="flex flex-col items-end gap-0.5 shrink-0">
-                    <span className={`text-[11px] font-medium ${STATUS_STYLE[r.status] ?? ""}`}>
-                      {r.kind === "send" && r.status === "undone" ? "Cancelled" : (STATUS_LABEL[r.status] ?? r.status)}
-                      {r.source !== "engine" ? ` · ${r.source === "agent" ? "agent" : r.source === "assistant" ? "assistant" : "you"}` : ""}
-                    </span>
-                    <span className="text-[10px] text-ink3">{timeAgo(r.created_at)}</span>
-                    {pendingSend(r) && (
-                      <button
-                        onClick={() => undo(r)}
-                        disabled={busy.has(r.id)}
-                        className="mt-0.5 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-danger-soft text-danger hover:bg-danger-soft disabled:opacity-50 cursor-pointer"
-                      >
-                        Cancel send
-                      </button>
-                    )}
-                    {r.status === "done" && UNDOABLE.has(r.kind) && (
-                      <button
-                        onClick={() => undo(r)}
-                        disabled={busy.has(r.id)}
-                        className="text-[11px] font-medium text-wax hover:underline disabled:opacity-50 cursor-pointer"
-                      >
-                        Undo
-                      </button>
-                    )}
-                  </div>
+              </>
+            ) : r.status === "done" && UNDOABLE.has(r.kind) ? (
+              <button className="link" disabled={busy.has(r.id)} onClick={(e) => (e.stopPropagation(), undoRows([r]))}>
+                Undo
+              </button>
+            ) : r.status === "done" && r.kind === "send" ? (
+              <span className="text-ink3">{r.detail.sentAt ? `Sent ${shortWhen(String(r.detail.sentAt))}` : "Sending"}</span>
+            ) : r.status === "blocked" ? (
+              <span className="font-medium text-warn">Not allowed</span>
+            ) : r.status === "failed" ? (
+              <span className="font-medium text-danger">Failed</span>
+            ) : r.status === "running" ? (
+              <span className="text-ink3">Working</span>
+            ) : quiet ? (
+              <span className="text-ink3">{r.status === "dismissed" ? "Dismissed" : r.kind === "send" ? "Cancelled" : "Undone"}</span>
+            ) : null}
+          </span>
+          <time className="text-right text-xs text-ink3">{shortWhen(r.created_at)}</time>
+        </div>
+        {isOpen && (
+          <div className="ml-10 mr-5 overflow-y-auto rounded-[9px] bg-side px-3.5 py-2.5 text-[13px] leading-5" style={{ height: detailHeight(r) }}>
+            <dl className="grid grid-cols-[52px_minmax(0,1fr)] gap-x-3">
+              {detailOf(r).map(([label, text, bad]) => (
+                <div key={label} className="contents">
+                  <dt className="text-ink3">{label}</dt>
+                  <dd className={bad ? "text-danger" : "text-ink2"}>{text}</dd>
                 </div>
               ))}
-            </div>
-          )}
-        </section>
+            </dl>
+            {bodyOf(r) && <pre className="mt-5 whitespace-pre-wrap font-sans text-ink">{bodyOf(r)}</pre>}
+          </div>
+        )}
       </div>
-    </div>
+    );
+  };
+
+  const firstHead = (first: number): Head | null => {
+    for (let i = Math.min(first, items.length - 1); i >= 0; i--) if ("head" in items[i]) return items[i] as Head;
+    return null;
+  };
+
+  const level = engine?.level ?? "observe";
+  const busyChecking = checking !== null || !!engine?.running;
+
+  return (
+    <>
+      {selected.length ? (
+        <header className="bar">
+          <b className="bar-title mr-1.5">{selected.length} selected</b>
+          <button className="btn btn-pri" onClick={() => approve(selected)}>
+            Approve {selected.length} <Kbd>A</Kbd>
+          </button>
+          <button className="btn" onClick={() => dismiss(selected)}>
+            Dismiss {selected.length}
+          </button>
+          <button className="btn btn-plain" onClick={() => setPicked(new Set())}>
+            Clear <Kbd>esc</Kbd>
+          </button>
+        </header>
+      ) : (
+        <ViewBar
+          title="Activity"
+          search="Search activity"
+          right={
+            <Menu
+              label="Group"
+              value={group}
+              onChange={(g) => (localStorage.setItem("tabellar_activity_group", g), setGroup(g))}
+              options={[
+                { id: "day", label: "Day" },
+                { id: "kind", label: "Kind" },
+              ]}
+            />
+          }
+        >
+          <Seg
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { id: "waiting", label: "Waiting for you", count: mail.counts.proposals, need: true },
+              { id: "done", label: "Done" },
+              { id: "notdone", label: "Not done" },
+              { id: "all", label: "All" },
+            ]}
+          />
+        </ViewBar>
+      )}
+      <div className="flex h-9 flex-none items-center gap-2 border-b border-line-soft pl-5 pr-3.5 text-xs text-ink3">
+        <span className="flex-none">{engine?.paused ? "Paused. Nothing happens until you resume, at the bottom of the sidebar." : busyChecking ? "Checking Gmail now." : ago(engine?.lastCycleAt ?? null)}</span>
+        {engine?.lastError && !busyChecking && (
+          <span className="min-w-0 truncate text-danger" role="alert" title={engine.lastError}>
+            The last check failed: {engine.lastError}
+          </span>
+        )}
+        <span className="flex-1" />
+        <button className="btn btn-sm" disabled={busyChecking} onClick={checkNow}>
+          Check now
+        </button>
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col" role="listbox" aria-label="Activity">
+        {rows === null ? (
+          <div className="pt-9">
+            <SkeletonRows count={20} />
+          </div>
+        ) : !list.length ? (
+          search ? (
+            <Empty icon="search" title="Nothing in Activity matches that search">
+              Search looks at what was done and at the subject and sender of the email it belongs to.
+            </Empty>
+          ) : filter === "waiting" ? (
+            <Empty icon="activity" title="Nothing is waiting for you">
+              {level === "suggest"
+                ? "At Suggest, Tabellar asks before it labels, drafts, adds a todo or proposes a meeting. Each request appears here to approve."
+                : "Proposals appear here at the Suggest level. Change the level at the bottom of the sidebar."}{" "}
+              <button className="link" onClick={() => setFilter("all")}>
+                Show all activity
+              </button>
+            </Empty>
+          ) : filter !== "all" ? (
+            <Empty icon="activity" title={filter === "done" ? "Nothing has been done yet" : "Nothing was refused or failed"}>
+              {filter === "done" ? "Labels, drafts, todos, meetings and replies appear here once Tabellar makes them." : "Actions that were not allowed, and ones that went wrong, appear here with the reason."}{" "}
+              <button className="link" onClick={() => setFilter("all")}>
+                Show all activity
+              </button>
+            </Empty>
+          ) : (
+            <Empty icon="activity" title="No activity yet">
+              {level === "observe" ? (
+                <>
+                  At Observe, Tabellar sorts and notifies and changes nothing, so there is little to log. Raise the level at the bottom of the sidebar, or see{" "}
+                  <button className="link" onClick={() => setView("settings")}>
+                    Settings
+                  </button>
+                  .
+                </>
+              ) : (
+                "Everything Tabellar does or proposes is listed here, with the reason and a way to undo it. New mail is checked every two minutes."
+              )}
+            </Empty>
+          )
+        ) : (
+          <VirtualList
+            items={items}
+            heightOf={heightOf}
+            render={renderItem}
+            cursor={cursorIndex}
+            onEnd={hasMore ? () => load(true) : undefined}
+            sticky={(first) => {
+              const h = firstHead(first);
+              return h ? head(h) : null;
+            }}
+          />
+        )}
+      </div>
+      <KeyHints
+        left={rows ? `${list.length.toLocaleString()} ${list.length === 1 ? "action" : "actions"}${hasMore ? ", more load as you scroll" : ""}` : ""}
+        keys={[
+          ["J K", "Move"],
+          ["X", "Select"],
+          ["A", "Approve"],
+          ["↵", "Details"],
+          ["Z", "Undo approval"],
+        ]}
+      />
+    </>
   );
 }

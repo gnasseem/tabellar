@@ -1,10 +1,10 @@
-
 import { useState, useEffect, useRef } from "react";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
 import { EmailField, useContacts } from "./EmailAutocomplete";
 import DateTimePicker from "./DateTimePicker";
+import { Kbd } from "./ui";
 
 // Gmail rejects messages over 25 MB once encoded. Attachments go out base64
 // encoded (~4 bytes per 3 bytes of input), so cap the raw total below that to
@@ -17,35 +17,30 @@ const TONES = [
   {
     id: "formal",
     label: "Formal",
-    icon: "account_balance",
     prompt:
       "more formal and professional: complete sentences, no contractions, no slang, a courteous opening and closing",
   },
   {
     id: "friendly",
     label: "Friendly",
-    icon: "sentiment_satisfied",
     prompt:
       "warmer and more personable, as if writing to a colleague you like, while staying professional",
   },
   {
     id: "direct",
     label: "Direct",
-    icon: "bolt",
     prompt:
       "more direct and concise: lead with the ask, cut hedging and filler, keep it brief",
   },
   {
     id: "apologetic",
     label: "Apologetic",
-    icon: "front_hand",
     prompt:
       "apologetic and accommodating, acknowledging the inconvenience without grovelling or over-explaining",
   },
   {
     id: "firm",
     label: "Firm",
-    icon: "gavel",
     prompt:
       "firmer and more assertive: state the position plainly and hold it, while staying polite and professional",
   },
@@ -202,10 +197,10 @@ export default function ComposeModal({
   const [saveTemplateName, setSaveTemplateName] = useState("");
 
   const [showMeetingPanel, setShowMeetingPanel] = useState(false);
-  const [showTemplatesPopover, setShowTemplatesPopover] = useState(false);
 
-  // Schedule send popup
-  const [showSchedulePopup, setShowSchedulePopup] = useState(false);
+  // The footer menu that is open, if any: Rewrite, Send later or Templates.
+  const [menu, setMenu] = useState<"" | "rewrite" | "later" | "templates">("");
+  const footerRef = useRef<HTMLDivElement>(null);
 
   // Convert ISO scheduleAt to datetime-local format for the picker, and back
   function isoToDatetimeLocal(iso: string): string {
@@ -223,7 +218,7 @@ export default function ComposeModal({
     return new Date(y, mo - 1, d, h, mi).toISOString();
   }
 
-  // AI draft state
+  // Draft written by Tabellar
   const [generatingDraft, setGeneratingDraft] = useState(
     !!replyTo?._autoGenerate,
   );
@@ -231,9 +226,7 @@ export default function ComposeModal({
   const [showRefinePanel, setShowRefinePanel] = useState(false);
   const [refineFeedback, setRefineFeedback] = useState("");
   const [refining, setRefining] = useState(false);
-  const [showToneMenu, setShowToneMenu] = useState(false);
   const [rephrasingTone, setRephrasingTone] = useState<string | null>(null);
-  const toneMenuRef = useRef<HTMLDivElement>(null);
 
   // Context-aware knowledge entries for current recipient
   const [recipientKnowledge, setRecipientKnowledge] = useState<
@@ -436,7 +429,7 @@ export default function ComposeModal({
     const newSubject = t.subject || t.name;
     if (newSubject) setSubject(newSubject);
     setBody(t.body_html);
-    setShowTemplatesPopover(false);
+    setMenu("");
   };
 
   const saveAsTemplate = async () => {
@@ -458,7 +451,7 @@ export default function ComposeModal({
   const generateDraft = async (intentOverride?: string) => {
     const intent = intentOverride ?? body;
     if (!intent.trim()) {
-      addToast("error", "Write your message intent first");
+      addToast("error", "Write a few words on what to say first");
       return;
     }
     setGeneratingDraft(true);
@@ -549,16 +542,20 @@ export default function ComposeModal({
     setRefining(false);
   };
 
-  // Close the tone menu on outside click
+  // Close the open footer menu on a click outside the footer, or on Escape
   useEffect(() => {
-    if (!showToneMenu) return;
-    const handler = (e: MouseEvent) => {
-      if (toneMenuRef.current && !toneMenuRef.current.contains(e.target as Node))
-        setShowToneMenu(false);
+    if (!menu) return;
+    const outside = (e: MouseEvent) => {
+      if (footerRef.current && !footerRef.current.contains(e.target as Node)) setMenu("");
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [showToneMenu]);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setMenu("");
+    document.addEventListener("mousedown", outside);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", outside);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [menu]);
 
   // Rewrite the current body in a different register. Unlike refineWithFeedback
   // this is a one-off transformation, not a stated preference, so it asks the
@@ -566,7 +563,7 @@ export default function ComposeModal({
   const rephraseInTone = async (tone: (typeof TONES)[number]) => {
     const current = body.trim();
     if (!current || rephrasingTone) return;
-    setShowToneMenu(false);
+    setMenu("");
     setRephrasingTone(tone.id);
     const previousBody = body;
 
@@ -758,7 +755,7 @@ export default function ComposeModal({
                   </td>
                   <td style="padding-left:12px">
                     <div style="font-size:13px;color:#202124;font-weight:500">${dayName}, ${dateStr}</div>
-                    <div style="font-size:13px;color:#5f6368">${timeStr} – ${endTimeStr} (${durationMin} min)</div>
+                    <div style="font-size:13px;color:#5f6368">${timeStr} to ${endTimeStr} (${durationMin} min)</div>
                   </td>
                 </tr>
               </table>
@@ -942,7 +939,8 @@ export default function ComposeModal({
         }
 
         const scheduledId = scheduled.id;
-        addToast("info", "Sending in 15s...", {
+        const others = parsedTo.length - 1;
+        addToast("info", `Sending to ${parsedTo[0]}${others > 0 ? ` and ${others} more` : ""}`, {
           duration: 15_000,
           action: {
             label: "Cancel",
@@ -1089,490 +1087,434 @@ export default function ComposeModal({
     }
   };
 
+  // What the window says while Tabellar is writing.
+  const busy = generatingDraft
+    ? "Tabellar is writing a draft. A local model can take a moment."
+    : rephrasingTone
+      ? `Rewriting to sound ${TONES.find((t) => t.id === rephrasingTone)?.label.toLowerCase()}.`
+      : refining
+        ? "Applying your changes."
+        : "";
+  const offHours = !!(scheduleAt && isOutsideWorkingHours(scheduleAt, profile?.working_hours as WorkingHours));
+  const replyName = (replyTo?.sender ?? "").replace(/<.*>/, "").replace(/"/g, "").trim() || replyTo?.sender_email || "";
+  const title = draft?._scheduledId
+    ? "Scheduled message"
+    : !replyTo
+      ? "New message"
+      : /^fwd:/i.test(replyTo.subject || "")
+        ? "Forward"
+        : replyName
+          ? `Reply to ${replyName}`
+          : "Reply";
+  const canSend = !sending && !!to && !!subject;
+  const row = "flex min-h-9 items-center gap-2 border-b border-line-soft";
+  const rowLabel = "w-12 flex-none text-xs text-ink3";
+  const menuItem = "pop-item disabled:pointer-events-none disabled:opacity-45";
+
   return (
-    <>
-      <div
-        data-compose-modal
-        className="fixed bottom-0 z-50 shadow-2xl rounded-t-2xl border border-b-0 border-line bg-canvas flex flex-col overflow-hidden"
-        style={{
-          right: assistantOpen ? "388px" : "16px",
-          width: "780px",
-          maxWidth: "calc(100vw - 32px)",
-          maxHeight: "min(82vh, 700px)",
-          transition: "right 0.2s ease",
-        }}
-      >
-        {/* Title bar */}
-        <div className="flex items-center justify-between px-4 py-3 bg-wax rounded-t-2xl cursor-default select-none shrink-0">
-          <span className="text-sm font-semibold text-white tracking-wide">
-            {replyTo ? "Reply" : "New Message"}
-          </span>
-          <div className="flex items-center gap-0.5">
-            <button
-              onClick={onMinimize}
-              className="p-1.5 rounded-lg hover:bg-white/15 text-white/80 hover:text-white transition-colors cursor-pointer"
-              title="Minimize"
+    <div
+      data-compose-modal
+      role="dialog"
+      aria-label={title}
+      className="fixed bottom-4 z-50 flex flex-col rounded-[12px] bg-raised shadow-pop"
+      style={{
+        right: assistantOpen ? "388px" : "16px",
+        width: "640px",
+        maxWidth: `calc(100vw - ${assistantOpen ? 404 : 32}px)`,
+        maxHeight: "min(82vh, 700px)",
+        transition: "right 0.2s ease",
+      }}
+      onKeyDown={(e) => {
+        // Cmd or Ctrl with Enter sends from anywhere in the window.
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && canSend) {
+          e.preventDefault();
+          handleSend();
+        }
+      }}
+    >
+      <div className="flex h-10 flex-none select-none items-center border-b border-line-soft pl-4 pr-1.5">
+        <h2 className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink">{title}</h2>
+        <button className="iconbtn" onClick={onMinimize} title="Minimize" aria-label="Minimize">
+          <Icon name="minimize" size={16} />
+        </button>
+        <button className="iconbtn" onClick={onClose} title="Close" aria-label="Close">
+          <Icon name="close" size={16} />
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4">
+        {gmailAccounts.length > 1 && (
+          <label className={row}>
+            <span className={rowLabel}>From</span>
+            <select
+              value={selectedAccountId}
+              onChange={(e) => setSelectedAccountId(e.target.value)}
+              className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
             >
-              <Icon name="minimize" size={17} />
-            </button>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg hover:bg-white/15 text-white/80 hover:text-white transition-colors cursor-pointer"
-              title="Close"
-            >
-              <Icon name="close" size={17} />
-            </button>
+              {gmailAccounts.map((acc) => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.gmail_address}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        <EmailField
+          label="To"
+          value={to}
+          onChange={setTo}
+          contacts={contacts}
+          accountId={selectedAccountId || primaryAccountId}
+          suffix={
+            !showCcBcc ? (
+              <button className="link flex-none leading-[22px]" onClick={() => setShowCcBcc(true)}>
+                Cc, Bcc
+              </button>
+            ) : (
+              <button
+                className="iconbtn -my-[3px]"
+                title="Remove Cc and Bcc"
+                aria-label="Remove Cc and Bcc"
+                onClick={() => {
+                  setShowCcBcc(false);
+                  setCc("");
+                  setBcc("");
+                }}
+              >
+                <Icon name="close" size={14} />
+              </button>
+            )
+          }
+        />
+
+        {showCcBcc && (
+          <>
+            <EmailField label="Cc" value={cc} onChange={setCc} contacts={contacts} accountId={selectedAccountId || primaryAccountId} />
+            <EmailField label="Bcc" value={bcc} onChange={setBcc} contacts={contacts} accountId={selectedAccountId || primaryAccountId} />
+          </>
+        )}
+
+        <label className={row}>
+          <span className={rowLabel}>Subject</span>
+          <input
+            type="text"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            className="h-9 min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none"
+          />
+        </label>
+
+        {/* Meeting that goes on the calendar when the email is sent */}
+        {showMeetingPanel && (
+          <div className="inset mt-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="label">Meeting</span>
+              <button className="iconbtn -my-1 -mr-1.5" onClick={() => setShowMeetingPanel(false)} title="Remove the meeting" aria-label="Remove the meeting">
+                <Icon name="close" size={14} />
+              </button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <DateTimePicker value={meetingDatetime} onChange={setMeetingDatetime} placeholder="Pick date and time" />
+              <input
+                type="text"
+                value={meetingLocation}
+                onChange={(e) => setMeetingLocation(e.target.value)}
+                placeholder="Location (optional)"
+                className="input"
+              />
+            </div>
+            <div className="seg mt-2 flex-wrap" role="group" aria-label="Length">
+              {[
+                { label: "15 min", value: "15" },
+                { label: "30 min", value: "30" },
+                { label: "45 min", value: "45" },
+                { label: "1 hr", value: "60" },
+                { label: "1.5 hr", value: "90" },
+                { label: "2 hr", value: "120" },
+              ].map(({ label, value }) => (
+                <button key={value} type="button" aria-pressed={meetingDuration === value} onClick={() => setMeetingDuration(value)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-ink3">
+              {meetingDuration
+                ? "Sending also adds this to your calendar and invites the recipients."
+                : "Pick a length. Without one, no meeting is created."}
+            </p>
           </div>
+        )}
+
+        <textarea
+          value={body}
+          onChange={(e) => {
+            setBody(e.target.value);
+            if (aiGenerated) setAiGenerated(false);
+          }}
+          placeholder="Write your message. Or note what you want to say, then choose Rewrite and Draft with Tabellar."
+          rows={showMeetingPanel ? 6 : 10}
+          className="block w-full resize-none bg-transparent py-3 text-sm leading-[1.6] text-ink outline-none"
+        />
+
+        {busy && (
+          <p role="status" className="pb-2.5 text-xs text-ink3">
+            {busy}
+          </p>
+        )}
+
+        {/* Asking Tabellar for a change to the draft */}
+        {!busy && showRefinePanel && (
+          <div className="pb-3">
+            <label htmlFor="compose-refine" className="label">
+              What should change?
+            </label>
+            <textarea
+              id="compose-refine"
+              value={refineFeedback}
+              onChange={(e) => setRefineFeedback(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  // Applies the change; must not reach the window's own send shortcut.
+                  e.preventDefault();
+                  e.stopPropagation();
+                  refineWithFeedback();
+                }
+              }}
+              placeholder="For example: shorter, less formal, end with a question"
+              rows={2}
+              className="input mt-1.5 resize-none"
+              autoFocus
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <button className="btn btn-sm" onClick={refineWithFeedback} disabled={!refineFeedback.trim() || !body}>
+                Apply <Kbd>⌘↵</Kbd>
+              </button>
+              <button
+                className="btn btn-sm btn-plain"
+                onClick={() => {
+                  setShowRefinePanel(false);
+                  setRefineFeedback("");
+                }}
+              >
+                Cancel
+              </button>
+              <span className="text-xs text-ink3">Tabellar remembers this for later drafts.</span>
+            </div>
+          </div>
+        )}
+
+        {!busy && !showRefinePanel && aiGenerated && (
+          <p className="pb-2.5 text-xs text-ink3">
+            Drafted by Tabellar. Read it before you send.{" "}
+            <button className="link" onClick={() => setShowRefinePanel(true)}>
+              Ask for changes
+            </button>
+          </p>
+        )}
+
+        {attachments.length > 0 && (
+          <div className="pb-2.5">
+            {attachments.map((file, idx) => (
+              <div key={idx} className="flex h-7 items-center gap-2">
+                <Icon name="attach_file" size={14} className="text-ink3" />
+                <span className="min-w-0 truncate text-ink">{file.name}</span>
+                <span className="flex-none text-xs text-ink3">{formatFileSize(file.size)}</span>
+                <button className="iconbtn h-6 w-6" onClick={() => removeAttachment(idx)} title="Remove" aria-label={`Remove ${file.name}`}>
+                  <Icon name="close" size={13} />
+                </button>
+              </div>
+            ))}
+            {scheduleAt ? (
+              <p className="pt-1 text-xs text-warn">A scheduled email goes out without its attachments. Send now to include them.</p>
+            ) : (
+              <p className="pt-1 text-xs text-ink3">With attachments the email goes out at once, without the 15 second undo.</p>
+            )}
+          </div>
+        )}
+
+        <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
+      </div>
+
+      <div ref={footerRef} className="flex flex-none flex-wrap items-center gap-2 border-t border-line px-3 py-2.5">
+        <button className="btn btn-pri" onClick={() => handleSend()} disabled={!canSend}>
+          {sending ? "Sending" : scheduleAt ? "Schedule" : "Send"} <Kbd>⌘↵</Kbd>
+        </button>
+
+        <div className="relative">
+          <button
+            className="btn"
+            aria-haspopup="dialog"
+            aria-expanded={menu === "later"}
+            onClick={() => {
+              if (menu !== "later" && !scheduleAt) {
+                const wh = profile?.working_hours as WorkingHours;
+                const slot = getNextWorkingSlot(wh);
+                setScheduleAt(slot.toISOString());
+              }
+              setMenu(menu === "later" ? "" : "later");
+            }}
+          >
+            {scheduleAt
+              ? `Sends ${new Date(scheduleAt).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`
+              : "Send later"}
+            <Icon name="expand_more" size={13} className="text-ink3" />
+          </button>
+          {menu === "later" && (
+            <div className="pop absolute bottom-9 left-0 w-72 p-3" role="dialog" aria-label="Send later">
+              <p className="label mb-2">Send later</p>
+              <DateTimePicker
+                value={isoToDatetimeLocal(scheduleAt)}
+                onChange={(dtl) => setScheduleAt(datetimeLocalToIso(dtl))}
+                placeholder="Pick date and time"
+                showWarning={offHours}
+              />
+              {offHours && <p className="mt-2 text-xs text-warn">Outside your working hours.</p>}
+              <div className="mt-3 flex items-center gap-2">
+                <button className="btn btn-sm" onClick={() => setMenu("")}>
+                  Done
+                </button>
+                {scheduleAt && (
+                  <button
+                    className="btn btn-sm btn-plain"
+                    onClick={() => {
+                      setScheduleAt("");
+                      setMenu("");
+                    }}
+                  >
+                    Send now instead
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Compose form */}
-        <div className="flex-1 flex flex-col min-h-0">
-          {/* Scrollable content area */}
-          <div className="flex-1 overflow-auto">
-            {/* Header fields */}
-            <div className="px-5 pt-1">
-              {gmailAccounts.length > 1 && (
-                <div className="flex items-center gap-3 py-2.5 border-b border-line">
-                  <span className="text-xs font-medium text-ink3 w-12 shrink-0">From</span>
-                  <select
-                    value={selectedAccountId}
-                    onChange={(e) => setSelectedAccountId(e.target.value)}
-                    className="flex-1 bg-transparent text-sm focus:outline-none"
-                  >
-                    {gmailAccounts.map((acc) => (
-                      <option key={acc.id} value={acc.id}>{acc.gmail_address}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
+        {/* Writing help: draft from notes, change the tone, describe a change */}
+        <div className="relative">
+          <button className="btn" aria-haspopup="menu" aria-expanded={menu === "rewrite"} disabled={!!busy} onClick={() => setMenu(menu === "rewrite" ? "" : "rewrite")}>
+            Rewrite <Icon name="expand_more" size={13} className="text-ink3" />
+          </button>
+          {menu === "rewrite" && (
+            <div className="pop absolute bottom-9 left-0 w-56" role="menu">
+              <button
+                role="menuitem"
+                className={menuItem}
+                disabled={!to || !subject}
+                title="Turns the notes in the message into a full email. Needs a recipient and a subject."
+                onClick={() => {
+                  setMenu("");
+                  generateDraft();
+                }}
+              >
+                Draft with Tabellar
+              </button>
+              <div className="mx-2 my-1 border-t border-line-soft" />
+              <p className="label px-2 py-1">Change the tone</p>
+              {TONES.map((tone) => (
+                <button key={tone.id} role="menuitem" className={menuItem} disabled={!body.trim()} onClick={() => rephraseInTone(tone)}>
+                  {tone.label}
+                </button>
+              ))}
+              <div className="mx-2 my-1 border-t border-line-soft" />
+              <button
+                role="menuitem"
+                className={menuItem}
+                disabled={!body.trim()}
+                onClick={() => {
+                  setMenu("");
+                  setShowRefinePanel(true);
+                }}
+              >
+                Describe a change
+              </button>
+            </div>
+          )}
+        </div>
 
-              <EmailField
-                label="To"
-                value={to}
-                onChange={setTo}
-                contacts={contacts}
-                accountId={selectedAccountId || primaryAccountId}
-                suffix={
-                  !showCcBcc ? (
-                    <button
-                      onClick={() => setShowCcBcc(true)}
-                      className="text-xs text-ink3 hover:text-wax shrink-0 transition-colors cursor-pointer"
-                    >
-                      Cc/Bcc
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => { setShowCcBcc(false); setCc(""); setBcc(""); }}
-                      className="text-xs text-ink3 hover:text-wax shrink-0 transition-colors cursor-pointer"
-                      title="Hide Cc/Bcc"
-                    >
-                      <Icon name="close" size={14} />
-                    </button>
-                  )
-                }
-              />
+        <button className="iconbtn" onClick={() => fileInputRef.current?.click()} title="Attach files" aria-label="Attach files">
+          <Icon name="attach_file" size={16} />
+        </button>
 
-              {showCcBcc && (
-                <>
-                  <EmailField label="Cc" value={cc} onChange={setCc} contacts={contacts} accountId={selectedAccountId || primaryAccountId} />
-                  <EmailField label="Bcc" value={bcc} onChange={setBcc} contacts={contacts} accountId={selectedAccountId || primaryAccountId} />
-                </>
-              )}
-
-              <div className="flex items-center gap-2 py-2.5 border-b border-line">
-                <span className="text-xs font-medium text-ink3 w-8 shrink-0">Sub</span>
+        <div className="relative">
+          <button
+            className={`iconbtn ${menu === "templates" ? "bg-sel text-ink" : ""}`}
+            aria-haspopup="dialog"
+            aria-expanded={menu === "templates"}
+            title="Templates"
+            aria-label="Templates"
+            onClick={() => {
+              const opening = menu !== "templates";
+              setMenu(opening ? "templates" : "");
+              if (opening) setSaveTemplateName(subject || "");
+            }}
+          >
+            <Icon name="description" size={16} />
+          </button>
+          {menu === "templates" && (
+            <div className="pop absolute bottom-9 left-0 flex max-h-[340px] w-72 flex-col" role="dialog" aria-label="Templates">
+              <p className="label px-2 py-1.5">Templates</p>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {templates.length === 0 ? (
+                  <p className="px-2 pb-2 text-xs leading-normal text-ink3">No templates yet. Name the message you are writing below to keep it as one.</p>
+                ) : (
+                  templates.map((t) => (
+                    <div key={t.id} className="group flex items-center rounded-md hover:bg-sel">
+                      <button className="min-w-0 flex-1 px-2 py-1.5 text-left" onClick={() => applyTemplate(t)}>
+                        <span className="block truncate text-ink">{t.name}</span>
+                        {t.subject && t.subject !== t.name && <span className="block truncate text-xs text-ink3">{t.subject}</span>}
+                      </button>
+                      <button
+                        className="iconbtn mr-0.5 opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
+                        onClick={() => deleteTemplate(t.id)}
+                        title="Delete template"
+                        aria-label={`Delete template ${t.name}`}
+                      >
+                        <Icon name="delete" size={14} />
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              <div className="mt-1 flex items-center gap-1.5 border-t border-line-soft px-1 pb-1 pt-2">
                 <input
                   type="text"
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                  placeholder="Subject"
-                  className="flex-1 bg-transparent text-sm focus:outline-none"
+                  value={saveTemplateName}
+                  onChange={(e) => setSaveTemplateName(e.target.value)}
+                  placeholder="Save this message as"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) saveAsTemplate();
+                  }}
+                  className="input"
                 />
+                <button className="btn" onClick={saveAsTemplate} disabled={!saveTemplateName.trim() || !body}>
+                  Save
+                </button>
               </div>
             </div>
-
-            {/* Inline meeting card */}
-            {showMeetingPanel && (
-              <div className="mx-5 mt-3 rounded-xl border border-wax/25 bg-wax-soft overflow-hidden">
-                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-wax/15">
-                  <Icon name="event" size={15} className="text-wax" />
-                  <span className="text-xs font-semibold text-wax">Schedule Meeting</span>
-                  <button
-                    onClick={() => setShowMeetingPanel(false)}
-                    className="ml-auto p-1 rounded-lg hover:bg-black/5 text-ink3 hover:text-ink transition-colors cursor-pointer"
-                  >
-                    <Icon name="close" size={14} />
-                  </button>
-                </div>
-                <div className="p-4 space-y-3">
-                  <DateTimePicker
-                    value={meetingDatetime}
-                    onChange={setMeetingDatetime}
-                    placeholder="Pick date and time"
-                  />
-                  <div className="flex flex-wrap gap-1.5">
-                    {[
-                      { label: "15 min", value: "15" },
-                      { label: "30 min", value: "30" },
-                      { label: "45 min", value: "45" },
-                      { label: "1 hr", value: "60" },
-                      { label: "1.5 hr", value: "90" },
-                      { label: "2 hr", value: "120" },
-                    ].map(({ label, value }) => (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => setMeetingDuration(value)}
-                        className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${
-                          meetingDuration === value
-                            ? "bg-wax text-on-wax border-wax"
-                            : "border-line text-ink3 hover:border-wax hover:text-wax bg-canvas"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex gap-3 items-center">
-                    <input
-                      type="text"
-                      value={meetingLocation}
-                      onChange={(e) => setMeetingLocation(e.target.value)}
-                      placeholder="Location (optional)"
-                      className="flex-1 px-3 py-1.5 rounded-lg border border-line bg-canvas text-xs focus:outline-none focus:border-wax transition-colors"
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Body */}
-            <div className="px-5 pb-2">
-              <textarea
-                value={body}
-                onChange={(e) => {
-                  setBody(e.target.value);
-                  if (aiGenerated) setAiGenerated(false);
-                }}
-                placeholder="Write your message intent or draft..."
-                rows={showMeetingPanel ? 6 : 10}
-                className="w-full pt-3 pb-2 bg-transparent text-sm focus:outline-none resize-none"
-              />
-
-              {/* AI refine bar */}
-              {aiGenerated && (
-                <div className="mb-2 rounded-xl border border-line bg-hover overflow-hidden">
-                  {!showRefinePanel ? (
-                    <button
-                      onClick={() => setShowRefinePanel(true)}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-ink3 hover:text-wax hover:bg-field transition-colors cursor-pointer"
-                    >
-                      <Icon name="edit_note" size={14} />
-                      Not right? Tell the AI what to change
-                      <Icon name="chevron_right" size={14} className="ml-auto" />
-                    </button>
-                  ) : (
-                    <div className="p-3 space-y-2.5">
-                      <div className="flex items-center gap-1.5">
-                        <Icon name="edit_note" size={14} className="text-wax" />
-                        <span className="text-xs font-semibold text-ink">What should change?</span>
-                        <button
-                          onClick={() => { setShowRefinePanel(false); setRefineFeedback(""); }}
-                          className="ml-auto text-ink3 hover:text-ink transition-colors cursor-pointer"
-                        >
-                          <Icon name="close" size={14} />
-                        </button>
-                      </div>
-                      <textarea
-                        value={refineFeedback}
-                        onChange={(e) => setRefineFeedback(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) refineWithFeedback(); }}
-                        placeholder="e.g. Make it shorter, use a more casual tone, add a question at the end..."
-                        rows={2}
-                        className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs focus:outline-none focus:border-wax resize-none transition-colors"
-                        autoFocus
-                      />
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-ink3">Cmd+Enter to apply. Feedback is saved to your knowledge base.</span>
-                        <button
-                          onClick={refineWithFeedback}
-                          disabled={refining || !refineFeedback.trim()}
-                          className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full bg-wax text-on-wax text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
-                        >
-                          <Icon name={refining ? "progress_activity" : "auto_awesome"} size={12} className={`${refining ? "animate-spin" : ""}`} />
-                          {refining ? "Updating..." : "Apply"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Attachment pills */}
-              {attachments.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 pb-2">
-                  {attachments.map((file, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-field text-xs text-ink"
-                    >
-                      <Icon name="attach_file" size={13} />
-                      <span className="max-w-[140px] truncate">{file.name}</span>
-                      <span className="text-ink3">({formatFileSize(file.size)})</span>
-                      <button
-                        onClick={() => removeAttachment(idx)}
-                        className="text-ink3 hover:text-danger transition-colors cursor-pointer"
-                      >
-                        <Icon name="close" size={13} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileSelect} />
-            </div>
-          </div>
-
-          {/* Toolbar */}
-          <div className="flex items-center gap-2 px-4 py-2.5 border-t border-line shrink-0 bg-canvas">
-            {/* Primary actions */}
-            <button
-              onClick={() => generateDraft()}
-              disabled={generatingDraft || !to || !subject}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity shrink-0 cursor-pointer"
-            >
-              <Icon name={generatingDraft ? "progress_activity" : "auto_awesome"} size={16} className={`${generatingDraft ? "animate-spin" : ""}`} />
-              {generatingDraft ? "Generating..." : "Generate"}
-            </button>
-
-            <button
-              onClick={() => handleSend()}
-              disabled={sending || !to || !subject}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-line text-sm text-ink hover:border-wax hover:text-wax disabled:opacity-50 transition-colors shrink-0 cursor-pointer"
-            >
-              <Icon name="send" size={16} />
-              {sending ? "Sending..." : scheduleAt ? "Schedule" : "Send"}
-            </button>
-
-            {/* Divider */}
-            <div className="w-px h-5 bg-line mx-0.5 shrink-0" />
-
-            {/* Secondary actions */}
-            <div className="flex items-center gap-0.5 flex-1">
-              {/* Tone rephrase */}
-              <div className="relative shrink-0" ref={toneMenuRef}>
-                <button
-                  onClick={() => setShowToneMenu((v) => !v)}
-                  disabled={!body.trim() || rephrasingTone !== null}
-                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-field disabled:opacity-40 disabled:cursor-not-allowed ${showToneMenu ? "text-wax" : "text-ink3"}`}
-                  title={
-                    body.trim()
-                      ? "Rewrite this message in a different tone"
-                      : "Write or generate a message first"
-                  }
-                >
-                  <Icon name={rephrasingTone ? "progress_activity" : "tune"} size={16} className={`${rephrasingTone ? "animate-spin" : ""}`} />
-                  {rephrasingTone ? "Rewriting..." : "Tone"}
-                </button>
-                {showToneMenu && (
-                  <div className="absolute bottom-full left-0 mb-2 z-30 w-52 rounded-xl border border-line bg-canvas shadow-xl overflow-hidden py-1">
-                    {TONES.map((tone) => (
-                      <button
-                        key={tone.id}
-                        onClick={() => rephraseInTone(tone)}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs text-ink hover:bg-field transition-colors cursor-pointer"
-                      >
-                        <Icon name={tone.icon} size={15} className="text-ink3" />
-                        {tone.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-field ${attachments.length > 0 ? "text-wax" : "text-ink3"}`}
-                title="Attach files"
-              >
-                <Icon name="attach_file" size={16} />
-                {attachments.length > 0 ? `${attachments.length} file${attachments.length > 1 ? "s" : ""}` : "Attach"}
-              </button>
-
-              {/* Templates popover */}
-              <div className="relative">
-                <button
-                  onClick={() => {
-                    const opening = !showTemplatesPopover;
-                    setShowTemplatesPopover(opening);
-                    if (opening) setSaveTemplateName(subject || "");
-                  }}
-                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-field ${showTemplatesPopover ? "text-wax bg-wax-soft" : "text-ink3"}`}
-                  title="Templates"
-                >
-                  <Icon name="description" size={16} />
-                  Templates
-                </button>
-                {showTemplatesPopover && (
-                  <div
-                    className="absolute bottom-full mb-2 left-0 z-50 bg-canvas border border-line rounded-xl shadow-2xl flex flex-col overflow-hidden"
-                    style={{ width: "288px", maxHeight: "340px" }}
-                  >
-                    <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-line shrink-0">
-                      <span className="text-xs font-semibold text-ink">Templates</span>
-                      <button
-                        onClick={() => setShowTemplatesPopover(false)}
-                        className="text-ink3 hover:text-ink transition-colors cursor-pointer"
-                      >
-                        <Icon name="close" size={15} />
-                      </button>
-                    </div>
-                    <div className="flex-1 overflow-auto">
-                      {templates.length === 0 ? (
-                        <div className="flex flex-col items-center gap-2 px-4 py-6 text-center">
-                          <Icon name="description" size={28} className="text-ink3" />
-                          <p className="text-xs text-ink3">No templates yet. Save your current message as one below.</p>
-                        </div>
-                      ) : (
-                        templates.map((t) => (
-                          <div
-                            key={t.id}
-                            className="flex items-center gap-2 px-3.5 py-2.5 hover:bg-hover border-b border-line last:border-0 group transition-colors cursor-pointer"
-                          >
-                            <button onClick={() => applyTemplate(t)} className="flex-1 text-left min-w-0">
-                              <div className="text-xs font-medium text-ink truncate">{t.name}</div>
-                              {t.subject && <div className="text-[11px] text-ink3 truncate mt-0.5">{t.subject}</div>}
-                            </button>
-                            <button
-                              onClick={() => deleteTemplate(t.id)}
-                              className="opacity-0 group-hover:opacity-100 p-1 rounded text-ink3 hover:text-danger transition-all shrink-0 cursor-pointer"
-                            >
-                              <Icon name="delete" size={14} />
-                            </button>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    <div className="border-t border-line p-2.5 shrink-0">
-                      <p className="text-[10px] text-ink3 mb-1.5">Save current draft as template</p>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="text"
-                          value={saveTemplateName}
-                          onChange={(e) => setSaveTemplateName(e.target.value)}
-                          placeholder="Template name"
-                          onKeyDown={(e) => { if (e.key === "Enter") saveAsTemplate(); }}
-                          className="flex-1 px-2.5 py-1.5 rounded-lg border border-line bg-canvas text-xs focus:outline-none focus:border-wax transition-colors"
-                        />
-                        <button
-                          onClick={saveAsTemplate}
-                          disabled={!saveTemplateName.trim() || !body}
-                          className="px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer shrink-0"
-                        >
-                          Save
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Meeting toggle */}
-              <button
-                onClick={() => setShowMeetingPanel((p) => !p)}
-                disabled={!to || !subject}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-field cursor-pointer ${showMeetingPanel ? "text-wax bg-wax-soft" : "text-ink3"}`}
-                title={!to || !subject ? "Enter recipient and subject first" : "Schedule meeting"}
-              >
-                <Icon name="event" size={16} />
-                Meeting
-              </button>
-
-              {/* Schedule send */}
-              <div className="relative">
-                <button
-                  onClick={() => {
-                    if (!showSchedulePopup && !scheduleAt) {
-                      const wh = profile?.working_hours as WorkingHours;
-                      const slot = getNextWorkingSlot(wh);
-                      setScheduleAt(slot.toISOString());
-                    }
-                    setShowSchedulePopup((p) => !p);
-                  }}
-                  className={`p-2 rounded-lg hover:bg-field transition-colors cursor-pointer ${scheduleAt || showSchedulePopup ? "text-wax" : "text-ink3"}`}
-                  title="Schedule send"
-                >
-                  <Icon name="schedule_send" size={17} />
-                </button>
-                {showSchedulePopup && (
-                  <div
-                    className="absolute bottom-full mb-2 right-0 z-50 bg-canvas border border-line rounded-xl shadow-2xl p-3.5 w-80"
-                    style={{ maxHeight: "80vh", overflowY: "auto" }}
-                  >
-                    <div className="flex items-center justify-between mb-3">
-                      <span className="text-xs font-semibold text-ink">Schedule send</span>
-                      <button
-                        onClick={() => setShowSchedulePopup(false)}
-                        className="text-ink3 hover:text-ink transition-colors cursor-pointer"
-                      >
-                        <Icon name="close" size={15} />
-                      </button>
-                    </div>
-                    <DateTimePicker
-                      value={isoToDatetimeLocal(scheduleAt)}
-                      onChange={(dtl) => setScheduleAt(datetimeLocalToIso(dtl))}
-                      placeholder="Pick date and time"
-                      showWarning={!!(scheduleAt && isOutsideWorkingHours(scheduleAt, profile?.working_hours as WorkingHours))}
-                    />
-                    {scheduleAt && isOutsideWorkingHours(scheduleAt, profile?.working_hours as WorkingHours) && (
-                      <p className="flex items-center gap-1 text-[11px] text-warn mt-2">
-                        <Icon name="warning" size={12} />
-                        Outside your working hours
-                      </p>
-                    )}
-                    <div className="flex items-center gap-2 mt-3">
-                      {scheduleAt && (
-                        <button
-                          onClick={() => setScheduleAt("")}
-                          className="text-xs text-ink3 hover:text-danger flex items-center gap-1 transition-colors cursor-pointer"
-                        >
-                          <Icon name="close" size={13} />
-                          Clear
-                        </button>
-                      )}
-                      <button
-                        onClick={() => setShowSchedulePopup(false)}
-                        className="ml-auto px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
-                      >
-                        {scheduleAt ? "Confirm" : "Close"}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Save draft */}
-              <button
-                onClick={saveDraft}
-                className="p-2 rounded-lg hover:bg-field text-ink3 transition-colors cursor-pointer"
-                title="Save draft"
-              >
-                <Icon name="save" size={17} />
-              </button>
-            </div>
-
-            {/* Discard */}
-            <button
-              onClick={onClose}
-              className="p-2 rounded-lg hover:bg-field text-ink3 hover:text-danger transition-colors cursor-pointer shrink-0"
-              title="Discard"
-            >
-              <Icon name="delete" size={19} />
-            </button>
-          </div>
+          )}
         </div>
+
+        <button
+          className={`iconbtn ${showMeetingPanel ? "bg-sel text-ink" : ""}`}
+          aria-pressed={showMeetingPanel}
+          onClick={() => setShowMeetingPanel((p) => !p)}
+          disabled={!to || !subject}
+          title={!to || !subject ? "Add a recipient and a subject to set up a meeting" : "Set up a meeting with this email"}
+          aria-label="Set up a meeting with this email"
+        >
+          <Icon name="event" size={16} />
+        </button>
+
+        <span className="flex-1" />
+
+        <button className="btn btn-plain" onClick={saveDraft} disabled={!body} title="Keep this as a draft and close">
+          Save draft
+        </button>
+        <button className="iconbtn" onClick={onClose} title="Discard" aria-label="Discard">
+          <Icon name="delete" size={16} />
+        </button>
       </div>
-    </>
+    </div>
   );
 }

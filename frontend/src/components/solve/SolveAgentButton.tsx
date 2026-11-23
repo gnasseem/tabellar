@@ -1,63 +1,37 @@
-
 import { useApp } from "../AppShell";
-import Icon from "@/components/Icon";
 
 interface SolveAgentButtonProps {
   disabled?: boolean;
   size?: "sm" | "md";
 }
 
-/**
- * Primary entry point for the Auto-Resolve agent. Replaces the Regenerate
- * button on the briefing view. When clicked, starts (or reopens) a session and
- * opens the AgentWorkspace. The session keeps running in the background if the
- * user navigates elsewhere.
- */
-export default function SolveAgentButton({
-  disabled,
-  size = "md",
-}: SolveAgentButtonProps) {
+// Starts a cleanup plan from the briefing, or reopens the one in progress.
+// The plan keeps running in the background if the user goes elsewhere, and
+// the label says where it stands.
+export default function SolveAgentButton({ disabled, size = "md" }: SolveAgentButtonProps) {
   const { agentSession, startSolveAgent, openAgentWorkspace } = useApp();
-  const busy =
-    agentSession &&
-    ["planning", "asking", "executing"].includes(agentSession.status);
-  const ready = agentSession?.status === "ready";
+  const status = agentSession?.status;
+  const working = status === "planning" || status === "executing";
 
-  const label = busy
-    ? agentSession?.status === "asking"
-      ? "Review decision"
-      : agentSession?.status === "executing"
-        ? "Executing..."
-        : "Resolving..."
-    : ready
-      ? "Review plan"
-      : "Auto-Resolve";
-
-  const icon = busy ? "bolt" : ready ? "check_circle" : "auto_awesome";
+  const label =
+    status === "planning" ? "Planning" : status === "asking" ? "Answer a question" : status === "executing" ? "Running the plan" : status === "ready" ? "Review the plan" : "Plan a cleanup";
 
   const handleClick = () => {
     if (disabled) return;
-    if (agentSession) {
-      openAgentWorkspace();
-    } else {
-      void startSolveAgent();
-    }
+    if (agentSession) openAgentWorkspace();
+    else void startSolveAgent();
   };
-
-  const sizeClasses =
-    size === "sm" ? "px-3.5 py-1.5 text-[11.5px]" : "px-4 py-2 text-[12.5px]";
 
   return (
     <button
       onClick={handleClick}
       disabled={disabled}
-      title={label}
-      className={`group relative inline-flex items-center gap-2 rounded-full font-semibold text-white bg-ok hover:bg-ok disabled:opacity-40 disabled:hover:bg-ok transition-colors cursor-pointer shadow-[0_2px_8px_-2px_rgba(5,150,105,0.45)] ${sizeClasses}`}
+      title={agentSession ? "Open the cleanup plan" : "Tabellar proposes replies, todos, meetings and archiving from this briefing. Nothing runs until you approve it."}
+      className={`btn ${size === "sm" ? "btn-sm" : ""}`}
     >
-      <Icon name={icon} size={size === "sm" ? "14px" : "16px"} />
-      <span className="tracking-tight">{label}</span>
-      {busy && (
-        <span className="solve-dot-wave text-white/90 inline-flex">
+      {label}
+      {working && (
+        <span className="solve-dot-wave inline-flex text-ink3" aria-hidden>
           <span />
           <span />
           <span />

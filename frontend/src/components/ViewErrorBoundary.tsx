@@ -1,4 +1,3 @@
-
 import { Component, type ReactNode } from "react";
 import Icon from "@/components/Icon";
 
@@ -10,6 +9,24 @@ type Props = {
 type State = {
   hasError: boolean;
   error: Error | null;
+};
+
+// The view ids as the sidebar names them.
+const NAMES: Record<string, string> = {
+  inbox: "Inbox",
+  replies: "Replies",
+  drafts: "Replies",
+  todos: "Todos",
+  meetings: "Meetings",
+  followups: "Follow-ups",
+  newsletters: "Newsletters",
+  briefing: "Briefing",
+  activity: "Activity",
+  sent: "Sent",
+  scheduled: "Scheduled",
+  categories: "Labels",
+  relationships: "Knowledge",
+  settings: "Settings",
 };
 
 export default class ViewErrorBoundary extends Component<Props, State> {
@@ -27,38 +44,27 @@ export default class ViewErrorBoundary extends Component<Props, State> {
   }
 
   componentDidUpdate(prevProps: Props) {
-    // Reset error state when view changes
+    // Moving to another view clears the error.
     if (prevProps.viewName !== this.props.viewName && this.state.hasError) {
       this.setState({ hasError: false, error: null });
     }
   }
 
   render() {
-    if (this.state.hasError) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-          <Icon name="error" size={48} className="text-danger mb-3" />
-          <h2 className="text-lg font-semibold text-ink mb-2">
-            Something went wrong
-          </h2>
-          <p className="text-sm text-ink3 mb-4 max-w-md">
-            The {this.props.viewName} view encountered an error. Click &quot;Try Again&quot; to reload it.
-          </p>
-          <button
-            onClick={() => this.setState({ hasError: false, error: null })}
-            className="px-4 py-2 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 transition-opacity"
-          >
-            Try Again
+    if (!this.state.hasError) return this.props.children;
+    const name = NAMES[this.props.viewName] ?? "This page";
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="empty">
+          <Icon name="error" size={22} className="text-ink3" />
+          <h3>{name} could not be shown</h3>
+          <p>Something in this page failed while it was being drawn. Your mail and everything Tabellar did with it are untouched. Try again, or pick another page in the sidebar.</p>
+          {this.state.error && <p className="max-w-full truncate font-mono !text-xs !text-danger">{this.state.error.message}</p>}
+          <button className="btn mt-4" onClick={() => this.setState({ hasError: false, error: null })}>
+            Try again
           </button>
-          {this.state.error && (
-            <p className="mt-3 text-xs text-ink3 font-mono max-w-md truncate">
-              {this.state.error.message}
-            </p>
-          )}
         </div>
-      );
-    }
-
-    return this.props.children;
+      </div>
+    );
   }
 }

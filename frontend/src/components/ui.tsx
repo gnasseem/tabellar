@@ -50,7 +50,7 @@ export function SearchBox({ placeholder = "Search" }: { placeholder?: string }) 
           <Icon name="close" size={13} />
         </button>
       ) : (
-        <kbd className="kbd !bg-transparent">/</kbd>
+        <kbd className="kbd hidden !bg-transparent md:inline-block">/</kbd>
       )}
     </label>
   );
@@ -65,7 +65,7 @@ export function ViewBar({ title, children, right, search }: { title: ReactNode; 
       <button className="iconbtn -ml-2 lg:hidden" onClick={() => setSidebarOpen(true)} aria-label="Show sidebar">
         <Icon name="menu" size={16} />
       </button>
-      {typeof title === "string" ? <h1 className="bar-title">{title}</h1> : title}
+      {typeof title === "string" ? <h1 className="bar-title flex-none">{title}</h1> : title}
       {children}
       <span className="flex-1" />
       {search !== false && <SearchBox placeholder={search || "Search"} />}
@@ -125,7 +125,7 @@ export function Menu<T extends string>({ label, value, onChange, options }: { la
   return (
     <div ref={ref} className="relative">
       <button type="button" className="btn btn-plain gap-1 pr-1.5" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {label} <b className="font-medium text-ink">{options.find((o) => o.id === value)?.label}</b>
+        <span className="hidden md:inline">{label}</span> <b className="font-medium text-ink">{options.find((o) => o.id === value)?.label}</b>
         <Icon name="expand_more" size={13} className="text-ink3" />
       </button>
       {open && (
@@ -182,7 +182,7 @@ export function KeyHints({ left, keys }: { left?: ReactNode; keys: [string, stri
       <span className="truncate">{left}</span>
       <span className="flex-1" />
       {keys.map(([k, label]) => (
-        <span key={label} className="k hidden md:flex">
+        <span key={label} className="k">
           {k.split(" ").map((x) => (
             <kbd key={x} className="kbd">{x}</kbd>
           ))}

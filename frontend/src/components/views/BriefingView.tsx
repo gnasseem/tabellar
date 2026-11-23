@@ -1,11 +1,18 @@
-
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { setEmailFlag } from "@/lib/outcomes";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import EmailDetail from "../EmailDetail";
 import SolveAgentButton from "../solve/SolveAgentButton";
 import { useSetupState } from "../ModelSetup";
+import { Empty, Glyph, KeyHints, Menu, Seg, SkeletonRows, ViewBar, clock, dayLabel } from "../ui";
+
+// The briefing: a short written summary of the mail in a chosen range, then
+// what it found in four groups (reply needed, deadlines, crucial, and what
+// needs nothing), with today's calendar beside it.
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 interface BriefingEmail {
   subject: string;
@@ -57,7 +64,7 @@ interface BriefingResult {
   actionItems?: string[];
 }
 
-type FilterType = "crucial" | "replyNeeded" | "deadlines" | "nonEssential" | null;
+type Filter = "all" | "replyNeeded" | "deadlines" | "crucial" | "nonEssential";
 
 interface NormalizedBriefing {
   executiveSummary: string;
@@ -74,14 +81,6 @@ interface NormalizedBriefing {
   };
 }
 
-type BriefingAccent = "crucial" | "reply" | "deadline" | "noise";
-
-const ACCENT_BORDER: Record<BriefingAccent, string> = {
-  crucial: "border-l-danger/75",
-  reply: "border-l-ink4/75",
-  deadline: "border-l-ink4/75",
-  noise: "border-l-ink4/40",
-};
 
 function executiveSummaryIsUsable(s: string | undefined | null): boolean {
   if (!s?.trim()) return false;
@@ -107,7 +106,7 @@ function briefingExecutiveSummaryDisplay(raw: string): string {
       .replace(/&amp;/gi, "&");
     s = s.replace(/\n{3,}/g, "\n\n").replace(/[ \t]{2,}/g, " ").trim();
   }
-  return s.replace(/—/g, " - ");
+  return noDash(s);
 }
 
 function formatDeadlineDate(iso: string) {
@@ -125,7 +124,7 @@ function daysUntil(iso: string): number {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const diff = Math.round((d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-    // AI sometimes uses the wrong year; try bumping by 1 year if far in the past
+    // The model sometimes uses the wrong year; try bumping by 1 year if far in the past
     if (diff <= -300) {
       const corrected = new Date(parts[0] + 1, parts[1] - 1, parts[2]);
       return Math.round((corrected.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -145,7 +144,7 @@ function normalizeBriefing(b: BriefingResult, followUps: FollowUp[]): Normalized
       : [];
     let nonEssential: BriefingEmail[] = (b as any).nonEssential ?? [];
 
-    // Rescue: if AI put everything in nonEssential, reclassify by sender/urgency
+    // Rescue: if the model put everything in nonEssential, reclassify by sender/urgency
     if (crucial.length === 0 && replyNeededAI.length === 0 && deadlines.length === 0 && nonEssential.length > 0) {
       const rescued: BriefingEmail[] = [];
       const kept: BriefingEmail[] = [];
@@ -316,228 +315,179 @@ function groupByTopic(cards: BriefingEmail[]): BriefingEmail[][] {
   return groups;
 }
 
-function EmailCard({
+function noDash(s: string): string {
+  return s.replace(/\u2014/g, ", ");
+}
+
+function senderOf(e: BriefingEmail): string {
+  const raw = e.senderName && e.senderName !== "null" ? e.senderName : e.sender && e.sender !== "null" ? e.sender : "";
+  return raw.replace(/<.*>/, "").replace(/"/g, "").trim();
+}
+
+// The quiet words at the right of an item: when it is due, how urgent it is.
+function metaOf(e: BriefingEmail): { text: string; soon: boolean } {
+  const parts: string[] = [];
+  if (e.deadline) parts.push(`Due ${formatDeadlineDate(e.deadline)}`);
+  else if (e.tags?.includes("NO_REPLY")) parts.push("No reply yet");
+  else if (e.urgency === "critical") parts.push("Critical");
+  else if (e.urgency === "high") parts.push("High");
+  for (const tag of e.tags ?? []) {
+    if (!["REPLY_NEEDED", "DEADLINE", "NO_REPLY"].includes(tag)) parts.push(tag.replace(/_/g, " ").toLowerCase());
+  }
+  return { text: parts.join(", "), soon: !!e.deadline && daysUntil(e.deadline) <= 1 };
+}
+
+// One finding: who and what on the first line, the signal on the second, and
+// the suggested next step on the right.
+function ItemRow({
   email,
-  onClick,
+  need,
+  resolved,
+  onOpen,
+  onReply,
   onDismiss,
-  hideUrgency,
-  accent = "crucial",
-  isResolved,
 }: {
   email: BriefingEmail;
-  onClick?: () => void;
+  need?: boolean;
+  resolved?: boolean;
+  onOpen?: () => void;
+  onReply?: () => void;
   onDismiss?: () => void;
-  hideUrgency?: boolean;
-  accent?: BriefingAccent;
-  isResolved?: boolean;
 }) {
-  const hasNoReply = email.tags?.includes("NO_REPLY");
-  const borderAccent = ACCENT_BORDER[hideUrgency ? "noise" : accent];
-  const urgencyLabel =
-    email.urgency === "critical" ? "Critical" : email.urgency === "high" ? "High" : "Med";
-
-  const senderLabel = (email.senderName && email.senderName !== "null")
-    ? email.senderName
-    : ((email.sender && email.sender !== "null") ? email.sender : "");
-
-  const rowBase =
-    `rounded-lg border border-line bg-raised border-l-2 ${borderAccent} transition-colors duration-200 ` +
-    (onClick ? "cursor-pointer hover:bg-field/80 " : "");
-
-  if (hideUrgency) {
-    return (
-      <div
-        className={`${rowBase} flex items-center gap-2 px-2.5 py-1.5`}
-        onClick={onClick}
-        role={onClick ? "button" : undefined}
-        tabIndex={onClick ? 0 : undefined}
-        onKeyDown={onClick ? (e) => e.key === "Enter" && onClick() : undefined}
-      >
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[12px] font-medium text-ink truncate block leading-snug font-['DM_Sans',ui-sans-serif,sans-serif]">
-              {email.subject}
-            </span>
-            {isResolved && (
-              <span className="shrink-0 text-[9px] px-1 py-0.5 rounded font-semibold bg-ok/15 text-ok">
-                resolved
-              </span>
-            )}
-          </div>
-          {senderLabel && (
-            <span className="text-[10px] text-ink3 truncate block leading-snug">{senderLabel}</span>
-          )}
-        </div>
-        {onDismiss && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onDismiss(); }}
-            className="shrink-0 p-1 rounded-md hover:bg-black/[0.06] text-ink3 hover:text-danger transition-colors cursor-pointer"
-            title="Dismiss"
-            aria-label="Dismiss"
-          >
-            <Icon name="close" size={14} />
-          </button>
-        )}
-      </div>
-    );
-  }
-
+  const meta = metaOf(email);
+  const line = noDash(email.signal?.trim() || email.summary || "");
   return (
     <div
-      className={`${rowBase} px-3 py-2.5`}
-      onClick={onClick}
-      role={onClick ? "button" : undefined}
-      tabIndex={onClick ? 0 : undefined}
-      onKeyDown={onClick ? (e) => e.key === "Enter" && onClick() : undefined}
+      className="row2 group grid grid-cols-[26px_minmax(0,1fr)_auto] items-baseline gap-y-[3px]"
+      role={onOpen ? "button" : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      onClick={onOpen}
+      onKeyDown={onOpen ? (e) => e.key === "Enter" && e.target === e.currentTarget && onOpen() : undefined}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-1 min-w-0">
-          {!hasNoReply && (
-            <span className="text-[9px] font-semibold uppercase tracking-wide text-ink3 tabular-nums">
-              {urgencyLabel}
-            </span>
-          )}
-          {email.waitingForReply && !hasNoReply && (
-            <span className="text-[9px] font-semibold uppercase tracking-wide text-ink2">
-              Reply
-            </span>
-          )}
-          {hasNoReply && (
-            <span className="text-[9px] font-semibold uppercase tracking-wide text-warn">
-              No reply yet
-            </span>
-          )}
-          {email.deadline && (
-            <span className="text-[9px] font-semibold uppercase tracking-wide text-ink2">
-              Due {formatDeadlineDate(email.deadline)}
-            </span>
-          )}
-          {email.tags?.filter((t) => !["REPLY_NEEDED", "DEADLINE", "NO_REPLY"].includes(t)).map((tag) => (
-            <span key={tag} className="text-[9px] text-ink3">
-              {tag}
-            </span>
-          ))}
-          {isResolved && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded font-semibold bg-ok/15 text-ok">
-              resolved
-            </span>
-          )}
-        </div>
+      <span className="row-span-2 grid justify-center self-start pt-px">
+        <Glyph state={resolved ? "done" : need ? "need" : "filed"} />
+      </span>
+      <div className="flex min-w-0 items-baseline gap-2">
+        <b className={`max-w-[45%] flex-none truncate ${resolved ? "font-normal text-ink3" : "font-semibold text-ink"}`}>{senderOf(email) || "Unknown sender"}</b>
+        <span className={`truncate ${resolved ? "text-ink3" : "text-ink2"}`}>{email.subject || "(no subject)"}</span>
+      </div>
+      <span className={`whitespace-nowrap pl-3 text-right text-xs ${meta.soon && !resolved ? "font-medium text-warn" : "text-ink3"}`}>{resolved ? "Resolved" : meta.text}</span>
+      <p className="truncate text-ink3" title={noDash(email.summary || "")}>
+        {line}
+      </p>
+      <span className="flex items-center justify-end gap-3 whitespace-nowrap pl-3">
         {onDismiss && (
-          <button
-            onClick={(e) => { e.stopPropagation(); onDismiss(); }}
-            className="shrink-0 p-1 rounded-md hover:bg-black/[0.06] text-ink3 hover:text-danger transition-colors cursor-pointer"
-            title="Dismiss"
-            aria-label="Dismiss"
-          >
-            <Icon name="close" size={14} />
+          <button className="link invisible group-focus-within:visible group-hover:visible" onClick={(e) => (e.stopPropagation(), onDismiss())}>
+            Dismiss
           </button>
         )}
-      </div>
-      <p className="text-[13px] font-semibold text-ink mt-1 leading-snug line-clamp-2 font-['DM_Sans',ui-sans-serif,sans-serif]">
-        {email.subject}
-      </p>
-      <p className="text-[11px] text-ink3 mt-0.5 line-clamp-1">
-        {senderLabel}
-        {email.senderName && email.senderName !== "null" && email.sender && email.sender !== "null" && email.senderName !== email.sender && (
-          <span className="opacity-60"> · {email.sender}</span>
-        )}
-      </p>
-      {email.signal?.trim() && (
-        <p className="text-[11px] text-ink2/90 mt-1 line-clamp-1 italic">
-          {email.signal.replace(/—/g, " - ")}
-        </p>
-      )}
-      <p className="text-[12px] text-ink mt-1 leading-snug line-clamp-2 font-['DM_Sans',ui-sans-serif,sans-serif]">
-        {(email.summary || "").replace(/—/g, " - ")}
-      </p>
+        {onReply && !resolved ? (
+          <button className="link" onClick={(e) => (e.stopPropagation(), onReply())}>
+            Reply
+          </button>
+        ) : onOpen ? (
+          <button className="link" onClick={(e) => (e.stopPropagation(), onOpen())}>
+            Open
+          </button>
+        ) : null}
+      </span>
     </div>
   );
 }
 
-function GroupedEmailCard({
-  group,
-  onClickEmail,
-  onDismiss,
-  accent = "crucial",
-  resolvedIds,
-}: {
-  group: BriefingEmail[];
-  onClickEmail?: (email: BriefingEmail) => void;
-  onDismiss?: (email: BriefingEmail) => void;
-  accent?: BriefingAccent;
-  resolvedIds?: Set<string>;
-}) {
+// Emails on one topic: the most urgent stands for the rest until expanded.
+function Thread({ group, row }: { group: BriefingEmail[]; row: (e: BriefingEmail) => ReactNode }) {
   const [expanded, setExpanded] = useState(false);
   const sorted = [...group].sort((a, b) => (URGENCY_ORDER[a.urgency] ?? 3) - (URGENCY_ORDER[b.urgency] ?? 3));
-  const primary = sorted[0];
-  const rest = sorted.slice(1);
-
   return (
-    <div className="space-y-1.5">
-      <EmailCard
-        email={primary}
-        accent={accent}
-        isResolved={primary.email_id ? resolvedIds?.has(primary.email_id) : false}
-        onClick={primary.email_id && onClickEmail ? () => onClickEmail(primary) : undefined}
-        onDismiss={primary.email_id && onDismiss ? () => onDismiss(primary) : undefined}
-      />
-      {rest.length > 0 && (
-        <div className="ml-2 pl-2 border-l border-line">
-          {!expanded && (
-            <button
-              type="button"
-              onClick={() => setExpanded(true)}
-              className="text-[10px] text-ink3 hover:text-ink transition-colors flex items-center gap-0.5 py-0.5 cursor-pointer"
-            >
-              <Icon name="expand_more" size={12} />
-              {rest.length} more on thread
-            </button>
-          )}
-          {expanded && (
-            <div className="space-y-1.5 mt-1">
-              {rest.map((email, i) => (
-                <EmailCard
-                  key={email.email_id ?? i}
-                  email={email}
-                  accent={accent}
-                  isResolved={email.email_id ? resolvedIds?.has(email.email_id) : false}
-                  onClick={email.email_id && onClickEmail ? () => onClickEmail(email) : undefined}
-                  onDismiss={email.email_id && onDismiss ? () => onDismiss(email) : undefined}
-                />
-              ))}
-              <button
-                type="button"
-                onClick={() => setExpanded(false)}
-                className="text-[10px] text-ink3 hover:text-ink transition-colors flex items-center gap-0.5 py-0.5 cursor-pointer"
-              >
-                <Icon name="expand_less" size={12} />
-                Collapse
-              </button>
-            </div>
-          )}
-        </div>
+    <>
+      {row(sorted[0])}
+      {expanded && sorted.slice(1).map(row)}
+      {sorted.length > 1 && (
+        <button type="button" className="link mb-1 ml-10 mt-1.5 block" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+          {expanded ? "Show only the first" : `${sorted.length - 1} more on this thread`}
+        </button>
       )}
-    </div>
+    </>
   );
 }
 
-function SectionHeader({ icon, label, color }: { icon: string; label: string; color: string }) {
+function Section({ title, count, need, children }: { title: string; count: number; need?: boolean; children: ReactNode }) {
   return (
-    <div className="flex items-center gap-2 mb-3 mt-1">
-      <Icon name={icon} size={16} className={`${color}`} />
-      <h2 className="text-xs font-bold tracking-widest text-ink3 uppercase">{label}</h2>
+    <section className="pt-5">
+      <h2 className="label flex items-baseline gap-1.5 px-5 pb-1">
+        {title}
+        <span className={need ? "count-need" : "font-normal"}>{count.toLocaleString()}</span>
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+// Today's calendar: meetings Tabellar tracks and Google Calendar events.
+function Schedule({ items }: { items: any[] }) {
+  return (
+    <>
+      <h2 className="label flex items-baseline gap-1.5">
+        Today
+        <span className="font-normal">{new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}</span>
+      </h2>
+      {items.length === 0 ? (
+        <p className="mt-2 text-ink3">Nothing on your calendar today.</p>
+      ) : (
+        <ul className="mt-1">
+          {items.map((m) => (
+            <li key={m.id} className="grid grid-cols-[46px_minmax(0,1fr)] gap-x-2 border-b border-line-soft py-2 last:border-0">
+              <time className="pt-px text-xs text-ink3">{m.allDay ? "All day" : m.start ? clock(m.start) : ""}</time>
+              <div className="min-w-0">
+                <p className="truncate text-ink">{m.title}</p>
+                <p className="truncate text-xs text-ink3">
+                  {[m.end && !m.allDay ? `to ${clock(m.end)}` : "", m.status !== "confirmed" ? "proposed" : "", m.location || "", m.attendees?.length ? `${m.attendees.slice(0, 2).join(", ")}${m.attendees.length > 2 ? ` and ${m.attendees.length - 2} more` : ""}` : ""]
+                    .filter(Boolean)
+                    .join(", ")}
+                </p>
+                {m.meetingLink && (
+                  <a href={m.meetingLink} target="_blank" rel="noopener noreferrer" className="link">
+                    Join the call
+                  </a>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
+// The briefing's shape while it loads: a paragraph, then a group of items.
+function Skeleton() {
+  return (
+    <div aria-busy="true" aria-label="Loading" className="pt-6">
+      <div className="max-w-[68ch] space-y-2.5 px-5">
+        <span className="skel block h-3 w-full" />
+        <span className="skel block h-3 w-[94%]" />
+        <span className="skel block h-3 w-[62%]" />
+      </div>
+      <div className="px-5 pb-1 pt-8">
+        <span className="skel block h-2.5 w-24" />
+      </div>
+      <SkeletonRows count={3} tall />
+      <div className="px-5 pb-1 pt-6">
+        <span className="skel block h-2.5 w-20" />
+      </div>
+      <SkeletonRows count={3} tall />
     </div>
   );
 }
 
 type BriefingScope = "today_new" | "past_2_days" | "past_week" | "all_recent";
 
-const BRIEFING_SCOPE_OPTIONS: { id: BriefingScope; label: string; desc: string }[] = [
-  { id: "today_new", label: "Today", desc: "New emails from today" },
-  { id: "past_2_days", label: "2 days", desc: "Last 2 days catch-up" },
-  { id: "past_week", label: "Week", desc: "Past 7 days" },
-  { id: "all_recent", label: "Full inbox", desc: "40 most recent emails" },
+const BRIEFING_SCOPE_OPTIONS: { id: BriefingScope; label: string }[] = [
+  { id: "today_new", label: "Today" },
+  { id: "past_2_days", label: "Last 2 days" },
+  { id: "past_week", label: "Last 7 days" },
+  { id: "all_recent", label: "Latest 40 emails" },
 ];
 
 export default function BriefingView() {
@@ -553,6 +503,9 @@ export default function BriefingView() {
     briefingVersion,
     briefingRegenerating,
     requestBriefingRegeneration,
+    openCompose,
+    addToast,
+    setView,
   } = useApp();
   const supabase = createClient();
   const [briefing, setBriefing] = useState<BriefingResult | null>(null);
@@ -562,7 +515,7 @@ export default function BriefingView() {
   const [loading, setLoading] = useState(true);
   const [selectedEmail, setSelectedEmail] = useState<any | null>(null);
   const [followUps, setFollowUps] = useState<FollowUp[]>([]);
-  const [activeFilter, setActiveFilter] = useState<FilterType>(null);
+  const [filter, setFilter] = useState<Filter>("all");
   const [nonEssentialExpanded, setNonEssentialExpanded] = useState(false);
   const [importantExpanded, setImportantExpanded] = useState(false);
   const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => {
@@ -575,17 +528,22 @@ export default function BriefingView() {
   const validScopes = BRIEFING_SCOPE_OPTIONS.map((o) => o.id);
   const rawScope = profile?.briefing_scope ?? "today_new";
   const activeScope: BriefingScope = validScopes.includes(rawScope as BriefingScope) ? (rawScope as BriefingScope) : "today_new";
-  const [scopeDropdownOpen, setScopeDropdownOpen] = useState(false);
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(new Set());
-  const [resolvedSortToEnd, setResolvedSortToEnd] = useState<boolean>(() => {
-    try {
-      const raw = localStorage.getItem(`tabellar_resolved_sort_end_${user.id}`);
-      return raw === null ? true : raw === "true";
-    } catch { return true; }
-  });
+
+  // A regeneration that ends without a new briefing has failed.
+  const [failed, setFailed] = useState(false);
+  const wasRegenerating = useRef(false);
+  const versionAtStart = useRef(briefingVersion);
+  useEffect(() => {
+    if (briefingRegenerating && !wasRegenerating.current) {
+      versionAtStart.current = briefingVersion;
+      setFailed(false);
+    }
+    if (!briefingRegenerating && wasRegenerating.current) setFailed(briefingVersion === versionAtStart.current);
+    wasRegenerating.current = briefingRegenerating;
+  }, [briefingRegenerating, briefingVersion]);
 
   const saveScope = useCallback(async (scope: BriefingScope) => {
-    setScopeDropdownOpen(false);
     updateProfile({ briefing_scope: scope });
     await supabase.from("profiles").update({ briefing_scope: scope }).eq("id", user.id);
     // Clear stale cache so the user sees "generating..." instead of the old briefing
@@ -784,8 +742,6 @@ export default function BriefingView() {
     if (data) setSelectedEmail(data);
   }, [supabase]);
 
-  const formatTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
-
   // Merge DB meetings and Google Calendar events into a unified sorted list
   const todayScheduleItems = (() => {
     const dbItems = meetings.map((m: any) => ({
@@ -849,14 +805,6 @@ export default function BriefingView() {
   const displayReplyNeededIncoming = displayReplyNeeded.filter((e) => !e.tags?.includes("NO_REPLY"));
   const displayNoReplyYet = displayReplyNeeded.filter((e) => e.tags?.includes("NO_REPLY"));
 
-  const displayStats = normalized ? {
-    total: normalized.stats.total,
-    crucial: displayCrucial.length,
-    replyNeeded: displayReplyNeeded.length,
-    deadlines: displayDeadlines.length,
-    nonEssential: normalized.stats.nonEssential,
-  } : null;
-
   const hasContent = Boolean(
     briefing &&
       (executiveSummaryIsUsable(briefing.executiveSummary) ||
@@ -874,577 +822,248 @@ export default function BriefingView() {
         (normalized?.nonEssential?.length ?? 0) > 0),
   );
 
-  // Which email list to show based on active filter
-  const filteredEmails: BriefingEmail[] = (() => {
-    if (activeFilter === "crucial") return displayCrucial;
-    if (activeFilter === "replyNeeded") return displayReplyNeeded;
-    if (activeFilter === "deadlines") return displayDeadlines;
-    if (activeFilter === "nonEssential") return displayNonEssential;
-    return [];
-  })();
+  // Resolved items sink to the end of their group.
+  const resolvedLast = (cards: BriefingEmail[]) => [...cards].sort((a, b) => Number(!!a.email_id && resolvedIds.has(a.email_id)) - Number(!!b.email_id && resolvedIds.has(b.email_id)));
 
-  const FILTER_CONFIG = {
-    crucial: {
-      label: "Crucial",
-      icon: "priority_high",
-      color: "text-danger",
-      border: "border-danger/30",
-      activeBg: "bg-danger/10",
-      count: displayStats?.crucial ?? 0,
-    },
-    replyNeeded: {
-      label: "Reply Needed",
-      icon: "reply",
-      color: "text-ink2",
-      border: "border-ink4/30",
-      activeBg: "bg-wax/10",
-      count: displayStats?.replyNeeded ?? 0,
-    },
-    deadlines: {
-      label: "Deadlines",
-      icon: "event_upcoming",
-      color: "text-ink2",
-      border: "border-ink4/30",
-      activeBg: "bg-wax/10",
-      count: displayStats?.deadlines ?? 0,
-    },
-    nonEssential: {
-      label: "Non-essential",
-      icon: "filter_alt",
-      color: "text-ink2",
-      border: "border-ink4/20",
-      activeBg: "bg-ink3/10",
-      count: displayStats?.nonEssential ?? 0,
-    },
+  const replyTo = async (emailId: string) => {
+    const { data } = await supabase.from("emails").select("*, email_processed(*)").eq("id", emailId).single();
+    if (data) openCompose(data);
+    else addToast("error", "That email is no longer in Tabellar. Refresh the briefing.");
   };
 
+  const row = (email: BriefingEmail, need = false) => {
+    const id = email.email_id;
+    const followUp = email.tags?.includes("NO_REPLY");
+    return (
+      <ItemRow
+        key={id ?? `${email.subject}:${email.sender}`}
+        email={email}
+        need={need && !followUp}
+        resolved={id ? resolvedIds.has(id) : false}
+        onOpen={id ? () => openEmailById(id) : undefined}
+        onReply={id && !followUp && (need || email.suggestedAction === "reply") ? () => replyTo(id) : undefined}
+        onDismiss={id ? () => dismissCard(id) : undefined}
+      />
+    );
+  };
+  const threads = (cards: BriefingEmail[], need = false) => groupByTopic(resolvedLast(cards)).map((group, i) => <Thread key={group[0].email_id ?? i} group={group} row={(e) => row(e, need)} />);
+
+  if (selectedEmail)
+    return (
+      <EmailDetail
+        key={selectedEmail.id}
+        email={selectedEmail}
+        onBack={() => setSelectedEmail(null)}
+        onArchive={() => {
+          const id = selectedEmail.id;
+          setSelectedEmail(null);
+          setEmailFlag(id, "archive")
+            .then((undo) => addToast("success", "Archived", { action: { label: "Undo", onClick: () => void undo() } }))
+            .catch((e: Error) => addToast("error", `Could not archive: ${e.message}`));
+        }}
+        onReply={() => setSelectedEmail(null)}
+        onMarkUnread={() => {
+          const id = selectedEmail.id;
+          setSelectedEmail(null);
+          setEmailFlag(id, "unread").catch(() => {});
+        }}
+        onSnooze={() => setSelectedEmail(null)}
+        onRethink={(updated: any) => setSelectedEmail((prev: any) => (prev ? { ...prev, email_processed: updated } : prev))}
+        showBack
+      />
+    );
+
+  const noModel = setup !== null && !setup.model;
+  const written = (() => {
+    if (!briefingAt) return new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+    const d = dayLabel(briefingAt);
+    return `Written ${d.name === "Today" || d.name === "Yesterday" ? d.name.toLowerCase() : `on ${d.name} ${d.date}`} at ${clock(briefingAt)}`;
+  })();
+  const nonEssentialTotal = normalized?.stats.nonEssential ?? 0;
+  const quietSenders = [...new Set(displayNonEssential.map(senderOf).filter(Boolean))];
+  const show = (f: Filter) => filter === "all" || filter === f;
+  const shownCount =
+    (show("replyNeeded") ? displayReplyNeeded.length : 0) + (show("deadlines") ? displayDeadlines.length : 0) + (show("crucial") ? displayCrucial.length : 0) + (show("nonEssential") ? nonEssentialTotal : 0);
+
   return (
-    <div className="h-full flex overflow-hidden">
-      {/* Left panel: Today's timeline */}
-      <div className="w-72 lg:w-80 border-r border-line flex flex-col flex-shrink-0 overflow-auto">
-        <div className="px-4 py-3 border-b border-line">
-          <h2 className="text-sm font-semibold text-ink flex items-center gap-2">
-            <Icon name="today" size={18} className="text-wax" />
-            Today&apos;s Schedule
-          </h2>
-          <p className="text-xs text-ink3 mt-0.5">
-            {new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
-          </p>
-        </div>
-        <div className="flex-1 p-4">
-          {todayScheduleItems.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-ink3 text-center">
-              <Icon name="event_available" size={40} className="mb-2" />
-              <p className="text-sm">No meetings today</p>
-              <p className="text-xs mt-1 opacity-70">Your calendar is clear</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {todayScheduleItems.map((m: any) => {
-                const isGcal = m.source === "google_calendar";
-                const confirmed = m.status === "confirmed";
-                const borderColor = confirmed ? "border-l-ok" : "border-l-ink4";
-                const bgColor = confirmed ? "bg-ok-soft" : "bg-field";
-                return (
-                  <div key={m.id} className="flex gap-3">
-                    <div className="text-right shrink-0 w-14">
-                      {m.start && !m.allDay && (
-                        <p className="text-xs font-medium text-ink">{formatTime(m.start)}</p>
-                      )}
-                      {m.end && !m.allDay && (
-                        <p className="text-[10px] text-ink3">{formatTime(m.end)}</p>
-                      )}
-                      {m.allDay && (
-                        <p className="text-[10px] text-ink3 font-medium">All day</p>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className={`p-2 rounded-lg border-l-2 ${borderColor} ${bgColor}`}>
-                        <div className="flex items-start gap-1.5">
-                          {isGcal && (
-                            <Icon name="event" size={13} className="text-ink3 shrink-0 mt-px" />
-                          )}
-                          <p className="text-sm font-medium text-ink truncate leading-snug">{m.title}</p>
-                        </div>
-                        {m.attendees?.length > 0 && (
-                          <p className="text-[11px] text-ink3 truncate mt-0.5">
-                            {m.attendees.slice(0, 2).join(", ")}{m.attendees.length > 2 ? ` +${m.attendees.length - 2}` : ""}
-                          </p>
-                        )}
-                        {m.location && (
-                          <p className="text-[10px] text-ink3 truncate mt-0.5 flex items-center gap-0.5">
-                            <Icon name="location_on" size={11} />
-                            {m.location}
-                          </p>
-                        )}
-                        {m.meetingLink && (
-                          <a
-                            href={m.meetingLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] text-ink2 hover:underline flex items-center gap-0.5 mt-0.5"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Icon name="videocam" size={11} />
-                            Join meeting
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Right panel: Executive briefing or email detail */}
-      <div className="flex-1 overflow-auto">
-        {selectedEmail ? (
-          <EmailDetail
-            key={selectedEmail.id}
-            email={selectedEmail}
-            onBack={() => setSelectedEmail(null)}
-            onArchive={() => setSelectedEmail(null)}
-            onReply={() => setSelectedEmail(null)}
-            onMarkUnread={() => setSelectedEmail(null)}
-            onSnooze={() => setSelectedEmail(null)}
-            onRethink={(updated: any) => setSelectedEmail((prev: any) => prev ? { ...prev, email_processed: updated } : prev)}
-            showBack
-          />
-        ) : (
-          <div className="max-w-3xl mx-auto px-6 py-5">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <h1 className="text-[1.35rem] font-bold text-ink flex items-center gap-2 font-['Syne',system-ui,sans-serif] tracking-tight">
-                  <Icon name="summarize" size={22} className="text-wax" />
-                  Morning Briefing
-                </h1>
-                <p className="text-[11px] text-ink3 mt-0.5 font-['DM_Sans',ui-sans-serif,sans-serif]">
-                  {briefingAt
-                    ? `Generated ${new Date(briefingAt).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" })} at ${new Date(briefingAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })}`
-                    : new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => void requestBriefingRegeneration()}
-                  disabled={briefingRegenerating}
-                  className="flex h-8 w-8 items-center justify-center rounded-full border border-line text-ink3 transition-colors hover:border-wax hover:text-ink disabled:opacity-50"
-                  title={briefingRegenerating ? "Regenerating briefing..." : "Regenerate briefing"}
-                  aria-label="Regenerate briefing"
-                >
-                  <Icon name={briefingRegenerating ? "progress_activity" : "refresh"} size={16} className={`${briefingRegenerating ? "animate-spin" : ""}`} />
-                </button>
-                {/* Subtle scope selector */}
-                <div className="relative">
-                  <button
-                    onClick={() => setScopeDropdownOpen((v) => !v)}
-                    className="flex items-center gap-1 rounded-full border border-line px-2.5 py-1 text-[11px] font-medium text-ink3 transition-colors hover:border-wax/50 hover:text-ink"
-                    title="Briefing scope"
-                  >
-                    {BRIEFING_SCOPE_OPTIONS.find((o) => o.id === activeScope)?.label ?? "Today"}
-                    <Icon name="expand_more" size={13} />
-                  </button>
-                  {scopeDropdownOpen && (
-                    <>
-                      <div className="fixed inset-0 z-10" onClick={() => setScopeDropdownOpen(false)} />
-                      <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-lg border border-line bg-raised shadow-lg overflow-hidden">
-                        {BRIEFING_SCOPE_OPTIONS.map((opt) => (
-                          <button
-                            key={opt.id}
-                            onClick={() => void saveScope(opt.id)}
-                            className={`w-full text-left px-3 py-2 flex flex-col transition-colors hover:bg-field ${activeScope === opt.id ? "text-wax" : "text-ink"}`}
-                          >
-                            <span className="text-[12px] font-medium">{opt.label}</span>
-                            <span className="text-[10px] text-ink3">{opt.desc}</span>
-                          </button>
-                        ))}
-                        <div className="border-t border-line px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const next = !resolvedSortToEnd;
-                              setResolvedSortToEnd(next);
-                              try { localStorage.setItem(`tabellar_resolved_sort_end_${user.id}`, String(next)); } catch { /* ignore */ }
-                            }}
-                            className="w-full flex items-center justify-between gap-2 text-left"
-                          >
-                            <span className="text-[11px] text-ink">Resolved emails sort to end</span>
-                            <span className={`relative inline-flex h-4 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors ${resolvedSortToEnd ? "bg-ok" : "bg-line"}`}>
-                              <span className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow-sm transform transition-transform ${resolvedSortToEnd ? "translate-x-3" : "translate-x-0"}`} />
-                            </span>
-                          </button>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-                <SolveAgentButton disabled={!hasContent || briefingRegenerating} />
-              </div>
-            </div>
-
-            {loading ? (
-              <div className="space-y-4">
-                <div className="h-16 rounded-xl bg-field animate-pulse" />
-                <div className="flex gap-3">
-                  {[1, 2, 3, 4, 5].map((i) => <div key={i} className="h-14 flex-1 rounded-xl bg-field animate-pulse" />)}
-                </div>
-                {[1, 2, 3].map((i) => <div key={i} className="h-24 rounded-xl bg-field animate-pulse" />)}
-              </div>
-            ) : !hasContent ? (
-              <div className="text-center py-16 text-ink3">
-                {briefingRegenerating ? (
-                  <>
-                    <Icon name="progress_activity" size={48} className="mb-3 animate-spin text-wax" />
-                    <p className="text-sm font-medium text-ink">Generating your briefing...</p>
-                    <p className="text-xs mt-1 opacity-70">This takes a moment. You can keep using the app.</p>
-                  </>
-                ) : (
-                  <>
-                    <Icon name="mark_email_read" size={48} className="mb-3" />
-                    <p className="text-sm font-medium">No briefing available</p>
-                    <p className="text-xs mt-1 opacity-70 mb-4">Generate a briefing from your current inbox.</p>
-                    <button
-                      onClick={() => void requestBriefingRegeneration()}
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-wax text-on-wax text-sm font-medium hover:opacity-90"
-                    >
-                      <Icon name="auto_awesome" size={16} />
-                      Generate Briefing
-                    </button>
-                  </>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-5">
-                {/* Compact inline meta chips  -  muted, calm, dashboard aesthetic */}
-                {displayStats && (
-                  <div className="flex flex-wrap items-center gap-1.5 rounded-full border border-line bg-field/60 px-2 py-1.5">
-                    <button
-                      onClick={() => setActiveFilter(null)}
-                      title="Show all"
-                      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors ${
-                        activeFilter === null
-                          ? "bg-ink text-canvas"
-                          : "text-ink3 hover:bg-raised hover:text-ink"
-                      }`}
-                    >
-                      <Icon name="inbox" size={13} />
-                      <span>All</span>
-                      <span className="tabular-nums opacity-70">{displayStats.total}</span>
-                    </button>
-                    <span className="h-4 w-px bg-line" aria-hidden />
-                    {([
-                      { key: "crucial", label: "Crucial", dot: "bg-danger", icon: "priority_high", count: displayStats.crucial },
-                      { key: "replyNeeded", label: "Reply", dot: "bg-wax", icon: "reply", count: displayStats.replyNeeded },
-                      { key: "deadlines", label: "Deadlines", dot: "bg-wax", icon: "event_upcoming", count: displayStats.deadlines },
-                      { key: "nonEssential", label: "Noise", dot: "bg-ink4", icon: "filter_alt", count: displayStats.nonEssential },
-                    ] as const).map((chip) => {
-                      const isActive = activeFilter === chip.key;
-                      return (
-                        <button
-                          key={chip.key}
-                          onClick={() => setActiveFilter(isActive ? null : chip.key)}
-                          className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors ${
-                            isActive
-                              ? "bg-ink text-canvas"
-                              : "text-ink3 hover:bg-raised hover:text-ink"
-                          }`}
-                        >
-                          <span className={`h-1.5 w-1.5 rounded-full ${chip.dot}`} aria-hidden />
-                          <span>{chip.label}</span>
-                          <span className="tabular-nums opacity-70">{chip.count}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                {/* Executive summary */}
-                {briefing && executiveSummaryIsUsable(briefing.executiveSummary) && (
-                  <div className="px-4 py-3.5 rounded-xl border border-line bg-raised/90">
-                    <div className="flex items-center justify-between gap-3 mb-2">
-                      <span className="text-[10px] font-semibold tracking-[0.12em] text-ink3 uppercase font-['Syne',system-ui,sans-serif]">Executive summary</span>
-                    </div>
-                    <p className="text-[13px] leading-relaxed whitespace-pre-wrap text-ink font-['DM_Sans',ui-sans-serif,sans-serif]">
-                      {briefingExecutiveSummaryDisplay(briefing.executiveSummary)}
-                    </p>
-                  </div>
-                )}
-                {summaryFailedButHasCards && (
-                  <div
-                    className="rounded-xl border border-warn/30 bg-warn/[0.06] px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between"
-                    role="status"
-                  >
-                    <p className="text-[13px] text-ink leading-snug font-['DM_Sans',ui-sans-serif,sans-serif]">
-                      Overview text did not generate for this inbox load, but the sections below are filled from your mail. Regenerate to try the overview again.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void requestBriefingRegeneration()}
-                      disabled={briefingRegenerating}
-                      className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-md border border-line bg-raised px-3 py-1.5 text-[12px] font-medium hover:border-wax/50 disabled:opacity-50 cursor-pointer transition-colors"
-                    >
-                      <Icon name={briefingRegenerating ? "progress_activity" : "refresh"} size={15} className={`${briefingRegenerating ? "animate-spin" : ""}`} />
-                      {briefingRegenerating ? "Working…" : "Regenerate"}
-                    </button>
-                  </div>
-                )}
-
-                {/* Email list: filtered or grouped */}
-                {activeFilter ? (
-                  <div>
-                    {/* replyNeeded filter: show as two subsections */}
-                    {activeFilter === "replyNeeded" ? (
-                      <div className="space-y-6">
-                        {displayReplyNeededIncoming.length > 0 && (
-                          <div>
-                            <SectionHeader icon="reply" label="Reply Needed" color="text-ink2" />
-                            <div className="space-y-2.5">
-                              {groupByTopic(displayReplyNeededIncoming).map((group, i) => (
-                                <GroupedEmailCard
-                                  key={group[0].email_id ?? i}
-                                  group={group}
-                                  accent="reply"
-                                  resolvedIds={resolvedIds}
-                                  onClickEmail={(e) => e.email_id && openEmailById(e.email_id)}
-                                  onDismiss={(e) => e.email_id && dismissCard(e.email_id)}
-                                />
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {displayNoReplyYet.length > 0 && (
-                          <div>
-                            <SectionHeader icon="mark_email_unread" label="No Reply Yet" color="text-warn" />
-                            <div className="space-y-2.5">
-                              {displayNoReplyYet.map((email, i) => (
-                                <EmailCard
-                                  key={email.email_id ?? i}
-                                  email={email}
-                                  accent="reply"
-                                  isResolved={email.email_id ? resolvedIds.has(email.email_id) : false}
-                                  onClick={email.email_id ? () => openEmailById(email.email_id!) : undefined}
-                                  onDismiss={email.email_id ? () => dismissCard(email.email_id!) : undefined}
-                                />
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                        {displayReplyNeededIncoming.length === 0 && displayNoReplyYet.length === 0 && (
-                          <p className="text-sm text-center py-8 text-ink3">No emails in this category.</p>
-                        )}
-                      </div>
-                    ) : (
-                      <>
-                        <SectionHeader
-                          icon={FILTER_CONFIG[activeFilter].icon}
-                          label={FILTER_CONFIG[activeFilter].label}
-                          color={FILTER_CONFIG[activeFilter].color}
-                        />
-                        {filteredEmails.length === 0 ? (
-                          <div className="text-center py-8 text-ink3">
-                            {activeFilter === "nonEssential" && (displayStats?.nonEssential ?? 0) > 0 ? (
-                              <>
-                                <Icon name="filter_alt" size={32} className="mb-2" />
-                                <p className="text-sm font-medium">{displayStats!.nonEssential} emails filtered</p>
-                                <p className="text-xs mt-1 opacity-70">Regenerate your briefing to see individual non-essential emails.</p>
-                                <button
-                                  onClick={() => void requestBriefingRegeneration()}
-                                  disabled={briefingRegenerating}
-                                  className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-line text-xs hover:border-wax transition-colors disabled:opacity-50"
-                                >
-                                  <Icon name={briefingRegenerating ? "progress_activity" : "refresh"} size={13} className={`${briefingRegenerating ? "animate-spin" : ""}`} />
-                                  {briefingRegenerating ? "Generating..." : "Regenerate"}
-                                </button>
-                              </>
-                            ) : (
-                              <p className="text-sm">No emails in this category.</p>
-                            )}
-                          </div>
-                        ) : (
-                          <div className="space-y-1.5">
-                            {filteredEmails.map((email, i) => (
-                              <EmailCard
-                                key={email.email_id ?? i}
-                                email={email}
-                                hideUrgency={activeFilter === "nonEssential"}
-                                accent={
-                                  activeFilter === "deadlines"
-                                    ? "deadline"
-                                    : activeFilter === "nonEssential"
-                                      ? "noise"
-                                      : "crucial"
-                                }
-                                isResolved={email.email_id ? resolvedIds.has(email.email_id) : false}
-                                onClick={email.email_id ? () => openEmailById(email.email_id!) : undefined}
-                                onDismiss={email.email_id ? () => dismissCard(email.email_id!) : undefined}
-                              />
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  // No filter: show all groups (reply-first, then crucial)
-                  <div className="space-y-6">
-                    {/* Reply Needed: incoming emails that need a response */}
-                    {displayReplyNeededIncoming.length > 0 && (
-                      <div>
-                        <SectionHeader icon="reply" label="Reply Needed" color="text-ink2" />
-                        <div className="space-y-2.5">
-                          {groupByTopic(displayReplyNeededIncoming).map((group, i) => (
-                            <GroupedEmailCard
-                              key={group[0].email_id ?? i}
-                              group={group}
-                              accent="reply"
-                              resolvedIds={resolvedIds}
-                              onClickEmail={(e) => e.email_id && openEmailById(e.email_id)}
-                              onDismiss={(e) => e.email_id && dismissCard(e.email_id)}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* No Reply Yet: sent emails awaiting response */}
-                    {displayNoReplyYet.length > 0 && (
-                      <div>
-                        <SectionHeader icon="mark_email_unread" label="No Reply Yet" color="text-warn" />
-                        <div className="space-y-2.5">
-                          {displayNoReplyYet.map((email, i) => (
-                            <EmailCard
-                              key={email.email_id ?? i}
-                              email={email}
-                              accent="reply"
-                              isResolved={email.email_id ? resolvedIds.has(email.email_id) : false}
-                              onClick={email.email_id ? () => openEmailById(email.email_id!) : undefined}
-                              onDismiss={email.email_id ? () => dismissCard(email.email_id!) : undefined}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Crucial: critical/high shown first, medium collapsed under "Also important" */}
-                    {displayCrucial.length > 0 && (
-                      <div>
-                        <SectionHeader icon="priority_high" label="Crucial" color="text-danger" />
-                        {crucialsHigh.length > 0 && (
-                          <div className="space-y-2.5">
-                            {groupByTopic(crucialsHigh).map((group, i) => (
-                              <GroupedEmailCard
-                                key={group[0].email_id ?? i}
-                                group={group}
-                                accent="crucial"
-                                resolvedIds={resolvedIds}
-                                onClickEmail={(e) => e.email_id && openEmailById(e.email_id)}
-                                onDismiss={(e) => e.email_id && dismissCard(e.email_id)}
-                              />
-                            ))}
-                          </div>
-                        )}
-                        {crucialsImportant.length > 0 && (
-                          <div className={crucialsHigh.length > 0 ? "mt-3" : ""}>
-                            <button
-                              type="button"
-                              onClick={() => setImportantExpanded((v) => !v)}
-                              className="flex items-center gap-1.5 mb-2 text-[11px] text-ink3 hover:text-ink transition-colors group cursor-pointer"
-                            >
-                              <Icon name={importantExpanded ? "expand_less" : "expand_more"} size={13} className="text-ink3 group-hover:text-ink transition-colors" />
-                              Also important ({crucialsImportant.length})
-                            </button>
-                            {importantExpanded && (
-                              <div className="space-y-2.5">
-                                {groupByTopic(crucialsImportant).map((group, i) => (
-                                  <GroupedEmailCard
-                                    key={group[0].email_id ?? i}
-                                    group={group}
-                                    accent="crucial"
-                                    resolvedIds={resolvedIds}
-                                    onClickEmail={(e) => e.email_id && openEmailById(e.email_id)}
-                                    onDismiss={(e) => e.email_id && dismissCard(e.email_id)}
-                                  />
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {displayDeadlines.length > 0 && (
-                      <div>
-                        <SectionHeader icon="event_upcoming" label="Deadlines" color="text-ink2" />
-                        <div className="space-y-2.5">
-                          {groupByTopic(displayDeadlines).map((group, i) => (
-                            <GroupedEmailCard
-                              key={group[0].email_id ?? i}
-                              group={group}
-                              accent="deadline"
-                              resolvedIds={resolvedIds}
-                              onClickEmail={(e) => e.email_id && openEmailById(e.email_id)}
-                              onDismiss={(e) => e.email_id && dismissCard(e.email_id)}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {(displayStats?.nonEssential ?? 0) > 0 && displayNonEssential.length === 0 && activeFilter !== "nonEssential" && (
-                      <button
-                        onClick={() => setActiveFilter("nonEssential")}
-                        className="w-full text-[11px] text-ink3 text-center py-2 hover:text-ink transition-colors"
-                      >
-                        <Icon name="filter_alt" size={12} className="align-middle mr-1" />
-                        {displayStats!.nonEssential} non-essential emails filtered out -- click to view
-                      </button>
-                    )}
-
-                    {displayNonEssential.length > 0 && (
-                      <div>
-                        <button
-                          onClick={() => setNonEssentialExpanded((v) => !v)}
-                          className="flex items-center gap-2 mb-3 mt-1 w-full group"
-                        >
-                          <Icon name="filter_alt" size={16} className="text-ink3" />
-                          <h2 className="text-xs font-bold tracking-widest text-ink3 uppercase flex-1 text-left">Non-essential</h2>
-                          <Icon name={nonEssentialExpanded ? "expand_less" : "expand_more"} size={16} className="text-ink3 group-hover:text-ink transition-colors" />
-                        </button>
-                        {nonEssentialExpanded && (
-                          <div className="space-y-1">
-                            {displayNonEssential.map((email, i) => (
-                              <EmailCard
-                                key={email.email_id ?? i}
-                                email={email}
-                                hideUrgency
-                                isResolved={email.email_id ? resolvedIds.has(email.email_id) : false}
-                                onClick={email.email_id ? () => openEmailById(email.email_id!) : undefined}
-                                onDismiss={email.email_id ? () => dismissCard(email.email_id!) : undefined}
-                              />
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Which model wrote it */}
-                {writer && (
-                  <p className="text-[11px] text-ink3 flex items-center gap-1 pb-2">
-                    <Icon name={writer.format === "ollama" ? "laptop_mac" : "cloud"} size={12} />
-                    Written by {writer.model}
-                    {writer.format === "ollama" ? " on this Mac" : " in the cloud"}
-                  </p>
-                )}
-              </div>
-            )}
+    <>
+      <ViewBar
+        title="Briefing"
+        search={false}
+        right={
+          <>
+            <Menu label="Covers" value={activeScope} onChange={(scope) => void saveScope(scope)} options={BRIEFING_SCOPE_OPTIONS} />
+            <button
+              className="iconbtn"
+              title={briefingRegenerating ? "Writing a new briefing" : "Write a new briefing"}
+              aria-label="Write a new briefing"
+              disabled={briefingRegenerating || noModel}
+              onClick={() => void requestBriefingRegeneration()}
+            >
+              <Icon name="refresh" size={16} />
+            </button>
+            <SolveAgentButton disabled={!hasContent || briefingRegenerating} />
+          </>
+        }
+      >
+        <span className="hidden whitespace-nowrap text-xs text-ink3 xl:block">{written}</span>
+        {hasContent && (
+          <div className="hidden lg:block">
+            <Seg
+              value={filter}
+              onChange={setFilter}
+              options={[
+                { id: "all", label: "All" },
+                { id: "replyNeeded", label: "Reply needed", count: displayReplyNeeded.length, need: displayReplyNeededIncoming.length > 0 },
+                { id: "deadlines", label: "Deadlines", count: displayDeadlines.length },
+                { id: "crucial", label: "Crucial", count: displayCrucial.length },
+                { id: "nonEssential", label: "Non-essential", count: nonEssentialTotal },
+              ]}
+            />
           </div>
         )}
+      </ViewBar>
+      <div className="flex min-h-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-y-auto">
+          <div className="max-w-[780px] pb-10">
+            {noModel ? (
+              <p className="px-5 pt-4 leading-normal text-danger" role="alert">
+                No model is set up, so Tabellar cannot write a briefing. Choose one in Settings, under AI.{" "}
+                <button className="link" onClick={() => setView("settings")}>
+                  Open Settings
+                </button>
+              </p>
+            ) : failed && !briefingRegenerating ? (
+              <p className="px-5 pt-4 leading-normal text-danger" role="alert">
+                The briefing could not be written. Check that the model in Settings, under AI, is running, then try again.{" "}
+                <button className="link" onClick={() => void requestBriefingRegeneration()}>
+                  Try again
+                </button>{" "}
+                <button className="link" onClick={() => setView("settings")}>
+                  Open Settings
+                </button>
+              </p>
+            ) : briefingRegenerating ? (
+              <p className="px-5 pt-4 text-xs text-ink3" role="status">
+                {hasContent ? "Writing a new briefing. This one stays until it is ready." : "Writing your briefing. It can take a minute, and you can keep using Tabellar meanwhile."}
+              </p>
+            ) : null}
+
+            {loading || (!hasContent && briefingRegenerating) ? (
+              <Skeleton />
+            ) : !hasContent ? (
+              <div className="empty">
+                <Icon name="description" size={22} className="text-ink3" />
+                <h3>No briefing yet</h3>
+                <p>A briefing sums up the mail in the range you choose: what needs a reply, what has a deadline, what matters, and what you can skip.</p>
+                <button className="btn btn-pri mt-4" disabled={noModel} onClick={() => void requestBriefingRegeneration()}>
+                  Write a briefing
+                </button>
+              </div>
+            ) : (
+              <>
+                {briefing && executiveSummaryIsUsable(briefing.executiveSummary) ? (
+                  <p className="max-w-[calc(68ch+40px)] whitespace-pre-wrap px-5 pt-5 text-sm leading-[1.6] tracking-[-0.006em] text-ink">{briefingExecutiveSummaryDisplay(briefing.executiveSummary)}</p>
+                ) : summaryFailedButHasCards ? (
+                  <p className="px-5 pt-5 leading-normal text-ink2" role="status">
+                    The overview could not be written this time. The groups below are complete.{" "}
+                    <button className="link" disabled={briefingRegenerating} onClick={() => void requestBriefingRegeneration()}>
+                      Try the overview again
+                    </button>
+                  </p>
+                ) : null}
+
+                {show("replyNeeded") && displayReplyNeeded.length > 0 && (
+                  <Section title="Reply needed" count={displayReplyNeeded.length} need={displayReplyNeededIncoming.length > 0}>
+                    {threads(displayReplyNeededIncoming, true)}
+                    {resolvedLast(displayNoReplyYet).map((e) => row(e))}
+                  </Section>
+                )}
+
+                {show("deadlines") && displayDeadlines.length > 0 && (
+                  <Section title="Deadlines" count={displayDeadlines.length}>
+                    {threads(displayDeadlines)}
+                  </Section>
+                )}
+
+                {show("crucial") && displayCrucial.length > 0 && (
+                  <Section title="Crucial" count={displayCrucial.length}>
+                    {threads(crucialsHigh)}
+                    {(importantExpanded || filter === "crucial") && threads(crucialsImportant)}
+                    {crucialsImportant.length > 0 && filter !== "crucial" && (
+                      <button type="button" className="link mb-1 ml-10 mt-1.5 block" aria-expanded={importantExpanded} onClick={() => setImportantExpanded((v) => !v)}>
+                        {importantExpanded ? "Show only the most urgent" : `${crucialsImportant.length} also important`}
+                      </button>
+                    )}
+                  </Section>
+                )}
+
+                {show("nonEssential") && nonEssentialTotal > 0 && (
+                  <Section title="Non-essential" count={nonEssentialTotal}>
+                    {displayNonEssential.length === 0 ? (
+                      <p className="px-5 py-1.5 text-ink3">You dismissed all of these.</p>
+                    ) : (
+                      <>
+                        {filter !== "nonEssential" && (
+                          <button type="button" className="row w-[calc(100%-16px)] text-left" aria-expanded={nonEssentialExpanded} onClick={() => setNonEssentialExpanded((v) => !v)}>
+                            <span className="grid w-[26px] flex-none place-items-center">
+                              <Icon name={nonEssentialExpanded ? "expand_less" : "expand_more"} size={14} className="text-ink3" />
+                            </span>
+                            <span className="truncate text-ink3">
+                              {nonEssentialExpanded
+                                ? "Hide these"
+                                : `Nothing needed from you: ${quietSenders.slice(0, 3).join(", ")}${quietSenders.length > 3 ? ` and ${quietSenders.length - 3} more` : ""}`}
+                            </span>
+                          </button>
+                        )}
+                        {(nonEssentialExpanded || filter === "nonEssential") &&
+                          resolvedLast(displayNonEssential).map((e, i) => (
+                            <div
+                              key={e.email_id ?? i}
+                              className="row group !grid grid-cols-[26px_minmax(0,172px)_minmax(0,1fr)_auto]"
+                              role={e.email_id ? "button" : undefined}
+                              tabIndex={e.email_id ? 0 : undefined}
+                              onClick={e.email_id ? () => openEmailById(e.email_id!) : undefined}
+                              onKeyDown={e.email_id ? (ev) => ev.key === "Enter" && ev.target === ev.currentTarget && openEmailById(e.email_id!) : undefined}
+                            >
+                              <span className="grid place-items-center">
+                                <Glyph state={e.email_id && resolvedIds.has(e.email_id) ? "done" : "filed"} />
+                              </span>
+                              <span className="truncate pr-3">{senderOf(e) || "Unknown sender"}</span>
+                              <span className="truncate text-ink3">{e.subject || "(no subject)"}</span>
+                              {e.email_id && (
+                                <button className="link invisible pl-3 group-focus-within:visible group-hover:visible" onClick={(ev) => (ev.stopPropagation(), dismissCard(e.email_id!))}>
+                                  Dismiss
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                      </>
+                    )}
+                  </Section>
+                )}
+
+                {filter !== "all" && shownCount === 0 && (
+                  <Empty icon="description" title="Nothing in this group">
+                    This briefing found nothing here.{" "}
+                    <button className="link" onClick={() => setFilter("all")}>
+                      Show the whole briefing
+                    </button>
+                  </Empty>
+                )}
+              </>
+            )}
+
+            <div className="px-5 pt-8 lg:hidden">
+              <Schedule items={todayScheduleItems} />
+            </div>
+          </div>
+        </div>
+        <aside className="hidden w-[288px] flex-none overflow-y-auto border-l border-line px-5 pb-6 pt-5 lg:block" aria-label="Today's calendar">
+          <Schedule items={todayScheduleItems} />
+        </aside>
       </div>
-    </div>
+      <KeyHints left={writer ? `Written by ${writer.model}${writer.format === "ollama" ? " on this Mac" : " in the cloud"}` : ""} keys={[]} />
+    </>
   );
 }

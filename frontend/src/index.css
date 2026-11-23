@@ -7,7 +7,7 @@
   font-family: "Ysabeau Office";
   src: url("./assets/fonts/ysabeau-office.woff2") format("woff2");
   font-weight: 100 900;
-  font-display: block;
+  font-display: swap;
 }
 
 /* Tokens. Warm neutral surfaces, three steps of ink, and one sealing-wax red
@@ -195,7 +195,11 @@
 
   /* The bar at the top of every view: title, filters, search. */
   .bar {
-    @apply flex h-[52px] flex-none items-center gap-3.5 border-b border-line pl-5 pr-3.5;
+    @apply flex h-[52px] min-w-0 flex-none items-center gap-2 border-b border-line pl-5 pr-3.5 md:gap-3.5;
+  }
+  .bar > .seg {
+    @apply min-w-0 overflow-x-auto;
+    scrollbar-width: none;
   }
   .bar-title {
     @apply text-[15px] font-[650] tracking-[-0.01em] text-ink;
@@ -204,7 +208,7 @@
     @apply flex gap-0.5;
   }
   .seg > button {
-    @apply flex h-[26px] items-center gap-1.5 rounded-md px-[9px] text-ink2 transition-colors duration-150;
+    @apply flex h-[26px] flex-none items-center gap-1.5 whitespace-nowrap rounded-md px-[9px] text-ink2 transition-colors duration-150;
   }
   .seg > button:hover {
     @apply bg-hover;
@@ -221,7 +225,7 @@
     @apply font-semibold text-wax-ink;
   }
   .searchbox {
-    @apply flex h-7 w-[248px] items-center gap-[7px] rounded-[7px] bg-field pl-2 pr-1.5 text-ink3;
+    @apply flex h-7 w-[248px] min-w-[36px] shrink items-center gap-[7px] rounded-[7px] bg-field pl-2 pr-1.5 text-ink3;
   }
   .searchbox input {
     @apply min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none;
@@ -290,7 +294,7 @@
     @apply flex h-[30px] flex-none items-center gap-4 border-t border-line pl-5 pr-3.5 text-xs text-ink3;
   }
   .foot .k {
-    @apply flex items-center gap-[5px];
+    @apply hidden items-center gap-[5px] md:flex;
   }
 
   /* Form fields. */
@@ -354,15 +358,14 @@
 }
 
 /* Agent workspace: thinking dots and step fade. */
-@keyframes solveDotBounce {
+/* Working dots: each fades in turn. */
+@keyframes solveDotFade {
   0%,
   80%,
   100% {
-    transform: translateY(0);
-    opacity: 0.3;
+    opacity: 0.25;
   }
   40% {
-    transform: translateY(-3px);
     opacity: 1;
   }
 }
@@ -383,7 +386,7 @@
   border-radius: 999px;
   background: currentColor;
   margin: 0 2px;
-  animation: solveDotBounce 1.2s infinite ease-in-out;
+  animation: solveDotFade 1.2s infinite ease-in-out;
 }
 .solve-dot-wave span:nth-child(2) {
   animation-delay: 0.15s;
