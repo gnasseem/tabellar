@@ -369,7 +369,7 @@ function ModelStep({ state, refresh, onBack, onNext, onSkip }: { state: SetupSta
   return (
     <>
       <Heading title="Choose the model Tabellar uses">
-        A language model sorts your mail, writes the daily briefing and drafts replies. You can change it later in Settings, under Models, or give reading mail a smaller, faster model of its own.
+        A language model sorts your mail and drafts replies. You can change it later in Settings, under Models, or give reading mail a smaller, faster model of its own.
       </Heading>
       <ModelSetup state={state} refresh={refresh} onSaved={onNext} />
       <Actions onBack={onBack}>
@@ -401,7 +401,7 @@ function GmailStep({ state, goTo }: { state: SetupState; goTo: (i: number) => vo
     own
       ? "Google will say it has not verified the app. That is expected, because the client is your own. Choose Advanced, then Go to Tabellar."
       : "Google will say it has not verified the app, because Tabellar has not been through Google's review yet. Choose Advanced, then Go to Tabellar.",
-    "Allow access to Gmail and Calendar. Tabellar then fetches your recent mail, sorts it and writes your first briefing.",
+    "Allow access to Gmail and Calendar. Tabellar then fetches your recent mail and sorts it.",
   ];
   return (
     <>

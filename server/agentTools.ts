@@ -29,7 +29,7 @@ export const AGENT_TOOLS = [
     function: {
       name: "get_briefing_context",
       description:
-        "Get the current briefing context (all emails the user is trying to clear). Returns a compact list of each card with id, sender, subject, summary, category (crucial/replyNeeded/deadlines/nonEssential), urgency, deadline. Call this FIRST before anything else so you know what you are working with.",
+        "Get the current inbox list (all emails the user is trying to clear). Returns a compact list of each card with id, sender, subject, summary, category (crucial/replyNeeded/deadlines/nonEssential), urgency, deadline. Call this FIRST before anything else so you know what you are working with.",
       parameters: { type: "object", properties: {}, required: [] },
     },
   },
@@ -38,7 +38,7 @@ export const AGENT_TOOLS = [
     function: {
       name: "get_thread",
       description:
-        "Read the full email body and thread context for a briefing email. Use this before proposing a reply or meeting so you can write in context. Returns subject, from, date, body text, and any prior thread messages.",
+        "Read the full email body and thread context for an email in the list. Use this before proposing a reply or meeting so you can write in context. Returns subject, from, date, body text, and any prior thread messages.",
       parameters: {
         type: "object",
         properties: {
@@ -53,7 +53,7 @@ export const AGENT_TOOLS = [
     function: {
       name: "search_emails",
       description:
-        "Search the user's wider inbox history beyond the current briefing for related emails. Useful to check past context with a sender or topic.",
+        "Search the user's wider inbox history beyond the current list for related emails. Useful to check past context with a sender or topic.",
       parameters: {
         type: "object",
         properties: {
@@ -197,7 +197,7 @@ export const AGENT_TOOLS = [
                 related_email_id: {
                   type: "string",
                   description:
-                    "Optional: the briefing email this question is about, for UI linking.",
+                    "Optional: the email this question is about, for UI linking.",
                 },
               },
               required: ["eyebrow", "question", "brief", "options"],
@@ -254,7 +254,7 @@ export const AGENT_TOOLS = [
           linked_email_id: {
             type: "string",
             description:
-              "The briefing email this action is based on, if applicable.",
+              "The email this action is based on, if applicable.",
           },
           // reply payload
           to: {
@@ -444,7 +444,7 @@ export async function runReadTool(
       ].filter(Boolean);
       return sections.length
         ? sections.join("\n\n")
-        : "The briefing is empty; there is nothing to solve.";
+        : "The inbox list is empty; there is nothing to do.";
     }
 
     case "get_thread": {

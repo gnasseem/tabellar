@@ -133,7 +133,7 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
   const seenTodoText = new Set<string>();
 
   for (const r of log) {
-    // Labels are plain Gmail labels, shown on the row; undo them in Activity.
+    // Labels are plain Gmail labels, shown on the row; undo them in History.
     if (r.kind === "label") continue;
     const d = r.detail || {};
     const base = { key: r.id, at: r.created_at };
@@ -304,7 +304,7 @@ export function setMailState(ids: string[], state: { archived?: boolean; read?: 
 }
 
 // Archive or mark unread from a reader opened outside the Inbox (Todos,
-// Meetings, Briefing). Returns the undo.
+// Meetings, Brief). Returns the undo.
 export async function setEmailFlag(emailId: string, flag: "archive" | "unread"): Promise<() => Promise<void>> {
   const key = flag === "archive" ? "archived" : "read";
   const on = flag === "archive";

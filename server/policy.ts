@@ -6,7 +6,7 @@
 // Levels:
 //   observe  syncs, sorts and notifies, but changes nothing and proposes nothing
 //   suggest  labels happen on their own (and can be undone); everything else
-//            waits in Activity for approval
+//            waits for approval on its page
 //   assist   labels, drafts, todos and meeting proposals happen on their own
 //   autopilot  as Assist, and it may also send a reply on its own, but only
 //            inside the thread and only to the person who wrote (checkAutoSend),

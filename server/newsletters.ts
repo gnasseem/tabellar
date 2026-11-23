@@ -26,6 +26,7 @@ type Sender = {
   unread: number;
   last_at: string;
   can_unsubscribe: boolean;
+  reason: string;
   status: "kept" | "unsubscribed" | null;
   method: string | null;
 };
@@ -56,6 +57,13 @@ export async function listNewsletters(userId: string): Promise<Sender[]> {
   });
   if (!listed.length) return [];
 
+  // Why a sender is listed, in the words of the header that made it bulk.
+  const reason = (s: Stat) => {
+    const opened = s.opened ? `${s.opened.toLocaleString()} opened` : "none opened";
+    const why = s.category === "promotions" ? "Gmail Promotions" : s.list_id ? "Mailing list" : "Sent in bulk";
+    return `${why}, ${s.received.toLocaleString()} emails, ${opened}`;
+  };
+
   // What is still in the inbox here, which is what Archive moves.
   const inbox = new Map<string, { inbox: number; unread: number }>();
   const addresses = listed.map((s) => s.address);
@@ -80,6 +88,7 @@ export async function listNewsletters(userId: string): Promise<Sender[]> {
         unread: inbox.get(s.address)?.unread ?? 0,
         last_at: s.last_at,
         can_unsubscribe: s.list_unsubscribe,
+        reason: reason(s),
         status: (m?.status as Sender["status"]) ?? null,
         method: (m?.method as string) ?? null,
       };
@@ -123,7 +132,7 @@ export async function archiveSender(userId: string, sender: string): Promise<{ a
     { ...settings, source: "user" },
   );
   if (result === "refused") throw Object.assign(new Error("Tabellar is paused"), { status: 409 });
-  if (result === "failed") throw new Error("Gmail did not archive them; see Activity");
+  if (result === "failed") throw new Error("Gmail did not archive them; see History in Settings");
   return { archived: mail.length, result };
 }
 

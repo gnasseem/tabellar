@@ -10,13 +10,14 @@ const RepliesView = lazy(() => import("./views/RepliesView"));
 const ScheduledView = lazy(() => import("./views/ScheduledView"));
 const TodosView = lazy(() => import("./views/TodosView"));
 const MeetingsView = lazy(() => import("./views/MeetingsView"));
-const CategoriesView = lazy(() => import("./views/CategoriesView"));
+const LabelsView = lazy(() => import("./views/LabelsView"));
 const BriefingView = lazy(() => import("./views/BriefingView"));
 const SettingsView = lazy(() => import("./views/SettingsView"));
 const RelationshipsView = lazy(() => import("./views/RelationshipsView"));
 const FollowupsView = lazy(() => import("./views/FollowupsView"));
-const ActivityView = lazy(() => import("./views/ActivityView"));
+const HistoryView = lazy(() => import("./views/HistoryView"));
 const NewslettersView = lazy(() => import("./views/NewslettersView"));
+const AskView = lazy(() => import("./views/AskView"));
 
 const views: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
   inbox: InboxView,
@@ -26,13 +27,14 @@ const views: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
   scheduled: ScheduledView,
   todos: TodosView,
   meetings: MeetingsView,
-  categories: CategoriesView,
+  labels: LabelsView,
   briefing: BriefingView,
   settings: SettingsView,
   relationships: RelationshipsView,
   followups: FollowupsView,
-  activity: ActivityView,
+  history: HistoryView,
   newsletters: NewslettersView,
+  ask: AskView,
 };
 
 export default function EmailDashboard() {

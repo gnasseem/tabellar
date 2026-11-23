@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import Icon from "@/components/Icon";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import { normalizeAgentSessionError } from "@/lib/agentClient";
 import type { AgentAction, AgentAnswer, AgentBucket, AgentQuestion, AgentTurnRow } from "@/lib/agentTypes";
@@ -7,9 +7,10 @@ import { Glyph } from "../ui";
 import QuestionCard from "./QuestionCard";
 import AgentActionCard from "./AgentActionCard";
 
-// The cleanup plan: the steps Tabellar took to work it out, the questions it
-// needs answered, and the actions it proposes. Nothing is carried out until
-// the user ticks what to include and runs it.
+// A cleanup plan, inside the Ask conversation that started it: the steps
+// Tabellar took to work it out, the questions it needs answered, and the
+// actions it proposes. Nothing is carried out until the user ticks what to
+// include and runs it.
 
 type StepStatus = "done" | "running" | "queued";
 
@@ -27,7 +28,7 @@ interface ProgressStep {
 }
 
 const TOOL_LABEL: Record<string, string> = {
-  get_briefing_context: "Read the briefing",
+  get_briefing_context: "Read the inbox",
   get_thread: "Read a thread",
   search_emails: "Searched the inbox",
   past_replies_by_me: "Checked your past replies",
@@ -86,17 +87,8 @@ function shortSubject(s?: string, n = 32): string {
   return t.length > n ? t.slice(0, n - 1) + "…" : t;
 }
 
-interface BriefingLabel {
-  label: string;
-  bucket: AgentBucket;
-}
 
-interface AgentWorkspaceProps {
-  open: boolean;
-  onClose: () => void;
-}
-
-export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
+export default function AgentWorkspace() {
   const {
     agentSession,
     agentTurns,
@@ -107,7 +99,6 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
     solveAgentCancelInFlight,
     resetSolveAgent,
     addToast,
-    profile,
   } = useApp();
 
   const [localActions, setLocalActions] = useState<AgentAction[]>([]);
@@ -117,40 +108,32 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
   const [showThinking, setShowThinking] = useState(false);
   const lastTurnCountRef = useRef(0);
   const lastTurnTimeRef = useRef(Date.now());
-  const streamRef = useRef<HTMLDivElement>(null);
 
-  // Build a map from email_id to a human label + bucket from the cached
-  // briefing on the profile. Falls back to "this thread" when unknown.
-  const briefingIndex = useMemo(() => {
-    const map = new Map<string, BriefingLabel>();
-    const b = (profile?.last_briefing ?? {}) as Record<string, unknown>;
-    const addList = (arr: unknown, bucket: AgentBucket) => {
-      if (!Array.isArray(arr)) return;
-      for (const it of arr) {
-        const x = it as Record<string, unknown>;
-        const id = typeof x.email_id === "string" ? x.email_id : "";
-        if (!id) continue;
-        const sender =
-          typeof x.senderName === "string" && x.senderName.trim()
-            ? x.senderName.trim()
-            : typeof x.sender === "string"
-              ? shortAddress(x.sender as string)
-              : "";
-        const subj =
-          typeof x.subject === "string" ? shortSubject(x.subject, 28) : "";
-        const label =
-          sender && subj
-            ? `${sender}: ${subj}`
-            : sender || subj || "this thread";
-        map.set(id, { label, bucket });
-      }
-    };
-    addList(b.crucial, "replies");
-    addList(b.replyNeeded, "replies");
-    addList(b.deadlines, "todos");
-    addList(b.nonEssential, "noise");
-    return map;
-  }, [profile?.last_briefing]);
+  // "Sender: subject" for the threads the plan reads, looked up once each.
+  const [threadNames, setThreadNames] = useState<Map<string, string>>(new Map());
+  const threadIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const t of agentTurns ?? []) for (const tc of t.content.tool_calls ?? []) if (tc.function.name === "get_thread") ids.add(String(parseArgs(tc.function.arguments || "{}").email_id ?? ""));
+    ids.delete("");
+    return [...ids].sort().join(",");
+  }, [agentTurns]);
+  useEffect(() => {
+    const ids = threadIds ? threadIds.split(",").filter((id) => !threadNames.has(id)) : [];
+    if (!ids.length) return;
+    createClient()
+      .from("emails")
+      .select("id, sender, subject")
+      .in("id", ids)
+      .then(({ data }) => {
+        const next = new Map(threadNames);
+        for (const e of (data || []) as { id: string; sender: string | null; subject: string | null }[]) {
+          const who = (e.sender || "").replace(/<.*>/, "").replace(/"/g, "").trim();
+          next.set(e.id, [who, shortSubject(e.subject ?? "", 28)].filter(Boolean).join(": ") || "this thread");
+        }
+        setThreadNames(next);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadIds]);
 
   // Mirror agent session actions locally so user edits feel instant.
   useEffect(() => {
@@ -196,7 +179,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
         let detail = "";
         if (tc.function.name === "get_thread") {
           const id = String(args.email_id ?? "");
-          suffix = briefingIndex.get(id)?.label ?? "this thread";
+          suffix = threadNames.get(id) ?? "this thread";
         } else if (tc.function.name === "past_replies_by_me") {
           suffix = shortAddress(String(args.to ?? ""));
         } else if (tc.function.name === "search_emails") {
@@ -261,7 +244,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
     }
 
     return { steps: items, assistantStatusLine: lastStatus };
-  }, [agentTurns, briefingIndex, agentSession?.status]);
+  }, [agentTurns, threadNames, agentSession?.status]);
 
   const doneCount = steps.filter((s) => s.status === "done").length;
 
@@ -301,19 +284,6 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
     return () => clearInterval(id);
   }, [agentSession?.status, agentTurns?.length]);
 
-  // Autoscroll on new steps / turn count.
-  useLayoutEffect(() => {
-    if (!open) return;
-    const el = streamRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distanceFromBottom < 240) {
-      requestAnimationFrame(() => {
-        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-      });
-    }
-  }, [steps.length, agentTurns.length, open, agentSession?.status]);
-
   // Pending questions: prefer the batched array when available.
   const pendingQuestions: AgentQuestion[] = useMemo(() => {
     const arr = agentSession?.pending_questions;
@@ -331,7 +301,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
     setBatchAnswers({});
   }, [pendingQuestions.map((q) => q.id).join("|")]);
 
-  if (!open || !agentSession) return null;
+  if (!agentSession) return null;
 
   const status = agentSession.status;
 
@@ -340,11 +310,11 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
     : status === "planning"
       ? "Working out a plan"
       : status === "asking"
-        ? "Needs an answer from you"
+        ? "Has a question"
         : status === "ready" && localActions.length === 0
           ? "Nothing to do"
           : status === "ready"
-            ? "Ready for you to review"
+            ? "Ready to review"
             : status === "executing"
               ? "Running what you approved"
               : status === "done"
@@ -382,10 +352,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
     }
   };
 
-  const onClearSession = () => {
-    resetSolveAgent();
-    onClose();
-  };
+  const onClearSession = () => resetSolveAgent();
 
   const canCancel =
     status === "planning" ||
@@ -432,233 +399,215 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
   const reviewing = status === "ready" || status === "executing" || status === "done";
   const lane = (list: ProgressStep[]) => list.map((step) => <StepRow key={step.key} step={step} showReasoning={showReasoning} />);
 
+  // Inside the conversation column: rows keep their inset, so the block is
+  // pulled out by it and headings put it back, lining text up with the chat.
+  const pad = "px-3.5";
   return (
-    <div
-      className="fixed inset-0 z-50 flex justify-end bg-black/30"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="solve-panel-bg flex h-full w-full max-w-[720px] flex-col shadow-pop" role="dialog" aria-label="Cleanup plan">
-        <header className="bar">
-          <h2 className="bar-title">Cleanup plan</h2>
-          <span className={`flex min-w-0 items-center gap-1.5 text-xs ${status === "asking" && !solveAgentCancelInFlight ? "count-need" : status === "error" ? "text-danger" : "text-ink3"}`}>
-            <span className="truncate">{statusLabel}</span>
-            {status === "planning" && !solveAgentCancelInFlight && (
+    <section className="-mx-3.5 rounded-[9px]" aria-label="Cleanup plan">
+      <div className={`flex h-7 items-center gap-2 ${pad}`}>
+        <b className="font-medium text-ink">Cleanup plan</b>
+        <span className={`flex min-w-0 items-center gap-1.5 text-[12.5px] ${status === "asking" && !solveAgentCancelInFlight ? "font-semibold text-wax-ink" : status === "error" ? "text-danger" : "text-ink3"}`}>
+          <span className="truncate">{statusLabel}</span>
+          {status === "planning" && !solveAgentCancelInFlight && (
+            <span className="solve-dot-wave inline-flex" aria-hidden>
+              <span />
+              <span />
+              <span />
+            </span>
+          )}
+        </span>
+        <span className="flex-1" />
+        {showCancelControl && (
+          <button type="button" className="link" onClick={() => void cancelSolveAgent()} disabled={solveAgentCancelInFlight}>
+            {solveAgentCancelInFlight ? "Cancelling" : "Cancel plan"}
+          </button>
+        )}
+        {(status === "done" || status === "cancelled" || status === "error") && (
+          <button className="link" onClick={onClearSession}>
+            Clear
+          </button>
+        )}
+      </div>
+
+      {steps.length === 0 && status === "planning" && <p className={`${pad} pt-1 text-ink3`}>Reading the inbox</p>}
+
+      {steps.length > 0 && (
+        <div className="pt-2">
+          <div className={`flex items-baseline gap-3 ${pad} pb-1`}>
+            <h3 className="label">
+              Steps <span className="font-normal">{doneCount} of {steps.length}</span>
+            </h3>
+            <span className="flex-1" />
+            {anyReasoning && (
+              <button className="link" aria-expanded={showReasoning} onClick={() => setShowReasoning((v) => !v)}>
+                {showReasoning ? "Hide reasoning" : "Show reasoning"}
+              </button>
+            )}
+            {steps.length > 4 && (
+              <button className="link" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((v) => !v)}>
+                {showAdvanced ? "Show the latest only" : "Show every step"}
+              </button>
+            )}
+          </div>
+
+          {hasMultipleBuckets ? (
+            bucketKeys.map((bk) => {
+              const list = stepsByBucket[bk] ?? [];
+              const shown = showAdvanced ? list : list.filter((s) => s.tool !== "ask_user").slice(-4);
+              return (
+                <div key={bk} className="pb-2">
+                  <p className={`${pad} pb-0.5 pt-1.5 text-xs text-ink3`}>
+                    <b className="font-semibold text-ink2">{BUCKET_LABEL[bk as AgentBucket] ?? BUCKET_LABEL.single}</b> {list.filter((s) => s.status === "done").length} of {list.length}
+                  </p>
+                  <ol>{lane(shown)}</ol>
+                </div>
+              );
+            })
+          ) : (
+            <ol>{lane(showAdvanced ? visibleSteps : visibleSteps.slice(-6))}</ol>
+          )}
+
+          {assistantStatusLine && <p className={`${pad} pt-2 leading-normal text-ink2`}>{assistantStatusLine}</p>}
+
+          {showThinking && (
+            <p className={`flex items-center gap-1.5 ${pad} pt-2 text-xs text-ink3`} role="status">
+              Working on the next step
               <span className="solve-dot-wave inline-flex" aria-hidden>
                 <span />
                 <span />
                 <span />
               </span>
-            )}
-          </span>
-          <span className="flex-1" />
-          {showCancelControl && (
-            <button type="button" className="btn" onClick={() => void cancelSolveAgent()} disabled={solveAgentCancelInFlight}>
-              {solveAgentCancelInFlight ? "Cancelling" : "Cancel plan"}
-            </button>
-          )}
-          {(status === "done" || status === "cancelled" || status === "error") && (
-            <button className="btn" onClick={onClearSession}>
-              Clear
-            </button>
-          )}
-          <button className="iconbtn" onClick={onClose} aria-label="Close" title="Close. The plan keeps going in the background.">
-            <Icon name="close" size={16} />
-          </button>
-        </header>
-
-        <div ref={streamRef} className="min-h-0 flex-1 overflow-y-auto pb-8">
-          {steps.length === 0 && status === "planning" && (
-            <p className="max-w-[calc(68ch+40px)] px-5 pt-5 leading-normal text-ink2">
-              Tabellar is reading your briefing and working out what to propose. You can close this panel and keep working: the plan continues in the background and tells you when it needs an answer. Nothing is carried out
-              until you approve it.
             </p>
           )}
+        </div>
+      )}
 
-          {steps.length > 0 && (
-            <section className="pt-4">
-              <div className="flex items-baseline gap-3 px-5 pb-1">
-                <h3 className="label">
-                  Steps <span className="font-normal">{doneCount} of {steps.length}</span>
-                </h3>
-                <span className="flex-1" />
-                {anyReasoning && (
-                  <button className="link" aria-expanded={showReasoning} onClick={() => setShowReasoning((v) => !v)}>
-                    {showReasoning ? "Hide reasoning" : "Show reasoning"}
-                  </button>
-                )}
-                {steps.length > 4 && (
-                  <button className="link" aria-expanded={showAdvanced} onClick={() => setShowAdvanced((v) => !v)}>
-                    {showAdvanced ? "Show the latest only" : "Show every step"}
-                  </button>
-                )}
-              </div>
-
-              {hasMultipleBuckets ? (
-                bucketKeys.map((bk) => {
-                  const list = stepsByBucket[bk] ?? [];
-                  const shown = showAdvanced ? list : list.filter((s) => s.tool !== "ask_user").slice(-4);
-                  return (
-                    <div key={bk} className="pb-2">
-                      <p className="px-5 pb-0.5 pt-1.5 text-xs text-ink3">
-                        <b className="font-semibold text-ink2">{BUCKET_LABEL[bk as AgentBucket] ?? BUCKET_LABEL.single}</b> {list.filter((s) => s.status === "done").length} of {list.length}
-                      </p>
-                      <ol>{lane(shown)}</ol>
-                    </div>
-                  );
+      {status === "asking" && pendingQuestions.length > 0 && (
+        <div className={`${pad} pt-4`}>
+          {pendingQuestions.length === 1 ? (
+            <QuestionCard
+              question={pendingQuestions[0]}
+              initialAnswer={batchAnswers[pendingQuestions[0].id]}
+              onChange={(a) =>
+                setBatchAnswers((prev) => {
+                  const next = { ...prev };
+                  if (a) next[pendingQuestions[0].id] = a;
+                  else delete next[pendingQuestions[0].id];
+                  return next;
                 })
-              ) : (
-                <ol>{lane(showAdvanced ? visibleSteps : visibleSteps.slice(-6))}</ol>
-              )}
-
-              {assistantStatusLine && <p className="max-w-[calc(68ch+40px)] px-5 pt-2 leading-normal text-ink2">{assistantStatusLine}</p>}
-
-              {showThinking && (
-                <p className="flex items-center gap-1.5 px-5 pt-2 text-xs text-ink3" role="status">
-                  Working on the next step
-                  <span className="solve-dot-wave inline-flex" aria-hidden>
-                    <span />
-                    <span />
-                    <span />
-                  </span>
-                </p>
-              )}
-            </section>
-          )}
-
-          {status === "asking" && pendingQuestions.length > 0 && (
-            <section className="px-5 pt-6">
-              {pendingQuestions.length === 1 ? (
+              }
+              onAnswer={async (a) => {
+                await answerSolveAgent({ ...a, question_id: pendingQuestions[0].id });
+              }}
+            />
+          ) : (
+            <>
+              <h3 className="label">{pendingQuestions.length} questions</h3>
+              {pendingQuestions.map((q) => (
                 <QuestionCard
-                  question={pendingQuestions[0]}
-                  initialAnswer={batchAnswers[pendingQuestions[0].id]}
+                  key={q.id}
+                  question={q}
+                  compact
+                  initialAnswer={batchAnswers[q.id]}
+                  hideContinue
                   onChange={(a) =>
                     setBatchAnswers((prev) => {
                       const next = { ...prev };
-                      if (a) next[pendingQuestions[0].id] = a;
-                      else delete next[pendingQuestions[0].id];
+                      if (a) next[q.id] = a;
+                      else delete next[q.id];
                       return next;
                     })
                   }
-                  onAnswer={async (a) => {
-                    await answerSolveAgent({ ...a, question_id: pendingQuestions[0].id });
-                  }}
                 />
-              ) : (
-                <>
-                  <h3 className="label">{pendingQuestions.length} questions for you</h3>
-                  {pendingQuestions.map((q) => (
-                    <QuestionCard
-                      key={q.id}
-                      question={q}
-                      compact
-                      initialAnswer={batchAnswers[q.id]}
-                      hideContinue
-                      onChange={(a) =>
-                        setBatchAnswers((prev) => {
-                          const next = { ...prev };
-                          if (a) next[q.id] = a;
-                          else delete next[q.id];
-                          return next;
-                        })
-                      }
-                    />
-                  ))}
-                </>
-              )}
-            </section>
-          )}
-
-          {status === "error" && (
-            <p className="max-w-[calc(68ch+40px)] px-5 pt-5 leading-normal text-danger" role="alert">
-              The plan stopped: {normalizeAgentSessionError(agentSession.error) ?? "the reason was not reported"}. Nothing was carried out. Clear it, then start a new plan from Briefing.
-            </p>
-          )}
-
-          {localActions.length > 0 && !reviewing && (
-            <section className="pt-5">
-              <h3 className="label px-5 pb-1">
-                Proposed so far <span className="font-normal">{localActions.length}</span>
-              </h3>
-              <ul>
-                {localActions.map((a) => (
-                  <li key={a.id} className="row">
-                    <span className="w-[26px] flex-none" />
-                    <span className="truncate">{actionLine(a)}</span>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          {reviewing && (
-            <section className="pt-6">
-              <h3 className="px-5 text-[15px] font-[650] tracking-[-0.01em] text-ink">{status === "done" ? "What was done" : status === "executing" ? "Running what you approved" : "Review the plan"}</h3>
-              {agentSession.summary && <p className="max-w-[calc(68ch+40px)] px-5 pt-1.5 text-sm leading-[1.6] text-ink">{agentSession.summary}</p>}
-              {finalReasoning && status === "ready" && (
-                <details className="px-5 pt-2">
-                  <summary className="link inline cursor-default">Why this plan</summary>
-                  <p className="mt-1.5 max-w-[68ch] whitespace-pre-wrap text-[12.5px] leading-normal text-ink2">{finalReasoning}</p>
-                </details>
-              )}
-              {localActions.length === 0 ? (
-                <p className="px-5 pt-3 leading-normal text-ink2">Tabellar found nothing to propose from this briefing. Clear the plan, or refresh the briefing and plan again.</p>
-              ) : (
-                KINDS.map(([type, name]) => {
-                  const group = localActions.filter((a) => a.type === type);
-                  if (!group.length) return null;
-                  const on = group.filter((a) => a.selected).length;
-                  return (
-                    <div key={type} className="pt-4">
-                      <h4 className="label px-5 pb-0.5">
-                        {name} <span className="font-normal">{status === "ready" ? `${on} of ${group.length}` : group.length}</span>
-                      </h4>
-                      {group.map((a) => (
-                        <AgentActionCard
-                          key={a.id}
-                          action={a}
-                          onToggle={(s) => toggleAction(a.id, s)}
-                          onEdit={(patch) => editAction(a.id, patch)}
-                          result={agentSession.results?.[a.id]}
-                          locked={status === "executing" || status === "done"}
-                        />
-                      ))}
-                    </div>
-                  );
-                })
-              )}
-            </section>
+              ))}
+              <div className="flex items-center gap-2 pt-3">
+                <span className="text-xs text-ink3">
+                  {answeredCount} of {totalQuestions} answered{answeredCount < totalQuestions ? ", the rest skipped" : ""}
+                </span>
+                <span className="flex-1" />
+                <button className="btn btn-pri" onClick={() => void submitBatch()} disabled={answeredCount === 0}>
+                  Continue
+                </button>
+              </div>
+            </>
           )}
         </div>
+      )}
 
-        {status === "asking" && totalQuestions > 1 && (
-          <footer className="flex flex-none items-center gap-2 border-t border-line py-2.5 pl-5 pr-3.5">
-            <span className="text-xs text-ink3">
-              {answeredCount} of {totalQuestions} answered{answeredCount < totalQuestions ? ". The rest are skipped." : ""}
-            </span>
-            <span className="flex-1" />
-            <button className="btn btn-pri" onClick={() => void submitBatch()} disabled={answeredCount === 0}>
-              Continue
-            </button>
-          </footer>
-        )}
-        {status === "ready" && localActions.length > 0 && (
-          <footer className="flex flex-none items-center gap-2 border-t border-line py-2.5 pl-5 pr-3.5">
-            <span className="text-xs text-ink3">
-              {included} of {localActions.length} included
-            </span>
-            <span className="flex-1" />
-            <button className="btn" onClick={() => setLocalActions((prev) => prev.map((a) => ({ ...a, selected: true })))}>
-              Include all
-            </button>
-            <button className="btn btn-pri" onClick={onExecute} disabled={executing || included === 0}>
-              {executing ? "Running" : `Run ${included} approved`}
-            </button>
-          </footer>
-        )}
-      </div>
-    </div>
+      {status === "error" && (
+        <p className={`${pad} pt-3 leading-normal text-danger`} role="alert">
+          The plan stopped: {normalizeAgentSessionError(agentSession.error) ?? "the reason was not reported"}. Nothing was carried out.
+        </p>
+      )}
+
+      {localActions.length > 0 && !reviewing && (
+        <div className="pt-4">
+          <h3 className={`label ${pad} pb-1`}>
+            Proposed so far <span className="font-normal">{localActions.length}</span>
+          </h3>
+          <ul>
+            {localActions.map((a) => (
+              <li key={a.id} className="row">
+                <span className="w-[26px] flex-none" />
+                <span className="truncate">{actionLine(a)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {reviewing && (
+        <div className="pt-4">
+          {agentSession.summary && <p className={`${pad} leading-[1.6] text-ink`}>{agentSession.summary}</p>}
+          {finalReasoning && status === "ready" && (
+            <details className={`${pad} pt-2`}>
+              <summary className="link inline cursor-default">Why this plan</summary>
+              <p className="mt-1.5 max-w-[68ch] whitespace-pre-wrap text-[12.5px] leading-normal text-ink2">{finalReasoning}</p>
+            </details>
+          )}
+          {localActions.length === 0 ? (
+            <p className={`${pad} pt-2 text-ink3`}>Nothing to propose.</p>
+          ) : (
+            KINDS.map(([type, name]) => {
+              const group = localActions.filter((a) => a.type === type);
+              if (!group.length) return null;
+              const on = group.filter((a) => a.selected).length;
+              return (
+                <div key={type} className="pt-3">
+                  <h4 className={`label ${pad} pb-0.5`}>
+                    {name} <span className="font-normal">{status === "ready" ? `${on} of ${group.length}` : group.length}</span>
+                  </h4>
+                  {group.map((a) => (
+                    <AgentActionCard
+                      key={a.id}
+                      action={a}
+                      onToggle={(s) => toggleAction(a.id, s)}
+                      onEdit={(patch) => editAction(a.id, patch)}
+                      result={agentSession.results?.[a.id]}
+                      locked={status === "executing" || status === "done"}
+                    />
+                  ))}
+                </div>
+              );
+            })
+          )}
+          {status === "ready" && localActions.length > 0 && (
+            <div className={`flex items-center gap-2 ${pad} pt-3`}>
+              <span className="text-xs text-ink3">
+                {included} of {localActions.length} included
+              </span>
+              <span className="flex-1" />
+              <button className="btn" onClick={() => setLocalActions((prev) => prev.map((a) => ({ ...a, selected: true })))}>
+                Include all
+              </button>
+              <button className="btn btn-pri" onClick={onExecute} disabled={executing || included === 0}>
+                {executing ? "Running" : `Run ${included}`}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
-import { setMailState, type Outcome } from "@/lib/outcomes";
+import { api, setMailState, type Outcome } from "@/lib/outcomes";
 import { assessSuspicion, type SuspicionVerdict } from "@/lib/suspicion";
 import { useApp } from "./AppShell";
 import DateTimePicker from "./DateTimePicker";
@@ -187,7 +187,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
   }, [idKey, liveChanges.draft_emails, liveChanges.scheduled_emails, draftVersion]);
 
   useEffect(() => {
-    supabase.from("categories").select("slug, display_name").eq("user_id", user.id).then(({ data }: { data: any[] | null }) => setLabels(data || []));
+    supabase.from("categories").select("slug, display_name").eq("user_id", user.id).order("position", { ascending: true }).then(({ data }: { data: any[] | null }) => setLabels(data || []));
     if (email.thread_id)
       supabase
         .from("follow_up_reminders")
@@ -286,6 +286,22 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
     setProc(next);
     onRethink?.(next);
     await supabase.from("email_processed").update(patch).eq("email_id", email.id);
+  };
+
+  // In or out of one of the user's labels: in Gmail too, and kept as an example.
+  const label = async (slug: string, on: boolean) => {
+    const before = proc;
+    const extraNow: string[] = Array.isArray(proc?.extra_labels) ? proc.extra_labels : [];
+    const next = { ...proc, extra_labels: on ? [...extraNow, slug] : extraNow.filter((x) => x !== slug) };
+    setProc(next);
+    onRethink?.(next);
+    try {
+      await api("/labels/apply", { email_id: email.id, slug, on });
+    } catch (e) {
+      setProc(before);
+      onRethink?.(before);
+      addToast("error", (e as Error).message);
+    }
   };
 
   const readAgain = async () => {
@@ -465,7 +481,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
               {labels.map((l) => {
                 const on = extra.includes(l.slug);
                 return (
-                  <button key={l.slug} role="menuitemcheckbox" aria-checked={on} className="pop-item" onClick={() => sort({ extra_labels: on ? extra.filter((x) => x !== l.slug) : [...extra, l.slug] })}>
+                  <button key={l.slug} role="menuitemcheckbox" aria-checked={on} className="pop-item" onClick={() => label(l.slug, !on)}>
                     <Icon name="check" size={13} className={on ? "text-ink" : "invisible"} />
                     <span className="truncate">{l.display_name}</span>
                   </button>

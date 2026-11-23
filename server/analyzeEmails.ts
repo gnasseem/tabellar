@@ -15,8 +15,10 @@
  * - Each email is read with the user's profile (profile.ts). Only mail from
  *   people the user corresponds with also goes through extractEntities, in
  *   parallel, and only the people and companies it names are kept.
- * - Preamble DB reads (delegation rules, category rules, user tags, sender
- *   memory) run in parallel via Promise.all.
+ * - The user's labels (labels.ts) go to the model with their examples, and
+ *   mail from an example's sender gets the label without it.
+ * - Preamble DB reads (delegation rules, labels, sender memory) run in
+ *   parallel via Promise.all.
  * - Results are flushed to email_processed / knowledge_base as they complete
  *   (micro-batched) so Realtime streams rows to the UI progressively instead
  *   of waiting for the slowest email.
@@ -28,6 +30,7 @@ import { extractEntities, processFullEmail } from "./ai.ts";
 import { isLocalModel } from "./llm.ts";
 import { correspondents, profileContext } from "./profile.ts";
 import { isBulk, writtenTo } from "./senders.ts";
+import { labelsBySender, labelsForPrompt, userLabels } from "./labels.ts";
 import { findCalendarEvent, type LinkedEvent } from "./gmail.ts";
 import type { CalendarEvent } from "./rules.ts";
 
@@ -54,7 +57,7 @@ async function linkCalendar(tokenRef: string | undefined, e: Record<string, unkn
 export async function analyzeEmailsForUser(
   userId: string,
   db: Db,
-): Promise<{ analyzed: number; briefing: unknown }> {
+): Promise<{ analyzed: number }> {
   const { data: alreadyProcessed } = await db
     .from("email_processed")
     .select("email_id")
@@ -77,7 +80,7 @@ export async function analyzeEmailsForUser(
   const emailsToProcess = unprocessed || [];
 
   if (emailsToProcess.length === 0) {
-    return { analyzed: 0, briefing: null };
+    return { analyzed: 0 };
   }
 
   // ── Parallel preamble: fetch all per-user config + sender memory at once ──
@@ -87,8 +90,7 @@ export async function analyzeEmailsForUser(
 
   const [
     delegationRulesRes,
-    allCategoryRulesRes,
-    userTagRowsRes,
+    labels,
     memRowsRes,
     profileRes,
     accountsRes,
@@ -98,14 +100,7 @@ export async function analyzeEmailsForUser(
       .select("pattern, target_email")
       .eq("user_id", userId)
       .eq("is_enabled", true),
-    db
-      .from("category_rules")
-      .select("match_type, match_value, category_slug")
-      .eq("user_id", userId),
-    db
-      .from("categories")
-      .select("slug, description")
-      .eq("user_id", userId),
+    userLabels(userId),
     senderEmails.length > 0
       ? db
           .from("email_memory")
@@ -131,19 +126,11 @@ export async function analyzeEmailsForUser(
       ?.timezone) || "UTC";
 
   const delegationRules = delegationRulesRes.data ?? [];
-  const allCategoryRules = allCategoryRulesRes.data ?? [];
-  const userTagRows = userTagRowsRes.data ?? [];
   const memRows = memRowsRes.data ?? [];
-
-  const categoryRules = allCategoryRules.filter((r) => r.match_type !== "description");
-  const categoryHints = allCategoryRules
-    .filter((r) => r.match_type === "description")
-    .map((r) => ({ category_slug: r.category_slug as string, description: r.match_value as string }));
-  const userTags: { slug: string; description: string }[] = userTagRows.map((t) => ({
-    slug: t.slug as string,
-    description: (t.description as string) || "",
-  }));
-  const MAIN_CATEGORIES = new Set(["important", "action-required", "promotions", "updates"]);
+  const userTags = labelsForPrompt(labels);
+  // Labels an email gets from its sender, whatever else is decided.
+  const bySender = (email: Record<string, unknown>) => labelsBySender(labels, String(email.sender_email ?? ""));
+  const extra = (slugs: string[]) => (slugs.length ? [...new Set(slugs)] : null);
 
   const senderInteractionMap = new Map<string, number>();
   for (const row of memRows) {
@@ -199,6 +186,7 @@ export async function analyzeEmailsForUser(
           urgency: "low",
           summary: null,
           quick_actions: [],
+          extra_labels: extra(bySender(email)),
           calendar: await linkCalendar(tokenRefs.get(String(email.gmail_account_id)), email),
         });
         processed += 1;
@@ -213,6 +201,7 @@ export async function analyzeEmailsForUser(
           urgency: "low",
           summary: null,
           quick_actions: [],
+          extra_labels: extra(bySender(email)),
         });
         processed += 1;
         if (rowBuffer.length >= FLUSH_SIZE) await flushRows();
@@ -243,7 +232,6 @@ export async function analyzeEmailsForUser(
           body,
           signals,
           userTags.length > 0 ? userTags : undefined,
-          categoryHints.length > 0 ? categoryHints : undefined,
           userTimezone,
           profile,
         ),
@@ -269,28 +257,8 @@ export async function analyzeEmailsForUser(
         }
       }
 
-      let finalCategory = result.category;
-      const extraLabels: string[] = [...(result.tags || [])];
-      if (categoryRules.length) {
-        const subjectLc = subject.toLowerCase();
-        const senderLc = sender.toLowerCase();
-        const bodyLc = body.toLowerCase();
-        for (const rule of categoryRules) {
-          const val = (rule.match_value as string).toLowerCase();
-          let matched = false;
-          if (rule.match_type === "subject") matched = subjectLc.includes(val);
-          else if (rule.match_type === "sender") matched = senderLc.includes(val);
-          else if (rule.match_type === "keyword") matched = bodyLc.includes(val);
-          if (matched) {
-            const slug = rule.category_slug as string;
-            if (MAIN_CATEGORIES.has(slug)) {
-              finalCategory = slug;
-            } else if (!extraLabels.includes(slug)) {
-              extraLabels.push(slug);
-            }
-          }
-        }
-      }
+      const finalCategory = result.category;
+      const extraLabels = [...(result.tags || []), ...bySender(email)];
 
       rowBuffer.push({
         user_id: userId,
@@ -299,7 +267,7 @@ export async function analyzeEmailsForUser(
         urgency: result.urgency,
         summary: result.summary,
         quick_actions: [...(result.quick_actions as object[]), ...delegationActions],
-        extra_labels: extraLabels.length > 0 ? extraLabels : null,
+        extra_labels: extra(extraLabels),
       });
 
       // People and companies only; topics and places from one email are trivia.
@@ -345,5 +313,5 @@ export async function analyzeEmailsForUser(
   // Final flush for anything that didn't hit the FLUSH_SIZE threshold.
   await Promise.all([flushRows(), flushKb()]);
 
-  return { analyzed: processed, briefing: null };
+  return { analyzed: processed };
 }

@@ -32,6 +32,7 @@ import { dueOf, meetingOf, todoOf } from "./rules.ts";
 import { judgeSent } from "./followups.ts";
 import { notify } from "./notify.ts";
 import { firstReadState, startFirstRead } from "./firstRead.ts";
+import { gmailLabelOf, userLabels } from "./labels.ts";
 import { ask, covers, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
 
 const INTERVAL_MS = 2 * 60_000;
@@ -145,7 +146,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
 
   const { data: rows } = await db
     .from("email_processed")
-    .select("id, category, urgency, summary, quick_actions, calendar, emails!inner(id, subject, sender, sender_email, reply_to_email, body_text, body_html, snippet, received_at, thread_id, gmail_id, gmail_account_id, is_calendar)")
+    .select("id, category, urgency, summary, quick_actions, calendar, extra_labels, emails!inner(id, subject, sender, sender_email, reply_to_email, body_text, body_html, snippet, received_at, thread_id, gmail_id, gmail_account_id, is_calendar)")
     .eq("user_id", userId)
     .is("engine_at", null)
     .limit(100);
@@ -160,6 +161,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
   const sendCap = Math.max(0, Number(profile?.autopilot_daily_cap ?? 5));
   const timezone = (profile?.working_hours as { timezone?: string } | null)?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const today = await countsToday(userId);
+  const userLabelList = await userLabels(userId);
   let cycleCount = 0;
   const notes: { sender: string; summary: string; drafted: boolean; replying?: boolean }[] = [];
 
@@ -188,10 +190,12 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     const from = email.sender?.split("<")[0]?.trim() || email.sender_email || "someone";
     // An email read again (its text was filled in later) keeps what was
     // already done or proposed for it; nothing is done twice.
-    const { data: before } = await db.from("action_log").select("kind").eq("email_id", email.id).in("status", ["done", "running", "proposed"]);
+    const { data: before } = await db.from("action_log").select("kind, detail").eq("email_id", email.id).in("status", ["done", "running", "proposed"]);
     const already = new Set((before ?? []).map((r) => r.kind as string));
+    // Labels count one by one: an email carries its sort and the user's own.
+    const labelled = new Set((before ?? []).filter((r) => r.kind === "label").map((r) => String((r.detail as { label?: string } | null)?.label ?? "")));
     const run = async (p: Planned, send?: AutoSend) => {
-      if (already.has(p.kind)) return "refused";
+      if (p.kind === "label" ? labelled.has(String(p.detail?.label ?? "")) : already.has(p.kind)) return "refused";
       const r = await act(userId, p, { ...settings, source: "engine", suspicious, todayCount: today[p.kind] ?? 0, cycleCount, send, sendCap });
       if (r === "done" || r === "proposed") {
         today[p.kind] = (today[p.kind] ?? 0) + 1;
@@ -208,6 +212,13 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     // Label. A planted-instruction email gets the Suspicious label and nothing else.
     const label = suspicious ? SUSPICIOUS_LABEL : LABELS[category];
     if (label) await run({ kind: "label", emailId: email.id, summary: `Label "${label.replace("Tabellar/", "")}"`, detail: { label } });
+    if (!suspicious) {
+      const own = new Set((row.extra_labels as string[] | null) ?? []);
+      for (const l of userLabelList.filter((x) => own.has(x.slug))) {
+        const name = gmailLabelOf(l);
+        await run({ kind: "label", emailId: email.id, summary: `Label "${l.display_name}"`, detail: { label: name } });
+      }
+    }
 
     const replyTo = (email.reply_to_email || email.sender_email || "").trim();
     const reply = actions.find((a) => a.action === "reply");
@@ -341,7 +352,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     notify({
       title: preview ? n.sender : "Tabellar",
       subtitle: `Autopilot replies in ${delayMinutes} min`,
-      body: preview ? `${n.summary} Cancel it in Activity.` : "Autopilot will send a reply. Cancel it in Activity.",
+      body: preview ? `${n.summary} Cancel it in Replies.` : "Autopilot will send a reply. Cancel it in Replies.",
     });
   }
   const rest = notes.filter((n) => !n.replying);

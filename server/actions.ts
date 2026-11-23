@@ -15,7 +15,7 @@ import { learn, type Signal } from "./profile.ts";
 export type Planned = {
   kind: Kind;
   emailId: string | null;
-  summary: string; // one line for the Activity list, e.g. "Label Important"
+  summary: string; // one line for History, e.g. "Label Important"
   detail: Record<string, unknown>;
 };
 
@@ -225,7 +225,7 @@ export async function approve(userId: string, id: string, hash: string): Promise
   if (row.status !== "proposed") throw Object.assign(new Error("This proposal was already handled"), { status: 409 });
   const fresh = proposalHash(row.kind as string, row.email_id as string | null, row.detail);
   if (!hash || hash !== row.hash || hash !== fresh) {
-    throw Object.assign(new Error("This proposal changed after you saw it. Reload Activity and look again."), { status: 409 });
+    throw Object.assign(new Error("This proposal changed after you saw it. Reload and look again."), { status: 409 });
   }
   const { paused } = await engineSettings(userId);
   const decision = decide({ kind: row.kind as string, source: "user", level: "suggest", paused });

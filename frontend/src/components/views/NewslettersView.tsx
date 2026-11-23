@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import { engineFetch } from "./ActivityView";
+import { api } from "@/lib/outcomes";
 import { Empty, Seg, SkeletonRows, Tick, ViewBar } from "../ui";
 import { NotThis } from "../Profile";
 
@@ -23,6 +23,7 @@ type Sender = {
   opened: number;
   last_at: string;
   can_unsubscribe: boolean;
+  reason: string;
   status: "kept" | "unsubscribed" | null;
   method: string | null;
 };
@@ -37,10 +38,6 @@ function emails(n: number): string {
   return `${n.toLocaleString()} email${n === 1 ? "" : "s"}`;
 }
 
-// Why a sender is listed: "12 emails, 0 opened, has unsubscribe".
-function why(s: Sender): string {
-  return `${emails(s.total)}, ${s.opened.toLocaleString()} opened, ${s.can_unsubscribe ? "has unsubscribe" : "no unsubscribe link"}`;
-}
 
 export default function NewslettersView() {
   const { user, addToast, search, mail } = useApp();
@@ -63,7 +60,7 @@ export default function NewslettersView() {
 
   const load = useCallback(async () => {
     try {
-      const r = await engineFetch("/newsletters");
+      const r = await api("/newsletters");
       setSenders(r.senders || []);
       setError(null);
     } catch (e) {
@@ -111,10 +108,10 @@ export default function NewslettersView() {
   // Returns false when the user declined to send an unsubscribe email, "web"
   // when it has to be finished on the sender's page, else "done".
   const doUnsubscribe = async (s: Sender): Promise<false | "web" | "done"> => {
-    let r = await engineFetch("/newsletters/unsubscribe", { sender: s.sender_email });
+    let r = await api("/newsletters/unsubscribe", { sender: s.sender_email });
     if (r.confirm) {
       if (!(await confirmEmail(s.name, r.confirm.to, r.confirm.subject))) return false;
-      r = await engineFetch("/newsletters/unsubscribe", { sender: s.sender_email, confirm: r.confirm.to });
+      r = await api("/newsletters/unsubscribe", { sender: s.sender_email, confirm: r.confirm.to });
     }
     if (r.open) setPages((p) => [...p.filter((x) => x.addr !== s.sender_email), { addr: s.sender_email, sender: s.name, url: r.open }]);
     patch(s.sender_email, { status: "unsubscribed", method: r.method ?? (r.open ? "web" : null) });
@@ -124,7 +121,7 @@ export default function NewslettersView() {
   // Archives the sender's inbox mail and returns how many, with the id of the
   // logged action so it can be undone from here.
   const doArchive = async (s: Sender): Promise<{ archived: number; actionId: string | null }> => {
-    const r = await engineFetch("/newsletters/archive", { sender: s.sender_email });
+    const r = await api("/newsletters/archive", { sender: s.sender_email });
     patch(s.sender_email, { inbox: 0 });
     if (!r.archived) return { archived: 0, actionId: null };
     const { data } = await supabase.from("action_log").select("id, detail").eq("user_id", user.id).eq("kind", "archive").eq("source", "user").eq("status", "done").order("created_at", { ascending: false }).limit(10);
@@ -134,7 +131,7 @@ export default function NewslettersView() {
 
   const archivedToast = (text: string, actionIds: (string | null)[]) => {
     const ids = actionIds.filter((x): x is string => !!x);
-    if (!ids.length) return addToast("success", `${text} Undo it in Activity.`);
+    if (!ids.length) return addToast("success", `${text} Undo it in History, in Settings.`);
     const undo = async () => {
       for (const id of ids) await mail.undo(id).catch(() => {});
       await load();
@@ -174,7 +171,7 @@ export default function NewslettersView() {
   const keep = (list: Sender[], on: boolean) =>
     withBusy(list.map((s) => s.sender_email), async () => {
       for (const s of list) {
-        await engineFetch("/newsletters/keep", { sender: s.sender_email, keep: on });
+        await api("/newsletters/keep", { sender: s.sender_email, keep: on });
         patch(s.sender_email, { status: on ? "kept" : null });
       }
       setPicked(new Set());
@@ -212,7 +209,6 @@ export default function NewslettersView() {
 
   const cursor = rows.find((s) => s.sender_email === cursorAddr) || rows[0] || null;
   const selected = rows.filter((s) => picked.has(s.sender_email));
-  const inboxTotal = rows.reduce((n, s) => n + s.inbox, 0);
   const targets = (): Sender[] => (selected.length ? selected : cursor ? [cursor] : []);
   const canUnsubscribe = (s: Sender) => s.status === null && s.can_unsubscribe;
 
@@ -288,8 +284,8 @@ export default function NewslettersView() {
           </button>
         )}
         {s.inbox > 0 && (
-          <button className="btn btn-sm" disabled={off} title={`Archive all ${s.inbox} from this sender`} onClick={(e) => (e.stopPropagation(), archive([s]))}>
-            Archive {s.inbox.toLocaleString()}
+          <button className="btn btn-sm" disabled={off} title={`Archive the ${s.inbox.toLocaleString()} in your inbox`} onClick={(e) => (e.stopPropagation(), archive([s]))}>
+            Archive all
           </button>
         )}
         <button className="btn btn-plain btn-sm" disabled={off} onClick={(e) => (e.stopPropagation(), keep([s], s.status === null))}>
@@ -381,11 +377,6 @@ export default function NewslettersView() {
           <>
             <div className="day">
               <b>{tab === "clean" ? "In your inbox" : tab === "kept" ? "Kept" : "Unsubscribed"}</b>
-              <span className="truncate">{tab === "clean" ? "Heaviest first" : tab === "kept" ? "Left alone" : "Mail may take a few days to stop"}</span>
-              <span className="flex-1" />
-              <span className="whitespace-nowrap">
-                {rows.length.toLocaleString()} sender{rows.length === 1 ? "" : "s"}, {emails(inboxTotal)} in your inbox
-              </span>
             </div>
             {rows.map((s) => {
               const isCursor = cursor === s;
@@ -410,7 +401,7 @@ export default function NewslettersView() {
                   <span className={`whitespace-nowrap text-right ${s.inbox > 0 ? "text-ink" : "text-ink3"}`}>{isBusy ? "Working" : s.inbox > 0 ? `${s.inbox.toLocaleString()} in inbox` : "None in inbox"}</span>
                   <span className="hidden min-w-0 items-center justify-end gap-1.5 md:flex">
                     <span className={`truncate text-xs text-ink3 ${isCursor ? "hidden" : "group-hover:hidden"}`}>
-                      {s.status === "unsubscribed" ? METHOD[s.method || ""] || "Unsubscribed" : why(s)}
+                      {s.status === "unsubscribed" ? METHOD[s.method || ""] || "Unsubscribed" : s.reason}
                     </span>
                     <span className={`items-center gap-1.5 ${isCursor ? "flex" : "hidden group-hover:flex has-[[aria-expanded=true]]:flex"}`}>{actions(s)}</span>
                   </span>

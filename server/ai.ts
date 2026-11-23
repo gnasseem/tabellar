@@ -1,6 +1,7 @@
 // The prompts and the calls that use them. Every model call goes through
 // chatCompletion in llm.ts, which reaches the model chosen in setup.
 
+import { applyLabel } from "./labels.ts";
 import { act, engineSettings } from "./actions.ts";
 import { chatCompletion, requireModel, modelTimeoutMs } from "./llm.ts";
 import type { Slot } from "./config.ts";
@@ -55,39 +56,11 @@ Examples:
 Return raw JSON only. No explanation, no markdown.`,
   draft:
     "You are an email drafting assistant. Write a professional, clear reply to the email below. Match the tone of the original. Keep it concise.",
-  briefing:
-    'You are an executive email intelligence system. Analyze ALL emails below and return ONLY valid JSON with this exact structure: {"executiveSummary":"detailed summary, see rules","crucial":[{"subject":"...","senderName":"...","sender":"...","summary":"what this specific email is about, what it asks, and any key detail (amount, name, date, deadline) in 1-2 sentences","signal":"one clause: what the sender actually wants from the user","evidence":"the 1-2 literal phrases from the email that justify the classification","relationshipHint":"first-party|known-contact|stranger|auto","suggestedAction":"reply|todo|meeting|archive|ignore","urgency":"critical|high|medium","deadline":null,"waitingForReply":false,"tags":[]}],"replyNeeded":[/* same fields */],"deadlines":[/* same fields, set deadline to YYYY-MM-DD */],"nonEssential":[/* same fields */],"stats":{"total":N,"crucial":N,"replyNeeded":N,"deadlines":N,"nonEssential":N}}.\n\nEXECUTIVE SUMMARY RULES: 4-6 sentences walking through what actually happened in the inbox. Name specific senders, specific topics, specific amounts/dates where present. Do NOT cluster into vague themes ("several project updates"); list concrete items one after another. FORBIDDEN: never mention any email count number in the executive summary (no "40 emails", no "several", no "five messages"). The UI shows counts separately; your job is to narrate content, not tally. Example: "Bob pinged you about the Q3 budget review due Friday. Sarah shared revised design mocks and is waiting on your feedback. Stripe flagged a failed payment of $249. LinkedIn and a marketing digest were the only filler. Two meeting invites need RSVP (kickoff Thu 10am, review Fri 2pm)."\n\nPER-EMAIL ENRICHMENT RULES (hard contract  -  downstream agent relies on these):\n- signal: ONE short clause describing what the sender wants from the user. Examples: "confirm receipt of API key", "RSVP to kickoff Thu 10am", "review Q3 budget doc", "no action, informational FYI", "promotional, no action".\n- evidence: copy 1-2 short phrases (under ~90 chars total) verbatim from the email that justify your classification. Never paraphrase, never fabricate. If nothing concrete stands out, use the subject line.\n- relationshipHint: "first-party" if the sender looks like the user themselves (self-email), "known-contact" for real named humans, "stranger" for unknown humans/cold outreach, "auto" for no-reply/notifications/bulk senders.\n- suggestedAction: the SINGLE most sensible next move. Rules: senders with no-reply@/notifications@/donotreply@ or relationshipHint=auto MUST use "archive" or "ignore"  -  NEVER "todo", NEVER "reply". "ignore" means truly no action (pure FYI bulk). Use "todo" only for a concrete task the user must track (pay invoice, read doc, prepare slides); otherwise prefer "reply", "meeting", or "archive".\n\nCLASSIFICATION RULES  -  assign each email to exactly ONE category using this strict priority. The first rule that fits wins:\n(1) replyNeeded: a real human is explicitly waiting on a response from the user. Direct questions, requested input, open conversational threads. If someone asked something that expects an answer, it goes here even if there is also a deadline (surface the deadline as a tag like "DUE 2026-04-25" in the deadline field, but the card lives in replyNeeded).\n(2) deadlines: the email carries a concrete future date/time by which the user must complete an action, and no reply is expected. Pay by X, submit by Y, RSVP by Z, expires on W. Set the deadline field to YYYY-MM-DD.\n(3) crucial: high-impact or time-sensitive FYI that needs user attention but is neither a reply request nor a dated action item. Financial holds, account/security alerts, significant updates from named individuals, urgent personal matters, important announcements. Real-human updates worth reading live here.\n(4) nonEssential: ONLY newsletters, promotional emails, automated marketing, shipping/order receipts, no-reply senders, social digests, system notifications without user action. An email from a real named person is almost never nonEssential. Any sender matching /no.?reply|noreply|notifications?|donotreply|mailer-daemon/ IS nonEssential.\n\nINBOX REALITY: Real inboxes mix valuable threads with shipping pings, digests, receipts, and cold outreach. Do NOT upgrade vague or low-signal mail to replyNeeded or crucial just because it arrived. Use nonEssential for bulk, automated, or mail where no real person expects a personal reply. Use suggestedAction ignore when nothing matters. Cold outreach belongs in crucial only when it has a concrete time-sensitive ask; otherwise prefer nonEssential or crucial as FYI with suggestedAction archive or ignore.\n\nEvery input email must appear in exactly one array. Do not skip any email. If unsure between crucial and nonEssential, choose crucial. If unsure between replyNeeded and deadlines, choose replyNeeded. Stats must satisfy: crucial + replyNeeded + deadlines + nonEssential = total (= number of input emails).',
-  briefing_batch_cards: `You refine a capped batch of inbox rows for Tabellar. Input is NDJSON: one JSON object per line. Each line has email_id, subject, sender, category (from prior classifier), urgency (stored urgency: critical|high|medium|low, may be null), summary (may be truncated).
-
-Return ONLY valid JSON: {"cards":[...]} with one object per input line you could judge (same count as input lines). Each card MUST include email_id (exactly as given).
-
-Each card fields: email_id, bucket (one of crucial|replyNeeded|deadlines|nonEssential), subject, senderName, sender, summary (1-2 sentences), signal (one short clause: what the sender wants), evidence (under 90 chars, verbatim from subject or summary; if none, repeat subject slice), relationshipHint (first-party|known-contact|stranger|auto), suggestedAction (reply|todo|meeting|archive|ignore), urgency (critical|high|medium), deadline (null or YYYY-MM-DD), waitingForReply (boolean), tags (string array, can be empty).
-
-URGENCY FLOOR: if the stored urgency field is "critical" or "high", do not downgrade it  -  use it as a minimum floor for your output urgency. A stored-high email cannot be output as urgency medium.
-
-CAREER AND HIGH-STAKES OVERRIDE: emails about job offers, interview invitations, application status, medical appointments/results, legal notices/contracts, academic admissions, or financial decisions (mortgage, loan, account suspended) are NEVER nonEssential regardless of how the sender looks. If category was "updates" but subject/summary contains career/job/interview/offer/hiring/admitted/rejected/offer letter/medical/legal/financial signals, override to crucial or replyNeeded.
-
-AUTO SENDERS EXCEPTION: the auto-sender rule (no-reply|noreply|notifications|donotreply) routes to nonEssential ONLY when the email is genuinely bulk/transactional. ATS and HR system emails about a specific candidate's job/interview are NOT bulk  -  they go to replyNeeded or crucial.
-
-BROADCAST AND LOW-STAKE CIVIC MAIL: mass voting requests, petitions, generic "cast your vote", campus-wide surveys, LinkedIn-style blasts without a personal obligation belong in nonEssential with suggestedAction archive or ignore and urgency medium, waitingForReply false, unless the body clearly shows a direct one-to-one obligation to this user.
-
-FYI ARTICLE OR SCIENCE SHARES: if category was "important" but the text is only sharing an article, science curiosity, or "thought you would enjoy" with no question and no task for this user, use nonEssential and urgency medium, never high.
-
-REPLY VS DEADLINE: if a human expects a written reply, use replyNeeded even with a date. Use deadlines only when the action is dated but no personal reply thread (pay by, submit form by, expire on).
-
-Do not invent email_id values. Do not omit cards for any input line.`,
-  briefing_executive: `You write the executive summary for a morning email briefing. You receive a short digest: bucket counts and a list of notable threads (subject, sender, category).
-
-Write 4-6 sentences in plain prose. Name specific senders and topics where the digest provides them. Do NOT output JSON. Do NOT use markdown fences.
-
-FORBIDDEN in the prose: any tally of how many emails or messages (no digits with "email", "message", "item", "unread"). The UI already shows counts.
-
-If the digest is thin, still write a calm overview of what the day looks like based on what is given.`,
   extract_entities:
     'Extract entities from this email that would be useful to remember for future reference. Return a JSON array of objects with "entity" (proper name or specific identifier), "entity_type" (person|company), and "info" (one concrete sentence about what was learned: their role, their relationship to the user, or what the user deals with them about). Rules: only include named people with a clear role or relationship; only include companies if a specific detail was learned (what they do, how the user deals with them); never include topics, places, projects or figures; skip generic words like "meeting", "email", "deadline", "invoice", "document"; skip entities where info would be trivially vague. Confidence bar: only include if you would recommend storing this fact for future drafts or decisions. Return an empty array if nothing clearly useful was found.',
   style_analysis:
     'Analyze the writing style of these sent emails (written BY the user). Return ONLY valid JSON with EXACTLY these four string keys and no extras: {"greeting_style":"<short>","closing_style":"<short>","tone":"formal|casual|mixed","avg_length":"short|medium|long"}. FIELD RULES  -  greeting_style: the exact most common opening word or phrase the user writes (e.g. "Hi", "Hey", "Hi {name}", "Hello", "Dear", "Good morning"). closing_style: the exact most common sign-off the user writes (e.g. "Best", "Thanks", "Cheers", "Best regards", "Talk soon", "Thanks,\\nGeorge"). NEVER return empty strings  -  if there is truly no greeting or closing, use "Hi" and "Thanks" as sensible defaults. tone: single word from formal/casual/mixed. avg_length: single word from short/medium/long. Do NOT wrap in markdown. Do NOT add commentary. Return JSON only.',
-  agent_system: `You are Tabellar's Auto-Resolve executive agent. Your job is to completely clear the user's current briefing by producing a fully confirmed action plan: drafted replies, todos, calendar events, and a single bulk archive. At the end, the user reviews and executes approved actions with one click.
+  agent_system: `You are Tabellar's Auto-Resolve executive agent. Your job is to completely clear the user's current inbox list by producing a fully confirmed action plan: drafted replies, todos, calendar events, and a single bulk archive. At the end, the user reviews and executes approved actions with one click.
 
 You have tools. You MUST use them. You never speak in plain prose to the user. Every output from you is either tool calls or, when you truly have nothing to say, a single short line of status text (one sentence, max 12 words, no lists, no options in text).
 
@@ -135,7 +108,7 @@ Your status text (when you rarely emit content) should be like "Reading Hanan's 
 ## TIMEZONE
 
 Today is {TODAY}. User timezone: {TIMEZONE}. All ISO times you output in meeting proposals are in the user's local timezone with no Z suffix.`,
-  agent_system_bucket: `You are a SUB-AGENT of Tabellar's Auto-Resolve system, owning the "{BUCKET}" scope only. A parent agent has split the briefing into buckets; another sub-agent is handling the others in parallel. Focus exclusively on the emails in your scope.
+  agent_system_bucket: `You are a SUB-AGENT of Tabellar's Auto-Resolve system, owning the "{BUCKET}" scope only. A parent agent has split the inbox list into buckets; another sub-agent is handling the others in parallel. Focus exclusively on the emails in your scope.
 
 You follow every rule in the full Auto-Resolve agent system (think-like-user reasoning on every propose_action, gather before acting, no-todos-for-noise, batch questions, one archive per run at most, never duplicate actions). Keep within your bucket's budget:
 
@@ -508,7 +481,6 @@ export async function processFullEmail(
   body: string,
   signals?: EmailSignals,
   userTags?: { slug: string; description: string }[],
-  categoryHints?: { category_slug: string; description: string }[],
   timezone = "UTC",
   profile = "",
 ): Promise<{
@@ -529,17 +501,11 @@ export async function processFullEmail(
   // is, so every relative date ("Friday", "tomorrow", "next week") was
   // unresolvable and came back null or guessed against the training cutoff.
   let prompt = `Today is ${dateContextFor(timezone)} in the user's timezone (${timezone}). Resolve every relative date against it, and resolve a named weekday with no date to the next such day that is today or later.\n\n${PROMPTS.process_email}`;
-  if (categoryHints && categoryHints.length > 0) {
-    const hintLines = categoryHints
-      .map((h) => `- If ${h.description}, classify as "${h.category_slug}"`)
-      .join("\n");
-    prompt += `\n\nUser-defined categorization rules (apply these when they match the email):\n${hintLines}`;
-  }
   if (userTags && userTags.length > 0) {
     const tagLines = userTags
       .map((t) => `- ${t.slug}: ${t.description || t.slug}`)
       .join("\n");
-    prompt += `\n\nCustom tags (apply any that fit, can be multiple or none):\n${tagLines}\nAdd "tags": ["slug1",...] to the JSON if any apply. Omit "tags" key if none match.`;
+    prompt += `\n\nThe user's own labels:\n${tagLines}\nMost emails belong in none of them. Add a label only when this email is plainly what the label's description says (the sender and the subject both fit); a word in common is not enough, and when unsure leave it out. Add "tags": ["slug", ...] to the JSON with the slugs that apply, or omit "tags".`;
   }
 
   if (profile) {
@@ -683,143 +649,6 @@ function draftBody(text: string): string {
   return text.replace(/^\s*\**subject:\**[^\n]*\n+/i, "").trim();
 }
 
-export async function generateBriefing(
-  emailsText: string,
-  knowledgeContext?: string,
-): Promise<Record<string, unknown>> {
-  const fullText = knowledgeContext
-    ? `## Background Knowledge\n${knowledgeContext}\n\n## Emails\n${emailsText}`
-    : emailsText;
-  const todayDate = new Date().toISOString().split("T")[0]; // UTC date
-  const raw = await llm(
-    `Today's date is ${todayDate}. ${PROMPTS.briefing}`,
-    fullText,
-    0.3,
-    6144,
-  );
-  const parsed = parseJson(raw) as Record<string, unknown> | null;
-  // Accept any response that has at least one recognized briefing key
-  const isValidShape =
-    parsed &&
-    typeof parsed === "object" &&
-    (parsed.executiveSummary ||
-      Array.isArray(parsed.crucial) ||
-      Array.isArray(parsed.replyNeeded) ||
-      Array.isArray(parsed.deadlines) ||
-      parsed.topPriority ||
-      parsed.stats);
-  if (isValidShape) {
-    // Guarantee a non-error summary when the arrays are present but summary is missing
-    if (!(parsed as any).executiveSummary) {
-      (parsed as any).executiveSummary =
-        (parsed as any).summary || "Here is your email briefing.";
-    }
-    return parsed as Record<string, unknown>;
-  }
-  return {
-    executiveSummary:
-      (parsed as any)?.summary ?? "Unable to generate briefing summary.",
-    crucial: [],
-    replyNeeded: [],
-    deadlines: [],
-    nonEssential: [],
-    stats: (parsed as any)?.stats ?? {
-      total: 0,
-      crucial: 0,
-      replyNeeded: 0,
-      deadlines: 0,
-      nonEssential: 0,
-    },
-  };
-}
-
-const BRIEFING_FAILURE_SUBSTRINGS = [
-  "unable to generate briefing",
-  "unable to generate summary",
-];
-
-/** True when the stored executive summary failed or is empty and should be regenerated. */
-export function briefingSummaryNeedsRecovery(
-  s: string | undefined | null,
-): boolean {
-  if (s === undefined || s === null) return true;
-  const t = s.trim();
-  if (!t) return true;
-  const lower = t.toLowerCase();
-  return BRIEFING_FAILURE_SUBSTRINGS.some((x) => lower.includes(x));
-}
-
-/**
- * Refine up to a few dozen briefing rows: bucket placement plus Auto-Resolve fields.
- */
-export async function refineBriefingCards(
-  ndjsonLines: string,
-): Promise<Record<string, unknown>[]> {
-  const todayDate = new Date().toISOString().split("T")[0];
-  const raw = await llm(
-    `Today's date is ${todayDate}. ${PROMPTS.briefing_batch_cards}`,
-    ndjsonLines,
-    0.25,
-    8192,
-  );
-  const parsed = parseJson(raw) as { cards?: Record<string, unknown>[] } | null;
-  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.cards)) {
-    return [];
-  }
-  return parsed.cards;
-}
-
-/**
- * Short executive briefing prose from a compact digest (not the full inbox).
- */
-export async function generateBriefingExecutiveSummary(
-  digest: string,
-  knowledgeContext?: string,
-): Promise<string> {
-  const userText = knowledgeContext
-    ? `## Background\n${knowledgeContext}\n\n## Digest\n${digest}`
-    : digest;
-  const todayDate = new Date().toISOString().split("T")[0];
-  const raw = await llm(
-    `Today's date is ${todayDate}. ${PROMPTS.briefing_executive}`,
-    userText,
-    0.35,
-    2048,
-  );
-  const text = stripThinkTags(typeof raw === "string" ? raw.trim() : "").trim();
-  if (!text) {
-    return "Your briefing is ready; scan the sections for what needs attention.";
-  }
-  return text;
-}
-
-/**
- * Incremental briefing update: merges new relevant emails into an existing
- * briefing without reprocessing everything. Much cheaper than a full rebuild.
- * Returns null if the new emails don't warrant any changes.
- */
-export async function updateBriefing(
-  previousBriefingJson: string,
-  newEmailsText: string,
-): Promise<Record<string, unknown> | null> {
-  const todayDate = new Date().toISOString().split("T")[0]; // UTC date
-  const prompt =
-    `Today's date is ${todayDate}. You are an executive email intelligence system. You have an existing briefing and a set of NEW emails that just arrived. ` +
-    `Update the briefing to incorporate only the new emails that matter. ` +
-    `Keep existing items that are still relevant. Add new priority items only if they genuinely need executive attention. ` +
-    `Update the stats counts. Do NOT add newsletters, spam, or low-priority automated emails to the briefing. ` +
-    `Return the complete updated briefing as valid JSON using the same structure as the original. ` +
-    `If none of the new emails are worth adding, return the original briefing unchanged with stats.total incremented.`;
-
-  const userText = `## Current Briefing\n${previousBriefingJson}\n\n## New Emails\n${newEmailsText}`;
-
-  const raw = await llm(prompt, userText, 0.2, 4096);
-  const parsed = parseJson(raw);
-  return parsed && typeof parsed === "object"
-    ? (parsed as Record<string, unknown>)
-    : null;
-}
-
 export async function extractEntities(
   subject: string,
   sender: string,
@@ -887,6 +716,27 @@ export async function factsFromSent(sample: string): Promise<string[]> {
     .slice(0, 10);
 }
 
+// Labels the user would want, from who writes to them and about what. Each
+// names the senders from the list it would hold, so it can be checked.
+export async function labelsFromMail(sample: string): Promise<{ name: string; description: string; senders: string[] }[]> {
+  const raw = await llm(
+    'Below are the people and services that email this person most, then recent subjects. Suggest the labels they would want to sort their mail into: groups that recur and matter to them, named the way they would name them ("Job applications", "NYU admin", "Receipts", "Course: Machine Learning"), not generic types like "Important" or "Updates", and not one label per sender. For each give a one-line description that tells a reader which emails belong in it, and the sender addresses from the list that belong in it. Return only JSON: {"labels": [{"name": "...", "description": "...", "senders": ["..."]}]}, 3 to 6 labels, names under 4 words.',
+    sample,
+    0.3,
+    1200,
+  );
+  const parsed = parseJson(raw) as { labels?: unknown } | null;
+  const list = Array.isArray(parsed?.labels) ? (parsed.labels as Record<string, unknown>[]) : [];
+  return list
+    .map((l) => ({
+      name: String(l?.name ?? "").replace(/\s+/g, " ").trim().slice(0, 40),
+      description: String(l?.description ?? "").replace(/\s+/g, " ").trim().slice(0, 200),
+      senders: (Array.isArray(l?.senders) ? l.senders : []).map((x) => String(x ?? "").toLowerCase().trim()).filter(Boolean),
+    }))
+    .filter((l) => l.name.length > 1)
+    .slice(0, 6);
+}
+
 // ─── Personal Assistant Chat ──────────────────────────────────────────────────
 
 export interface ChatContext {
@@ -947,6 +797,7 @@ export interface ChatToolCall {
     | "search_knowledge_base"
     | "get_sent_emails"
     | "archive_email"
+    | "plan_cleanup"
     | "suggest_reply_options"
     | "get_email_thread"
     | "list_tags"
@@ -977,6 +828,9 @@ NEVER write things like "1. Accept  2. Decline  3. Ask for agenda" or "Option A:
 When you need to present ANY choices to the user, you MUST call the suggest_reply_options tool instead.
 If you catch yourself about to write a list of choices  -  STOP immediately and call suggest_reply_options.
 This rule has no exceptions. Options always appear as clickable cards, never as text.
+
+## CLEANUP PLANS
+When the user asks to clean up, clear, triage or go through their inbox or many emails at once, call plan_cleanup and nothing else. Never write a plan, a list of proposed actions or example emails yourself: the plan tool reads the real inbox. Never name an email, a sender or a subject you have not read through a tool.
 
 ## SEARCH-FIRST RULE  -  NEVER ASK BEFORE SEARCHING
 When user refers to "email from [Person]", "email about [Topic]", or any email without an explicit ID:
@@ -1591,6 +1445,15 @@ const CHAT_TOOLS = [
         },
         required: ["id"],
       },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "plan_cleanup",
+      description:
+        "Start a cleanup plan for the inbox: Tabellar reads the last week of inbox mail and proposes replies, todos, meetings and one archive of what needs nothing, asks the user anything it cannot decide, and runs only what the user approves. Use it when the user asks to clean up, clear, triage, go through or deal with their inbox or several emails at once. Takes no arguments; the plan appears under your answer.",
+      parameters: { type: "object", properties: {} },
     },
   },
   {
@@ -2350,50 +2213,15 @@ export async function chatWithAssistant(
                 )
                 .join("\n")
             : "No tags found. Use create_tag to create one.";
-      } else if (tc.function?.name === "apply_tag" && db && userId) {
-        const emailId = (args.email_id as string) ?? "";
-        const tagSlug = (args.tag_slug as string) ?? "";
-        const { data: ep } = await db
-          .from("email_processed")
-          .select("extra_labels")
-          .eq("email_id", emailId)
-          .eq("user_id", userId)
-          .maybeSingle();
-        const current: string[] = Array.isArray(ep?.extra_labels)
-          ? ep.extra_labels
-          : [];
-        if (current.includes(tagSlug)) {
-          toolResult = `Tag "${tagSlug}" is already applied to this email.`;
-        } else {
-          const { error } = await db
-            .from("email_processed")
-            .update({ extra_labels: [...current, tagSlug] })
-            .eq("email_id", emailId)
-            .eq("user_id", userId);
-          toolResult = error
-            ? `Failed to apply tag: ${error.message}`
-            : `Tag "${tagSlug}" applied to email.`;
+      } else if ((tc.function?.name === "apply_tag" || tc.function?.name === "remove_tag") && db && userId) {
+        // As if the user did it in the reader: in Gmail too, and kept as an example.
+        const on = tc.function.name === "apply_tag";
+        try {
+          await applyLabel(userId, String(args.email_id ?? ""), String(args.tag_slug ?? ""), on);
+          toolResult = on ? "Label applied to the email." : "Label removed from the email.";
+        } catch (e) {
+          toolResult = `Failed: ${(e as Error).message}`;
         }
-      } else if (tc.function?.name === "remove_tag" && db && userId) {
-        const emailId = (args.email_id as string) ?? "";
-        const tagSlug = (args.tag_slug as string) ?? "";
-        const { data: ep } = await db
-          .from("email_processed")
-          .select("extra_labels")
-          .eq("email_id", emailId)
-          .eq("user_id", userId)
-          .maybeSingle();
-        const current: string[] = Array.isArray(ep?.extra_labels)
-          ? ep.extra_labels
-          : [];
-        const { error } = await db
-          .from("email_processed")
-          .update({ extra_labels: current.filter((l) => l !== tagSlug) })
-          .eq("email_id", emailId)
-          .eq("user_id", userId);
-        toolResult = error
-          ? `Failed to remove tag: ${error.message}`
-          : `Tag "${tagSlug}" removed from email.`;
       } else {
         // These tools are executed by the caller (index.ts) after this function returns.
         // Tell the model they succeeded so it confirms in past tense.

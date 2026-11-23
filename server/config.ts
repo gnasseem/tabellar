@@ -42,8 +42,8 @@ export type ModelConfig = {
   model: string;
 };
 
-// Two model slots. `model` is the careful one (drafts, briefing, assistant,
-// agent); `fastModel` reads each email (sorting, summaries, todos, meetings)
+// Two model slots. `model` is the careful one (drafts, Ask, the cleanup
+// plan); `fastModel` reads each email (sorting, summaries, todos, meetings)
 // and, when unset, is the same model.
 export type Slot = "fast" | "careful";
 

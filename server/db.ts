@@ -24,12 +24,11 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
     cols: {
       id: "uuid pk", email: "text", display_name: "text", avatar_url: "text",
       theme: 'text ! ="light"', style_notes: "text", working_hours: "json",
-      last_briefing: "json", last_briefing_at: "time",
-      briefing_scope: 'text ! ="today_new"', calendar_send_invites: "bool ! =true",
+      calendar_send_invites: "bool ! =true",
       notification_level: 'text ! ="important"', notification_preview: "bool ! =true",
       autonomy_level: 'text ! ="suggest"', engine_paused: "bool ! =false",
       autopilot_delay_min: "int ! =5", autopilot_daily_cap: "int ! =5", autopilot_known_only: "bool ! =true",
-      first_read: "json", rules_version: "int ! =0",
+      first_read: "json", rules_version: "int ! =0", label_suggestions: "json",
       created_at: "time ! =now", updated_at: "time ! =now",
     },
   },
@@ -64,10 +63,12 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
     },
     unique: [["email_id"]],
   },
+  // The user's own labels: see labels.ts.
   categories: {
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", slug: "text !", display_name: "text !",
-      color: 'text ="#6b7280"', rules: "json =[]", description: 'text =""', created_at: "time ! =now",
+      color: 'text ="#8a857d"', description: 'text =""', examples: "json ! =[]",
+      position: "int ! =0", gmail_label: "text", created_at: "time ! =now",
     },
     unique: [["user_id", "slug"]],
   },
@@ -137,13 +138,6 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       id: "uuid pk =uuid", user_id: "uuid !", pattern: "text !", target_email: "text !",
       is_enabled: "bool ! =true", weight: "int ! =1", created_at: "time ! =now", updated_at: "time ! =now",
     },
-  },
-  category_rules: {
-    cols: {
-      id: "uuid pk =uuid", user_id: "uuid !", match_type: "text !", match_value: "text !",
-      category_slug: "text !", hits: "int ! =1", created_at: "time ! =now", updated_at: "time ! =now",
-    },
-    unique: [["user_id", "match_type", "match_value"]],
   },
   style_profiles: {
     cols: {
@@ -218,6 +212,13 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       status: 'text ! ="waiting"', snooze_until: "time", created_at: "time ! =now",
     },
     unique: [["user_id", "thread_id"]],
+  },
+  // Ask: one row per conversation, its messages kept whole.
+  conversations: {
+    cols: {
+      id: "uuid pk =uuid", user_id: "uuid !", title: "text !", messages: "json ! =[]",
+      created_at: "time ! =now", updated_at: "time ! =now",
+    },
   },
   agent_sessions: {
     cols: {

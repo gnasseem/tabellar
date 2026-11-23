@@ -228,7 +228,7 @@ async function pickModel(current: ModelConfig | undefined, slot: Slot): Promise<
 
 async function setupModel(config: Config) {
   console.log("\n2. AI models");
-  console.log("   The careful model writes drafts and the briefing, and runs the assistant and the agent.");
+  console.log("   The careful model writes drafts and runs Ask and its cleanup plans.");
   config.model = await pickModel(config.model, "careful");
   saveConfig(config);
   if (!config.model) return;

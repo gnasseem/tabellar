@@ -25,7 +25,6 @@ import {
   READ_TOOL_NAMES,
   runReadTool,
 } from "./agentTools.ts";
-import { buildBriefingForUser } from "./buildBriefing.ts";
 
 const MAX_ROUNDS_PER_STEP = 18;
 export const AGENT_BUCKETS = ["replies", "meetings", "todos", "noise"] as const;
@@ -103,12 +102,14 @@ function uid(): string {
   return crypto.randomUUID();
 }
 
+// One action per id, and one reply, todo or meeting per email: parallel
+// lanes can each propose the same reply.
 function mergeDraftsById(actions: DraftAction[]): DraftAction[] {
-  const byId = new Map<string, DraftAction>();
+  const byKey = new Map<string, DraftAction>();
   for (const a of actions) {
-    byId.set(a.id, a);
+    byKey.set(a.linked_email_id && a.type !== "archive" ? `${a.type}:${a.linked_email_id}` : a.id, a);
   }
-  return [...byId.values()];
+  return [...byKey.values()];
 }
 
 /** PostgREST errors often are not `instanceof Error`; String(err) becomes useless. */
@@ -281,43 +282,62 @@ function filterToBucket(
   return turns.filter((t) => t.bucket === bucket);
 }
 
+// What the plan works on: inbox mail of the last week that arrived before the
+// plan started (so every step sees the same list), sorted by what the
+// engine made of it. Mail with a drafted reply waiting counts as reply
+// needed; mail with an open todo that has a day, as a deadline.
 export async function getOrCreateBriefingSnapshot(
   db: Db,
   userId: string,
+  at?: string | null,
 ): Promise<{
   snapshotText: string;
   cards: AgentToolContext["briefingCards"];
   briefingAt: string;
   executiveSummary: string;
 }> {
-  const { data: profile } = await db
-    .from("profiles")
-    .select("last_briefing, last_briefing_at")
-    .eq("id", userId)
-    .maybeSingle();
-  let briefing = profile?.last_briefing as {
-    crucial?: BriefingCard[];
-    replyNeeded?: BriefingCard[];
-    deadlines?: BriefingCard[];
-    nonEssential?: BriefingCard[];
-    executiveSummary?: string;
-  } | null;
-  let briefingAt =
-    (profile?.last_briefing_at as string) || new Date().toISOString();
-  const summaryMissing =
-    typeof briefing?.executiveSummary !== "string" ||
-    !briefing.executiveSummary.trim();
-  if (!briefing || summaryMissing) {
-    const built = await buildBriefingForUser(userId, db);
-    briefing = built as typeof briefing;
-    briefingAt = new Date().toISOString();
+  const briefingAt = at || new Date().toISOString();
+  const weekAgo = new Date(new Date(briefingAt).getTime() - 7 * 86_400_000).toISOString();
+  const [{ data: mail }, { data: drafts }, { data: todos }] = await Promise.all([
+    db
+      .from("emails")
+      .select("id, subject, sender, sender_email, snippet, label_ids, is_archived, email_processed(category, urgency, summary, quick_actions)")
+      .eq("user_id", userId)
+      .eq("is_archived", false)
+      .contains("label_ids", ["INBOX"])
+      .gte("received_at", weekAgo)
+      .lte("received_at", briefingAt)
+      .order("received_at", { ascending: false })
+      .limit(80),
+    db.from("draft_emails").select("email_id").eq("user_id", userId),
+    db.from("todos").select("email_id, due").eq("user_id", userId).eq("is_completed", false),
+  ]);
+  const drafted = new Set((drafts ?? []).map((d: Record<string, unknown>) => String(d.email_id ?? "")));
+  const due = new Map((todos ?? []).filter((t: Record<string, unknown>) => t.email_id && t.due).map((t: Record<string, unknown>) => [String(t.email_id), String(t.due)]));
+  const cards: AgentToolContext["briefingCards"] = { crucial: [], replyNeeded: [], deadlines: [], nonEssential: [] };
+  for (const e of (mail ?? []) as Record<string, unknown>[]) {
+    const raw = e.email_processed as Record<string, unknown> | Record<string, unknown>[] | null;
+    const p = (Array.isArray(raw) ? raw[0] : raw) ?? null;
+    if (!p) continue;
+    const id = String(e.id);
+    const category = String(p.category ?? "");
+    const asksReply = Array.isArray(p.quick_actions) && (p.quick_actions as { action?: string }[]).some((q) => q?.action === "reply");
+    const card: BriefingCard = {
+      email_id: id,
+      subject: String(e.subject ?? ""),
+      sender: String(e.sender ?? e.sender_email ?? ""),
+      senderName: String(e.sender ?? "").replace(/<.*>/, "").replace(/"/g, "").trim() || String(e.sender_email ?? ""),
+      summary: String(p.summary || e.snippet || ""),
+      urgency: String(p.urgency ?? "medium"),
+      deadline: (due.get(id) as string | undefined) ?? null,
+      waitingForReply: drafted.has(id) || (category === "action-required" && asksReply),
+      tags: [],
+    };
+    if (card.waitingForReply) cards.replyNeeded.push(card);
+    else if (card.deadline) cards.deadlines.push(card);
+    else if (category === "action-required" || category === "important") cards.crucial.push(card);
+    else cards.nonEssential.push(card);
   }
-  const cards: AgentToolContext["briefingCards"] = {
-    crucial: briefing?.crucial ?? [],
-    replyNeeded: briefing?.replyNeeded ?? [],
-    deadlines: briefing?.deadlines ?? [],
-    nonEssential: briefing?.nonEssential ?? [],
-  };
 
   const fmtCard = (c: BriefingCard, bucket: string) => {
     const id = c.email_id ?? "no-id";
@@ -338,7 +358,7 @@ export async function getOrCreateBriefingSnapshot(
   const fmtCards = (arr: BriefingCard[], bucket: string) =>
     arr.map((c) => fmtCard(c, bucket)).join("\n");
 
-  const snapshotText = `CURRENT BRIEFING (call get_briefing_context for the structured view):\n\nEXECUTIVE SUMMARY:\n${briefing?.executiveSummary ?? ""}\n\nEMAILS:\n${[
+  const snapshotText = `CURRENT INBOX (call get_briefing_context for the structured view):\n\nEMAILS:\n${[
     cards.crucial.length
       ? `CRUCIAL (${cards.crucial.length}):\n${fmtCards(cards.crucial, "crucial")}`
       : "",
@@ -356,8 +376,7 @@ export async function getOrCreateBriefingSnapshot(
     .join(
       "\n\n",
     )}\n\nGoal: produce a confirmed plan that clears as much of this as possible. Begin.`;
-  const executiveSummary = (briefing?.executiveSummary ?? "").trim();
-  return { snapshotText, cards, briefingAt, executiveSummary };
+  return { snapshotText, cards, briefingAt, executiveSummary: "" };
 }
 
 /** Scope a briefing snapshot to a single bucket for a sub-agent. */
@@ -721,7 +740,7 @@ export async function runAgentStep(
     snapshotText = opts.bucketSnapshotText;
     cards = opts.bucketCards;
   } else {
-    const snap = await getOrCreateBriefingSnapshot(db, session.user_id);
+    const snap = await getOrCreateBriefingSnapshot(db, session.user_id, session.briefing_at);
     snapshotText = snap.snapshotText;
     cards = snap.cards;
   }
@@ -1091,12 +1110,11 @@ async function _runAgentStepParallel(
     };
   }
 
-  const snap = await getOrCreateBriefingSnapshot(db, session.user_id);
+  const snap = await getOrCreateBriefingSnapshot(db, session.user_id, session.briefing_at);
 
   const exec = snap.cards as AgentToolContext["briefingCards"];
   const executiveSummary =
-    snap.executiveSummary.trim() ||
-    "No executive summary is cached yet. Use get_briefing_context and the email lists in your scope.";
+    "Use get_briefing_context and the email lists in your scope.";
 
   // Build bucket contexts. Skip buckets with no emails entirely.
   const bucketPlans: Array<{
@@ -1147,7 +1165,7 @@ async function _runAgentStepParallel(
   // minutes for a local one, which answers the lanes one after another, so a
   // few lanes of several model turns each take minutes.
   const capMs = isLocalModel("careful") ? 900_000 : 100_000;
-  const results = await Promise.race([
+  const raced = await Promise.race([
     Promise.allSettled(
       bucketPlans.map((bp) =>
         runAgentStep(sessionId, db, userTimezone, {
@@ -1157,13 +1175,22 @@ async function _runAgentStepParallel(
         }),
       ),
     ),
-    new Promise<never>((_, reject) =>
-      setTimeout(
-        () => reject(new Error(`Parallel bucket orchestration timed out after ${capMs / 1000}s`)),
-        capMs,
-      )
-    ),
+    new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), capMs)),
   ]);
+
+  // Out of time: what was proposed by then is the plan, for the user to
+  // review; with nothing proposed, it is an error.
+  if (raced === "timeout") {
+    const { data: late } = await db.from("agent_sessions").select("status, draft_actions").eq("id", sessionId).single();
+    const drafts = mergeDraftsById((late?.draft_actions as DraftAction[] | null) ?? []);
+    if (late?.status === "cancelled") return { status: "cancelled", draft_actions: drafts };
+    if (!drafts.length) throw new Error(`The plan took longer than ${capMs / 60_000} minutes and proposed nothing`);
+    const summary = `Stopped after ${capMs / 60_000} minutes with what was proposed by then.`;
+    const plan = { actions: drafts, summary, finalized_at: new Date().toISOString() };
+    await db.from("agent_sessions").update({ status: "ready", plan, summary, draft_actions: drafts, pending_question: null, pending_questions: [] }).eq("id", sessionId);
+    return { status: "ready", plan, draft_actions: drafts, summary };
+  }
+  const results = raced;
 
   // Consolidate: if any sub-agent paused, session is "asking".
   const { data: refreshed } = await db
@@ -1295,7 +1322,7 @@ async function _runAgentStepParallel(
 
   if (draftActions.length === 0 && hadBriefingWork) {
     const errMsg =
-      "Auto-Resolve could not produce a plan. Try again in a moment, or regenerate your briefing.";
+      "The plan could not be worked out. Ask again in a moment.";
     await db
       .from("agent_sessions")
       .update({

@@ -651,6 +651,14 @@ export async function ensureLabel(tokenRef: string, name: string): Promise<strin
   return id;
 }
 
+// The names of the user's own Gmail labels, for mapping a Tabellar label to one.
+export async function userLabelNames(tokenRef: string): Promise<string[]> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const res = await gmailRequest(tokenData.token, "/labels");
+  if (!res.ok) throw new Error(`Gmail labels list failed (${res.status})`);
+  return ((await res.json()).labels ?? []).filter((l: { type?: string }) => l.type === "user").map((l: { name: string }) => l.name);
+}
+
 // Add and remove labels on one message. Archiving is removing INBOX.
 export async function modifyLabels(tokenRef: string, gmailId: string, add: string[], remove: string[]): Promise<string[]> {
   const { tokenData } = await resolveTokens(tokenRef);

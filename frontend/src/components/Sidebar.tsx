@@ -48,14 +48,13 @@ export function LevelControl({ value, onChange }: { value: string; onChange: (le
 }
 
 function NavItem({ id, icon, label, count, need, on: forced }: { id: string; icon: string; label: string; count?: number; need?: boolean; on?: boolean }) {
-  const { view, setView, setSidebarOpen, assistantOpen, setAssistantOpen } = useApp();
-  const on = forced ?? (id === "ask" ? assistantOpen : view === id);
+  const { view, setView, setSidebarOpen } = useApp();
+  const on = forced ?? view === id;
   return (
     <button
       aria-current={on ? "page" : undefined}
       onClick={() => {
-        if (id === "ask") setAssistantOpen(!assistantOpen);
-        else setView(id);
+        setView(id);
         setSidebarOpen(false);
       }}
       className={`flex h-7 w-full items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${on ? "bg-sel font-medium text-ink" : "text-ink2 hover:bg-sel/55"}`}
@@ -187,14 +186,14 @@ export default function Sidebar() {
           <div>
             <NavItem id="sent" icon="send" label="Sent" />
             <NavItem id="scheduled" icon="schedule" label="Scheduled" />
-            <NavItem id="categories" icon="label" label="Labels" />
+            <NavItem id="labels" icon="label" label="Labels" />
             <NavItem id="newsletters" icon="newspaper" label="Newsletters" />
           </div>
         </nav>
         <GoingOut />
         <div className="mx-2 border-t border-line pb-2 pt-1.5">
           <Engine />
-          <NavItem id="settings" icon="settings" label="Settings" on={view === "settings" || view === "activity" || view === "relationships"} />
+          <NavItem id="settings" icon="settings" label="Settings" on={view === "settings" || view === "history" || view === "relationships"} />
         </div>
       </aside>
     </>

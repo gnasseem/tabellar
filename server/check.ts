@@ -706,6 +706,7 @@ const newsletters = await listNewsletters(ruleUser);
 ok("Newsletters: list mail with an unsubscribe is listed, with why; a person on a list, one email, a company written to and the user's own domain are not", () => {
   assert.deepEqual(newsletters.map((x) => x.sender_email), ["digest@news.example"]);
   assert.deepEqual([newsletters[0].total, newsletters[0].opened, newsletters[0].can_unsubscribe], [2, 2, true]);
+  assert.equal(newsletters[0].reason, "Mailing list, 2 emails, 2 opened");
 });
 
 // Follow-ups: sent mail that waits on a person.
@@ -762,7 +763,7 @@ if (modelConfigured()) {
   ];
   const outcomes: string[] = [];
   for (const c of CASES) {
-    const r = await processFullEmail(c.subject, c.from, c.body, undefined, undefined, undefined, TZ, "");
+    const r = await processFullEmail(c.subject, c.from, c.body, undefined, undefined, TZ, "");
     const todo = rules.todoOf(r.quick_actions as Record<string, unknown>[], { subject: c.subject, body_text: c.body }, r.category);
     const meeting = (r.quick_actions as { action?: string; meetingDetails?: { dateTime?: string | null } }[]).find((a) => a.action === "schedule_meeting");
     const time = meeting?.meetingDetails?.dateTime?.slice(11) ?? null;

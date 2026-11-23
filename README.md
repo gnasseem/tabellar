@@ -1,21 +1,21 @@
 # Tabellar
 
-A personal email agent that runs on your Mac. Tabellar keeps a local copy of your Gmail, sorts it, writes a daily briefing, drafts replies in your style, pulls out todos and meetings, tracks mail that got no answer, answers questions about your inbox, and can plan and carry out a whole inbox cleanup that you approve. It keeps working in the background with the window closed, within limits you set.
+A personal email agent that runs on your Mac. Tabellar keeps a local copy of your Gmail, sorts it into your own labels, drafts replies in your style, pulls out todos and meetings, tracks mail that got no answer, answers questions about your inbox, and can plan and carry out a whole inbox cleanup that you approve. It keeps working in the background with the window closed, within limits you set.
 
 There is no hosted service and no sign-up. Your mail is stored in one SQLite file on your Mac. The AI runs either on your Mac through Ollama, free and private, or with a cloud provider of your choice on your own API key. The only outside calls are to Google for your mail and calendar, and to the cloud provider if you pick one. The [privacy policy](https://gnasseem.github.io/tabellar/privacy.html) says this in full.
 
 ## What it does
 
 - **Inbox**: one line per conversation, ending in what Tabellar did with it: reply ready, todo added, on your calendar, replying in 3:12. Only what needs you stands out. Filter to what needs you, group by day, sender or outcome, select many at once, and open the details panel to see each action with its reason and Undo.
-- **Brief**: a daily summary sorted into Reply needed, Deadlines, Crucial and Non-essential.
+- **Brief**: one page for the day: at most five things that need you, each with its one action; who owes you an answer; today's calendar; and how much Tabellar handled since yesterday, which opens to the list. Every line is something Tabellar did or holds, not a summary written for the page.
 - **Replies**: answers written in your style wait here. Read, edit, send, send later or discard, one or several at once, with 15 seconds to undo a send. Replies Autopilot is about to send are listed with their countdown and a Cancel. Tone rephrasing is in the compose window.
 - **Todos and meetings**: a todo only when someone asks you for something, quoting the sentence that asks, due on the day that sentence names; a meeting only at the time the email states, in the timezone it states, and never for what is already on your Google Calendar (invitations and acceptances are linked to their event instead). Todos are a checklist by Today, This week and Later. Meetings lists what waits to be confirmed, with the sentence its time came from and your free time that day, then the next two weeks of your Google Calendar.
 - **Follow-ups**: mail you sent to a person that asks or promises something and got no reply: who, what you asked, how long ago. Nudge opens a drafted follow-up in the thread; Later brings it back in three days.
-- **Assistant**: ask about your inbox ("what did the registrar say about fees?") or tell it to act.
-- **Agent**: give it your briefing and it proposes replies, todos, meetings and a bulk archive, asks when unsure, and runs only what you approve.
+- **Ask**: ask about your inbox ("what did the registrar say about fees?") or tell it to act. Past conversations are kept on the left. "Clean up my inbox" starts a plan in the conversation: it reads the last week of the inbox, proposes replies, todos, meetings and a bulk archive, asks when unsure, and runs only what you approve.
+- **Labels**: your own labels, with a line that says which mail belongs and examples (senders, and emails you put in a label by hand; mail from those senders always gets it). Tabellar suggests some from your mail on first run, applies each as a Gmail label (`Tabellar/<name>` or one of your own), and the order you drag them into is the order of the Inbox's Priority grouping.
 - **Background engine**: watches Gmail every few seconds (new mail shows in the window within seconds), even with the window closed, and labels, drafts and plans for new mail. You choose how far it goes: **Observe** (sorts and notifies, changes nothing), **Suggest** (labels mail; drafts, todos and meetings wait for your approval), **Assist** (labels, drafts, todos and meeting proposals happen on their own) or **Autopilot** (see below). It never deletes or archives on its own. Everything it does is listed under **Settings > History**, with Undo, and one Pause switch stops all actions at once.
 - **Autopilot**: off until you turn it on. On top of Assist, it replies on its own to email that needs an answer it can give, only to the person who wrote and only inside the thread: nobody copied in, no forwarding, no attachments. Each reply waits (5 minutes by default) under Going out in the sidebar and in Replies, where you can read and cancel it, and there is a daily limit. By default it only answers people you have written to before; everyone else gets a draft (or, for someone you have never dealt with, a question first), and so does any email whose answer needs a decision only you can make.
-- **Newsletters**: senders of bulk mail, the ones filling your inbox first. Unsubscribe in one click (through the sender's own unsubscribe link; when that means sending an email, you see the address first) and archive everything a sender left in your inbox, with Undo.
+- **Newsletters**: senders of bulk mail, the ones filling your inbox first, each with why it is listed. Unsubscribe in one click (through the sender's own unsubscribe link; when that means sending an email, you see the address first) and archive everything a sender left in your inbox, with Undo.
 - **What it knows about you**: before it makes a todo or a draft from someone you have never written to or read mail from, Tabellar asks ("Do you deal with Voyage AI?") at the top of the Inbox. Every todo, meeting, follow-up and newsletter has a menu for "Not this", "Never for this sender" and "Not interested in this topic", and turning down the same kind of thing twice from one sender is remembered. All of it is listed in Settings, under About you, where you can change or delete it, and every prompt Tabellar writes reads it.
 - **Notifications**: macOS notifications for important new mail.
 - **Also**: search operators, full keyboard use (press `?` for the keys), light and dark, phishing warnings, signatures, templates, scheduled send and undo send, several Gmail accounts.
@@ -39,7 +39,7 @@ tabellar start
 
 `tabellar start` runs Tabellar and opens its window, which walks you through two steps:
 
-1. **AI model.** On this Mac: Tabellar downloads Ollama from ollama.com, checks its signature, installs it and downloads a model sized for your Mac's memory. In the cloud: pick a provider, paste your API key and choose from its models. You can skip this and choose later in Settings, under Models. Tabellar has two model slots: the careful model writes drafts and the briefing and runs the assistant and agent, and the fast model reads each new email. Both start as the model you pick here; Settings, under Models, or `tabellar setup` can give the fast slot a smaller model, local or cloud, so new mail is sorted sooner.
+1. **AI model.** On this Mac: Tabellar downloads Ollama from ollama.com, checks its signature, installs it and downloads a model sized for your Mac's memory. In the cloud: pick a provider, paste your API key and choose from its models. You can skip this and choose later in Settings, under Models. Tabellar has two model slots: the careful model writes drafts and runs Ask and its cleanup plans, and the fast model reads each new email. Both start as the model you pick here; Settings, under Models, or `tabellar setup` can give the fast slot a smaller model, local or cloud, so new mail is sorted sooner.
 2. **Gmail.** Click **Sign in with Google**. Google warns that it hasn't verified the app, because Tabellar has not been through Google's review yet: choose Advanced, then Go to Tabellar. The first sign-in shows your newest mail at once, then reads further back in the background: the senders of the last 90 days (who you write to, whose mail you open, which are mailing lists), your last 200 sent emails for your writing style and a few facts about you, and the last 30 days of inbox mail.
 
 After that, `tabellar start` runs Tabellar (Ctrl-C stops it), `tabellar open` opens the window again, and `tabellar status` shows what it is connected to and what the engine is doing. `tabellar setup` chooses the models in the terminal instead.
@@ -83,6 +83,8 @@ server/
   actions.ts    carrying out, logging, approving and undoing actions
   outbox.ts     sending what is due: send later, undo send, Autopilot replies
   newsletters.ts  bulk senders by their headers, unsubscribe, archiving a sender
+  labels.ts     the user's labels: examples, Gmail labels, suggestions
+  brief.ts      the Brief, from what the engine stored
   notify.ts     notifications (macOS)
   launchd.ts    start at login
   check.ts      the safety checks run by `tabellar check`
@@ -93,7 +95,7 @@ server/
   llm.ts        model calls (fast and careful slots): Ollama, Anthropic, or OpenAI-compatible
   ai.ts         prompts and AI helpers
   agentLoop.ts, agentTools.ts, agentExecute.ts   the agent
-  analyzeEmails.ts, buildBriefing.ts
+  analyzeEmails.ts
   config.ts     paths, config.json, the Keychain and the built-in Google client
 docs/             the public home page and privacy policy (GitHub Pages)
 frontend/

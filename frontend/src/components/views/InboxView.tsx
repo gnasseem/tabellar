@@ -45,17 +45,26 @@ const COLUMNS = "!grid grid-cols-[26px_minmax(0,1fr)_minmax(0,auto)_44px] md:gri
 const SELECT =
   "id, user_id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, snippet, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed(*)";
 const CATEGORY: Record<string, string> = { important: "Important", "action-required": "Action required", promotions: "Promotions", updates: "Updates" };
-// Priority grouping: what waits on the user, then mail from people, then
-// updates, then promotions (folded until opened).
-const PRIORITY: [string, string][] = [
-  ["need", "Needs you"],
+// Priority grouping: what waits on the user, then the user's own labels in
+// the order set in Labels, then mail from people, updates and promotions
+// (folded until opened).
+type UserLabel = { slug: string; display_name: string };
+const REST: [string, string][] = [
   ["people", "People"],
   ["updates", "Updates"],
   ["promotions", "Promotions"],
 ];
 
-function priorityOf(t: Thread): string {
+// The first of the user's labels the email carries, in their order.
+function firstLabel(t: Thread, labels: UserLabel[]): UserLabel | null {
+  const own = t.latest.email_processed?.extra_labels;
+  return own?.length ? labels.find((l) => own.includes(l.slug)) ?? null : null;
+}
+
+function priorityOf(t: Thread, labels: UserLabel[]): string {
   if (t.state === "need" || t.state === "going" || t.state === "failed") return "need";
+  const own = firstLabel(t, labels);
+  if (own) return `label:${own.slug}`;
   const cat = t.latest.email_processed?.category;
   return cat === "updates" || cat === "promotions" ? cat : "people";
 }
@@ -79,7 +88,7 @@ export default function InboxView() {
   const [emails, setEmails] = useState<Email[]>(() => getViewCache("inbox")?.emails ?? []);
   const [loading, setLoading] = useState(() => !getViewCache("inbox"));
   const [hasMore, setHasMore] = useState(false);
-  const [labels, setLabels] = useState<Record<string, string>>({});
+  const [labels, setLabels] = useState<UserLabel[]>([]);
   const [filter, setFilter] = useState<Filter>(() => (localStorage.getItem("tabellar_inbox_filter") === "need" ? "need" : "all"));
   const [group, setGroup] = useState<Group>(() => {
     const g = localStorage.getItem("tabellar_inbox_group");
@@ -183,7 +192,8 @@ export default function InboxView() {
       .from("categories")
       .select("slug, display_name")
       .eq("user_id", user.id)
-      .then(({ data }: { data: { slug: string; display_name: string }[] | null }) => setLabels(Object.fromEntries((data || []).map((c) => [c.slug, c.display_name]))));
+      .order("position", { ascending: true })
+      .then(({ data }: { data: UserLabel[] | null }) => setLabels(data || []));
   }, [user.id, liveChanges.emails]);
 
   // One row per conversation: the newest message stands for the thread.
@@ -208,7 +218,7 @@ export default function InboxView() {
       t.state = s.state;
       // Fetched but not read by the model yet.
       const unread = !t.latest.email_processed && mail.engine?.model;
-      t.text = s.text || labels[cat] || CATEGORY[cat] || cat || (unread ? "Reading" : "");
+      t.text = s.text || firstLabel(t, labels)?.display_name || CATEGORY[cat] || cat || (unread ? "Reading" : "");
       // Marked done by hand: handled, unless Tabellar has something on it.
       if (t.latest.resolved_at && s.state === "filed") {
         t.state = "done";
@@ -233,7 +243,7 @@ export default function InboxView() {
       if (state === "filed" && t.state !== "filed") return false;
       if (state === "handled" && t.state !== "done" && t.state !== "held" && t.state !== "failed") return false;
       if (filter === "need" || state === "need" || state === "going" || state === "handled") return true;
-      if (group === "priority" && priorityOf(t) === "need") return true;
+      if (group === "priority" && priorityOf(t, labels) === "need") return true;
       return !(oldest && t.latest.received_at < oldest);
     });
     const out: Item[] = [];
@@ -243,7 +253,8 @@ export default function InboxView() {
       if (!(fold && folded.has(key))) out.push(...list);
     };
     if (group === "priority") {
-      for (const [key, name] of PRIORITY) add(key, name, shown.filter((t) => priorityOf(t) === key), key !== "need");
+      const groups: [string, string][] = [["need", "Needs you"], ...labels.map((l): [string, string] => [`label:${l.slug}`, l.display_name]), ...REST];
+      for (const [key, name] of groups) add(key, name, shown.filter((t) => priorityOf(t, labels) === key), key !== "need");
     } else if (group === "sender") {
       const by = new Map<string, Thread[]>();
       for (const t of shown) {
@@ -266,7 +277,7 @@ export default function InboxView() {
       add(day.key, day.head, run);
     }
     return out;
-  }, [threads, filter, group, folded, hasMore, emails, search]);
+  }, [threads, filter, group, folded, hasMore, emails, search, labels]);
 
   const fold = (key: string) =>
     setFolded((prev) => {

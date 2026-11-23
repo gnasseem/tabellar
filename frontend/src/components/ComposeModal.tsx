@@ -126,7 +126,6 @@ export default function ComposeModal({
     addToast,
     notifyDraftChange,
     notifySent,
-    assistantOpen,
   } = useApp();
   const supabase = createClient();
   const draftId = useRef(draft?.id ?? crypto.randomUUID());
@@ -1069,9 +1068,9 @@ export default function ComposeModal({
       aria-label={title}
       className="fixed bottom-4 z-50 flex flex-col rounded-[12px] bg-raised shadow-pop"
       style={{
-        right: assistantOpen ? "388px" : "16px",
+        right: "16px",
         width: "640px",
-        maxWidth: `calc(100vw - ${assistantOpen ? 404 : 32}px)`,
+        maxWidth: "calc(100vw - 32px)",
         maxHeight: "min(82vh, 700px)",
         transition: "right 0.2s ease",
       }}

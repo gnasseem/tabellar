@@ -6,7 +6,8 @@
 //            has something to show, is read by the model meanwhile.
 //   sent     The last 200 sent emails: kept for Follow-ups, the writing style
 //            learned from all of them, and one careful-model call that writes
-//            the first facts about the user.
+//            the first facts about the user; then one more that suggests
+//            labels from the senders and subjects (labels.ts).
 //   deep     Inbox mail from the last 30 days, real people before bulk, newest
 //            first, 300 in all: bodies fetched, then sorted. Bulk mail is
 //            sorted from its headers alone (analyzeEmails.ts).
@@ -22,7 +23,7 @@ import { fetchHeaderRows, fetchMessages, fetchSentEmails, listMessageIds } from 
 import { analyzeInbox, notStored, sentHeaderRow, storeInbox, storeSent, syncMail, type Account } from "./sync.ts";
 import { indexMail, isBulk, ownAddresses, rebuildSenders, writtenTo } from "./senders.ts";
 import { setPref } from "./profile.ts";
-import { buildBriefingForUser } from "./buildBriefing.ts";
+import { suggestLabels } from "./labels.ts";
 
 const HEADER_DAYS = 90;
 const HEADER_CAP = 5000;
@@ -102,6 +103,8 @@ async function firstRead(userId: string, plan: () => unknown): Promise<void> {
 
   if (state.step === "sent") {
     const read = await learnFromSent(userId, accounts[0], { facts: true });
+    // Labels to offer, from who writes and about what.
+    await suggestLabels(userId).catch((e) => console.error("[first read] labels:", e));
     state = await save(userId, { step: "deep", sent: read.sent, facts: read.facts });
   }
 
@@ -141,19 +144,11 @@ async function indexHeaders(userId: string, accounts: Account[]): Promise<void> 
   }
 }
 
-// Sort what is already stored, plan it, and write the first briefing.
+// Sort what is already stored and plan it.
 async function readNewest(userId: string, plan: () => unknown): Promise<void> {
   if (!modelConfigured()) return;
   await analyzeInbox(userId);
   await plan();
-  const { data: p } = await db.from("profiles").select("last_briefing").eq("id", userId).maybeSingle();
-  if (p?.last_briefing) return;
-  try {
-    const briefing = await buildBriefingForUser(userId, db, "all_recent");
-    await db.from("profiles").update({ last_briefing: briefing, last_briefing_at: new Date().toISOString() }).eq("id", userId);
-  } catch (e) {
-    console.error("[first read] briefing:", e);
-  }
 }
 
 // ── Sent mail ───────────────────────────────────────────────────────────────

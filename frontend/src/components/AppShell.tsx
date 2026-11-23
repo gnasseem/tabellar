@@ -10,9 +10,7 @@ import {
 import Icon from "@/components/Icon";
 import Sidebar from "./Sidebar";
 import ComposeModal from "./ComposeModal";
-import AssistantPanel from "./AssistantPanel";
 import { ToastContainer, type ToastItem } from "./Toast";
-import AgentWorkspace from "./solve/AgentWorkspace";
 import ShortcutsHelp from "./ShortcutsHelp";
 import { GO_TO_VIEWS, isTypingTarget } from "@/lib/shortcuts";
 import type { User } from "@/lib/db";
@@ -20,7 +18,6 @@ import { createClient } from "@/lib/db";
 import { useLiveUpdates, type LiveChangeCounters } from "@/lib/useLiveUpdates";
 import { useOverview, type Overview } from "@/lib/outcomes";
 import {
-  startAgent as apiStartAgent,
   stepAgent as apiStepAgent,
   answerAgent as apiAnswerAgent,
   answerAgentBatch as apiAnswerAgentBatch,
@@ -47,9 +44,6 @@ type Profile = {
   theme: "light" | "dark";
   style_notes?: string | null;
   working_hours?: Record<string, unknown> | null;
-  last_briefing?: Record<string, unknown> | null;
-  last_briefing_at?: string | null;
-  briefing_scope?: string | null;
   calendar_send_invites?: boolean | null;
   autonomy_level?: string | null;
   engine_paused?: boolean | null;
@@ -116,24 +110,13 @@ export type AppContextType = {
   invalidateViewCache: (...keys: string[]) => void;
   // Live update change counters (per-table)
   liveChanges: LiveChangeCounters;
-  // Processing banner (how many emails are being AI-processed)
-  // Briefing version  -  increments whenever a new briefing is saved
-  briefingVersion: number;
-  notifyBriefingUpdated: () => void;
-  briefingRegenerating: boolean;
-  requestBriefingRegeneration: (scope?: string) => void;
-  // Assistant panel open state (used by ComposeModal to shift position)
-  assistantOpen: boolean;
-  setAssistantOpen: (v: boolean) => void;
   // What Tabellar made of the mail: outcomes per email, counts, outgoing replies, engine state
   mail: Overview;
   // Solve-Everything agent session (survives navigation)
   agentSession: AgentSessionState | null;
   agentTurns: AgentTurnRow[];
-  agentWorkspaceOpen: boolean;
-  openAgentWorkspace: () => void;
-  closeAgentWorkspace: () => void;
-  startSolveAgent: () => Promise<void>;
+  /** Follows the cleanup plan Ask started: its state, turns and updates. */
+  adoptSolveAgent: (sessionId: string) => Promise<void>;
   answerSolveAgent: (answer: AgentAnswer) => Promise<void>;
   answerSolveAgentBatch: (batch: AgentBatchAnswer) => Promise<void>;
   executeSolveAgent: (
@@ -201,25 +184,15 @@ export default function AppShell({
   const [inboxCustomTags, setInboxCustomTags] = useState<
     { slug: string; displayName: string; color: string }[]
   >([]);
-  const [assistantOpen, setAssistantOpen] = useState(false);
   const [draftVersion, setDraftVersion] = useState(0);
   const notifyDraftChange = useCallback(
     () => setDraftVersion((v) => v + 1),
     [],
   );
-  const [briefingVersion, setBriefingVersion] = useState(0);
-  const [briefingRegenerating, setBriefingRegenerating] = useState(false);
-  const briefingGenLockRef = useRef(false);
-  const pendingScopeRef = useRef<string | null>(null);
-  const requestBriefingRegenerationRef = useRef<((scope?: string) => void) | null>(null);
   const viewRef = useRef(viewRaw);
   useEffect(() => {
     viewRef.current = viewRaw;
   }, [viewRaw]);
-  const profileRef = useRef(profileState);
-  useEffect(() => {
-    profileRef.current = profileState;
-  }, [profileState]);
   useEffect(() => {
     localStorage.setItem("tabellar_inbox_sort", inboxSort);
   }, [inboxSort]);
@@ -250,7 +223,6 @@ export default function AppShell({
       ) => void)
     | null
   >(null);
-  const onBriefingUpdatedRef = useRef<(() => void) | null>(null);
 
   // View data cache (in-memory, survives view switches but not page reloads)
   const viewCacheRef = useRef<Record<string, ViewCacheEntry>>({});
@@ -272,20 +244,7 @@ export default function AppShell({
   }, []);
 
   // Centralized live updates (realtime + background sync + visibility refresh)
-  const { changeCounters: liveChanges } = useLiveUpdates(
-    user.id,
-    profileState?.last_briefing_at ?? null,
-    (profileState?.working_hours as {
-      start?: string;
-      end?: string;
-      days?: number[];
-    } | null) ?? null,
-    {
-      addToast: (type, msg) => addToastRef.current?.(type, msg),
-      onBriefingUpdated: () => onBriefingUpdatedRef.current?.(),
-    },
-    profileState?.briefing_scope ?? null,
-  );
+  const { changeCounters: liveChanges } = useLiveUpdates(user.id);
 
   // Background prefetch of common view data after initial load
   const prefetchDone = useRef(false);
@@ -362,85 +321,7 @@ export default function AppShell({
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
   }, [theme]);
-  const notifyBriefingUpdated = useCallback(
-    () => setBriefingVersion((v) => v + 1),
-    [],
-  );
-
-  const invalidateViewCacheRef = useRef(invalidateViewCache);
-  invalidateViewCacheRef.current = invalidateViewCache;
-
-  const requestBriefingRegeneration = useCallback(async (scope?: string) => {
-    if (scope) pendingScopeRef.current = scope;
-    if (briefingGenLockRef.current) return;
-    briefingGenLockRef.current = true;
-    setBriefingRegenerating(true);
-    const supabase = createClient();
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
-      const apiUrl = "/api";
-      const scopeToUse = pendingScopeRef.current;
-      pendingScopeRef.current = null;
-      const briefingUrl = scopeToUse
-        ? `${apiUrl}/briefing?scope=${encodeURIComponent(scopeToUse)}`
-        : `${apiUrl}/briefing`;
-      const res = await fetch(briefingUrl, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (!data?.executiveSummary && !data?.briefing) return;
-      const briefingData = data.briefing ?? data;
-      const ts = Date.now();
-      const iso = new Date(ts).toISOString();
-      try {
-        localStorage.setItem(
-          `tabellar_briefing_cache_${user.id}`,
-          JSON.stringify({ data: briefingData, ts, scope: scopeToUse ?? profileRef.current?.briefing_scope ?? null }),
-        );
-      } catch {
-        /* ignore */
-      }
-      await supabase
-        .from("profiles")
-        .update({
-          last_briefing: briefingData,
-          last_briefing_at: iso,
-        })
-        .eq("id", user.id);
-      updateProfile({
-        last_briefing: briefingData as Profile["last_briefing"],
-        last_briefing_at: iso,
-      });
-      invalidateViewCacheRef.current("briefing");
-      notifyBriefingUpdated();
-      if (viewRef.current !== "briefing") {
-        addToast("info", "Briefing finished updating.");
-      }
-    } catch (err) {
-      console.error("[AppShell] briefing regeneration:", err);
-    } finally {
-      briefingGenLockRef.current = false;
-      setBriefingRegenerating(false);
-      // Re-run if a scope change arrived while we were locked
-      if (pendingScopeRef.current) {
-        void requestBriefingRegenerationRef.current?.();
-      }
-    }
-  }, [
-    user.id,
-    addToast,
-    notifyBriefingUpdated,
-    updateProfile,
-  ]);
-
-  // Keep refs in sync so useLiveUpdates callbacks can call these without stale closures
   addToastRef.current = addToast;
-  onBriefingUpdatedRef.current = notifyBriefingUpdated;
-  requestBriefingRegenerationRef.current = requestBriefingRegeneration;
 
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -452,15 +333,12 @@ export default function AppShell({
     null,
   );
   const [agentTurns, setAgentTurns] = useState<AgentTurnRow[]>([]);
-  const [agentWorkspaceOpen, setAgentWorkspaceOpen] = useState(false);
+  const agentRef = useRef(agentSession);
+  agentRef.current = agentSession;
   const [solveAgentCancelInFlight, setSolveAgentCancelInFlight] =
     useState(false);
   const agentUnsubRef = useRef<(() => void) | null>(null);
   const lastStatusRef = useRef<string | null>(null);
-  const agentWorkspaceOpenRef = useRef(false);
-  useEffect(() => {
-    agentWorkspaceOpenRef.current = agentWorkspaceOpen;
-  }, [agentWorkspaceOpen]);
 
   const loadAgentTurns = useCallback(async (sessionId: string) => {
     const supabase = createClient();
@@ -475,17 +353,12 @@ export default function AppShell({
       agentUnsubRef.current = subscribeAgent(supabase, sessionId, {
         onSession: (s) => {
           setAgentSession((prev) => (prev ? { ...prev, ...s } : s));
-          // Surface a toast + notification on status transitions when the
-          // workspace is closed so the user knows they need to act.
+          // Away from Ask, say when the plan needs the user.
           const prev = lastStatusRef.current;
           if (s.status !== prev) {
             lastStatusRef.current = s.status;
-            if (!agentWorkspaceOpenRef.current) {
-              if (s.status === "asking") {
-                addToast("info", "Solver needs your input");
-              } else if (s.status === "ready") {
-                addToast("info", "Plan ready for review");
-              }
+            if (viewRef.current !== "ask" && (s.status === "asking" || s.status === "ready")) {
+              addToast("info", s.status === "asking" ? "The plan has a question" : "The plan is ready", { action: { label: "Open Ask", onClick: () => setView("ask") } });
             }
           }
         },
@@ -496,7 +369,7 @@ export default function AppShell({
           }),
       });
     },
-    [addToast],
+    [addToast, setView],
   );
 
   // Restore session from sessionStorage on mount.
@@ -565,38 +438,19 @@ export default function AppShell({
     } catch {}
   }, [agentSession?.id, agentSession, AGENT_SESSION_KEY]);
 
-  const startSolveAgent = useCallback(async () => {
-    // Optimistic: open the workspace instantly with a placeholder session so
-    // the UI feels instant. The real session_id arrives from the backend shortly
-    // and we swap the state in place.
-    setAgentSession({
-      id: "__starting__",
-      status: "planning",
-      draft_actions: [],
-      pending_question: null,
-      plan: null,
-      results: {},
-    });
-    setAgentTurns([]);
-    setAgentWorkspaceOpen(true);
-
-    const supabase = createClient();
-    try {
-      const { session_id } = await apiStartAgent(supabase);
-      const session = await apiFetchSession(supabase, session_id);
-      if (session) setAgentSession(session);
-      else
-        setAgentSession((prev) => (prev ? { ...prev, id: session_id } : prev));
-      attachAgentRealtime(session_id);
-    } catch (err) {
-      const msg =
-        normalizeAgentSessionError(err) ?? "Could not start solve agent";
-      setAgentSession((prev) =>
-        prev ? { ...prev, status: "error", error: msg } : prev,
-      );
-      addToast("error", `Could not start solve agent: ${msg}`);
-    }
-  }, [addToast, attachAgentRealtime]);
+  const adoptSolveAgent = useCallback(
+    async (sessionId: string) => {
+      if (agentRef.current?.id === sessionId) return;
+      const supabase = createClient();
+      const session = await apiFetchSession(supabase, sessionId);
+      if (!session) return;
+      lastStatusRef.current = session.status;
+      setAgentSession(session);
+      await loadAgentTurns(sessionId);
+      if (["planning", "asking", "executing", "ready"].includes(session.status)) attachAgentRealtime(sessionId);
+    },
+    [attachAgentRealtime, loadAgentTurns],
+  );
 
   const answerSolveAgent = useCallback(
     async (answer: AgentAnswer) => {
@@ -619,7 +473,7 @@ export default function AppShell({
         await loadAgentTurns(agentSession.id);
         void result;
       } catch (err) {
-        addToast("error", `Answer failed: ${(err as Error).message}`);
+        addToast("error", `The answer was not sent: ${(err as Error).message}`);
       }
     },
     [agentSession, addToast, loadAgentTurns],
@@ -650,7 +504,7 @@ export default function AppShell({
         await loadAgentTurns(agentSession.id);
         void result;
       } catch (err) {
-        addToast("error", `Answer batch failed: ${(err as Error).message}`);
+        addToast("error", `The answers were not sent: ${(err as Error).message}`);
       }
     },
     [agentSession, addToast, loadAgentTurns],
@@ -675,13 +529,10 @@ export default function AppShell({
         const bad = Object.values(results).filter(
           (r) => r.status === "error",
         ).length;
-        addToast(
-          bad ? "error" : "success",
-          `Solve finished: ${ok} succeeded${bad ? `, ${bad} failed` : ""}`,
-        );
+        addToast(bad ? "error" : "success", bad ? `${ok} done, ${bad} failed` : `${ok} done`);
         return results;
       } catch (err) {
-        addToast("error", `Execute failed: ${(err as Error).message}`);
+        addToast("error", `The plan did not run: ${(err as Error).message}`);
         return {} as Record<
           string,
           { status: "success" | "error"; info?: string; error?: string }
@@ -700,7 +551,6 @@ export default function AppShell({
       agentUnsubRef.current = null;
       setAgentSession(null);
       setAgentTurns([]);
-      setAgentWorkspaceOpen(false);
       addToast("info", "Cancelled");
       return;
     }
@@ -767,17 +617,11 @@ export default function AppShell({
     agentUnsubRef.current = null;
     setAgentSession(null);
     setAgentTurns([]);
-    setAgentWorkspaceOpen(false);
     try {
       sessionStorage.removeItem(AGENT_SESSION_KEY);
     } catch {}
   }, [AGENT_SESSION_KEY]);
 
-  const openAgentWorkspace = useCallback(() => setAgentWorkspaceOpen(true), []);
-  const closeAgentWorkspace = useCallback(
-    () => setAgentWorkspaceOpen(false),
-    [],
-  );
 
   // ── Global keyboard shortcuts ────────────────────────────────────────────
   // View-scoped shortcuts (j/k and the like) stay in their own views; this
@@ -906,19 +750,10 @@ export default function AppShell({
         setViewCache,
         invalidateViewCache,
         liveChanges,
-        briefingVersion,
-        notifyBriefingUpdated,
-        briefingRegenerating,
-        requestBriefingRegeneration,
-        assistantOpen,
-        setAssistantOpen,
         mail,
         agentSession,
         agentTurns,
-        agentWorkspaceOpen,
-        openAgentWorkspace,
-        closeAgentWorkspace,
-        startSolveAgent,
+        adoptSolveAgent,
         answerSolveAgent,
         answerSolveAgentBatch,
         executeSolveAgent,
@@ -927,10 +762,7 @@ export default function AppShell({
         resetSolveAgent,
       }}
     >
-      <div
-        className="flex h-screen overflow-hidden bg-canvas text-ink"
-        style={{ marginRight: assistantOpen ? "380px" : "0" }}
-      >
+      <div className="flex h-screen overflow-hidden bg-canvas text-ink">
         <Sidebar />
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
       </div>
@@ -951,10 +783,7 @@ export default function AppShell({
           <button
             onClick={() => setComposeMinimized(false)}
             className="fixed bottom-0 z-50 flex h-9 items-center gap-2 rounded-t-[10px] bg-raised px-3.5 text-[13px] font-medium text-ink shadow-pop"
-            style={{
-              right: assistantOpen ? "388px" : "16px",
-              transition: "right 0.2s ease",
-            }}
+            style={{ right: "16px" }}
           >
             <Icon name="edit" size={18} />
             {composeReplyTo ? "Reply" : "New message"}
@@ -965,19 +794,10 @@ export default function AppShell({
           </button>
         )}
 
-        <AssistantPanel
-          open={assistantOpen}
-          onClose={() => setAssistantOpen(false)}
-        />
-
         <ToastContainer toasts={toasts} removeToast={removeToast} />
         <ShortcutsHelp
           open={showShortcutsHelp}
           onClose={() => setShowShortcutsHelp(false)}
-        />
-        <AgentWorkspace
-          open={agentWorkspaceOpen}
-          onClose={closeAgentWorkspace}
         />
       </div>
     </AppContext.Provider>

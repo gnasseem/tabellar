@@ -7,8 +7,7 @@
 //   POST /generate-draft        Draft a reply to a stored email
 //   POST /analyze-inbox         Re-analyze unprocessed or all emails
 //   POST /learn-style           Learn the user's writing style from sent mail
-//   GET  /briefing              Morning briefing
-//   POST /briefing/update       Incremental briefing update
+//   GET  /briefing              The Brief
 //   GET  /calendar/free-slots   Free calendar slots
 //   GET  /calendar/events       Calendar events
 //   POST /calendar/create-event Create a Google Calendar event
@@ -23,7 +22,7 @@
 //   GET|POST /follow-ups, PATCH|DELETE /follow-ups/:id, GET /follow-ups/list
 //   GET|POST /signatures, PATCH|DELETE /signatures/:id
 //   GET  /attachment            Fetch a Gmail attachment
-//   POST /agent/start|step|answer|execute|cancel   The agent
+//   POST /agent/step|answer|execute|cancel   The agent (started from /chat)
 //   GET  /engine/status, POST /engine/autostart, POST /mail/state
 //   POST /actions/approve|dismiss|undo   The action log
 
@@ -37,12 +36,10 @@ import {
   listAllGoogleContacts,
   fetchAttachment,
   sendEmail,
+  userLabelNames,
 } from "./gmail.ts";
 import {
   chatWithAssistant,
-  briefingSummaryNeedsRecovery,
-  generateBriefingExecutiveSummary,
-  updateBriefing,
   composeDraft,
   refineDraft,
   generateDraft,
@@ -55,7 +52,8 @@ import { learnFromSent, startFirstRead } from "./firstRead.ts";
 import { approve, dismiss, undo, record, engineSettings, setMailState } from "./actions.ts";
 import { answer, applyPref, feedback, profileContext, setPref, type Feedback } from "./profile.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
-import { buildBriefingForUser } from "./buildBriefing.ts";
+import { brief } from "./brief.ts";
+import { applyLabel, labelsBySender, labelsForPrompt, suggestLabels, userLabels } from "./labels.ts";
 import {
   runAgentStep,
   runAgentStepParallel,
@@ -176,7 +174,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       const allNew = await syncMail(userId, isInitialFetch);
 
       // The first fetch starts the first read (firstRead.ts), which sorts
-      // this mail, writes the briefing and reads further back in the
+      // this mail and reads further back in the
       // background while the window shows what has arrived.
       if (isInitialFetch) void startFirstRead(userId, () => planNew(userId));
 
@@ -292,6 +290,40 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
       }
       return json({ error: "Not found" }, 404);
+    }
+
+    // ── Labels (labels.ts) ─────────────────────────────────────────────────
+    //   POST /labels/apply {email_id, slug, on}   put an email in or out of a label
+    //   GET  /labels/gmail                        the user's own Gmail labels
+    //   GET  /labels/suggestions                  labels to suggest, worked out once
+    //   POST /labels/suggestions/dismiss {name}
+    if (path === "/labels/apply" && req.method === "POST") {
+      const { email_id, slug, on } = await req.json();
+      if (typeof email_id !== "string" || typeof slug !== "string") return json({ error: "email_id and slug are required" }, 400);
+      try {
+        await applyLabel(userId, email_id, slug, on !== false);
+        return json({ ok: true });
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
+    }
+    if (path === "/labels/gmail" && req.method === "GET") {
+      const { data: accounts } = await db.from("gmail_accounts").select("token_ref").eq("user_id", userId).eq("is_active", true);
+      const names = new Set<string>();
+      for (const a of accounts ?? []) for (const n of await userLabelNames(String(a.token_ref)).catch(() => [])) names.add(n);
+      return json({ labels: [...names].sort((x, y) => x.localeCompare(y)) });
+    }
+    if (path === "/labels/suggestions" && req.method === "GET") {
+      const { data } = await db.from("profiles").select("label_suggestions").eq("id", userId).maybeSingle();
+      const stored = data?.label_suggestions as unknown[] | null;
+      return json({ suggestions: Array.isArray(stored) ? stored : await suggestLabels(userId).catch(() => []) });
+    }
+    if (path === "/labels/suggestions/dismiss" && req.method === "POST") {
+      const { name } = await req.json();
+      const { data } = await db.from("profiles").select("label_suggestions").eq("id", userId).maybeSingle();
+      const left = ((data?.label_suggestions as { name: string }[] | null) ?? []).filter((x) => x.name !== name);
+      await db.from("profiles").update({ label_suggestions: left }).eq("id", userId);
+      return json({ suggestions: left });
     }
 
     // ── POST /learn-style ───────────────────────────────────────────────────
@@ -654,255 +686,9 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ draft }, 200, corsHeaders);
     }
 
-    // ── GET /briefing ──────────────────────────────────────────────────────
+    // ── GET /briefing: what needs the user today (brief.ts) ──────────────
     if (path === "/briefing" && req.method === "GET") {
-      try {
-        const urlObj = new URL(req.url);
-        const scopeParam = urlObj.searchParams.get("scope");
-        const scopeArg =
-          scopeParam &&
-          ["today_new", "today_unread", "past_2_days", "past_week", "all_recent"].includes(
-            scopeParam,
-          )
-            ? (scopeParam as
-                | "today_new"
-                | "today_unread"
-                | "past_2_days"
-                | "past_week"
-                | "all_recent")
-            : undefined;
-
-        const normalized = await buildBriefingForUser(
-          userId,
-          db,
-          scopeArg,
-        );
-        return json(normalized, 200, corsHeaders);
-      } catch (err) {
-        console.error("Briefing error:", err);
-        const errorMessage =
-          (err as Error).message === "LLM_API_ERROR"
-            ? "AI service temporarily unavailable. Please try again later."
-            : "Could not generate briefing. Please try again later.";
-        return json({ error: errorMessage }, 500, corsHeaders);
-      }
-    }
-
-    // ── POST /briefing/update ── Incremental briefing update ──────────────
-    if (path === "/briefing/update" && req.method === "POST") {
-      try {
-        const body = await req.json();
-        const previousBriefing = body.previous_briefing;
-        const since = body.since; // ISO timestamp: only consider emails newer than this
-
-        if (!previousBriefing || !since) {
-          return json(
-            { error: "previous_briefing and since are required" },
-            400,
-            corsHeaders,
-          );
-        }
-
-        // Fetch only NEW emails since the given timestamp, with their processed data
-        const { data: newEmails } = await db
-          .from("emails")
-          .select(
-            "id, subject, sender, snippet, email_processed(category, summary)",
-          )
-          .eq("user_id", userId)
-          .gt("received_at", since)
-          .order("received_at", { ascending: false })
-          .limit(50);
-
-        if (!newEmails?.length) {
-          // No new emails at all, return previous briefing unchanged
-          return json(
-            { briefing: previousBriefing, updated: false },
-            200,
-            corsHeaders,
-          );
-        }
-
-        // Filter to only briefing-worthy emails (skip newsletters, informational, promotional)
-        const SKIP_CATEGORIES = new Set([
-          "newsletter",
-          "informational",
-          "promotional",
-        ]);
-        const relevant = newEmails.filter((e: any) => {
-          const p = Array.isArray(e.email_processed)
-            ? e.email_processed[0]
-            : e.email_processed;
-          if (!p) return true; // unprocessed = might be important
-          return !SKIP_CATEGORIES.has(p.category);
-        });
-
-        if (relevant.length === 0) {
-          // Only newsletters/spam arrived. Update stats.total but don't regenerate.
-          const updated = { ...previousBriefing };
-          if (updated.stats && typeof updated.stats === "object") {
-            const stats = updated.stats as Record<string, number>;
-            stats.total = (stats.total || 0) + newEmails.length;
-            stats.filtered = (stats.filtered || 0) + newEmails.length;
-          }
-          return json({ briefing: updated, updated: false }, 200, corsHeaders);
-        }
-
-        // Build text for only the relevant new emails
-        const newEmailsText = relevant
-          .map((e: any) => {
-            const p = Array.isArray(e.email_processed)
-              ? e.email_processed[0]
-              : e.email_processed;
-            return `Subject: ${e.subject}\nFrom: ${e.sender}\nCategory: ${p?.category ?? "unknown"}\nSummary: ${p?.summary ?? e.snippet ?? ""}`;
-          })
-          .join("\n\n---\n\n");
-
-        // Call the incremental update (cheaper than full rebuild)
-        const updatedBriefing = await updateBriefing(
-          JSON.stringify(previousBriefing),
-          newEmailsText,
-        );
-
-        if (!updatedBriefing) {
-          return json(
-            { briefing: previousBriefing, updated: false },
-            200,
-            corsHeaders,
-          );
-        }
-
-        const ub = updatedBriefing as Record<string, unknown>;
-        let executiveSummary = String(ub.executiveSummary ?? "");
-        if (briefingSummaryNeedsRecovery(executiveSummary)) {
-          const lines: string[] = [];
-          const cr = Array.isArray(ub.crucial)
-            ? (ub.crucial as Record<string, unknown>[])
-            : [];
-          const rep = Array.isArray(ub.replyNeeded)
-            ? (ub.replyNeeded as Record<string, unknown>[])
-            : [];
-          const dl = Array.isArray(ub.deadlines)
-            ? (ub.deadlines as Record<string, unknown>[])
-            : [];
-          const ne = Array.isArray(ub.nonEssential)
-            ? (ub.nonEssential as Record<string, unknown>[])
-            : [];
-          const tp = Array.isArray(ub.topPriority)
-            ? (ub.topPriority as Record<string, unknown>[])
-            : [];
-          const wr = Array.isArray(ub.waitingForReply)
-            ? (ub.waitingForReply as Record<string, unknown>[])
-            : [];
-          if (cr.length || rep.length || dl.length || ne.length) {
-            lines.push(
-              `Buckets: crucial=${cr.length}, replyNeeded=${rep.length}, deadlines=${dl.length}, nonEssential=${ne.length}.`,
-            );
-            const pick = (
-              arr: Record<string, unknown>[],
-              label: string,
-              n: number,
-            ) => {
-              for (let i = 0; i < Math.min(n, arr.length); i++) {
-                const c = arr[i];
-                lines.push(
-                  `[${label}] ${String(c.subject ?? "")} (from ${String(c.sender ?? "")})`,
-                );
-              }
-            };
-            pick(rep, "reply", 8);
-            pick(dl, "deadline", 5);
-            pick(cr, "crucial", 8);
-          } else {
-            lines.push(
-              `Legacy shape: ${tp.length} top priority, ${wr.length} waiting for reply.`,
-            );
-            for (let i = 0; i < Math.min(8, tp.length); i++) {
-              const c = tp[i];
-              lines.push(
-                `[priority] ${String(c.subject ?? "")} (from ${String(c.sender ?? "")})`,
-              );
-            }
-            for (let i = 0; i < Math.min(5, wr.length); i++) {
-              const c = wr[i];
-              lines.push(
-                `[waiting] ${String(c.subject ?? "")} (from ${String(c.sender ?? "")})`,
-              );
-            }
-          }
-          try {
-            executiveSummary = await generateBriefingExecutiveSummary(
-              lines.join("\n"),
-            );
-          } catch {
-            executiveSummary =
-              "Briefing updated; review sections for what changed.";
-          }
-        }
-
-        // Normalize the structure (v1 fields + optional v2 arrays from the model)
-        const normalized: Record<string, unknown> = {
-          executiveSummary,
-          topPriority: (updatedBriefing as any).topPriority || [],
-          deadlines: (updatedBriefing as any).deadlines || [],
-          waitingForReply: (updatedBriefing as any).waitingForReply || [],
-          stats: (updatedBriefing as any).stats || previousBriefing.stats || {},
-        };
-        if (Array.isArray(ub.crucial)) normalized.crucial = ub.crucial;
-        if (Array.isArray(ub.replyNeeded))
-          normalized.replyNeeded = ub.replyNeeded;
-        if (Array.isArray(ub.nonEssential)) {
-          normalized.nonEssential = ub.nonEssential;
-        }
-
-        // Attach email_id to new cards; preserve existing email_id on carried-over cards
-        const newSubjectToId = new Map<string, string>();
-        for (const e of newEmails) {
-          newSubjectToId.set(
-            ((e as any).subject ?? "").toLowerCase(),
-            (e as any).id,
-          );
-        }
-        const attachIdsUpdate = (cards: any[]) =>
-          cards.map((card) => {
-            if (card.email_id) return card; // already set from previous briefing
-            const key = (card.subject ?? "").toLowerCase();
-            let id = newSubjectToId.get(key);
-            if (!id) {
-              for (const [s, eid] of newSubjectToId) {
-                if (s.includes(key) || key.includes(s)) {
-                  id = eid;
-                  break;
-                }
-              }
-            }
-            return id ? { ...card, email_id: id } : card;
-          });
-        normalized.topPriority = attachIdsUpdate(
-          normalized.topPriority as any[],
-        );
-        normalized.waitingForReply = attachIdsUpdate(
-          normalized.waitingForReply as any[],
-        );
-        if (Array.isArray(normalized.crucial)) {
-          normalized.crucial = attachIdsUpdate(normalized.crucial as any[]);
-        }
-        if (Array.isArray(normalized.replyNeeded)) {
-          normalized.replyNeeded = attachIdsUpdate(
-            normalized.replyNeeded as any[],
-          );
-        }
-        if (Array.isArray(normalized.nonEssential)) {
-          normalized.nonEssential = attachIdsUpdate(
-            normalized.nonEssential as any[],
-          );
-        }
-
-        return json({ briefing: normalized, updated: true }, 200, corsHeaders);
-      } catch (err: any) {
-        console.error("Briefing update error:", err);
-        return json({ error: "Could not update briefing" }, 500, corsHeaders);
-      }
+      return json(await brief(userId), 200, corsHeaders);
     }
 
     // ── GET /calendar/free-slots ───────────────────────────────────────────
@@ -1339,7 +1125,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
       const { data: emails } = await db
         .from("emails")
-        .select("id, subject, sender, body_text, snippet")
+        .select("id, subject, sender, sender_email, body_text, snippet")
         .eq("id", emailId)
         .eq("user_id", userId);
 
@@ -1353,13 +1139,13 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         .select("working_hours")
         .eq("id", userId)
         .maybeSingle();
+      const labels = await userLabels(userId);
       const result = await processFullEmail(
         (email.subject as string) || "",
         (email.sender as string) || "",
         (email.body_text as string) || (email.snippet as string) || "",
         undefined,
-        undefined,
-        undefined,
+        labelsForPrompt(labels),
         ((rethinkProfile?.working_hours as { timezone?: string } | null)
           ?.timezone) || "UTC",
       );
@@ -1372,6 +1158,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           urgency: result.urgency,
           summary: result.summary,
           quick_actions: result.quick_actions,
+          extra_labels: [...new Set([...result.tags, ...labelsBySender(labels, String(email.sender_email ?? ""))])],
         },
         { onConflict: "email_id" },
       );
@@ -1483,22 +1270,56 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       // Wipe everything Tabellar learned or stored. The profile and the
       // connected accounts stay, so the user remains signed in.
       for (const t of ["agent_sessions", "email_processed", "todos", "meetings", "follow_up_reminders",
-        "scheduled_emails", "draft_emails", "email_memory", "contacts", "knowledge_base", "categories", "preferences", "questions",
-        "category_rules", "delegation_rules", "style_profiles", "email_templates", "email_signatures", "newsletter_senders", "emails"]) {
+        "scheduled_emails", "draft_emails", "email_memory", "contacts", "knowledge_base", "categories", "preferences", "questions", "conversations",
+        "delegation_rules", "style_profiles", "email_templates", "email_signatures", "newsletter_senders", "emails"]) {
         const { error } = await db.from(t).delete().eq("user_id", userId);
         if (error) return json({ error: "Failed to delete data: " + error.message }, 500, corsHeaders);
       }
       await db.from("gmail_accounts").update({ history_id: null }).eq("user_id", userId);
-      await db.from("profiles").update({ last_briefing: null, last_briefing_at: null, style_notes: null }).eq("id", userId);
+      await db.from("profiles").update({ style_notes: null }).eq("id", userId);
       return json({ deleted: true }, 200, corsHeaders);
     }
 
     // ── POST /chat ───────────────────────────────────────────────────────────
     if (path === "/chat" && req.method === "POST") {
-      const { message, history = [], timezone = "UTC" } = await req.json();
+      const { message, history = [], timezone = "UTC", conversation_id } = await req.json();
 
       if (!message?.trim()) {
         return json({ error: "Message required" }, 400, corsHeaders);
+      }
+
+      // The answer kept in its conversation here, so it lands even if the window was closed.
+      const keep = async (reply: string, actions: unknown[]) => {
+        if (typeof conversation_id !== "string") return;
+        const { data: conv } = await db.from("conversations").select("messages").eq("id", conversation_id).eq("user_id", userId).maybeSingle();
+        if (!conv) return;
+        const messages = [...((conv.messages as unknown[]) ?? []), { role: "assistant", content: reply, actions }];
+        await db.from("conversations").update({ messages, updated_at: new Date().toISOString() }).eq("id", conversation_id);
+      };
+
+      // The plan a cleanup request shows: the one already going, or a new one.
+      const cleanupPlan = async (): Promise<string> => {
+        const { data: going } = await db
+          .from("agent_sessions")
+          .select("id")
+          .eq("user_id", userId)
+          .is("parent_id", null)
+          .in("status", ["planning", "asking", "ready", "executing"])
+          .order("created_at", { ascending: false })
+          .limit(1);
+        if (going?.[0]?.id) return going[0].id as string;
+        const id = await startAgentSession(db, userId);
+        void runAgentStepParallel(id, db, timezone).catch((e) => console.error("[chat] plan:", e));
+        return id;
+      };
+
+      // "Clean up my inbox" and the like start the plan without asking the
+      // model whether to: a small model would rather describe a plan.
+      if (message.length < 120 && /^\s*(please\s+)?((can|could|would) you\s+)?(please\s+)?(clean\s*up|clear|tidy( up)?|triage|go through|sort out|deal with)\s+(my\s+|the\s+)?(inbox|mail|emails)\b/i.test(message)) {
+        const reply = "A cleanup plan for the last week of your inbox. Nothing runs until you approve it.";
+        const actions = [{ type: "plan_cleanup", data: { session_id: await cleanupPlan() } }];
+        await keep(reply, actions);
+        return json({ reply, actions }, 200, corsHeaders);
       }
 
       // Load only what's needed for the system prompt; everything else is fetched on demand by the AI via tools.
@@ -1589,7 +1410,9 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
       // Pause stops these too; the assistant is told and nothing runs.
       const { paused } = await engineSettings(userId);
-      for (const tc of paused ? [] : tool_calls) {
+      // Paused: nothing is done, but reading and planning go on.
+      const ACTS = new Set(["create_todo", "update_todo", "delete_todo", "save_draft", "delete_draft", "add_knowledge", "create_tag", "send_email", "reply_to_email", "create_meeting", "update_meeting", "delete_meeting", "archive_email", "set_follow_up"]);
+      for (const tc of tool_calls.filter((t) => !paused || !ACTS.has(t.name))) {
         if (tc.name === "create_todo") {
           const args = tc.arguments as { text: string };
           console.log("[chat/create_todo] inserting:", args.text);
@@ -1659,7 +1482,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
               user_id: userId,
               slug: args.slug,
               display_name: args.display_name,
-              color: args.color ?? "#6b7280",
+              color: args.color ?? "#8a857d",
+              position: 10_000,
             })
             .select("id")
             .single();
@@ -1890,6 +1714,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           const args = tc.arguments as { email_id: string };
           await setMailState(userId, [args.email_id], { archived: true });
           actions.push({ type: "archive_email", data: tc.arguments });
+        } else if (tc.name === "plan_cleanup") {
+          actions.push({ type: "plan_cleanup", data: { session_id: await cleanupPlan() } });
         } else if (tc.name === "suggest_reply_options") {
           const args = tc.arguments as {
             options: { label: string; description: string }[];
@@ -2073,7 +1899,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       // Note: knowledge use_count is incremented by the search_knowledge_base tool
       // inside chatWithAssistant when entries are explicitly searched and returned.
 
-      if (paused && tool_calls.length) actions.push({ type: "paused", data: { message: "Tabellar is paused, so nothing was done. Resume it in Activity." } });
+      if (paused && tool_calls.some((t) => ACTS.has(t.name))) actions.push({ type: "paused", data: { message: "Tabellar is paused, so nothing was done. Resume it with the play button above Settings." } });
+      await keep(reply, actions);
       return json({ reply, actions }, 200, corsHeaders);
     }
 
@@ -2310,28 +2137,6 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     }
 
     // ── Solve-Everything agent routes ────────────────────────────────────
-    // Start a new agent session for the current briefing. Returns the session id.
-    if (path === "/agent/start" && req.method === "POST") {
-      const body = (await req.json().catch(() => ({}))) as {
-        timezone?: string;
-      };
-      const sessionId = await startAgentSession(db, userId);
-      // Fire-and-forget: kick off the parallel bucket orchestrator.
-      // waitUntil keeps the execution context alive after the response is sent
-      // so the orchestrator's consolidation step actually completes.
-      const bgStart = runAgentStepParallel(
-        sessionId,
-        db,
-        body.timezone ?? "UTC",
-      ).catch((e) =>
-        console.error("[agent/start] initial parallel step failed:", e),
-      );
-      (globalThis as unknown as Record<symbol, { waitUntil: (p: Promise<unknown>) => void }>)[
-        Symbol.for("EdgeRuntime")
-      ]?.waitUntil(bgStart);
-      return json({ session_id: sessionId }, 200, corsHeaders);
-    }
-
     // Run the next iteration of the planning loop. Frontend calls this on
     // status changes to "planning" (e.g. after an /agent/answer).
     if (path === "/agent/step" && req.method === "POST") {

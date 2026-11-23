@@ -35,7 +35,7 @@ async function autopilotRefusal(row: Row): Promise<string | null> {
   });
 }
 
-// Keep a refused Autopilot reply as a draft and say so in Activity.
+// Keep a refused Autopilot reply as a draft and say so in History.
 async function holdBack(row: Row, reason: string) {
   await db.from("scheduled_emails").update({ status: "cancelled", error_message: reason }).eq("id", row.id);
   await db.from("draft_emails").insert({

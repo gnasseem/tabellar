@@ -4,7 +4,7 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import { LevelControl } from "../Sidebar";
-import { engineFetch } from "./ActivityView";
+import { api } from "@/lib/outcomes";
 import { EmailField, useContacts } from "../EmailAutocomplete";
 import { ModelSettings, RadioDot } from "../ModelSetup";
 import { Seg, ViewBar } from "../ui";
@@ -37,7 +37,7 @@ type DelegationRule = {
   weight: number;
 };
 
-type TabId = "account" | "about" | "background" | "ai" | "style" | "signatures" | "templates" | "schedule" | "briefing" | "automation";
+type TabId = "account" | "about" | "background" | "ai" | "style" | "signatures" | "templates" | "schedule" | "calendar" | "automation";
 
 const SECTIONS: { id: TabId; label: string }[] = [
   { id: "account", label: "General" },
@@ -48,7 +48,7 @@ const SECTIONS: { id: TabId; label: string }[] = [
   { id: "signatures", label: "Signatures" },
   { id: "templates", label: "Templates" },
   { id: "schedule", label: "Working hours" },
-  { id: "briefing", label: "Briefing and calendar" },
+  { id: "calendar", label: "Calendar" },
   { id: "automation", label: "Forwarding" },
 ];
 
@@ -152,7 +152,7 @@ function EngineSettings() {
   const [knownOnly, setKnownOnly] = useState<boolean>(profile.autopilot_known_only !== false);
 
   useEffect(() => {
-    engineFetch("/engine/status")
+    api("/engine/status")
       .then((s) => {
         setAutostart(!!s.autostart);
         setLevel(s.level);
@@ -170,7 +170,7 @@ function EngineSettings() {
 
   const toggleAutostart = async (on: boolean) => {
     try {
-      const r = await engineFetch("/engine/autostart", { on });
+      const r = await api("/engine/autostart", { on });
       setAutostart(!!r.autostart);
       addToast("success", on ? "Tabellar will start at login" : "Tabellar will no longer start at login");
     } catch (e) {
@@ -454,8 +454,6 @@ export default function SettingsView() {
   const [workDays, setWorkDays] = useState([1, 2, 3, 4, 5]);
   const [workDnd, setWorkDnd] = useState(false);
 
-  // Briefing scope
-  const [briefingScope, setBriefingScope] = useState(profile?.briefing_scope || "today_new");
 
   // Calendar invites
   const [calendarSendInvites, setCalendarSendInvites] = useState(profile?.calendar_send_invites !== false);
@@ -720,7 +718,6 @@ export default function SettingsView() {
       .update({
         style_notes: styleNotes || null,
         working_hours: { start: workStart, end: workEnd, days: workDays, timezone: detectedTimezone, dnd: workDnd },
-        briefing_scope: briefingScope,
         calendar_send_invites: calendarSendInvites,
       })
       .eq("id", user.id);
@@ -741,7 +738,6 @@ export default function SettingsView() {
     updateProfile({
       style_notes: styleNotes || null,
       working_hours: { start: workStart, end: workEnd, days: workDays, timezone: detectedTimezone, dnd: workDnd },
-      briefing_scope: briefingScope,
       calendar_send_invites: calendarSendInvites,
     });
     setSaved(true);
@@ -760,7 +756,7 @@ export default function SettingsView() {
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
-  }, [styleNotes, workStart, workEnd, workDays, workDnd, briefingScope, calendarSendInvites, styleGreeting, styleClosing, styleTone, styleLength]);
+  }, [styleNotes, workStart, workEnd, workDays, workDnd, calendarSendInvites, styleGreeting, styleClosing, styleTone, styleLength]);
 
   // Monday first, as the week is read; the stored numbers keep Sunday as 0.
   const WEEK: [number, string][] = [
@@ -906,7 +902,7 @@ export default function SettingsView() {
               {s.label}
             </button>
           ))}
-          <button onClick={() => setView("activity")} className="flex h-7 w-full items-center rounded-md px-2 text-left text-ink2 transition-colors duration-150 hover:bg-hover">
+          <button onClick={() => setView("history")} className="flex h-7 w-full items-center rounded-md px-2 text-left text-ink2 transition-colors duration-150 hover:bg-hover">
             History
           </button>
         </nav>
@@ -1105,23 +1101,8 @@ export default function SettingsView() {
               </Group>
             )}
 
-            {activeTab === "briefing" && (
+            {activeTab === "calendar" && (
               <>
-                <Group title="What the briefing covers">
-                  <div role="radiogroup" aria-label="What the briefing covers" className="divide-y divide-line-soft">
-                    {(
-                      [
-                        ["today_new", "Today", "New emails from today only."],
-                        ["past_2_days", "Two days", "Everything from the last two days, for catching up after a day off."],
-                        ["past_week", "A week", "Emails from the last seven days, for a broader overview."],
-                        ["all_recent", "Latest 40", "Your 40 most recent emails, whatever their date."],
-                      ] as const
-                    ).map(([id, name, text]) => (
-                      <ChoiceRow key={id} on={briefingScope === id} onClick={() => setBriefingScope(id)} name={name} text={text} />
-                    ))}
-                  </div>
-                </Group>
-
                 <Group title="Calendar">
                   <Row name="Send invitations to attendees" text="Google Calendar emails the people invited">
                     <Switch label="Send invitations to attendees" on={calendarSendInvites} onChange={setCalendarSendInvites} />

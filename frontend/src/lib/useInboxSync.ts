@@ -50,7 +50,7 @@ export function useInboxSync(reload: () => Promise<void> | void) {
         return;
       }
       // The newest mail is in. The server reads the rest in the background
-      // (sorting, the briefing, 90 days of senders) and the inbox fills in as
+      // (sorting, 90 days of senders) and the inbox fills in as
       // it lands.
       invalidateViewCache("inbox", "inbox:smart");
       try {

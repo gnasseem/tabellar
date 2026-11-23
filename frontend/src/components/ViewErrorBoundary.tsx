@@ -21,10 +21,11 @@ const NAMES: Record<string, string> = {
   followups: "Follow-ups",
   newsletters: "Newsletters",
   briefing: "Brief",
-  activity: "History",
+  ask: "Ask",
+  history: "History",
   sent: "Sent",
   scheduled: "Scheduled",
-  categories: "Labels",
+  labels: "Labels",
   relationships: "Knowledge",
   settings: "Settings",
 };

@@ -21,9 +21,10 @@ export const GO_TO_VIEWS: Record<string, string> = {
   m: "meetings",
   s: "sent",
   r: "replies",
-  a: "activity",
+  a: "ask",
+  h: "history",
   f: "followups",
-  c: "categories",
+  l: "labels",
   ",": "settings",
 };
 
@@ -37,9 +38,10 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "g m", description: "Go to meetings" },
       { keys: "g s", description: "Go to sent" },
       { keys: "g r", description: "Go to replies" },
-      { keys: "g a", description: "Go to history" },
+      { keys: "g a", description: "Go to ask" },
+      { keys: "g h", description: "Go to history" },
       { keys: "g f", description: "Go to follow-ups" },
-      { keys: "g c", description: "Go to labels" },
+      { keys: "g l", description: "Go to labels" },
       { keys: "g ,", description: "Go to settings" },
     ],
   },
@@ -117,6 +119,14 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
+    title: "Labels",
+    shortcuts: [
+      { keys: "j k", description: "Move" },
+      { keys: "Enter", description: "Edit" },
+      { keys: "Alt Up, Alt Down", description: "Move the label up or down" },
+    ],
+  },
+  {
     title: "Sent and Scheduled",
     shortcuts: [
       { keys: "j k", description: "Move" },
@@ -129,10 +139,8 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: "History",
     shortcuts: [
       { keys: "j k", description: "Move" },
-      { keys: "x", description: "Select" },
-      { keys: "a", description: "Approve" },
       { keys: "Enter", description: "Details" },
-      { keys: "z", description: "Undo approval" },
+      { keys: "z", description: "Undo the selected line" },
     ],
   },
 ];

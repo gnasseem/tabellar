@@ -67,19 +67,6 @@ function withNormalizedAgentSession(row: AgentSessionState): AgentSessionState {
   } as AgentSessionState;
 }
 
-export async function startAgent(
-  supabase: SupabaseClient,
-): Promise<{ session_id: string }> {
-  const headers = await authHeaders(supabase);
-  const res = await fetch(`${apiUrl()}/agent/start`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ timezone: userTimezone() }),
-  });
-  if (!res.ok) throw new Error(`Agent start failed: ${res.status}`);
-  return res.json();
-}
-
 export async function stepAgent(
   supabase: SupabaseClient,
   sessionId: string,

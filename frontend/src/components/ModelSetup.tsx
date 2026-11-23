@@ -459,7 +459,7 @@ function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
 
 // Settings, Models: the same picker for each slot, with its own state.
 const SLOTS: { id: Slot; label: string; text: string }[] = [
-  { id: "careful", label: "Careful model", text: "Writes drafts and the briefing, answers in Ask, runs the agent." },
+  { id: "careful", label: "Careful model", text: "Writes drafts, answers in Ask, runs cleanup plans." },
   { id: "fast", label: "Fast model", text: "Reads each new email to sort it, summarise it and find todos and meetings." },
 ];
 
@@ -507,7 +507,7 @@ export function ModelSettings() {
               <span className="font-medium text-ink">{modelLabel(shown, state.providers)}</span>.
             </>
           ) : (
-            "No model yet. Mail still syncs, but sorting, the briefing and drafts wait until you choose one."
+            "No model yet. Mail still syncs, but sorting and drafts wait until you choose one."
           )}
           {saved === slot && <span className="ml-2 text-ok">Saved.</span>}
         </p>
