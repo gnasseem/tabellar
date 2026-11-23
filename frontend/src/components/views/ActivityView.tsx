@@ -601,7 +601,7 @@ export default function ActivityView() {
           ) : filter === "waiting" ? (
             <Empty icon="activity" title="Nothing is waiting for you">
               {level === "suggest"
-                ? "At Suggest, Tabellar asks before it labels, drafts, adds a todo or proposes a meeting. Each request appears here to approve."
+                ? "At Suggest, Tabellar asks before it drafts, adds a todo or proposes a meeting. Each request appears here to approve."
                 : "Proposals appear here at the Suggest level. Change the level at the bottom of the sidebar."}{" "}
               <button className="link" onClick={() => setFilter("all")}>
                 Show all activity

@@ -26,7 +26,7 @@ Local and personal: mail stays in one SQLite file on the Mac, the model can run 
 
 ## Capabilities and Constraints
 
-- Engine levels: Observe (sorts and notifies), Suggest (proposals wait for approval), Assist (labels, drafts, todos, meeting proposals happen on their own), Autopilot (also replies to the writer in-thread after a cancel window, daily cap). One Pause switch stops everything. It never deletes, and never archives on its own.
+- Engine levels: Observe (sorts and notifies), Suggest (labels mail; drafts, todos and meetings wait for approval), Assist (labels, drafts, todos, meeting proposals happen on their own), Autopilot (also replies to the writer in-thread after a cancel window, daily cap). One Pause switch stops everything. It never deletes, and never archives on its own.
 - Activity: the action log, with approve, dismiss and undo. Approval is bound to a hash of the exact proposal.
 - Briefing, drafts, todos, meetings with calendar free slots, follow-ups for unanswered sent mail, newsletter cleanup (unsubscribe, archive a sender), an assistant that answers questions about the inbox, and an agent that plans a cleanup and runs only what is approved.
 - Several Gmail accounts. Local or cloud models in two slots.

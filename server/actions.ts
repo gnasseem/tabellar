@@ -193,6 +193,23 @@ async function loadRow(userId: string, id: string) {
   return data;
 }
 
+// Carry out a proposal that has been claimed (status "running").
+async function carryOut(userId: string, row: Record<string, unknown>, reason: string): Promise<void> {
+  const p: Planned = { kind: row.kind as Kind, emailId: row.email_id as string | null, summary: row.summary as string, detail: row.detail as Record<string, unknown> };
+  try {
+    const undoInfo = await execute(userId, p, row.id as string);
+    await db.from("action_log").update({ status: "done", detail: { ...p.detail, ...undoInfo }, decided_at: new Date().toISOString(), reason }).eq("id", row.id);
+  } catch (e) {
+    await db.from("action_log").update({ status: "failed", error: (e as Error).message.slice(0, 500), decided_at: new Date().toISOString() }).eq("id", row.id);
+    throw e;
+  }
+}
+
+async function claim(id: string): Promise<boolean> {
+  const claimed = await db.from("action_log").update({ status: "running" }).eq("id", id).eq("status", "proposed").select("id");
+  return !!claimed.data?.length;
+}
+
 // Approve a proposal. `hash` is the one the window showed alongside the text;
 // it has to match both the stored hash and a fresh hash of the stored detail.
 export async function approve(userId: string, id: string, hash: string): Promise<void> {
@@ -206,16 +223,28 @@ export async function approve(userId: string, id: string, hash: string): Promise
   const decision = decide({ kind: row.kind as string, source: "user", level: "suggest", paused });
   if (decision.verdict !== "do") throw Object.assign(new Error(decision.reason), { status: 409 });
   // Claim it first so a double click cannot run it twice.
-  const claimed = await db.from("action_log").update({ status: "running" }).eq("id", id).eq("status", "proposed").select("id");
-  if (!claimed.data?.length) throw Object.assign(new Error("This proposal was already handled"), { status: 409 });
-  const p: Planned = { kind: row.kind as Kind, emailId: row.email_id as string | null, summary: row.summary as string, detail: row.detail as Record<string, unknown> };
-  try {
-    const undoInfo = await execute(userId, p, id);
-    await db.from("action_log").update({ status: "done", detail: { ...p.detail, ...undoInfo }, decided_at: new Date().toISOString(), reason: "Approved" }).eq("id", id);
-  } catch (e) {
-    await db.from("action_log").update({ status: "failed", error: (e as Error).message.slice(0, 500), decided_at: new Date().toISOString() }).eq("id", id);
-    throw e;
+  if (!(await claim(id))) throw Object.assign(new Error("This proposal was already handled"), { status: 409 });
+  await carryOut(userId, row, "Approved");
+}
+
+// Labels no longer wait for approval at Suggest. Labels proposed before that
+// are carried out now, as the engine would label new mail.
+export async function applyWaitingLabels(userId: string): Promise<number> {
+  const settings = await engineSettings(userId);
+  const decision = decide({ kind: "label", source: "engine", ...settings });
+  if (decision.verdict !== "do") return 0;
+  const { data } = await db.from("action_log").select("*").eq("user_id", userId).eq("kind", "label").eq("status", "proposed");
+  let done = 0;
+  for (const row of data ?? []) {
+    if (!(await claim(row.id as string))) continue;
+    try {
+      await carryOut(userId, row, decision.reason);
+      done++;
+    } catch (e) {
+      console.error("[actions] waiting label:", (e as Error).message);
+    }
   }
+  return done;
 }
 
 export async function dismiss(userId: string, id: string): Promise<void> {

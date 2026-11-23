@@ -58,11 +58,16 @@ export default class ViewErrorBoundary extends Component<Props, State> {
         <div className="empty">
           <Icon name="error" size={22} className="text-ink3" />
           <h3>{name} could not be shown</h3>
-          <p>Something in this page failed while it was being drawn. Your mail and everything Tabellar did with it are untouched. Try again, or pick another page in the sidebar.</p>
+          <p>Your mail and everything Tabellar did with it are untouched.</p>
           {this.state.error && <p className="max-w-full truncate font-mono !text-xs !text-danger">{this.state.error.message}</p>}
-          <button className="btn mt-4" onClick={() => this.setState({ hasError: false, error: null })}>
-            Try again
-          </button>
+          <div className="mt-4 flex gap-2">
+            <button className="btn btn-pri" onClick={() => window.location.reload()}>
+              Reload
+            </button>
+            <button className="btn" onClick={() => this.setState({ hasError: false, error: null })}>
+              Try again
+            </button>
+          </div>
         </div>
       </div>
     );

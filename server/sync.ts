@@ -13,6 +13,7 @@ import {
   threadIdOf,
   fetchGoogleContacts,
   currentHistoryId,
+  htmlToText,
   type EmailData,
 } from "./gmail.ts";
 import { analyzeEmailsForUser } from "./analyzeEmails.ts";
@@ -367,3 +368,31 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
 });
 
 export const analyzeInbox = serial((userId: string) => analyzeEmailsForUser(userId, db));
+
+// Mail stored before HTML-only emails got a text body: fill it in, and have
+// the model read those emails again with their real text instead of the
+// snippet. Proposals made from the snippet are withdrawn; what was already
+// done stays, and planNew does not repeat it.
+export async function fillMissingBodies(userId: string): Promise<number> {
+  const { data } = await db
+    .from("emails")
+    .select("id, body_html, label_ids")
+    .eq("user_id", userId)
+    .or("body_text.is.null,body_text.eq.")
+    .neq("body_html", "");
+  const rows = (data ?? []).filter((e) => e.body_html);
+  if (!rows.length) return 0;
+  const reread: string[] = [];
+  for (const e of rows) {
+    const text = htmlToText(e.body_html as string);
+    if (!text) continue;
+    await db.from("emails").update({ body_text: text }).eq("id", e.id);
+    if (!((e.label_ids as string[] | null) ?? []).includes("SENT")) reread.push(e.id as string);
+  }
+  for (let i = 0; i < reread.length; i += 200) {
+    const ids = reread.slice(i, i + 200);
+    await db.from("email_processed").delete().in("email_id", ids);
+    await db.from("action_log").delete().in("email_id", ids).eq("status", "proposed");
+  }
+  return rows.length;
+}

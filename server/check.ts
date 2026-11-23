@@ -61,10 +61,10 @@ ok("Autopilot replies only to the person who wrote, in the thread", () => {
     assert.equal(decide({ kind: "send", level: "autopilot", send: s, ...engine }).verdict, "refuse", JSON.stringify(s));
   }
 });
-ok("observe changes nothing, suggest proposes, assist and autopilot do", () => {
+ok("observe changes nothing, suggest labels and proposes the rest, assist and autopilot do", () => {
   for (const kind of ["label", "draft", "todo", "meeting"]) {
     assert.equal(decide({ kind, level: "observe", ...engine }).verdict, "refuse");
-    assert.equal(decide({ kind, level: "suggest", ...engine }).verdict, "propose");
+    assert.equal(decide({ kind, level: "suggest", ...engine }).verdict, kind === "label" ? "do" : "propose");
     assert.equal(decide({ kind, level: "assist", ...engine }).verdict, "do");
     assert.equal(decide({ kind, level: "autopilot", ...engine }).verdict, "do");
   }
@@ -341,5 +341,59 @@ ok("when the model holds, the reply becomes a draft", () => {
   assert.equal(held.row, null);
   assert.ok(held.log.some((r) => r.kind === "draft"));
 });
+
+// ── Suggest ─────────────────────────────────────────────────────────────────
+// HTML-only mail gets real text, labels are not proposals, and an email read
+// again does not get its actions twice.
+console.log("Suggest");
+ok("HTML is read as text, without its styles", () => {
+  const text = gmail.htmlToText("<html><head><style>.a{color:red}</style></head><body><!-- x --><p>Hi&nbsp;George,</p>\r\n\r\n<div>Your API key &amp; credits</div><script>var a=1</script><ul><li>One</li></ul></body></html>");
+  assert.equal(text, "Hi George,\n\nYour API key & credits\n\n- One");
+});
+await db.from("profiles").update({ autonomy_level: "suggest" }).eq("id", userId);
+const { data: htmlOnly } = await db
+  .from("emails")
+  .insert({
+    user_id: userId, gmail_id: "html-only", gmail_account_id: account!.id, subject: "Your credits", body_text: "",
+    body_html: "<style>td{font:12px}</style><table><tr><td>You have 50M free tokens.</td></tr></table>", sender: "Voyage <hi@voyage.example>",
+    sender_email: "hi@voyage.example", received_at: new Date().toISOString(), label_ids: ["INBOX"],
+  })
+  .select("id")
+  .single();
+await db.from("email_processed").insert({ user_id: userId, email_id: htmlOnly!.id, category: "promotions", summary: "From the snippet", quick_actions: [] });
+await db.from("action_log").insert({ user_id: userId, kind: "todo", email_id: htmlOnly!.id, summary: "Todo: from the snippet", detail: { text: "x" }, status: "proposed", source: "engine" });
+const { fillMissingBodies } = await import("./sync.ts");
+await fillMissingBodies(userId);
+const { data: filled } = await db.from("emails").select("body_text").eq("id", htmlOnly!.id).single();
+const { count: stale } = await db.from("email_processed").select("id", { count: "exact", head: true }).eq("email_id", htmlOnly!.id);
+const { count: staleProposals } = await db.from("action_log").select("id", { count: "exact", head: true }).eq("email_id", htmlOnly!.id);
+ok("stored HTML-only mail gets its text, and is read again", () => {
+  assert.equal(filled!.body_text, "You have 50M free tokens.");
+  assert.equal(stale, 0);
+  assert.equal(staleProposals, 0);
+});
+await db.from("email_processed").insert({
+  user_id: userId, email_id: htmlOnly!.id, category: "important", summary: "Free tokens",
+  quick_actions: [{ action: "add_todo", label: "Use the free tokens" }],
+});
+await planNew(userId);
+const { data: suggestLog } = await db.from("action_log").select("kind, status").eq("email_id", htmlOnly!.id);
+ok("at Suggest a label is carried out, not proposed; the todo is proposed", () => {
+  const label = suggestLog!.find((r) => r.kind === "label");
+  assert.ok(label && label.status !== "proposed", `label was ${label?.status}`);
+  assert.equal(suggestLog!.find((r) => r.kind === "todo")?.status, "proposed");
+});
+await db.from("email_processed").update({ engine_at: null }).eq("email_id", htmlOnly!.id);
+await planNew(userId);
+const { data: again } = await db.from("action_log").select("kind, status").eq("email_id", htmlOnly!.id).neq("status", "failed");
+ok("an email planned again gets nothing twice", () => {
+  const kinds = again!.map((r) => r.kind);
+  assert.equal(new Set(kinds).size, kinds.length, kinds.join(", "));
+});
+const { data: waiting } = await db.from("action_log").insert({ user_id: userId, kind: "label", email_id: htmlOnly!.id, summary: "Label", detail: { label: "Tabellar/Important" }, status: "proposed", source: "engine" }).select("id").single();
+const { applyWaitingLabels } = await import("./actions.ts");
+await applyWaitingLabels(userId);
+const { data: waited } = await db.from("action_log").select("status").eq("id", waiting!.id).single();
+ok("labels left waiting from before are carried out", () => assert.notEqual(waited!.status, "proposed"));
 
 console.log(`\n${passed} checks passed.`);

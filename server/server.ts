@@ -228,6 +228,11 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
         });
       }
 
+      // A file of an older build (the interface was rebuilt while the window
+      // was open) is gone. Answering with index.html would hand the window
+      // HTML where it expects a script.
+      if (path.startsWith("/assets/")) return send(res, 404, "Not found", "text/plain; charset=utf-8");
+
       // Everything else is the app itself.
       const code = url.searchParams.get("code");
       if (code && path === "/") {

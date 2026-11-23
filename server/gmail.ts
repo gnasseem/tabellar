@@ -142,6 +142,44 @@ function decodeSnippet(s: string | undefined): string {
     .replace(/&amp;/g, "&");
 }
 
+const ENTITIES: Record<string, string> = {
+  nbsp: " ", amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", zwnj: "", zwj: "", shy: "",
+  ndash: "-", mdash: "-", hellip: "...", lsquo: "'", rsquo: "'", ldquo: '"', rdquo: '"',
+  bull: "*", middot: "*", copy: "(c)", reg: "(R)", trade: "(TM)", euro: "EUR", pound: "GBP",
+};
+
+// The readable text of an HTML email, for mail that has no plain-text part.
+// Style, script, head and comments go with their contents; block tags become
+// line breaks.
+export function htmlToText(html: string): string {
+  if (!html) return "";
+  return html
+    .replace(/\r\n?/g, "\n")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(style|script|head|title|noscript|template)\b[\s\S]*?<\/\1\s*>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<li\b[^>]*>/gi, "\n- ")
+    .replace(/<\/?(p|div|tr|table|tbody|thead|ul|ol|li|h[1-6]|blockquote|section|article|header|footer|center|hr|pre)\b[^>]*>/gi, "\n")
+    .replace(/<\/t[dh]\s*>/gi, " ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&#(\d+);/g, (_, n) => safeCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => safeCodePoint(parseInt(n, 16)))
+    .replace(/&([a-z]+);/gi, (m, name) => ENTITIES[name.toLowerCase()] ?? m)
+    .replace(/[​-‍͏﻿­]/g, "")
+    .replace(/[ \t ]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function safeCodePoint(n: number): string {
+  try {
+    return n === 160 ? " " : String.fromCodePoint(n);
+  } catch {
+    return "";
+  }
+}
+
 function b64urlDecode(s: string): string {
   try {
     const binary = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
@@ -279,7 +317,7 @@ async function fetchMessageById(
       sender_email: extractEmail(from),
       recipients: headers["to"] ?? "",
       snippet: decodeSnippet(msg.snippet as string),
-      body_text: state.bodyText,
+      body_text: state.bodyText || htmlToText(state.bodyHtml),
       body_html: state.bodyHtml,
       received_at: msg.internalDate
         ? new Date(parseInt(msg.internalDate as string, 10)).toISOString()
@@ -697,7 +735,7 @@ export async function fetchSentEmails(
             to: headers["to"] ?? "",
             date: headers["date"] ?? "",
             body_html: state.bodyHtml,
-            body: state.bodyText,
+            body: state.bodyText || htmlToText(state.bodyHtml),
             snippet: decodeSnippet(msg.snippet as string),
             has_attachments: state.hasAttachments,
             attachments: state.attachments,

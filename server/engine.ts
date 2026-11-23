@@ -18,8 +18,8 @@ import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { generateDraft } from "./ai.ts";
 import { hasSentTo, messageHeaders } from "./gmail.ts";
-import { syncMail, analyzeInbox, serial } from "./sync.ts";
-import { act, engineSettings, type Planned } from "./actions.ts";
+import { syncMail, analyzeInbox, serial, fillMissingBodies } from "./sync.ts";
+import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions.ts";
 import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
 import { notify } from "./notify.ts";
@@ -191,7 +191,12 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     const suspicious = looksLikeInstructions(email.subject, email.body_text, email.body_html);
     const actions = (Array.isArray(row.quick_actions) ? row.quick_actions : []) as QuickAction[];
     const from = email.sender?.split("<")[0]?.trim() || email.sender_email || "someone";
+    // An email read again (its text was filled in later) keeps what was
+    // already done or proposed for it; nothing is done twice.
+    const { data: before } = await db.from("action_log").select("kind").eq("email_id", email.id).in("status", ["done", "running", "proposed"]);
+    const already = new Set((before ?? []).map((r) => r.kind as string));
     const run = async (p: Planned, send?: AutoSend) => {
+      if (already.has(p.kind)) return "refused";
       const r = await act(userId, p, { ...settings, source: "engine", suspicious, todayCount: today[p.kind] ?? 0, cycleCount, send, sendCap });
       if (r === "done" || r === "proposed") {
         today[p.kind] = (today[p.kind] ?? 0) + 1;
@@ -210,7 +215,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     let replying = false;
     const replyTo = (email.reply_to_email || email.sender_email || "").trim();
     const reply = actions.find((a) => a.action === "reply");
-    if (category === "action-required" && reply && replyTo && !NO_REPLY.test(replyTo)) {
+    if (category === "action-required" && reply && replyTo && !NO_REPLY.test(replyTo) && !already.has("draft") && !already.has("send")) {
       const subject = /^re:/i.test(email.subject ?? "") ? email.subject! : `Re: ${email.subject ?? ""}`;
       const base: Planned = { kind: "draft", emailId: email.id, summary: `Draft a reply to ${from}`, detail: { to: [replyTo], subject } };
       const autoSend: AutoSend = { to: [replyTo], threadId: email.thread_id, writer: replyTo };
@@ -333,6 +338,9 @@ export function kickEngine(): void {
 
 // ── The loop ────────────────────────────────────────────────────────────────
 
+// Once per start: fill in text for HTML-only mail stored earlier.
+let startedUp = false;
+
 export async function runCycle(): Promise<void> {
   if (engineStatus.running) return;
   const userId = await localUser();
@@ -341,6 +349,11 @@ export async function runCycle(): Promise<void> {
   if (!count) return;
   engineStatus.running = true;
   try {
+    if (!startedUp) {
+      await fillMissingBodies(userId);
+      startedUp = true;
+    }
+    await applyWaitingLabels(userId);
     await syncMail(userId);
     if (modelConfigured()) {
       await analyzeInbox(userId);

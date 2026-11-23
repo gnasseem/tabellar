@@ -5,7 +5,8 @@
 //
 // Levels:
 //   observe  syncs, sorts and notifies, but changes nothing and proposes nothing
-//   suggest  everything waits in Activity for approval
+//   suggest  labels happen on their own (and can be undone); everything else
+//            waits in Activity for approval
 //   assist   labels, drafts, todos and meeting proposals happen on their own
 //   autopilot  as Assist, and it may also send a reply on its own, but only
 //            inside the thread and only to the person who wrote (checkAutoSend),
@@ -110,8 +111,8 @@ export function decide(r: Request): Decision {
   let cap = CAP_PER_DAY[r.kind] ?? 0;
   if (autoSend && r.sendCap !== undefined) cap = Math.min(cap, Math.max(0, r.sendCap));
   if ((r.todayCount ?? 0) >= cap) return { verdict: "refuse", reason: `Daily limit of ${cap} for ${r.kind} reached` };
-  if (level === "suggest") return { verdict: "propose", reason: "Waiting for your approval" };
-  return { verdict: "do", reason: level === "autopilot" ? "Autopilot" : "Assist" };
+  if (level === "suggest" && r.kind !== "label") return { verdict: "propose", reason: "Waiting for your approval" };
+  return { verdict: "do", reason: level === "autopilot" ? "Autopilot" : level === "assist" ? "Assist" : "Suggest" };
 }
 
 // An approval is bound to the exact proposal the user saw: the hash covers the

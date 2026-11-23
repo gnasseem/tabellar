@@ -8,7 +8,7 @@ import { useApp } from "./AppShell";
 // Levels, in the order of how much Tabellar does on its own.
 export const LEVELS: { id: "observe" | "suggest" | "assist" | "autopilot"; label: string; text: string }[] = [
   { id: "observe", label: "Observe", text: "Sorts and notifies. Changes nothing." },
-  { id: "suggest", label: "Suggest", text: "Proposes labels, drafts, todos and meetings for you to approve." },
+  { id: "suggest", label: "Suggest", text: "Labels mail. Proposes drafts, todos and meetings for you to approve." },
   { id: "assist", label: "Assist", text: "Does those on its own. Never sends, archives or deletes." },
   { id: "autopilot", label: "Autopilot", text: "Also replies on its own to the person who wrote, inside the thread, after a wait you can cancel in." },
 ];

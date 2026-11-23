@@ -52,7 +52,6 @@ export type Overview = {
 const RANK: Record<string, number> = { going: 0, need: 1, failed: 2, held: 3, done: 4, info: 5, filed: 6 };
 
 const PROPOSED: Record<string, string> = {
-  label: "Label to approve",
   draft: "Reply to approve",
   send: "Reply to approve",
   todo: "Todo to approve",
@@ -124,13 +123,12 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
   const seenTodoText = new Set<string>();
 
   for (const r of log) {
+    // Labels are plain Gmail labels, shown on the row; undo them in Activity.
+    if (r.kind === "label") continue;
     const d = r.detail || {};
     const base = { key: r.id, at: r.created_at };
     if (r.status === "proposed") {
-      // A label waiting for approval is listed but does not make the email
-      // need you: at Suggest every email has one, and the inbox would be all red.
-      const label = r.kind === "label";
-      push(r.email_id, { ...base, state: label ? "info" : "need", short: label ? "" : PROPOSED[r.kind] || "To approve", title: r.summary, why: "Waiting for your approval. It is carried out exactly as shown.", act: { kind: "approve", id: r.id, hash: r.hash || "" } });
+      push(r.email_id, { ...base, state: "need", short: PROPOSED[r.kind] || "To approve", title: r.summary, why: "Waiting for your approval. It is carried out exactly as shown.", act: { kind: "approve", id: r.id, hash: r.hash || "" } });
     } else if (r.status === "done" && r.kind === "send") {
       const pending = pendingByAction.get(r.id);
       if (pending) push(r.email_id, { ...base, state: "going", short: "Replying", title: "Replying on its own", why: "Only to the person who wrote, inside this thread. You can cancel until it goes.", sendAt: pending.send_at, act: { kind: "cancel", id: r.id } });
@@ -149,8 +147,6 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
       if (m) seenMeeting.add(m.id);
       if (m && m.status === "proposed") push(r.email_id, { ...base, state: "need", short: "Meeting to confirm", title: `Proposed a meeting: ${m.title}`, why: `${when(m.start_time)}. It goes on your calendar when you confirm it.`, act: { kind: "view", view: "meetings" } });
       else if (m && m.status === "confirmed") push(r.email_id, { ...base, state: "done", short: `On calendar, ${when(m.start_time)}`, title: `On your calendar: ${m.title}`, why: when(m.start_time), act: { kind: "view", view: "meetings" } });
-    } else if (r.status === "done" && r.kind === "label") {
-      push(r.email_id, { ...base, state: "done", short: "", title: r.summary.replace(/^Label /, "Labelled "), why: "Tabellar does not keep its reasons for a label. It is a Gmail label only, and Undo takes it off.", act: { kind: "undo", id: r.id } });
     } else if (r.status === "done" && r.kind === "archive") {
       push(r.email_id, { ...base, state: "done", short: "Archived", title: "Archived", act: { kind: "undo", id: r.id } });
     } else if (r.status === "done" && r.kind === "unsubscribe") {
@@ -269,7 +265,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
         todos: raw.todos.length,
         meetings: raw.meetings.filter((m) => m.status === "proposed").length,
         followups: raw.followups,
-        proposals: raw.log.filter((r) => r.status === "proposed").length,
+        proposals: raw.log.filter((r) => r.status === "proposed" && r.kind !== "label").length,
         scheduled: raw.sched.length - auto.length,
       },
     };
