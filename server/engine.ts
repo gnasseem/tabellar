@@ -17,7 +17,7 @@
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { generateDraft } from "./ai.ts";
-import { messageHeaders } from "./gmail.ts";
+import { hasSentTo, messageHeaders } from "./gmail.ts";
 import { syncMail, analyzeInbox, serial } from "./sync.ts";
 import { act, engineSettings, type Planned } from "./actions.ts";
 import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
@@ -78,15 +78,22 @@ const HOLD = /^\W*HOLD\W*$/;
 export const drafter = { draft: (userId: string, e: EmailRow, instructions: string) => draftReply(userId, e, instructions) };
 
 // Has the user written to this address before? Autopilot can be limited to
-// people the user already corresponds with.
-async function wroteTo(userId: string, address: string): Promise<boolean> {
+// people the user already corresponds with. Mail sent through Tabellar is in
+// the database; for anything else Gmail answers, since sync keeps no sent mail.
+async function wroteTo(userId: string, address: string, tokenRef: string | null): Promise<boolean> {
   const { count } = await db
     .from("emails")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
     .contains("label_ids", ["SENT"])
     .ilike("recipients", `%${address.replace(/[%_]/g, "")}%`);
-  return (count ?? 0) > 0;
+  if (count) return true;
+  if (!tokenRef || !/^[^\s@"]+@[^\s@"]+$/.test(address)) return false;
+  try {
+    return await hasSentTo(tokenRef, address);
+  } catch {
+    return false;
+  }
 }
 
 // A reply to one email in the user's writing style, with what Tabellar knows
@@ -207,10 +214,15 @@ export const planNew = serial(async (userId: string): Promise<void> => {
       const base: Planned = { kind: "draft", emailId: email.id, summary: `Draft a reply to ${from}`, detail: { to: [replyTo], subject } };
       const autoSend: AutoSend = { to: [replyTo], threadId: email.thread_id, writer: replyTo };
       const sendCtx = { ...settings, source: "engine" as const, suspicious, todayCount: today.send ?? 0, cycleCount, send: autoSend, sendCap };
+      let tokenRef: string | null = null;
+      if (settings.level === "autopilot") {
+        const { data: acct } = await db.from("gmail_accounts").select("token_ref").eq("id", email.gmail_account_id ?? "").maybeSingle();
+        tokenRef = (acct?.token_ref as string | undefined) ?? null;
+      }
       const trySend =
         settings.level === "autopilot" &&
         decide({ kind: "send", ...sendCtx }).verdict === "do" &&
-        (!profile?.autopilot_known_only || (await wroteTo(userId, replyTo)));
+        (!profile?.autopilot_known_only || (await wroteTo(userId, replyTo, tokenRef)));
       // Ask before paying for the model call; a refusal is logged by act().
       const pre = decide({ kind: "draft", ...settings, source: "engine", suspicious, todayCount: today.draft ?? 0, cycleCount });
       const { count: existing } = await db.from("draft_emails").select("id", { count: "exact", head: true }).eq("email_id", email.id);
@@ -224,8 +236,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
           } else if (trySend && body) {
             let inReplyTo: string | null = null;
             try {
-              const { data: acct } = await db.from("gmail_accounts").select("token_ref").eq("id", email.gmail_account_id ?? "").maybeSingle();
-              if (acct?.token_ref && email.gmail_id) inReplyTo = (await messageHeaders(acct.token_ref as string, email.gmail_id, ["Message-ID"]))["message-id"] ?? null;
+              if (tokenRef && email.gmail_id) inReplyTo = (await messageHeaders(tokenRef, email.gmail_id, ["Message-ID"]))["message-id"] ?? null;
             } catch {
               // Without the Message-ID the reply still lands in the thread by its thread id.
             }

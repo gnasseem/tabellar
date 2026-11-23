@@ -502,6 +502,18 @@ export async function messageHeaders(tokenRef: string, gmailId: string, names: s
   return headers;
 }
 
+// Has this mailbox ever sent mail to the address? Asks Gmail, since sync
+// does not keep a copy of sent mail.
+export async function hasSentTo(tokenRef: string, address: string): Promise<boolean> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const q = encodeURIComponent(`in:sent to:${address}`);
+  const res = await gmailRequest(tokenData.token, `/messages?q=${q}&maxResults=1&fields=messages/id`);
+  if (!res.ok) throw new Error(`Gmail search failed (${res.status})`);
+  // With no match Gmail can answer with an empty body.
+  const text = await res.text();
+  return text ? (JSON.parse(text).messages ?? []).length > 0 : false;
+}
+
 export async function sendEmail(
   tokenRef: string,
   to: string[],
