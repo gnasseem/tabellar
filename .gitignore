@@ -66,3 +66,7 @@ frontend/package-lock.json
 
 # Google OAuth client files (imported into the Keychain by setup)
 client_secret*.json
+
+# Design mocks and review captures (local only)
+frontend/.impeccable/mocks/
+frontend/.impeccable/review/
