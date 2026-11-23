@@ -23,14 +23,6 @@ export function confirmLevel(level: string): boolean {
   );
 }
 
-function ago(iso: string | null): string {
-  if (!iso) return "Not checked yet";
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return "Checked Gmail just now";
-  if (s < 3600) return `Checked Gmail ${Math.floor(s / 60)} min ago`;
-  return `Checked Gmail ${Math.floor(s / 3600)} h ago`;
-}
-
 function NavItem({ id, icon, label, count, need }: { id: string; icon: string; label: string; count?: number; need?: boolean }) {
   const { view, setView, setSidebarOpen, assistantOpen, setAssistantOpen } = useApp();
   const on = id === "ask" ? assistantOpen : view === id;
@@ -51,7 +43,8 @@ function NavItem({ id, icon, label, count, need }: { id: string; icon: string; l
   );
 }
 
-// Level, pause and last check: the engine's state, always in view and out of the way.
+// Level and pause: the engine's state, always in view and out of the way. A
+// line under it only when paused or failing.
 function Engine() {
   const { user, profile, updateProfile, setView, mail, addToast } = useApp();
   const supabase = createClient();
@@ -59,6 +52,8 @@ function Engine() {
   const ref = useRef<HTMLDivElement>(null);
   const level = mail.engine?.level ?? (profile.autonomy_level as string) ?? "observe";
   const paused = mail.engine?.paused ?? !!profile.engine_paused;
+  const failing = !!(mail.engine?.gmailError || mail.engine?.lastError);
+  const note = paused ? "Nothing happens until you resume" : mail.engine?.gmailError ? "Can't reach Gmail" : mail.engine?.lastError ? "Last check failed. See Activity" : "";
 
   useEffect(() => {
     if (!open) return;
@@ -82,7 +77,7 @@ function Engine() {
   return (
     <div ref={ref} className="relative mx-2 grid grid-cols-[1fr_auto_auto] items-center gap-x-0.5 border-t border-line pb-2.5 pl-2 pr-1 pt-2">
       <button className="flex h-6 items-center gap-[7px] justify-self-start rounded-md pr-1 font-semibold" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <i className="h-[7px] w-[7px] rounded-full" style={{ background: paused ? "var(--warn)" : mail.engine?.lastError ? "var(--danger)" : "var(--run)" }} />
+        <i className="h-[7px] w-[7px] rounded-full" style={{ background: paused ? "var(--warn)" : failing ? "var(--danger)" : "var(--run)" }} />
         {paused ? "Paused" : LEVELS.find((l) => l.id === level)?.label}
         <Icon name="expand_more" size={12} className="text-ink3" />
       </button>
@@ -92,12 +87,10 @@ function Engine() {
       <button className="iconbtn" title="Settings" aria-label="Settings" onClick={() => setView("settings")}>
         <Icon name="settings" size={16} />
       </button>
-      <small className="col-span-3 truncate text-xs text-ink3">
-        {paused ? "Nothing happens until you resume" : mail.engine?.lastError ? "Last check failed. See Activity" : mail.engine?.running ? "Checking Gmail now" : ago(mail.engine?.lastCycleAt ?? null)}
-      </small>
+      {note && <small className={`col-span-3 truncate text-xs ${paused ? "text-ink3" : "text-danger"}`}>{note}</small>}
       {open && (
         <div className="pop absolute bottom-full left-0 mb-1 w-[272px]" role="menu">
-          <p className="label px-2 pb-1 pt-1.5">How far Tabellar goes on its own</p>
+          <p className="label px-2 pb-1 pt-1.5">Level</p>
           {LEVELS.map((l) => (
             <button
               key={l.id}

@@ -328,7 +328,7 @@ The state of a piece of mail, drawn as the seal in a 16px box: a filled wax dot 
 ### Navigation
 - **Sidebar:** tray fill, hairline right edge, logo and compose button in a 52px head. Items are 28px, 6px corners, 16px icon in ink 3 then label in ink 2, count flushed right in 12px ink 3 (wax ink and semibold when it needs the user). Active item fills with the selected tone and goes to medium ink.
 - **Groups:** sentence-case labels (Inbox alone, then "From your mail", "Tabellar", "Mail").
-- **Foot:** "Going out" with each reply's recipient, countdown in wax ink and an underlined Cancel; then the engine row with a 7px state dot (run green, amber paused, danger failed), level menu, pause and settings, and a 12px "Checked Gmail" line.
+- **Foot:** "Going out" with each reply's recipient, countdown in wax ink and an underlined Cancel; then the engine row with a 7px state dot (run green, amber paused, danger failed), level menu, pause and settings, and a 12px line only when paused or when Gmail cannot be reached.
 
 ### Popovers and dialogs
 - **Popover:** raised fill, 10px corners, 4px padding, pop shadow; items are 28px, 6px corners, a check column for the chosen option, selected tone on hover.

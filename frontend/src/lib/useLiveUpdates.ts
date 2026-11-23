@@ -2,16 +2,9 @@
 import { useEffect, useRef, useCallback, useState } from "react";
 import { createClient } from "@/lib/db";
 
-/**
- * Centralized live-update hook.
- *
- * - Single live-update channel watching all key tables
- * - Background Gmail sync every 60s (only when tab is visible)
- * - Smart incremental briefing: only updates when meaningful emails arrive,
- *   reuses the old briefing so the LLM merges rather than rebuilds
- * - Visibility-based refresh when user returns to tab
- * - Auto-reconnect on channel errors
- */
+// Live updates: one channel on /events for the tables the views show (the
+// server fetches and reads new mail itself), and the briefing kept current
+// every few minutes and when the window comes back to the front.
 
 type TableName =
   | "emails"
@@ -24,9 +17,8 @@ type TableName =
   | "questions";
 
 
-// Background sync interval (ms)  -  Gmail push notifications are the primary delivery
-// mechanism; this is just a safety fallback for missed Pub/Sub deliveries.
-const SYNC_INTERVAL = 5 * 60 * 1000;
+// How often the briefing is looked at.
+const BRIEFING_INTERVAL = 5 * 60 * 1000;
 // Minimum time between briefing updates (ms)
 const BRIEFING_COOLDOWN_MS = 30 * 60 * 1000;
 
@@ -68,28 +60,19 @@ export function useLiveUpdates(
 ) {
   const supabase = createClient();
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
-  const autoSyncTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const briefingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastVisibilityRefresh = useRef<number>(0);
-  const syncingRef = useRef(false);
+  const briefingBusy = useRef(false);
 
-  // Keep callbacks in a ref so backgroundSync doesn't need them as a dependency.
+  // Keep callbacks in a ref so refreshBriefing doesn't need them as a dependency.
   // This prevents the inline callbacks object in AppShell from invalidating
-  // backgroundSync on every render, which was clearing the interval before it fired.
+  // refreshBriefing on every render, which was clearing the interval before it fired.
   const callbacksRef = useRef(callbacks);
   callbacksRef.current = callbacks;
 
   const workingHoursRef = useRef(workingHours);
   workingHoursRef.current = workingHours;
 
-  // Track how many emails are being processed (for "Processing X emails..." banner)
-  const [processingCount, setProcessingCount] = useState(0);
-
-  // Count of emails inserted via Realtime (not yet analysis-complete) this session
-  const pendingEmailsRef = useRef(0);
-  // Debounce timer for Realtime-triggered analysis
-  const analysisDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
   // Per-table change counters; views useEffect on these to re-fetch
   const [changeCounters, setChangeCounters] = useState<LiveChangeCounters>({
     emails: 0,
@@ -111,74 +94,10 @@ export function useLiveUpdates(
     const subscribe = () => {
       const channel = supabase.channel(`live-updates-${userId}`);
 
-      // emails INSERT: increment pending count and schedule immediate analysis
       channel.on(
         "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "emails",
-          filter: `user_id=eq.${userId}`,
-        },
-        (payload) => {
-          // Imported sent emails are inserted but never generate an
-          // email_processed row, so they must not count toward the
-          // "Processing N" banner. Only count inbox mail.
-          const row = (payload as { new?: Record<string, unknown> }).new;
-          const labels = (row?.label_ids as string[] | undefined) ?? [];
-          const isSent = labels.includes("SENT");
-          const isInbox = labels.includes("INBOX");
-          if (!isSent && isInbox !== false) {
-            pendingEmailsRef.current += 1;
-            setProcessingCount(pendingEmailsRef.current);
-          }
-          bumpTable("emails");
-
-          // Debounce analysis so multiple concurrent inserts are batched
-          if (analysisDebounceRef.current)
-            clearTimeout(analysisDebounceRef.current);
-          analysisDebounceRef.current = setTimeout(async () => {
-            analysisDebounceRef.current = null;
-            if (syncingRef.current) return;
-            syncingRef.current = true;
-            const emailCount = pendingEmailsRef.current;
-            try {
-              const apiUrl =
-                "/api";
-              let {
-                data: { session },
-              } = await supabase.auth.getSession();
-              if (!session?.access_token) {
-                const { data: refreshed } =
-                  await supabase.auth.refreshSession();
-                session = refreshed.session;
-              }
-              if (!session?.access_token) return;
-              await fetch(`${apiUrl}/analyze-inbox`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${session.access_token}`,
-                },
-              });
-            } catch (err) {
-              console.error("[useLiveUpdates] realtime analysis:", err);
-            } finally {
-              syncingRef.current = false;
-              pendingEmailsRef.current = 0;
-              setProcessingCount(0);
-              // Force inbox refresh in case Realtime events were missed during processing
-              bumpTable("emails");
-              bumpTable("email_processed");
-              if (emailCount > 0) {
-                callbacksRef.current?.addToast(
-                  "info",
-                  `${emailCount} new email${emailCount !== 1 ? "s" : ""} ready`,
-                );
-              }
-            }
-          }, 500);
-        },
+        { event: "INSERT", schema: "public", table: "emails", filter: `user_id=eq.${userId}` },
+        () => bumpTable("emails"),
       );
       channel.on(
         "postgres_changes",
@@ -201,20 +120,10 @@ export function useLiveUpdates(
         () => bumpTable("emails"),
       );
 
-      // email_processed INSERT: decrement pending count as each email finishes
       channel.on(
         "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "email_processed",
-          filter: `user_id=eq.${userId}`,
-        },
-        () => {
-          pendingEmailsRef.current = Math.max(0, pendingEmailsRef.current - 1);
-          setProcessingCount(pendingEmailsRef.current);
-          bumpTable("email_processed");
-        },
+        { event: "INSERT", schema: "public", table: "email_processed", filter: `user_id=eq.${userId}` },
+        () => bumpTable("email_processed"),
       );
       channel.on(
         "postgres_changes",
@@ -259,11 +168,11 @@ export function useLiveUpdates(
     };
   }, [userId, supabase, bumpTable]);
 
-  // ── Silent background sync ──
-  const backgroundSync = useCallback(async () => {
-    if (syncingRef.current) return;
+  // ── The briefing ──
+  const refreshBriefing = useCallback(async () => {
+    if (briefingBusy.current) return;
 
-    syncingRef.current = true;
+    briefingBusy.current = true;
     try {
       const apiUrl = "/api";
       let {
@@ -281,45 +190,7 @@ export function useLiveUpdates(
         Authorization: `Bearer ${session.access_token}`,
       };
 
-      // Phase 1: Fetch new emails from Gmail (lightweight if nothing new)
-      const fetchRes = await fetch(`${apiUrl}/fetch-emails`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ initial: false }),
-      });
-
-      if (!fetchRes.ok) return;
-
-      const { fetched: newEmailCount = 0 } = await fetchRes.json();
-
-      // Always run analysis even when fetch found nothing new: the Pub/Sub webhook
-      // may have already inserted emails that fetch-emails skipped as duplicates.
-      const hadNewEmails = newEmailCount > 0;
-      if (hadNewEmails) setProcessingCount(newEmailCount);
-
-      // Phase 2: Analyze new emails
-      try {
-        await fetch(`${apiUrl}/analyze-inbox`, {
-          method: "POST",
-          headers,
-        });
-      } catch {
-        // Will retry next interval
-      }
-
-      // Clear processing banner and notify user (only when emails were actually fetched)
-      if (hadNewEmails) {
-        setProcessingCount(0);
-        // Ensure inbox shows new emails even if Realtime events arrived out of order
-        bumpTable("emails");
-        bumpTable("email_processed");
-        callbacksRef.current?.addToast(
-          "info",
-          `${newEmailCount} new email${newEmailCount !== 1 ? "s" : ""} ready`,
-        );
-      }
-
-      // Phase 3: Smart briefing  -  auto-create first, refresh on new day, or update incrementally.
+      // Auto-create first, refresh on new day, or update incrementally.
       const briefingCooldownKey = `tabellar_briefing_ts_${userId}`;
       const lastBriefingUpdate = parseInt(
         localStorage.getItem(briefingCooldownKey) || "0",
@@ -472,35 +343,34 @@ export function useLiveUpdates(
         await runCloudIncrementalUpdate();
       }
     } catch (err) {
-      console.error("[useLiveUpdates] background sync:", err);
+      console.error("[useLiveUpdates] briefing:", err);
     } finally {
-      syncingRef.current = false;
+      briefingBusy.current = false;
     }
   }, [userId, supabase, lastBriefingAt]);
 
-  // Keep the timer pointed at the current sync closure without making the
+  // Keep the timer pointed at the current closure without making the
   // timer effect depend on its identity.
-  const backgroundSyncRef = useRef(backgroundSync);
+  const refreshBriefingRef = useRef(refreshBriefing);
   useEffect(() => {
-    backgroundSyncRef.current = backgroundSync;
-  }, [backgroundSync]);
+    refreshBriefingRef.current = refreshBriefing;
+  }, [refreshBriefing]);
 
-  // ── Background sync timer (every SYNC_INTERVAL) ──
-  // Mount-only: depending on backgroundSync would restart the interval and
-  // fire an extra immediate sync every time lastBriefingAt changed.
+  // ── The briefing timer ──
+  // Mount-only: depending on refreshBriefing would restart the interval and
+  // fire an extra immediate run every time lastBriefingAt changed.
   useEffect(() => {
-    // Fire once immediately so new emails appear without waiting for the first interval
-    backgroundSyncRef.current();
-    autoSyncTimer.current = setInterval(
-      () => backgroundSyncRef.current(),
-      SYNC_INTERVAL,
+    refreshBriefingRef.current();
+    briefingTimer.current = setInterval(
+      () => refreshBriefingRef.current(),
+      BRIEFING_INTERVAL,
     );
     return () => {
-      if (autoSyncTimer.current) clearInterval(autoSyncTimer.current);
+      if (briefingTimer.current) clearInterval(briefingTimer.current);
     };
   }, []);
 
-  // ── Visibility-based refresh: trigger sync when user returns (sync triggers Realtime events) ──
+  // ── When the window comes back to the front ──
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState !== "visible") return;
@@ -508,13 +378,12 @@ export function useLiveUpdates(
       if (now - lastVisibilityRefresh.current < 2 * 60_000) return;
       lastVisibilityRefresh.current = now;
 
-      // Only trigger sync; Realtime events from the sync will bump counters naturally
-      backgroundSyncRef.current();
+      refreshBriefingRef.current();
     };
 
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
-  return { changeCounters, processingCount };
+  return { changeCounters };
 }

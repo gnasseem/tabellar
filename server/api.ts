@@ -24,7 +24,7 @@
 //   GET|POST /signatures, PATCH|DELETE /signatures/:id
 //   GET  /attachment            Fetch a Gmail attachment
 //   POST /agent/start|step|answer|execute|cancel   The agent
-//   GET  /engine/status, POST /engine/run, POST /engine/autostart
+//   GET  /engine/status, POST /engine/autostart, POST /mail/state
 //   POST /actions/approve|dismiss|undo   The action log
 
 import { judgeSent, suggestedFollowups } from "./followups.ts";
@@ -51,9 +51,9 @@ import {
   type ChatContext,
 } from "./ai.ts";
 import { syncMail, analyzeInbox, type Account } from "./sync.ts";
-import { kickEngine, draftReply, runCycle, engineStatus, planNew } from "./engine.ts";
+import { kickEngine, draftReply, engineStatus, planNew } from "./engine.ts";
 import { learnFromSent, startFirstRead } from "./firstRead.ts";
-import { approve, dismiss, undo, record, engineSettings } from "./actions.ts";
+import { approve, dismiss, undo, record, engineSettings, setMailState } from "./actions.ts";
 import { answer, applyPref, feedback, profileContext, setPref, type Feedback } from "./profile.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
 import { buildBriefingForUser } from "./buildBriefing.ts";
@@ -193,17 +193,23 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
     // ── Background engine and the action log ───────────────────────────────
     //   GET  /engine/status              level, pause, last run, autostart
-    //   POST /engine/run                 sync and plan now
     //   POST /engine/autostart {on}      start Tabellar at login (launchd)
+    //   POST /mail/state {ids, archived?, read?}  in Gmail and here
     //   POST /actions/approve {id, hash} carry out a proposal exactly as shown
     //   POST /actions/dismiss {id}
     //   POST /actions/undo {id}
     if (path === "/engine/status" && req.method === "GET") {
-      return json({ ...(await engineSettings(userId)), ...engineStatus, autostart: autostartInstalled() });
+      return json({ ...(await engineSettings(userId)), ...engineStatus, model: modelConfigured(), autostart: autostartInstalled() });
     }
-    if (path === "/engine/run" && req.method === "POST") {
-      void runCycle();
-      return json({ started: true });
+    // Archive or return to the inbox, mark read or unread: in Gmail and here.
+    if (path === "/mail/state" && req.method === "POST") {
+      const { ids, archived, read } = await req.json();
+      if (!Array.isArray(ids) || !ids.length) return json({ error: "ids required" }, 400);
+      await setMailState(userId, ids.map(String), {
+        archived: typeof archived === "boolean" ? archived : undefined,
+        read: typeof read === "boolean" ? read : undefined,
+      });
+      return json({ ok: true });
     }
     if (path === "/engine/autostart" && req.method === "POST") {
       const { on } = await req.json();
@@ -1881,11 +1887,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           actions.push({ type: "delete_draft", data: tc.arguments });
         } else if (tc.name === "archive_email") {
           const args = tc.arguments as { email_id: string };
-          await db
-            .from("emails")
-            .update({ is_archived: true })
-            .eq("id", args.email_id)
-            .eq("user_id", userId);
+          await setMailState(userId, [args.email_id], { archived: true });
           actions.push({ type: "archive_email", data: tc.arguments });
         } else if (tc.name === "suggest_reply_options") {
           const args = tc.arguments as {

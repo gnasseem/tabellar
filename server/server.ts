@@ -23,7 +23,7 @@ import { handleSetup, startOllama } from "./setup.ts";
 import { signInUrl, finishSignIn, forgetTokens } from "./google.ts";
 import { sendDueEmails } from "./outbox.ts";
 import { modelConfigured } from "./llm.ts";
-import { startEngine } from "./engine.ts";
+import { startEngine, windowClosed, windowOpened } from "./engine.ts";
 
 const DIST = fileURLToPath(new URL("../frontend/dist/", import.meta.url));
 const MAX_BODY = 50 * 1024 * 1024; // attachments arrive base64-encoded in JSON
@@ -187,9 +187,11 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
         const onChange = (c: Change) => res.write(`data: ${JSON.stringify(c)}\n\n`);
         const ping = setInterval(() => res.write(": ping\n\n"), 25_000);
         changes.on("change", onChange);
+        windowOpened();
         req.on("close", () => {
           clearInterval(ping);
           changes.off("change", onChange);
+          windowClosed();
         });
         return;
       }

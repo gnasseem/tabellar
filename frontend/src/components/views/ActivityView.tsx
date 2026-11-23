@@ -154,13 +154,6 @@ function detailHeight(r: LogRow): number {
   return Math.min(n, 16) * LINE + 20;
 }
 
-function ago(iso: string | null): string {
-  if (!iso) return "Tabellar checks Gmail every two minutes while it runs.";
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (s < 60) return "Checked Gmail just now.";
-  if (s < 3600) return `Checked Gmail ${Math.floor(s / 60)} min ago.`;
-  return `Checked Gmail ${Math.floor(s / 3600)} h ago.`;
-}
 
 export default function ActivityView() {
   const { user, addToast, liveChanges, search, mail, setView } = useApp();
@@ -173,7 +166,6 @@ export default function ActivityView() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<Set<string>>(new Set());
-  const [checking, setChecking] = useState<string | null>(null);
   const searching = !!search.trim();
   const loaded = useRef(0);
   const loading = useRef(false);
@@ -214,29 +206,8 @@ export default function ActivityView() {
     return () => clearTimeout(id);
   }, [rows, load]);
 
-  // After "Check now", watch the engine until the check has finished.
   const engine = mail.engine;
-  useEffect(() => {
-    if (checking === null) return;
-    if ((engine?.lastCycleAt ?? "") !== checking && !engine?.running) return setChecking(null);
-    const poll = setInterval(() => mail.refreshEngine(), 2000);
-    const stop = setTimeout(() => setChecking(null), 60_000);
-    return () => {
-      clearInterval(poll);
-      clearTimeout(stop);
-    };
-  }, [checking, engine?.lastCycleAt, engine?.running]);
 
-  const checkNow = async () => {
-    try {
-      setChecking(engine?.lastCycleAt ?? "");
-      await engineFetch("/engine/run", {});
-      mail.refreshEngine();
-    } catch (e) {
-      setChecking(null);
-      addToast("error", `Could not start a check: ${(e as Error).message}`);
-    }
-  };
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -531,7 +502,6 @@ export default function ActivityView() {
   };
 
   const level = engine?.level ?? "observe";
-  const busyChecking = checking !== null || !!engine?.running;
 
   return (
     <>
@@ -576,18 +546,17 @@ export default function ActivityView() {
           />
         </ViewBar>
       )}
-      <div className="flex h-9 flex-none items-center gap-2 border-b border-line-soft pl-5 pr-3.5 text-xs text-ink3">
-        <span className="flex-none">{engine?.paused ? "Paused. Nothing happens until you resume, at the bottom of the sidebar." : busyChecking ? "Checking Gmail now." : ago(engine?.lastCycleAt ?? null)}</span>
-        {engine?.lastError && !busyChecking && (
-          <span className="min-w-0 truncate text-danger" role="alert" title={engine.lastError}>
-            The last check failed: {engine.lastError}
-          </span>
-        )}
-        <span className="flex-1" />
-        <button className="btn btn-sm" disabled={busyChecking} onClick={checkNow}>
-          Check now
-        </button>
-      </div>
+      {(engine?.paused || engine?.gmailError || engine?.lastError) && (
+        <div className="flex h-9 flex-none items-center gap-2 border-b border-line-soft pl-5 pr-3.5 text-xs text-ink3">
+          {engine.paused ? (
+            <span className="flex-none">Paused. Nothing happens until you resume, at the bottom of the sidebar.</span>
+          ) : (
+            <span className="min-w-0 truncate text-danger" role="alert" title={engine.gmailError || engine.lastError || ""}>
+              {engine.gmailError ? `Can't reach Gmail: ${engine.gmailError}` : `The last check failed: ${engine.lastError}`}
+            </span>
+          )}
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 flex-col" role="listbox" aria-label="Activity">
         {rows === null ? (
           <div className="pt-9">

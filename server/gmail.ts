@@ -570,67 +570,57 @@ export async function currentHistoryId(tokenRef: string): Promise<string> {
   return (await res.json()).historyId as string;
 }
 
-export interface HistoryFetchResult {
-  emails: EmailData[];
-  newHistoryId: string | null;
-  tooOld?: boolean;
+// What changed in a mailbox since a point in its history: messages that
+// arrived (in the inbox, or of unknown place), whether any sent mail arrived,
+// label changes in order, and deleted messages. tooOld when Gmail no longer
+// keeps history that far back, or when there was more than one read can take;
+// the caller then starts over from the inbox itself.
+export type LabelChange = { id: string; add: string[]; remove: string[] };
+export interface MailboxChanges {
+  tooOld: boolean;
+  historyId: string | null;
+  added: string[];
+  sentAdded: boolean;
+  labels: LabelChange[];
+  deleted: string[];
 }
 
-export async function fetchEmailsByHistoryId(
-  tokenRef: string,
-  startHistoryId: string,
-  db?: { from: (t: string) => unknown },
-  accountId?: string,
-): Promise<HistoryFetchResult> {
-  const { tokenData } = await resolveTokens(
-    tokenRef,
-    db,
-    accountId,
-  );
+type HistoryMessage = { id: string; labelIds?: string[] };
 
-  // Collect unique message IDs added to INBOX, following pages so a long
-  // sleep does not drop mail. The API request already filters by
-  // labelId=INBOX; the stubs in messagesAdded often have empty labelIds even
-  // for genuine inbox messages, so trust the API rather than the stub.
-  const messageIds = new Set<string>();
-  let newHistoryId: string | null = null;
+export async function readHistory(tokenRef: string, startHistoryId: string): Promise<MailboxChanges> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const out: MailboxChanges = { tooOld: false, historyId: null, added: [], sentAdded: false, labels: [], deleted: [] };
+  const added = new Set<string>();
+  const types = ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"].map((t) => `&historyTypes=${t}`).join("");
   let pageToken = "";
-  for (let page = 0; page < 10 && messageIds.size < 300; page++) {
-    const res = await gmailRequest(
-      tokenData.token,
-      `/history?startHistoryId=${startHistoryId}&labelId=INBOX&historyTypes=messageAdded${pageToken ? `&pageToken=${pageToken}` : ""}`,
-    );
-    if (res.status === 404) {
-      return { emails: [], newHistoryId: null, tooOld: true };
-    }
-    if (!res.ok) {
-      console.error(`[gmail] history.list failed status=${res.status} body=${await res.text().catch(() => "")}`);
-      throw new Error("Gmail history fetch failed");
-    }
+  for (let page = 0; page < 10; page++) {
+    const res = await gmailRequest(tokenData.token, `/history?startHistoryId=${startHistoryId}${types}&maxResults=500${pageToken ? `&pageToken=${pageToken}` : ""}`);
+    if (res.status === 404) return { ...out, tooOld: true };
+    if (!res.ok) throw new Error(`Gmail history fetch failed (${res.status})`);
     const data = await res.json();
-    newHistoryId = (data.historyId as string) ?? newHistoryId;
+    out.historyId = (data.historyId as string) ?? out.historyId;
     for (const record of (data.history ?? []) as {
-      messagesAdded?: { message: { id: string } }[];
+      messagesAdded?: { message: HistoryMessage }[];
+      messagesDeleted?: { message: HistoryMessage }[];
+      labelsAdded?: { message: HistoryMessage; labelIds: string[] }[];
+      labelsRemoved?: { message: HistoryMessage; labelIds: string[] }[];
     }[]) {
-      for (const added of record.messagesAdded ?? []) {
-        messageIds.add(added.message.id);
+      for (const { message: m } of record.messagesAdded ?? []) {
+        const labels = m.labelIds ?? [];
+        if (labels.includes("DRAFT")) continue;
+        if (labels.includes("SENT")) out.sentAdded = true;
+        if (!labels.length || labels.includes("INBOX")) added.add(m.id);
       }
+      for (const { message: m } of record.messagesDeleted ?? []) out.deleted.push(m.id);
+      for (const { message: m, labelIds } of record.labelsAdded ?? []) out.labels.push({ id: m.id, add: labelIds, remove: [] });
+      for (const { message: m, labelIds } of record.labelsRemoved ?? []) out.labels.push({ id: m.id, add: [], remove: labelIds });
     }
     pageToken = data.nextPageToken ?? "";
     if (!pageToken) break;
   }
-
-  if (messageIds.size === 0) {
-    return { emails: [], newHistoryId };
-  }
-
-  const results = await Promise.all(
-    [...messageIds].map((id) => fetchMessageById(tokenData.token, id)),
-  );
-  return {
-    emails: results.filter((e): e is EmailData => e !== null),
-    newHistoryId,
-  };
+  if (pageToken) return { ...out, tooOld: true };
+  out.added = [...added];
+  return out;
 }
 
 // ── Labels ──────────────────────────────────────────────────────────────────

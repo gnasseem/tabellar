@@ -31,7 +31,9 @@ export type EngineStatus = {
   paused: boolean;
   lastCycleAt: string | null;
   lastError: string | null;
+  gmailError: string | null;
   running: boolean;
+  model: boolean;
   autostart: boolean;
 };
 
@@ -319,15 +321,18 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
   };
 }
 
+// Archive or return to the inbox, mark read or unread: in Gmail and here.
+export function setMailState(ids: string[], state: { archived?: boolean; read?: boolean }): Promise<unknown> {
+  return api("/mail/state", { ids, ...state });
+}
+
 // Archive or mark unread from a reader opened outside the Inbox (Todos,
 // Meetings, Briefing). Returns the undo.
 export async function setEmailFlag(emailId: string, flag: "archive" | "unread"): Promise<() => Promise<void>> {
-  const db = createClient();
-  const patch = flag === "archive" ? { is_archived: true } : { is_read: false };
-  const back = flag === "archive" ? { is_archived: false } : { is_read: true };
-  const { error } = await db.from("emails").update(patch).eq("id", emailId);
-  if (error) throw new Error(error.message);
+  const key = flag === "archive" ? "archived" : "read";
+  const on = flag === "archive";
+  await setMailState([emailId], { [key]: on });
   return async () => {
-    await db.from("emails").update(back).eq("id", emailId);
+    await setMailState([emailId], { [key]: !on });
   };
 }

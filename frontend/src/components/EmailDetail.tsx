@@ -58,6 +58,7 @@ function touchAttachment(key: string): CachedAttachment | undefined {
 }
 
 import { createClient } from "@/lib/db";
+import { setMailState } from "@/lib/outcomes";
 import { assessSuspicion, type SuspicionVerdict } from "@/lib/suspicion";
 import { useApp } from "./AppShell";
 import DateTimePicker from "./DateTimePicker";
@@ -938,7 +939,11 @@ export default function EmailDetail({
   };
 
   const handleMarkUnread = async () => {
-    await supabase.from("emails").update({ is_read: false }).eq("id", email.id);
+    try {
+      await setMailState([email.id], { read: false });
+    } catch {
+      return addToast("error", "Could not mark it unread in Gmail.");
+    }
     addToast("info", "Marked as unread");
     onMarkUnread?.();
   };

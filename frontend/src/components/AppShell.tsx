@@ -83,8 +83,6 @@ export type AppContextType = {
   search: string;
   setSearch: (v: string) => void;
   // Global sync (used by InboxView for initial fetch overlay)
-  syncing: boolean;
-  setSyncing: (v: boolean) => void;
   // Inbox filter/sort (shared between TopBar and InboxView)
   inboxFilters: Set<string>;
   setInboxFilters: (v: Set<string>) => void;
@@ -119,7 +117,6 @@ export type AppContextType = {
   // Live update change counters (per-table)
   liveChanges: LiveChangeCounters;
   // Processing banner (how many emails are being AI-processed)
-  processingCount: number;
   // Briefing version  -  increments whenever a new briefing is saved
   briefingVersion: number;
   notifyBriefingUpdated: () => void;
@@ -202,7 +199,6 @@ export default function AppShell({
     window.addEventListener("hashchange", follow);
     return () => window.removeEventListener("hashchange", follow);
   }, []);
-  const [syncing, setSyncing] = useState(false);
   const [inboxFilters, setInboxFilters] = useState<Set<string>>(new Set());
   const [inboxSort, setInboxSort] = useState<"newest" | "smart">(() => {
     if (typeof window === "undefined") return "newest";
@@ -286,7 +282,7 @@ export default function AppShell({
   }, []);
 
   // Centralized live updates (realtime + background sync + visibility refresh)
-  const { changeCounters: liveChanges, processingCount } = useLiveUpdates(
+  const { changeCounters: liveChanges } = useLiveUpdates(
     user.id,
     profileState?.last_briefing_at ?? null,
     (profileState?.working_hours as {
@@ -905,8 +901,6 @@ export default function AppShell({
         addToast,
         search,
         setSearch,
-        syncing,
-        setSyncing,
         inboxFilters,
         setInboxFilters,
         inboxSort,
@@ -923,7 +917,6 @@ export default function AppShell({
         setViewCache,
         invalidateViewCache,
         liveChanges,
-        processingCount,
         briefingVersion,
         notifyBriefingUpdated,
         briefingRegenerating,

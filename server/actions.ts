@@ -53,29 +53,34 @@ function textToHtml(text: string): string {
   return esc.split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
 }
 
-// Archive (or, undoing, return to the inbox) a batch of emails, grouped by
-// the account each belongs to.
-async function setArchived(userId: string, emailIds: string[], archived: boolean) {
+// Archive or return to the inbox, mark read or unread, a batch of emails: in
+// Gmail first, grouped by account, then in the stored copies. Mail changed
+// here and mail changed in Gmail itself end up the same way (sync.ts).
+export async function setMailState(userId: string, emailIds: string[], state: { archived?: boolean; read?: boolean }) {
   const { data } = await db
     .from("emails")
-    .select("id, gmail_id, gmail_accounts(token_ref)")
+    .select("id, gmail_id, label_ids, gmail_accounts(token_ref)")
     .eq("user_id", userId)
     .in("id", emailIds);
-  const byAccount = new Map<string, { ids: string[]; gmailIds: string[] }>();
+  const add: string[] = [];
+  const drop: string[] = [];
+  if (state.archived !== undefined) (state.archived ? drop : add).push("INBOX");
+  if (state.read !== undefined) (state.read ? drop : add).push("UNREAD");
+  if (!add.length && !drop.length) return;
+  const byAccount = new Map<string, typeof data>();
   for (const e of data ?? []) {
     const ref = (e.gmail_accounts as { token_ref?: string } | null)?.token_ref;
     if (!ref) continue;
-    const g = byAccount.get(ref) ?? { ids: [], gmailIds: [] };
-    g.ids.push(e.id as string);
-    g.gmailIds.push(e.gmail_id as string);
-    byAccount.set(ref, g);
+    byAccount.set(ref, [...(byAccount.get(ref) ?? []), e]);
   }
-  for (const [ref, g] of byAccount) {
-    await batchModifyLabels(ref, g.gmailIds, archived ? [] : ["INBOX"], archived ? ["INBOX"] : []);
-    for (const id of g.ids) {
-      const { data: row } = await db.from("emails").select("label_ids").eq("id", id).single();
-      const labels = ((row?.label_ids as string[] | null) ?? []).filter((l) => l !== "INBOX");
-      await db.from("emails").update({ is_archived: archived, label_ids: archived ? labels : ["INBOX", ...labels] }).eq("id", id);
+  for (const [ref, rows] of byAccount) {
+    await batchModifyLabels(ref, rows!.map((e) => e.gmail_id as string), add, drop);
+    for (const e of rows!) {
+      const labels = [...new Set([...((e.label_ids as string[] | null) ?? []).filter((l) => !drop.includes(l)), ...add])];
+      const patch: Record<string, unknown> = { label_ids: labels };
+      if (state.archived !== undefined) patch.is_archived = state.archived;
+      if (state.read !== undefined) patch.is_read = state.read;
+      await db.from("emails").update(patch).eq("id", e.id);
     }
   }
 }
@@ -84,7 +89,7 @@ async function setArchived(userId: string, emailIds: string[], archived: boolean
 async function execute(userId: string, p: Planned, actionId: string): Promise<Record<string, unknown>> {
   const d = p.detail;
   if (p.kind === "archive" && Array.isArray(d.emailIds)) {
-    await setArchived(userId, d.emailIds as string[], true);
+    await setMailState(userId, d.emailIds as string[], { archived: true });
     return {};
   }
   if (p.kind === "send") {
@@ -277,7 +282,7 @@ export async function undo(userId: string, id: string): Promise<void> {
     const res = await db.from("scheduled_emails").update({ status: "cancelled", error_message: "Cancelled" }).eq("id", String(d.scheduledId ?? "")).eq("user_id", userId).eq("status", "pending").select("id");
     if (!res.data?.length) throw Object.assign(new Error("This reply was already sent"), { status: 409 });
   } else if (kind === "archive" && Array.isArray(d.emailIds)) {
-    await setArchived(userId, d.emailIds as string[], false);
+    await setMailState(userId, d.emailIds as string[], { archived: false });
   } else if (kind === "label" || kind === "archive") {
     const email = await emailWithToken(row.email_id as string);
     const labels = kind === "label"

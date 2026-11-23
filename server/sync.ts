@@ -1,5 +1,6 @@
-// Bringing new mail in from Gmail, shared by the window's refresh
-// (/fetch-emails) and the background engine.
+// Bringing mail in from Gmail and keeping the stored copies true to it,
+// shared by the window's first fetch (/fetch-emails), the watcher and the
+// background engine (engine.ts).
 //
 // Syncs and analyses each run one at a time: two overlapping syncs would race
 // to insert the same messages, and two overlapping analyses would pay for the
@@ -7,7 +8,7 @@
 
 import { db } from "./db.ts";
 import {
-  fetchEmailsByHistoryId,
+  readHistory,
   fetchEmails,
   fetchMessages,
   fetchSentEmails,
@@ -19,6 +20,7 @@ import {
   htmlToText,
   type EmailData,
   type HeaderRow,
+  type MailboxChanges,
 } from "./gmail.ts";
 import { analyzeEmailsForUser } from "./analyzeEmails.ts";
 import { addressesIn, indexMail, ownAddresses, rebuildSenders } from "./senders.ts";
@@ -183,10 +185,63 @@ export function sentHeaderRow(e: Sent, account: Account): HeaderRow {
   };
 }
 
+// Changes made in Gmail itself (read, starred, archived, snoozed, moved back
+// to the inbox, trashed, deleted) applied to the stored copies, in the order
+// they happened. Returns the ids of messages moved back into the inbox that
+// are not stored, to be fetched like new mail.
+async function applyChanges(userId: string, ch: MailboxChanges): Promise<string[]> {
+  const ids = [...new Set([...ch.labels.map((c) => c.id), ...ch.deleted])];
+  if (!ids.length) return [];
+  type Row = { id: string; gmail_id: string; label_ids: string[] | null; is_read: boolean; is_starred: boolean; is_archived: boolean };
+  const stored = new Map<string, Row>();
+  for (let i = 0; i < ids.length; i += 500) {
+    const { data } = await db.from("emails").select("id, gmail_id, label_ids, is_read, is_starred, is_archived").eq("user_id", userId).in("gmail_id", ids.slice(i, i + 500));
+    for (const r of (data ?? []) as unknown as Row[]) stored.set(r.gmail_id, r);
+  }
+  const back = new Set<string>();
+  const labels = new Map<string, Set<string>>();
+  for (const c of ch.labels) {
+    const row = stored.get(c.id);
+    if (!row) {
+      if (c.add.includes("INBOX")) back.add(c.id);
+      if (c.remove.includes("INBOX")) back.delete(c.id);
+      continue;
+    }
+    const set = labels.get(c.id) ?? new Set(row.label_ids ?? []);
+    for (const l of c.add) set.add(l);
+    for (const l of c.remove) set.delete(l);
+    labels.set(c.id, set);
+  }
+  for (const gmailId of ch.deleted) {
+    back.delete(gmailId);
+    const row = stored.get(gmailId);
+    if (!row) continue;
+    const set = labels.get(gmailId) ?? new Set(row.label_ids ?? []);
+    set.delete("INBOX");
+    labels.set(gmailId, set);
+  }
+  for (const [gmailId, set] of labels) {
+    const row = stored.get(gmailId)!;
+    const next = { label_ids: [...set], is_read: !set.has("UNREAD"), is_starred: set.has("STARRED"), is_archived: set.has("SENT") ? row.is_archived : !set.has("INBOX") };
+    const same =
+      next.is_read === row.is_read && next.is_starred === row.is_starred && next.is_archived === row.is_archived &&
+      [...set].sort().join() === [...(row.label_ids ?? [])].sort().join();
+    if (!same) await db.from("emails").update(next).eq("id", row.id);
+  }
+  return [...back];
+}
+
+// Sent mail and Google Contacts are fetched on their own, less often: sent
+// mail when the history shows some (or every 10 minutes), contacts every 6 hours.
+const SENT_EVERY_MS = 10 * 60_000;
+const CONTACTS_EVERY_MS = 6 * 3600_000;
+const lastSent = new Map<string, number>();
+const lastContacts = new Map<string, number>();
+
 // Fetch new inbox mail (and recent sent mail) for every active account.
 // Initial: the latest 50 inbox messages. Otherwise: whatever Gmail's change
-// history says arrived since the last sync, falling back to the last 30 days
-// when that history has expired. New mail is also added to the sender
+// history says arrived or changed since the last sync, falling back to the
+// last 30 days when that history has expired. New mail is also added to the sender
 // statistics (senders.ts). Returns the ids of the emails inserted.
 export const syncMail = serial(async (userId: string, isInitialFetch = false): Promise<string[]> => {
   const { data: accounts } = await db
@@ -213,19 +268,22 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
       };
 
       let rawEmails: EmailData[] = [];
+      let sentArrived = true;
       if (isInitialFetch) {
         await startOver();
         const result = await fetchEmails(account.token_ref, 50, db, account.id, false);
         rawEmails = result.emails;
         if (result.updatedTokenRef) account.token_ref = result.updatedTokenRef;
       } else if (account.history_id) {
-        const { emails, newHistoryId, tooOld } = await fetchEmailsByHistoryId(account.token_ref, account.history_id, db, account.id);
-        if (tooOld) {
+        const changes = await readHistory(account.token_ref, account.history_id);
+        if (changes.tooOld) {
           await startOver();
           rawEmails = await fetchRecent(userId, account);
         } else {
-          rawEmails = emails;
-          if (newHistoryId) await db.from("gmail_accounts").update({ history_id: newHistoryId }).eq("id", account.id);
+          const back = await applyChanges(userId, changes);
+          rawEmails = await fetchMessages(account.token_ref, await notStored(userId, [...new Set([...changes.added, ...back])]));
+          sentArrived = changes.sentAdded;
+          if (changes.historyId) await db.from("gmail_accounts").update({ history_id: changes.historyId }).eq("id", account.id);
         }
       } else {
         await startOver();
@@ -234,8 +292,9 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
 
       allNew.push(...(await storeInbox(userId, account, rawEmails)));
 
-      // Import Google Contacts into email_memory (runs every sync, upserts safely)
-      try {
+      // Google Contacts into email_memory, for names and autocomplete.
+      if (Date.now() - (lastContacts.get(account.id) ?? 0) > CONTACTS_EVERY_MS) try {
+        lastContacts.set(account.id, Date.now());
         const gContacts = await fetchGoogleContacts(account.token_ref);
         if (gContacts.length > 0) {
           await db.from("email_memory").upsert(
@@ -253,10 +312,11 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
         console.warn("[sync] Google contacts import failed:", contactErr);
       }
 
-      // Recent sent mail on every fetch (20 on initial, 5 on subsequent), so
-      // the Sent view and Follow-ups see mail sent from Gmail too.
+      // Recent sent mail (20 on the first fetch, then 5), so the Sent view
+      // and Follow-ups see mail sent from Gmail too.
       let sent: Sent[] = [];
-      try {
+      if (isInitialFetch || sentArrived || Date.now() - (lastSent.get(account.id) ?? 0) > SENT_EVERY_MS) try {
+        lastSent.set(account.id, Date.now());
         sent = await fetchSentEmails(account.token_ref, isInitialFetch ? 20 : 5);
         await storeSent(userId, account, sent);
       } catch (e) {

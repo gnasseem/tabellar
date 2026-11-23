@@ -3,7 +3,7 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { parseSearch } from "@/lib/searchQuery";
 import { isTypingTarget } from "@/lib/shortcuts";
-import { rowStatus, type Outcome } from "@/lib/outcomes";
+import { rowStatus, setMailState, type Outcome } from "@/lib/outcomes";
 import { useInboxSync } from "@/lib/useInboxSync";
 import { useApp } from "../AppShell";
 import EmailDetail from "../EmailDetail";
@@ -42,7 +42,7 @@ const CHUNK = 300;
 // Narrow windows drop the subject column; the status stays.
 const COLUMNS = "!grid grid-cols-[26px_minmax(0,1fr)_minmax(0,auto)_44px] md:grid-cols-[26px_164px_minmax(0,1fr)_172px_46px]";
 const SELECT =
-  "id, user_id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, snippet, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed!inner(*)";
+  "id, user_id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, snippet, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed(*)";
 const CATEGORY: Record<string, string> = { important: "Important", "action-required": "Action required", promotions: "Promotions", updates: "Updates" };
 const OUTCOME_GROUPS: [MailState, string, string][] = [
   ["need", "Needs you", "Waiting on a decision from you"],
@@ -82,9 +82,11 @@ export default function InboxView() {
       busy.current = true;
       try {
         const want = more ? loaded.current + CHUNK : Math.max(CHUNK, loaded.current);
+        // Mail shows as soon as it is fetched; a category search needs it read.
+        const category = search ? parseSearch(search).category : "";
         let query = supabase
           .from("emails")
-          .select(SELECT)
+          .select(category ? SELECT.replace("email_processed(*)", "email_processed!inner(*)") : SELECT)
           .eq("user_id", user.id)
           .eq("is_archived", false)
           .not("label_ids", "cs", '{"SENT"}')
@@ -148,7 +150,7 @@ export default function InboxView() {
       live = false;
     };
   }, [mail.byEmail, emails, search]);
-  const { syncInbox, syncing, syncError, initialPhase, syncMode, noAccountsConnected } = useInboxSync(reload);
+  const { syncInbox, syncError, initialPhase, noAccountsConnected } = useInboxSync(reload);
 
   useEffect(() => {
     loaded.current = 0;
@@ -190,11 +192,13 @@ export default function InboxView() {
       const s = rowStatus(t.outcomes);
       const cat = t.latest.email_processed?.category || "";
       t.state = s.state;
-      t.text = s.text || labels[cat] || CATEGORY[cat] || cat;
+      // Fetched but not read by the model yet.
+      const unread = !t.latest.email_processed && mail.engine?.model;
+      t.text = s.text || labels[cat] || CATEGORY[cat] || cat || (unread ? "Reading" : "");
       t.sendAt = s.sendAt;
     }
     return list;
-  }, [emails, attention, mail.byEmail, labels]);
+  }, [emails, attention, mail.byEmail, mail.engine?.model, labels]);
 
   const counts = useMemo(() => ({ need: threads.filter((t) => t.state === "need").length, going: threads.filter((t) => t.state === "going").length }), [threads]);
 
@@ -272,14 +276,15 @@ export default function InboxView() {
     setEmails((prev) => prev.filter((e) => !gone.has(e.id)));
     setPicked(new Set());
     setCursorKey(next?.key ?? null);
-    const { error } = await supabase.from("emails").update({ is_archived: true }).in("id", ids);
-    if (error) {
+    try {
+      await setMailState(ids, { archived: true });
+    } catch {
       addToast("error", "Could not archive. Nothing was changed.");
       return reload();
     }
     invalidateViewCache("inbox");
     const run = async () => {
-      await supabase.from("emails").update({ is_archived: false }).in("id", ids);
+      await setMailState(ids, { archived: false }).catch(() => addToast("error", "Could not move it back to the inbox."));
       await reload();
     };
     lastUndo.current = { label: "archive", run };
@@ -314,7 +319,7 @@ export default function InboxView() {
     if (!ids.length) return;
     setEmails((prev) => prev.map((e) => (ids.includes(e.id) ? { ...e, is_read: read } : e)));
     setPicked(new Set());
-    await supabase.from("emails").update({ is_read: read }).in("id", ids);
+    await setMailState(ids, { read }).catch(() => addToast("error", read ? "Could not mark it read in Gmail." : "Could not mark it unread in Gmail."));
   };
 
   const open = (t: Thread) => {
@@ -458,7 +463,7 @@ export default function InboxView() {
 
   return (
     <>
-      {initialPhase >= 0 && <InitialFetchOverlay phaseIndex={initialPhase} mode={syncMode} />}
+      {initialPhase >= 0 && <InitialFetchOverlay phaseIndex={initialPhase} />}
       {picked.size ? (
         <header className="bar">
           <b className="bar-title mr-1.5">{picked.size} selected</b>
@@ -493,9 +498,6 @@ export default function InboxView() {
                   { id: "outcome", label: "Outcome" },
                 ]}
               />
-              <button className="iconbtn" title="Check Gmail now" aria-label="Check Gmail now" disabled={syncing} onClick={() => syncInbox()}>
-                <Icon name="refresh" size={16} className={syncing ? "animate-spin" : ""} />
-              </button>
               <button className="iconbtn" title="Details (Space)" aria-label="Details" aria-pressed={details} onClick={() => (localStorage.setItem("tabellar_inbox_details", details ? "off" : "on"), setDetails(!details))}>
                 <Icon name="panel" size={16} />
               </button>

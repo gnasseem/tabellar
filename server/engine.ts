@@ -1,10 +1,12 @@
 // The background engine: works while the window is closed.
 //
-// Every two minutes (and straight away after the Mac wakes, since the timer
-// then finds the interval long passed) it syncs new mail through Gmail's
-// change history, has the model sort and summarise it, and then plans what to
-// do with each new email: a Tabellar label, a reply draft, a todo, a meeting
-// proposal. Each planned action goes through actions.act(), which asks the
+// A watcher asks Gmail every few seconds whether the mailbox changed, and
+// when it did, brings the change in at once: new mail is stored (the window
+// shows it straight away), then the model sorts and summarises it, and the
+// engine plans what to do with each new email: a Tabellar label, a reply draft, a todo, a meeting
+// proposal. Every two minutes a full cycle runs as well, as a safety net and
+// for the slower work (sent mail for Follow-ups, the first read). Each
+// planned action goes through actions.act(), which asks the
 // policy whether to do it, propose it, or refuse it.
 //
 // The model that reads the email has no tools: it returns a category, a
@@ -21,7 +23,7 @@
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { generateDraft } from "./ai.ts";
-import { findCalendarEvent, messageHeaders, type LinkedEvent } from "./gmail.ts";
+import { currentHistoryId, findCalendarEvent, messageHeaders, type LinkedEvent } from "./gmail.ts";
 import { syncMail, analyzeInbox, serial, fillMissingBodies, refreshStored } from "./sync.ts";
 import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions.ts";
 import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
@@ -48,6 +50,7 @@ const NO_REPLY = /no.?reply|noreply|donotreply|do-not-reply|notifications?@|mail
 export const engineStatus = {
   lastCycleAt: null as string | null,
   lastError: null as string | null,
+  gmailError: null as string | null, // set after a few failed checks in a row
   running: false,
 };
 
@@ -446,6 +449,105 @@ export async function runCycle(): Promise<void> {
   }
 }
 
+// ── The watcher ─────────────────────────────────────────────────────────────
+
+// Asks Gmail whether anything changed: every 5 seconds while a window is
+// connected to /events, every 20 seconds otherwise. One small request per
+// account (where the mailbox's change history stands); when it moved, the
+// change is synced at once and new mail is read and planned. Failures (no
+// network, a Mac just awake) back off up to 5 minutes.
+const WATCH_OPEN_MS = 5_000;
+const WATCH_CLOSED_MS = 20_000;
+const WATCH_MAX_MS = 5 * 60_000;
+
+let windowsOpen = 0;
+let wakeWatcher = () => {};
+export function windowOpened(): void {
+  windowsOpen++;
+  wakeWatcher();
+}
+export function windowClosed(): void {
+  windowsOpen = Math.max(0, windowsOpen - 1);
+}
+
+async function mailboxChanged(userId: string): Promise<boolean> {
+  const { data } = await db.from("gmail_accounts").select("token_ref, history_id").eq("user_id", userId).eq("is_active", true);
+  for (const a of data ?? []) {
+    if (a.history_id && (await currentHistoryId(a.token_ref as string)) !== a.history_id) return true;
+  }
+  return false;
+}
+
+// Read and plan new mail, one run at a time; mail arriving meanwhile is
+// picked up by one more run.
+let reading = false;
+let readAgain = false;
+async function readNew(userId: string): Promise<void> {
+  if (reading) {
+    readAgain = true;
+    return;
+  }
+  reading = true;
+  try {
+    do {
+      readAgain = false;
+      await analyzeInbox(userId);
+      await planNew(userId);
+    } while (readAgain);
+  } catch (e) {
+    console.error("[engine] reading new mail:", e);
+  } finally {
+    reading = false;
+  }
+}
+
+function startWatcher(): () => void {
+  let stopped = false;
+  let busy = false;
+  let soon = false;
+  let failures = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = (ms: number) => {
+    clearTimeout(timer);
+    if (!stopped) timer = setTimeout(check, ms);
+  };
+  const check = async () => {
+    if (busy) {
+      soon = true;
+      return;
+    }
+    busy = true;
+    let delay = windowsOpen ? WATCH_OPEN_MS : WATCH_CLOSED_MS;
+    try {
+      const userId = await localUser();
+      if (userId && (await mailboxChanged(userId))) {
+        const fresh = await syncMail(userId);
+        if (fresh.length && modelConfigured()) void readNew(userId);
+      }
+      failures = 0;
+      engineStatus.gmailError = null;
+    } catch (e) {
+      failures++;
+      if (failures >= 3) engineStatus.gmailError = (e as Error).message;
+      delay = Math.min(WATCH_MAX_MS, delay * 2 ** failures);
+    } finally {
+      busy = false;
+    }
+    if (soon) {
+      soon = false;
+      delay = 0;
+    }
+    schedule(delay);
+  };
+  wakeWatcher = () => schedule(0);
+  schedule(3_000);
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    wakeWatcher = () => {};
+  };
+}
+
 export function startEngine(): () => void {
   let last = 0;
   const tick = () => {
@@ -455,8 +557,10 @@ export function startEngine(): () => void {
   };
   const first = setTimeout(tick, 5_000);
   const timer = setInterval(tick, TICK_MS);
+  const stopWatcher = startWatcher();
   return () => {
     clearTimeout(first);
     clearInterval(timer);
+    stopWatcher();
   };
 }

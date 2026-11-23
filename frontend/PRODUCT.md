@@ -12,7 +12,7 @@ Primary: someone on a Mac who installed Tabellar from npm and lets it handle the
 
 ## Product Purpose
 
-Tabellar is a personal email agent that runs entirely on the user's Mac. A background engine reads new Gmail every two minutes, sorts it, drafts replies, pulls out todos and meetings, tracks unanswered mail, and, at the level the user chooses, acts on its own. Success is the user trusting it enough to stop living in their inbox: they check Tabellar, not Gmail.
+Tabellar is a personal email agent that runs entirely on the user's Mac. A background engine reads new Gmail within seconds of its arrival, sorts it, drafts replies, pulls out todos and meetings, tracks unanswered mail, and, at the level the user chooses, acts on its own. Success is the user trusting it enough to stop living in their inbox: they check Tabellar, not Gmail.
 
 ## Positioning
 
