@@ -4,7 +4,7 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import { Countdown, Empty, Glyph, KeyHints, Kbd, Menu, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
+import { Countdown, Empty, Glyph, KeyHints, Kbd, Menu, SearchBox, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
 
 // Replies: every answer Tabellar has written, ready to read and send, and the
 // ones Autopilot is about to send on its own. Reading and sending happen here,
@@ -62,6 +62,9 @@ export default function RepliesView() {
   const [laterOpen, setLaterOpen] = useState(false);
   const [sending, setSending] = useState(false);
   const account = useRef<string | null>(null);
+  const [accounts, setAccounts] = useState<Record<string, string>>({});
+  // A reply to someone the user has never written to is marked New sender.
+  const isNew = (r: Reply) => mail.written.size > 0 && !!r.to[0] && !mail.written.has(r.to[0].toLowerCase());
   const anchor = useRef<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -69,9 +72,11 @@ export default function RepliesView() {
     const [d, s, a] = await Promise.all([
       supabase.from("draft_emails").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("scheduled_emails").select("*").eq("user_id", user.id).eq("status", "pending").eq("source", "autopilot").order("send_at", { ascending: true }),
-      supabase.from("gmail_accounts").select("id").eq("user_id", user.id).eq("is_active", true).limit(1),
+      supabase.from("gmail_accounts").select("id, gmail_address").eq("user_id", user.id).eq("is_active", true),
     ]);
     account.current = a.data?.[0]?.id ?? null;
+    setAccounts(Object.fromEntries(((a.data || []) as any[]).map((x) => [x.id, x.gmail_address])));
+
     const drafts = (d.data || []) as any[];
     const sched = (s.data || []) as any[];
     const ids = [...new Set([...drafts, ...sched].map((x) => x.email_id).filter(Boolean))];
@@ -291,6 +296,17 @@ export default function RepliesView() {
           <button className="btn btn-plain" onClick={() => setPicked(new Set())}>
             Clear <Kbd>esc</Kbd>
           </button>
+          <span className="flex-1" />
+          <SearchBox placeholder="Search replies" />
+          <Menu
+            label="Group"
+            value={group}
+            onChange={setGroup}
+            options={[
+              { id: "day", label: "Day" },
+              { id: "person", label: "Person" },
+            ]}
+          />
         </header>
       ) : (
         <ViewBar
@@ -354,6 +370,8 @@ export default function RepliesView() {
                       </button>
                     ) : !item.to.length ? (
                       <em className="flex-none text-xs font-medium not-italic text-warn">No recipient</em>
+                    ) : isNew(item) ? (
+                      <em className="flex-none text-xs font-medium not-italic text-warn">New sender</em>
                     ) : null}
                   </div>
                 </div>
@@ -375,6 +393,12 @@ export default function RepliesView() {
                   </dd>
                   <dt className="text-ink3">Subject</dt>
                   <dd>{cursor.subject || "(no subject)"}</dd>
+                  {(accounts[cursor.source?.gmail_account_id || ""] || Object.values(accounts)[0]) && (
+                    <>
+                      <dt className="text-ink3">From</dt>
+                      <dd>{accounts[cursor.source?.gmail_account_id || ""] || Object.values(accounts)[0]}</dd>
+                    </>
+                  )}
                 </dl>
                 {cursor.source && (
                   <div className="inset mb-5 mt-4">
@@ -403,7 +427,9 @@ export default function RepliesView() {
                     <p>
                       <b className="font-semibold text-ink">Why this is waiting for you.</b>{" "}
                       {level === "autopilot"
-                        ? "Autopilot is on, but this one needs you: it is to someone you have not written to, or the answer is yours to decide."
+                        ? isNew(cursor)
+                          ? "Autopilot is on, but you have not written to this person before, so it only drafts."
+                          : "Autopilot is on, but this one needs you: the answer is yours to decide, or the day's limit was reached."
                         : level === "observe" || level === "suggest"
                           ? "Tabellar is not set to send anything on its own."
                           : "At Assist, Tabellar writes replies and never sends them."}{" "}

@@ -1,0 +1,368 @@
+---
+name: Tabellar
+description: A personal email agent's window, set as a quiet docket where colour marks only what needs the user.
+colors:
+  canvas: "oklch(1 0 0)"
+  side: "oklch(0.968 0.004 75)"
+  raised: "oklch(1 0 0)"
+  line: "oklch(0.912 0.004 75)"
+  line-soft: "oklch(0.948 0.003 75)"
+  hover: "oklch(0.968 0.003 75)"
+  sel: "oklch(0.932 0.005 75)"
+  field: "oklch(0.955 0.004 75)"
+  ink: "oklch(0.2 0.006 60)"
+  ink2: "oklch(0.4 0.006 60)"
+  ink3: "oklch(0.535 0.005 60)"
+  ink4: "oklch(0.7 0.004 60)"
+  wax: "oklch(0.55 0.185 31)"
+  wax-ink: "oklch(0.5 0.18 31)"
+  wax-soft: "oklch(0.55 0.185 31 / 0.09)"
+  on-wax: "oklch(1 0 0)"
+  warn: "oklch(0.52 0.12 65)"
+  warn-soft: "oklch(0.7 0.14 75 / 0.13)"
+  warn-line: "oklch(0.7 0.14 75 / 0.4)"
+  danger: "oklch(0.5 0.19 20)"
+  danger-soft: "oklch(0.55 0.2 20 / 0.08)"
+  danger-line: "oklch(0.55 0.2 20 / 0.32)"
+  ok: "oklch(0.48 0.11 155)"
+  ok-soft: "oklch(0.6 0.13 155 / 0.1)"
+  ok-line: "oklch(0.6 0.13 155 / 0.35)"
+  run: "oklch(0.62 0.13 150)"
+typography:
+  wordmark:
+    fontFamily: "Ysabeau Office, system-ui, sans-serif"
+    fontSize: "17px"
+    fontWeight: 650
+    lineHeight: 1
+    letterSpacing: "0.004em"
+  title:
+    fontFamily: "system-ui, -apple-system, SF Pro Text, Helvetica Neue, sans-serif"
+    fontSize: "15px"
+    fontWeight: 650
+    lineHeight: 1.25
+    letterSpacing: "-0.01em"
+  body:
+    fontFamily: "system-ui, -apple-system, SF Pro Text, Helvetica Neue, sans-serif"
+    fontSize: "13px"
+    fontWeight: 400
+    lineHeight: 1.4
+    letterSpacing: "-0.003em"
+    fontFeature: "tnum"
+  status:
+    fontFamily: "system-ui, -apple-system, SF Pro Text, Helvetica Neue, sans-serif"
+    fontSize: "12.5px"
+    fontWeight: 400
+    lineHeight: 1.375
+  label:
+    fontFamily: "system-ui, -apple-system, SF Pro Text, Helvetica Neue, sans-serif"
+    fontSize: "12px"
+    fontWeight: 600
+    lineHeight: 1.33
+  key:
+    fontFamily: "system-ui, -apple-system, SF Pro Text, Helvetica Neue, sans-serif"
+    fontSize: "10.5px"
+    fontWeight: 500
+    lineHeight: 1
+rounded:
+  kbd: "4px"
+  tick: "4.5px"
+  row: "6px"
+  control: "7px"
+  inset: "9px"
+  pop: "10px"
+  dialog: "12px"
+  dot: "999px"
+spacing:
+  hair: "2px"
+  xs: "4px"
+  sm: "8px"
+  md: "12px"
+  lg: "20px"
+  row-height: "32px"
+  control-height: "28px"
+  group-header: "34px"
+  bar-height: "52px"
+  foot-height: "30px"
+  sidebar-width: "224px"
+  details-width: "404px"
+components:
+  button:
+    backgroundColor: "{colors.raised}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.control}"
+    padding: "0 11px"
+    height: "28px"
+  button-hover:
+    backgroundColor: "{colors.hover}"
+  button-primary:
+    backgroundColor: "{colors.wax}"
+    textColor: "{colors.on-wax}"
+    rounded: "{rounded.control}"
+    padding: "0 11px"
+    height: "28px"
+  button-primary-hover:
+    backgroundColor: "{colors.wax-ink}"
+  button-plain:
+    textColor: "{colors.ink2}"
+    rounded: "{rounded.control}"
+    padding: "0 8px"
+    height: "28px"
+  button-plain-hover:
+    backgroundColor: "{colors.hover}"
+    textColor: "{colors.ink}"
+  button-small:
+    rounded: "{rounded.row}"
+    padding: "0 8px"
+    height: "24px"
+  icon-button:
+    textColor: "{colors.ink2}"
+    rounded: "{rounded.row}"
+    size: "28px"
+  icon-button-hover:
+    backgroundColor: "{colors.sel}"
+    textColor: "{colors.ink}"
+  input:
+    backgroundColor: "{colors.field}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.control}"
+    padding: "0 10px"
+    height: "28px"
+  searchbox:
+    backgroundColor: "{colors.field}"
+    textColor: "{colors.ink3}"
+    rounded: "{rounded.control}"
+    padding: "0 6px 0 8px"
+    height: "28px"
+    width: "248px"
+  segment:
+    textColor: "{colors.ink2}"
+    rounded: "{rounded.row}"
+    padding: "0 9px"
+    height: "26px"
+  segment-on:
+    backgroundColor: "{colors.sel}"
+    textColor: "{colors.ink}"
+  row:
+    textColor: "{colors.ink2}"
+    typography: "{typography.body}"
+    rounded: "{rounded.row}"
+    padding: "0 12px 0 6px"
+    height: "32px"
+  row-hover:
+    backgroundColor: "{colors.hover}"
+  row-selected:
+    backgroundColor: "{colors.sel}"
+  row-two-line:
+    rounded: "{rounded.control}"
+    padding: "9px 12px 9px 6px"
+  nav-item:
+    textColor: "{colors.ink2}"
+    rounded: "{rounded.row}"
+    padding: "0 8px"
+    height: "28px"
+  nav-item-on:
+    backgroundColor: "{colors.sel}"
+    textColor: "{colors.ink}"
+  popover:
+    backgroundColor: "{colors.raised}"
+    rounded: "{rounded.pop}"
+    padding: "4px"
+  popover-item:
+    textColor: "{colors.ink}"
+    rounded: "{rounded.row}"
+    padding: "0 8px"
+    height: "28px"
+  inset:
+    backgroundColor: "{colors.side}"
+    rounded: "{rounded.inset}"
+    padding: "12px 14px"
+  kbd:
+    backgroundColor: "{colors.canvas}"
+    textColor: "{colors.ink3}"
+    typography: "{typography.key}"
+    rounded: "{rounded.kbd}"
+    padding: "2px 4px"
+  tick:
+    rounded: "{rounded.tick}"
+    size: "15px"
+  tick-on:
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.canvas}"
+  dialog:
+    backgroundColor: "{colors.raised}"
+    rounded: "{rounded.dialog}"
+    padding: "20px"
+---
+
+# Design System: Tabellar
+
+## Overview
+
+**Creative North Star: "The Sealed Docket"**
+
+The window is a docket, not a reading room. Every email is one quiet line that ends in what Tabellar did with it, and the only colour on a normal screen is the sealing-wax red that marks a decision waiting for the user, the primary action, and a reply counting down to send. Everything else is warm grey paper and near-black ink in graded steps, set in the system face at 13px with tabular numerals, so the window sits among native Mac productivity apps without copying one.
+
+Density is high and calm. Rows are 32px, the top bar 52px, the key-hint footer 30px; hierarchy comes from ink weight and ink step, never from boxes, cards or coloured pills. The identity lives in two places only: the mark (three tablets, one sealed in wax, the channel between them forming a T) with its Ysabeau Office wordmark, and the state glyphs drawn as the seal itself. Light and dark are both first-class and share every token name.
+
+The rejected direction is on record: a dashboard home of counts and cards, stat tiles, metaphor costumes, coloured pills on every row, and any trace of the Gmail-styled RuneMail look.
+
+**Key Characteristics:**
+- Warm neutral surfaces (hue 60 to 75, chroma under 0.007) with a tinted sidebar and white content.
+- Four ink steps carry all hierarchy; weight 650 marks a line that needs the user.
+- One accent, wax red, reserved for "needs you", the primary action and the outgoing countdown.
+- Amber only for held mail and cautions; red-pink danger only for failure.
+- Selection is a neutral grey fill on a 6px rounded row, never an accent tint.
+- Full keyboard triage, with key hints always shown in the footer.
+
+## Colors
+
+A warm, almost colourless paper-and-ink palette with one sealing-wax red, defined in OKLCH as custom properties on `:root` and `.dark` and exposed to Tailwind through `color-mix`, so one class name serves both schemes.
+
+### Primary
+- **Sealing Wax** (wax): the dot of a line that needs the user, the ring of a reply going out, the primary button, the focus outline, the text caret, checkbox accent and the sealed tablet of the mark.
+- **Wax Ink** (wax-ink): the readable text form of the accent: status text such as "Reply ready", need counts in segments and the sidebar, countdown digits, and the primary button's hover.
+- **Wax Wash** (wax-soft): a faint wax tint for the rare surface that must read as "yours to decide"; selection highlight uses wax at 22%.
+- **On Wax** (on-wax): text on a wax fill; white in light, a deep wax-brown in dark.
+
+### Secondary
+- **Held Amber** (warn, warn-soft, warn-line): held mail ("Held: written to an AI"), "New sender" and "No recipient" cautions, the paused engine dot.
+- **Failure Red** (danger, danger-soft, danger-line): failed actions, sync error strips, destructive text buttons. Its hue (20) sits cooler than wax (31) so a failure never reads as a decision.
+
+### Tertiary
+- **Done Green** (ok, ok-soft, ok-line): confirmation states that need a positive colour.
+- **Running Green** (run): only the 7px engine-running dot at the foot of the sidebar.
+
+### Neutral
+- **Paper** (canvas): the content area, and the fill of sticky group headers.
+- **Tray** (side): the sidebar and quiet inset blocks such as quoted context.
+- **Raised** (raised): controls, popovers and dialogs; equals paper in light, one step lighter in dark.
+- **Hairline** (line) and **Soft Hairline** (line-soft): region borders, and dividers between two-line rows and inside panels.
+- **Hover** (hover), **Selected** (sel), **Field** (field): row hover, the cursor row or active nav item, and input wells.
+- **Ink** (ink): titles, senders, subjects. **Ink 2** (ink2): body copy in panels, default nav and row text. **Ink 3** (ink3): summaries, times, labels, placeholders, icons at rest. **Ink 4** (ink4): tick borders, link underlines, scrollbars.
+
+### Named Rules
+**The One Seal Rule.** Wax appears only where the user's decision is needed, on the one primary action in a region, or on a reply about to go out. A screen of handled mail has no red on it at all.
+
+**The Amber Is Held Rule.** Amber means held back or caution, nothing else. It is never used for emphasis, warnings of style, or a second accent.
+
+**The Same Name Both Ways Rule.** Every colour is a token with a light and a dark value under one name. No component carries a literal colour.
+
+## Typography
+
+**Body Font:** system-ui (with -apple-system, SF Pro Text, Helvetica Neue, sans-serif)
+**Wordmark Font:** Ysabeau Office, bundled as a variable woff2 (weights 100 to 900) under the SIL Open Font Licence
+
+**Character:** The native system face keeps the window feeling like a Mac app and lets dense lines stay crisp; Ysabeau Office, a humanist face with a lapidary edge, appears only in the wordmark beside the tablets.
+
+### Hierarchy
+- **Wordmark** (650, 0.78 of the mark size, so 17px beside the 22px sidebar mark, tracking 0.004em): the word "Tabellar" in the logo lockup and nowhere else.
+- **Title** (650, 15px, tracking -0.01em): the view title in the top bar, the subject in the details panel, empty-state headings.
+- **Body** (400, 13px, line-height 1.4, tracking -0.003em, tabular numerals): every row, control, menu item and panel paragraph. Panel prose loosens to line-height 1.625.
+- **Status** (12.5px, 400 to 600): the status column at the end of a row and panel notes; weight rises with urgency (600 for needs you, 500 for going out, held, failed).
+- **Label** (600, 12px, ink 3, sentence case): section labels such as "From your mail", "Going out", "What Tabellar did". Plain 12px ink 3 carries meta lines and counts.
+- **Key** (500, 10.5px): keyboard hints in the kbd chip.
+
+### Named Rules
+**The Weight Is The Flag Rule.** A line that needs the user is set in weight 650 for the sender and 500 for the subject; handled lines stay at 400. Size never changes inside a list.
+
+**The Wordmark Only Rule.** Ysabeau Office is for the wordmark. Every other piece of text is the system face.
+
+**The Sentence Case Rule.** Labels and headings are plain sentence case at normal tracking. No uppercase, no letter-spaced small caps.
+
+## Layout
+
+A three-column window: a 224px sidebar, a flexible list, and a 404px details panel on the right, each separated by a single hairline. Every view stacks the same three bands: a 52px bar (title, filter segments, a flexible gap, search, menus), the scrolling content, and a 30px footer with a count on the left and key hints on the right.
+
+Content is inset 20px from the left edge of the main column (bar, group headers, footer, panel); list rows sit 8px in from each side so their rounded selection floats inside the column. The inbox row is a fixed grid: 26px glyph, 164px sender, flexible subject and summary, 172px status, 46px time. Sticky group headers are 34px and bottom-aligned (Today, Yesterday, Ready to send) with counts flushed right. Lists are windowed, so row heights are fixed and exact (32px one-line, about 58px two-line).
+
+Rhythm is 2, 4, 8, 12 and 20px; controls are 24, 26 or 28px tall. Below 768px the filter segments collapse into a menu, the search becomes an icon button, the details panel and footer key hints hide, and the inbox grid drops to glyph, sender, status and time. Below 1024px the sidebar becomes a drawer over a 30% black scrim, sliding in over 200ms.
+
+## Elevation & Depth
+
+Flat by default. Depth comes from tone (tray sidebar beside paper content, raised controls) and hairlines. Shadows exist in exactly two roles: a whisper under controls that doubles as their edge, and a soft lift for anything floating above the window.
+
+### Shadow Vocabulary
+- **Control** (`box-shadow: 0 1px 2px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14)`; dark `0 1px 2px oklch(0 0 0 / 0.4), 0 0 0 0.5px oklch(1 0 0 / 0.12)`): standard buttons. The half-pixel ring is the button's border.
+- **Primary** (`box-shadow: 0 1px 2px oklch(0.3 0.1 31 / 0.3)`): the wax button only.
+- **Pop** (`box-shadow: 0 10px 32px oklch(0.2 0.01 60 / 0.16), 0 2px 6px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14)`; dark `0 12px 36px oklch(0 0 0 / 0.5), 0 0 0 0.5px oklch(1 0 0 / 0.14)`): menus, popovers, compose, dialogs.
+- **Focus ring** (`outline: 2px solid` wax, offset 1px; fields use `box-shadow: 0 0 0 2px` wax at 55%): keyboard focus and focused fields.
+
+### Named Rules
+**The Two Shadows Rule.** Controls get the control shadow, floating layers get the pop shadow. Rows, panels, group headers and inset blocks never cast a shadow.
+
+## Shapes
+
+Soft, small, consistent corners on a square-edged window. Rows, icon buttons, segments and menu items round at 6px; buttons, fields and two-line rows at 7px; inset blocks at 9px; popovers at 10px; dialogs and the compose window at 12px. Ticks are 15px squares at 4.5px with a 1.2px ink 4 border. Dots are full circles. Icons are Lucide outlines held at about 1.4px of stroke on screen at every size. The mark is a squircle clip holding three tablets: a full-width top bar and two lower blocks, the right one wax.
+
+## Components
+
+### Buttons
+Quiet, native and compact.
+- **Shape:** gently rounded (7px), 28px tall, 13px medium text, 6px gap to an icon or key hint.
+- **Standard:** raised fill with the control shadow; hover moves to the hover tone over 150ms.
+- **Primary:** wax fill, on-wax text, its own wax shadow; hover deepens to wax ink. One per region, and it carries its key hint inside at 78% opacity.
+- **Plain:** transparent, ink 2, no shadow, 8px padding; hover fills and darkens to ink.
+- **Small:** 24px tall, 6px corners, 12px text. **Danger:** standard with danger text.
+- **Icon button:** 28px square, 6px corners, ink 2; hover fills with the selected tone.
+- **Disabled:** 45% opacity, no pointer events.
+
+### Segments
+- **Style:** a row of 26px text buttons, 2px apart, 6px corners, ink 2, with a 12px ink 3 count after the label.
+- **State:** pressed fills with the selected tone and goes to medium ink; a count that needs the user turns wax ink and semibold.
+
+### Rows
+- **One-line row (32px):** 6px corners, inset 8px; the seal glyph in the first column swaps to a tick on hover or selection. Hover tone on hover, selected tone for the keyboard cursor.
+- **Two-line row:** 7px corners, 9px vertical padding, a soft hairline under it starting at 32px from the left, hidden next to a selected row.
+- **Group header:** 34px, sticky, paper fill, bold name in ink then a note and counts in ink 3.
+
+### Seal glyphs
+The state of a piece of mail, drawn as the seal in a 16px box: a filled wax dot (r 4) when it needs the user, a wax ring (r 3.4, 1.5 stroke) while a reply is going out, an ink 3 check when handled, an amber triangle when held, a danger triangle when failed, an ink 3 info ring for notes. Filed mail has no glyph.
+
+### Inputs / Fields
+- **Style:** field tone well, no border, 7px corners, 28px tall, 10px padding; placeholder in ink 3, caret in wax.
+- **Focus:** a 2px wax ring at 55% drawn as a shadow.
+- **Search:** the same well at 248px with a search icon and a "/" key chip, shrinking to an icon button on narrow screens.
+
+### Navigation
+- **Sidebar:** tray fill, hairline right edge, logo and compose button in a 52px head. Items are 28px, 6px corners, 16px icon in ink 3 then label in ink 2, count flushed right in 12px ink 3 (wax ink and semibold when it needs the user). Active item fills with the selected tone and goes to medium ink.
+- **Groups:** sentence-case labels (Inbox alone, then "From your mail", "Tabellar", "Mail").
+- **Foot:** "Going out" with each reply's recipient, countdown in wax ink and an underlined Cancel; then the engine row with a 7px state dot (run green, amber paused, danger failed), level menu, pause and settings, and a 12px "Checked Gmail" line.
+
+### Popovers and dialogs
+- **Popover:** raised fill, 10px corners, 4px padding, pop shadow; items are 28px, 6px corners, a check column for the chosen option, selected tone on hover.
+- **Dialog:** raised fill, 12px corners, 20px padding, pop shadow.
+
+### Key hints
+- **Kbd chip:** 10.5px medium ink 3 on paper, 1px hairline border, 4px corners, at least 17px wide. Inside a button it drops the chip and shows as 11px ink 3 text.
+- **Footer:** every list view ends in a 30px footer listing the keys that work there.
+
+### Details panel
+404px, hairline left edge: sender, address and time, the subject as a title, a summary in ink 2, then "What Tabellar did" as a list of seal-glyph items each with a right-aligned Undo or Review link, then the email itself. Actions sit in a hairline-topped strip at the bottom, primary first.
+
+### Empty and loading
+- **Empty:** centred column at most 380px wide, 22px ink 3 icon, 15px title, 13px ink 2 sentence with an inline link to the way out.
+- **Loading:** skeleton bars in the field tone at row height, pulsing to 45% over 1.4s. No spinners.
+
+## Do's and Don'ts
+
+### Do:
+- **Do** let wax mark only needs you, the one primary action and the outgoing countdown.
+- **Do** say state in words at the end of each row ("Reply ready, todo added", "Replying in 3:26") beside the seal glyph.
+- **Do** carry hierarchy with ink steps and weight 650, at one body size of 13px with tabular numerals.
+- **Do** use the neutral selected tone (sel) on 6px rounded rows for selection and the active nav item.
+- **Do** build views from the shared parts: bar, segments, rows, group header, footer with key hints, popover, inset, empty state.
+- **Do** keep icons to the bundled Lucide set at about 1.4px stroke, 16px in navigation and bars.
+- **Do** give every motion a reduced-motion fallback; colour transitions run 150ms.
+
+### Don't:
+- **Don't** build a dashboard of counts, stat tiles or cards.
+- **Don't** put coloured pills, badges or category chips on rows.
+- **Don't** use metaphor costumes (post office sorting cases, flight strips, ticket stubs).
+- **Don't** tint selection with the accent or use wax as decoration.
+- **Don't** use amber for anything but held mail and cautions.
+- **Don't** set any text but the wordmark in Ysabeau Office, and don't use uppercase or letter-spaced labels.
+- **Don't** add shadows to rows, panels or inset blocks, or put borders on inputs.
+- **Don't** keep any Gmail or RuneMail colours, green T icon or Google-blue accents.
+- **Don't** load fonts or icons from outside the app; both are bundled.

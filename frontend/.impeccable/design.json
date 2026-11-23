@@ -1,0 +1,699 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-23T10:28:25Z",
+  "title": "Design System: Tabellar",
+  "extensions": {
+    "colorMeta": {
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "canonical": "oklch(1 0 0)",
+        "dark": "oklch(0.205 0.004 60)",
+        "cssVar": "--bg",
+        "tonalRamp": [
+          "oklch(0.15 0.004 75)",
+          "oklch(0.25 0.004 75)",
+          "oklch(0.35 0.004 75)",
+          "oklch(0.45 0.004 75)",
+          "oklch(0.55 0.004 75)",
+          "oklch(0.7 0.004 75)",
+          "oklch(0.85 0.004 75)",
+          "oklch(0.95 0.004 75)"
+        ]
+      },
+      "side": {
+        "role": "neutral",
+        "displayName": "Tray",
+        "canonical": "oklch(0.968 0.004 75)",
+        "dark": "oklch(0.176 0.004 60)",
+        "cssVar": "--side",
+        "tonalRamp": [
+          "oklch(0.15 0.004 75)",
+          "oklch(0.25 0.004 75)",
+          "oklch(0.35 0.004 75)",
+          "oklch(0.45 0.004 75)",
+          "oklch(0.55 0.004 75)",
+          "oklch(0.7 0.004 75)",
+          "oklch(0.85 0.004 75)",
+          "oklch(0.95 0.004 75)"
+        ]
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Raised",
+        "canonical": "oklch(1 0 0)",
+        "dark": "oklch(0.25 0.004 60)",
+        "cssVar": "--raised",
+        "tonalRamp": [
+          "oklch(0.15 0.004 75)",
+          "oklch(0.25 0.004 75)",
+          "oklch(0.35 0.004 75)",
+          "oklch(0.45 0.004 75)",
+          "oklch(0.55 0.004 75)",
+          "oklch(0.7 0.004 75)",
+          "oklch(0.85 0.004 75)",
+          "oklch(0.95 0.004 75)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "oklch(0.912 0.004 75)",
+        "dark": "oklch(0.29 0.004 60)",
+        "cssVar": "--line",
+        "tonalRamp": [
+          "oklch(0.15 0.004 75)",
+          "oklch(0.25 0.004 75)",
+          "oklch(0.35 0.004 75)",
+          "oklch(0.45 0.004 75)",
+          "oklch(0.55 0.004 75)",
+          "oklch(0.7 0.004 75)",
+          "oklch(0.85 0.004 75)",
+          "oklch(0.95 0.004 75)"
+        ]
+      },
+      "line-soft": {
+        "role": "neutral",
+        "displayName": "Soft Hairline",
+        "canonical": "oklch(0.948 0.003 75)",
+        "dark": "oklch(0.25 0.004 60)",
+        "cssVar": "--line-soft",
+        "tonalRamp": [
+          "oklch(0.15 0.003 75)",
+          "oklch(0.25 0.003 75)",
+          "oklch(0.35 0.003 75)",
+          "oklch(0.45 0.003 75)",
+          "oklch(0.55 0.003 75)",
+          "oklch(0.7 0.003 75)",
+          "oklch(0.85 0.003 75)",
+          "oklch(0.95 0.003 75)"
+        ]
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Hover",
+        "canonical": "oklch(0.968 0.003 75)",
+        "dark": "oklch(0.24 0.004 60)",
+        "cssVar": "--hover",
+        "tonalRamp": [
+          "oklch(0.15 0.003 75)",
+          "oklch(0.25 0.003 75)",
+          "oklch(0.35 0.003 75)",
+          "oklch(0.45 0.003 75)",
+          "oklch(0.55 0.003 75)",
+          "oklch(0.7 0.003 75)",
+          "oklch(0.85 0.003 75)",
+          "oklch(0.95 0.003 75)"
+        ]
+      },
+      "sel": {
+        "role": "neutral",
+        "displayName": "Selected",
+        "canonical": "oklch(0.932 0.005 75)",
+        "dark": "oklch(0.295 0.005 60)",
+        "cssVar": "--sel",
+        "tonalRamp": [
+          "oklch(0.15 0.005 75)",
+          "oklch(0.25 0.005 75)",
+          "oklch(0.35 0.005 75)",
+          "oklch(0.45 0.005 75)",
+          "oklch(0.55 0.005 75)",
+          "oklch(0.7 0.005 75)",
+          "oklch(0.85 0.005 75)",
+          "oklch(0.95 0.005 75)"
+        ]
+      },
+      "field": {
+        "role": "neutral",
+        "displayName": "Field",
+        "canonical": "oklch(0.955 0.004 75)",
+        "dark": "oklch(0.255 0.004 60)",
+        "cssVar": "--field",
+        "tonalRamp": [
+          "oklch(0.15 0.004 75)",
+          "oklch(0.25 0.004 75)",
+          "oklch(0.35 0.004 75)",
+          "oklch(0.45 0.004 75)",
+          "oklch(0.55 0.004 75)",
+          "oklch(0.7 0.004 75)",
+          "oklch(0.85 0.004 75)",
+          "oklch(0.95 0.004 75)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "oklch(0.2 0.006 60)",
+        "dark": "oklch(0.945 0.004 75)",
+        "cssVar": "--ink",
+        "tonalRamp": [
+          "oklch(0.15 0.006 60)",
+          "oklch(0.25 0.006 60)",
+          "oklch(0.35 0.006 60)",
+          "oklch(0.45 0.006 60)",
+          "oklch(0.55 0.006 60)",
+          "oklch(0.7 0.006 60)",
+          "oklch(0.85 0.006 60)",
+          "oklch(0.95 0.006 60)"
+        ]
+      },
+      "ink2": {
+        "role": "neutral",
+        "displayName": "Ink 2",
+        "canonical": "oklch(0.4 0.006 60)",
+        "dark": "oklch(0.77 0.005 75)",
+        "cssVar": "--ink2",
+        "tonalRamp": [
+          "oklch(0.15 0.006 60)",
+          "oklch(0.25 0.006 60)",
+          "oklch(0.35 0.006 60)",
+          "oklch(0.45 0.006 60)",
+          "oklch(0.55 0.006 60)",
+          "oklch(0.7 0.006 60)",
+          "oklch(0.85 0.006 60)",
+          "oklch(0.95 0.006 60)"
+        ]
+      },
+      "ink3": {
+        "role": "neutral",
+        "displayName": "Ink 3",
+        "canonical": "oklch(0.535 0.005 60)",
+        "dark": "oklch(0.64 0.005 75)",
+        "cssVar": "--ink3",
+        "tonalRamp": [
+          "oklch(0.15 0.005 60)",
+          "oklch(0.25 0.005 60)",
+          "oklch(0.35 0.005 60)",
+          "oklch(0.45 0.005 60)",
+          "oklch(0.55 0.005 60)",
+          "oklch(0.7 0.005 60)",
+          "oklch(0.85 0.005 60)",
+          "oklch(0.95 0.005 60)"
+        ]
+      },
+      "ink4": {
+        "role": "neutral",
+        "displayName": "Ink 4",
+        "canonical": "oklch(0.7 0.004 60)",
+        "dark": "oklch(0.46 0.004 75)",
+        "cssVar": "--ink4",
+        "tonalRamp": [
+          "oklch(0.15 0.004 60)",
+          "oklch(0.25 0.004 60)",
+          "oklch(0.35 0.004 60)",
+          "oklch(0.45 0.004 60)",
+          "oklch(0.55 0.004 60)",
+          "oklch(0.7 0.004 60)",
+          "oklch(0.85 0.004 60)",
+          "oklch(0.95 0.004 60)"
+        ]
+      },
+      "wax": {
+        "role": "primary",
+        "displayName": "Sealing Wax",
+        "canonical": "oklch(0.55 0.185 31)",
+        "dark": "oklch(0.7 0.165 35)",
+        "cssVar": "--wax",
+        "tonalRamp": [
+          "oklch(0.15 0.185 31)",
+          "oklch(0.25 0.185 31)",
+          "oklch(0.35 0.185 31)",
+          "oklch(0.45 0.185 31)",
+          "oklch(0.55 0.185 31)",
+          "oklch(0.7 0.185 31)",
+          "oklch(0.85 0.185 31)",
+          "oklch(0.95 0.185 31)"
+        ]
+      },
+      "wax-ink": {
+        "role": "primary",
+        "displayName": "Wax Ink",
+        "canonical": "oklch(0.5 0.18 31)",
+        "dark": "oklch(0.76 0.14 38)",
+        "cssVar": "--wax-ink",
+        "tonalRamp": [
+          "oklch(0.15 0.18 31)",
+          "oklch(0.25 0.18 31)",
+          "oklch(0.35 0.18 31)",
+          "oklch(0.45 0.18 31)",
+          "oklch(0.55 0.18 31)",
+          "oklch(0.7 0.18 31)",
+          "oklch(0.85 0.18 31)",
+          "oklch(0.95 0.18 31)"
+        ]
+      },
+      "wax-soft": {
+        "role": "primary",
+        "displayName": "Wax Wash",
+        "canonical": "oklch(0.55 0.185 31 / 0.09)",
+        "dark": "oklch(0.7 0.165 35 / 0.13)",
+        "cssVar": "--wax-soft",
+        "tonalRamp": [
+          "oklch(0.15 0.185 31)",
+          "oklch(0.25 0.185 31)",
+          "oklch(0.35 0.185 31)",
+          "oklch(0.45 0.185 31)",
+          "oklch(0.55 0.185 31)",
+          "oklch(0.7 0.185 31)",
+          "oklch(0.85 0.185 31)",
+          "oklch(0.95 0.185 31)"
+        ]
+      },
+      "on-wax": {
+        "role": "primary",
+        "displayName": "On Wax",
+        "canonical": "oklch(1 0 0)",
+        "dark": "oklch(0.18 0.02 35)",
+        "cssVar": "--on-wax",
+        "tonalRamp": [
+          "oklch(0.15 0.02 35)",
+          "oklch(0.25 0.02 35)",
+          "oklch(0.35 0.02 35)",
+          "oklch(0.45 0.02 35)",
+          "oklch(0.55 0.02 35)",
+          "oklch(0.7 0.02 35)",
+          "oklch(0.85 0.02 35)",
+          "oklch(0.95 0.02 35)"
+        ]
+      },
+      "warn": {
+        "role": "secondary",
+        "displayName": "Held Amber",
+        "canonical": "oklch(0.52 0.12 65)",
+        "dark": "oklch(0.8 0.12 80)",
+        "cssVar": "--warn",
+        "tonalRamp": [
+          "oklch(0.15 0.12 65)",
+          "oklch(0.25 0.12 65)",
+          "oklch(0.35 0.12 65)",
+          "oklch(0.45 0.12 65)",
+          "oklch(0.55 0.12 65)",
+          "oklch(0.7 0.12 65)",
+          "oklch(0.85 0.12 65)",
+          "oklch(0.95 0.12 65)"
+        ]
+      },
+      "warn-soft": {
+        "role": "secondary",
+        "displayName": "Held Amber Wash",
+        "canonical": "oklch(0.7 0.14 75 / 0.13)",
+        "dark": "oklch(0.8 0.12 80 / 0.12)",
+        "cssVar": "--warn-soft",
+        "tonalRamp": [
+          "oklch(0.15 0.14 75)",
+          "oklch(0.25 0.14 75)",
+          "oklch(0.35 0.14 75)",
+          "oklch(0.45 0.14 75)",
+          "oklch(0.55 0.14 75)",
+          "oklch(0.7 0.14 75)",
+          "oklch(0.85 0.14 75)",
+          "oklch(0.95 0.14 75)"
+        ]
+      },
+      "warn-line": {
+        "role": "secondary",
+        "displayName": "Held Amber Line",
+        "canonical": "oklch(0.7 0.14 75 / 0.4)",
+        "dark": "oklch(0.8 0.12 80 / 0.35)",
+        "cssVar": "--warn-line",
+        "tonalRamp": [
+          "oklch(0.15 0.14 75)",
+          "oklch(0.25 0.14 75)",
+          "oklch(0.35 0.14 75)",
+          "oklch(0.45 0.14 75)",
+          "oklch(0.55 0.14 75)",
+          "oklch(0.7 0.14 75)",
+          "oklch(0.85 0.14 75)",
+          "oklch(0.95 0.14 75)"
+        ]
+      },
+      "danger": {
+        "role": "secondary",
+        "displayName": "Failure Red",
+        "canonical": "oklch(0.5 0.19 20)",
+        "dark": "oklch(0.74 0.15 22)",
+        "cssVar": "--danger",
+        "tonalRamp": [
+          "oklch(0.15 0.19 20)",
+          "oklch(0.25 0.19 20)",
+          "oklch(0.35 0.19 20)",
+          "oklch(0.45 0.19 20)",
+          "oklch(0.55 0.19 20)",
+          "oklch(0.7 0.19 20)",
+          "oklch(0.85 0.19 20)",
+          "oklch(0.95 0.19 20)"
+        ]
+      },
+      "danger-soft": {
+        "role": "secondary",
+        "displayName": "Failure Wash",
+        "canonical": "oklch(0.55 0.2 20 / 0.08)",
+        "dark": "oklch(0.7 0.17 22 / 0.13)",
+        "cssVar": "--danger-soft",
+        "tonalRamp": [
+          "oklch(0.15 0.2 20)",
+          "oklch(0.25 0.2 20)",
+          "oklch(0.35 0.2 20)",
+          "oklch(0.45 0.2 20)",
+          "oklch(0.55 0.2 20)",
+          "oklch(0.7 0.2 20)",
+          "oklch(0.85 0.2 20)",
+          "oklch(0.95 0.2 20)"
+        ]
+      },
+      "danger-line": {
+        "role": "secondary",
+        "displayName": "Failure Line",
+        "canonical": "oklch(0.55 0.2 20 / 0.32)",
+        "dark": "oklch(0.7 0.17 22 / 0.4)",
+        "cssVar": "--danger-line",
+        "tonalRamp": [
+          "oklch(0.15 0.2 20)",
+          "oklch(0.25 0.2 20)",
+          "oklch(0.35 0.2 20)",
+          "oklch(0.45 0.2 20)",
+          "oklch(0.55 0.2 20)",
+          "oklch(0.7 0.2 20)",
+          "oklch(0.85 0.2 20)",
+          "oklch(0.95 0.2 20)"
+        ]
+      },
+      "ok": {
+        "role": "tertiary",
+        "displayName": "Done Green",
+        "canonical": "oklch(0.48 0.11 155)",
+        "dark": "oklch(0.78 0.13 155)",
+        "cssVar": "--ok",
+        "tonalRamp": [
+          "oklch(0.15 0.11 155)",
+          "oklch(0.25 0.11 155)",
+          "oklch(0.35 0.11 155)",
+          "oklch(0.45 0.11 155)",
+          "oklch(0.55 0.11 155)",
+          "oklch(0.7 0.11 155)",
+          "oklch(0.85 0.11 155)",
+          "oklch(0.95 0.11 155)"
+        ]
+      },
+      "ok-soft": {
+        "role": "tertiary",
+        "displayName": "Done Wash",
+        "canonical": "oklch(0.6 0.13 155 / 0.1)",
+        "dark": "oklch(0.75 0.13 155 / 0.12)",
+        "cssVar": "--ok-soft",
+        "tonalRamp": [
+          "oklch(0.15 0.13 155)",
+          "oklch(0.25 0.13 155)",
+          "oklch(0.35 0.13 155)",
+          "oklch(0.45 0.13 155)",
+          "oklch(0.55 0.13 155)",
+          "oklch(0.7 0.13 155)",
+          "oklch(0.85 0.13 155)",
+          "oklch(0.95 0.13 155)"
+        ]
+      },
+      "ok-line": {
+        "role": "tertiary",
+        "displayName": "Done Line",
+        "canonical": "oklch(0.6 0.13 155 / 0.35)",
+        "dark": "oklch(0.75 0.13 155 / 0.35)",
+        "cssVar": "--ok-line",
+        "tonalRamp": [
+          "oklch(0.15 0.13 155)",
+          "oklch(0.25 0.13 155)",
+          "oklch(0.35 0.13 155)",
+          "oklch(0.45 0.13 155)",
+          "oklch(0.55 0.13 155)",
+          "oklch(0.7 0.13 155)",
+          "oklch(0.85 0.13 155)",
+          "oklch(0.95 0.13 155)"
+        ]
+      },
+      "run": {
+        "role": "tertiary",
+        "displayName": "Running Green",
+        "canonical": "oklch(0.62 0.13 150)",
+        "dark": "oklch(0.74 0.14 150)",
+        "cssVar": "--run",
+        "tonalRamp": [
+          "oklch(0.15 0.13 150)",
+          "oklch(0.25 0.13 150)",
+          "oklch(0.35 0.13 150)",
+          "oklch(0.45 0.13 150)",
+          "oklch(0.55 0.13 150)",
+          "oklch(0.7 0.13 150)",
+          "oklch(0.85 0.13 150)",
+          "oklch(0.95 0.13 150)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "wordmark": {
+        "displayName": "Wordmark",
+        "purpose": "The word Tabellar beside the mark, at 0.78 of the mark size. Nowhere else."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "View titles in the bar, the subject in the details panel, empty-state headings."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Every row, control, menu item and panel paragraph."
+      },
+      "status": {
+        "displayName": "Status",
+        "purpose": "The status column of a row and panel notes; weight rises with urgency."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Sentence-case section labels in ink 3."
+      },
+      "key": {
+        "displayName": "Key",
+        "purpose": "Keyboard hints in the kbd chip."
+      }
+    },
+    "shadows": [
+      {
+        "name": "control",
+        "value": "0 1px 2px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14)",
+        "dark": "0 1px 2px oklch(0 0 0 / 0.4), 0 0 0 0.5px oklch(1 0 0 / 0.12)",
+        "purpose": "Standard buttons; the half-pixel ring is their border."
+      },
+      {
+        "name": "primary",
+        "value": "0 1px 2px oklch(0.3 0.1 31 / 0.3)",
+        "purpose": "The wax primary button only."
+      },
+      {
+        "name": "pop",
+        "value": "0 10px 32px oklch(0.2 0.01 60 / 0.16), 0 2px 6px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14)",
+        "dark": "0 12px 36px oklch(0 0 0 / 0.5), 0 0 0 0.5px oklch(1 0 0 / 0.14)",
+        "purpose": "Menus, popovers, compose and dialogs."
+      },
+      {
+        "name": "focus-ring",
+        "value": "outline: 2px solid var(--wax); outline-offset: 1px",
+        "purpose": "Keyboard focus on every control."
+      },
+      {
+        "name": "field-ring",
+        "value": "0 0 0 2px color-mix(in oklch, var(--wax) 55%, transparent)",
+        "purpose": "Focused input and search field."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state",
+        "value": "150ms ease",
+        "purpose": "Colour changes on hover and press for buttons, rows, segments, ticks, nav items."
+      },
+      {
+        "name": "drawer",
+        "value": "200ms ease-out",
+        "purpose": "The sidebar sliding in as a drawer below 1024px."
+      },
+      {
+        "name": "step-in",
+        "value": "180ms ease-out, translateY(4px) to 0",
+        "purpose": "Agent workspace steps appearing."
+      },
+      {
+        "name": "enter",
+        "value": "420ms cubic-bezier(0.16, 1, 0.3, 1), translateY(8px) to 0",
+        "purpose": "First-run setup steps."
+      },
+      {
+        "name": "skeleton",
+        "value": "1.4s ease-in-out infinite, opacity to 0.45",
+        "purpose": "Loading rows; no spinners."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "animations off, transitions 0.01ms",
+        "purpose": "Every animation above stops under prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "md",
+        "value": "768px",
+        "purpose": "Below it: segments become a menu, search becomes an icon, the details panel and footer key hints hide, the inbox row drops to glyph, sender, status and time."
+      },
+      {
+        "name": "lg",
+        "value": "1024px",
+        "purpose": "Below it: the sidebar becomes a drawer over a 30% black scrim."
+      }
+    ],
+    "assets": {
+      "mark": "public/logo.svg and Logo.tsx: squircle clip, ink top bar, ink lower-left block, wax lower-right block; the channel forms a T.",
+      "appIcon": "public/icon.svg: the mark on a warm paper squircle with a soft drop shadow, for the Dock and notifications.",
+      "wordmarkFont": "src/assets/fonts/ysabeau-office.woff2, SIL Open Font Licence beside it.",
+      "icons": "Lucide, bundled, stroke held near 1.4px on screen at any size."
+    }
+  },
+  "components": [
+    {
+      "name": "Standard Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "The everyday control: raised, edged by its own half-pixel shadow.",
+      "html": "<button class=\"ds-btn\">Archive <kbd class=\"ds-btn-key\">E</kbd></button>",
+      "css": ".ds-btn { font-family: system-ui, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 13px; line-height: 1.4; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border: 0; border-radius: 7px; background: var(--raised, oklch(1 0 0)); color: var(--ink, oklch(0.2 0.006 60)); font-weight: 500; white-space: nowrap; box-shadow: 0 1px 2px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14); transition: background-color 150ms; } .ds-btn:hover { background: var(--hover, oklch(0.968 0.003 75)); } .ds-btn:focus-visible { outline: 2px solid var(--wax, oklch(0.55 0.185 31)); outline-offset: 1px; } .ds-btn-key { font: inherit; font-size: 11px; color: var(--ink3, oklch(0.535 0.005 60)); }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one wax action in a region, with its key hint inside.",
+      "html": "<button class=\"ds-btn-pri\">Review reply <kbd class=\"ds-btn-pri-key\">↵</kbd></button>",
+      "css": ".ds-btn-pri { font-family: system-ui, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 13px; line-height: 1.4; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border: 0; border-radius: 7px; background: var(--wax, oklch(0.55 0.185 31)); color: var(--on-wax, oklch(1 0 0)); font-weight: 500; white-space: nowrap; box-shadow: 0 1px 2px oklch(0.3 0.1 31 / 0.3); transition: background-color 150ms; } .ds-btn-pri:hover { background: var(--wax-ink, oklch(0.5 0.18 31)); } .ds-btn-pri:focus-visible { outline: 2px solid var(--wax, oklch(0.55 0.185 31)); outline-offset: 1px; } .ds-btn-pri-key { font: inherit; font-size: 11px; color: inherit; opacity: 0.78; }"
+    },
+    {
+      "name": "Plain Button",
+      "kind": "button",
+      "refersTo": "button-plain",
+      "description": "A quiet text action: menus in the bar, secondary actions in panels.",
+      "html": "<button class=\"ds-btn-plain\">Open email</button>",
+      "css": ".ds-btn-plain { font-family: system-ui, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 13px; line-height: 1.4; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; height: 28px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--ink2, oklch(0.4 0.006 60)); transition: background-color 150ms, color 150ms; } .ds-btn-plain:hover { background: var(--hover, oklch(0.968 0.003 75)); color: var(--ink, oklch(0.2 0.006 60)); } .ds-btn-plain:focus-visible { outline: 2px solid var(--wax, oklch(0.55 0.185 31)); outline-offset: 1px; }"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "refersTo": "searchbox",
+      "description": "Borderless field well with a search icon and a slash key chip; wax ring on focus.",
+      "html": "<label class=\"ds-search\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.24\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"11\" cy=\"11\" r=\"8\"/><path d=\"m21 21-4.3-4.3\"/></svg><input placeholder=\"Search mail\"><kbd class=\"ds-search-key\">/</kbd></label>",
+      "css": ".ds-search { font-family: system-ui, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 13px; line-height: 1.4; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 7px; width: 248px; height: 28px; padding: 0 6px 0 8px; border-radius: 7px; background: var(--field, oklch(0.955 0.004 75)); color: var(--ink3, oklch(0.535 0.005 60)); } .ds-search:focus-within { box-shadow: 0 0 0 2px color-mix(in oklch, var(--wax, oklch(0.55 0.185 31)) 55%, transparent); } .ds-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font: inherit; color: var(--ink, oklch(0.2 0.006 60)); caret-color: var(--wax, oklch(0.55 0.185 31)); } .ds-search input::placeholder { color: var(--ink3, oklch(0.535 0.005 60)); } .ds-search-key { font: 500 10.5px/1 system-ui, sans-serif; color: var(--ink3, oklch(0.535 0.005 60)); min-width: 17px; text-align: center; padding: 2px 4px; border: 1px solid var(--line, oklch(0.912 0.004 75)); border-radius: 4px; }"
+    },
+    {
+      "name": "Filter Segments",
+      "kind": "chip",
+      "refersTo": "segment",
+      "description": "Bar filters: text buttons with counts; the need count is wax ink.",
+      "html": "<div class=\"ds-seg\"><button aria-pressed=\"true\">All</button><button>Needs you <em class=\"ds-need\">63</em></button><button>Going out <em>2</em></button><button>Handled</button></div>",
+      "css": ".ds-seg { font-family: system-ui, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 13px; line-height: 1.4; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; display: flex; gap: 2px; } .ds-seg button { display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; font: inherit; color: var(--ink2, oklch(0.4 0.006 60)); transition: background-color 150ms; } .ds-seg button:hover { background: var(--hover, oklch(0.968 0.003 75)); } .ds-seg button[aria-pressed=\"true\"] { background: var(--sel, oklch(0.932 0.005 75)); color: var(--ink, oklch(0.2 0.006 60)); font-weight: 500; } .ds-seg button:focus-visible { outline: 2px solid var(--wax, oklch(0.55 0.185 31)); outline-offset: 1px; } .ds-seg em { font-style: normal; font-size: 12px; color: var(--ink3, oklch(0.535 0.005 60)); } .ds-seg em.ds-need { color: var(--wax-ink, oklch(0.5 0.18 31)); font-weight: 600; }"
+    },
+    {
+      "name": "Docket Row",
+      "kind": "custom",
+      "refersTo": "row",
+      "description": "The 32px inbox line: seal glyph, sender, subject and summary, status in words, time.",
+      "html": "<div class=\"ds-row\" aria-selected=\"true\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\"><circle cx=\"8\" cy=\"8\" r=\"4\" fill=\"var(--wax, oklch(0.55 0.185 31))\"/></svg><span class=\"ds-row-from ds-row-need\">Priya Raman</span><span class=\"ds-row-subj\"><b>Contract renewal: two questions before Friday</b> <span>Priya wants to renew on the current day rate</span></span><span class=\"ds-row-status\">Reply ready, todo added</span><span class=\"ds-row-time\">14:15</span></div><div class=\"ds-row\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\"><path d=\"M4.4 8.3l2.4 2.4 4.8-5.2\" fill=\"none\" stroke=\"var(--ink3, oklch(0.535 0.005 60))\" stroke-width=\"1.4\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg><span class=\"ds-row-from\">Dana Okoye</span><span class=\"ds-row-subj\"><b>Re: Signage proofs, round 3</b> <span>Approves the proofs</span></span><span class=\"ds-row-status ds-row-done\">Todo added</span><span class=\"ds-row-time\">14:08</span></div>",
+      "css": ".ds-row { font-family: system-ui, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 13px; line-height: 1.4; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; display: grid; grid-template-columns: 26px 164px minmax(0,1fr) 172px 46px; align-items: center; height: 32px; margin: 0 8px; padding: 0 12px 0 6px; border-radius: 6px; color: var(--ink2, oklch(0.4 0.006 60)); } .ds-row:hover { background: var(--hover, oklch(0.968 0.003 75)); } .ds-row[aria-selected=\"true\"] { background: var(--sel, oklch(0.932 0.005 75)); } .ds-row > svg { justify-self: center; } .ds-row-from { color: var(--ink, oklch(0.2 0.006 60)); padding-right: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; } .ds-row-need { font-weight: 650; } .ds-row-subj { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding-right: 16px; } .ds-row-subj b { color: var(--ink, oklch(0.2 0.006 60)); font-weight: 400; } .ds-row-need ~ .ds-row-subj b { font-weight: 500; } .ds-row-subj span { color: var(--ink3, oklch(0.535 0.005 60)); } .ds-row-status { font-size: 12.5px; font-weight: 600; color: var(--wax-ink, oklch(0.5 0.18 31)); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; } .ds-row-status.ds-row-done { font-weight: 400; color: var(--ink2, oklch(0.4 0.006 60)); } .ds-row-time { text-align: right; font-size: 12px; color: var(--ink3, oklch(0.535 0.005 60)); }"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Tray-coloured sidebar items with ink 3 icons and right-aligned counts.",
+      "html": "<nav class=\"ds-nav\"><button class=\"ds-nav-item\" aria-current=\"page\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.1\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M22 12h-6l-2 3h-4l-2-3H2\"/><path d=\"M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z\"/></svg><span>Inbox</span><em class=\"ds-need\">63</em></button><p class=\"ds-nav-label\">From your mail</p><button class=\"ds-nav-item\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.1\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M20 18v-2a4 4 0 0 0-4-4H4\"/><path d=\"m9 17-5-5 5-5\"/></svg><span>Replies</span><em>60</em></button></nav>",
+      "css": ".ds-nav { font-family: system-ui, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 13px; line-height: 1.4; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; width: 208px; padding: 8px; background: var(--side, oklch(0.968 0.004 75)); } .ds-nav-item { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; font: inherit; text-align: left; color: var(--ink2, oklch(0.4 0.006 60)); transition: background-color 150ms; } .ds-nav-item svg { color: var(--ink3, oklch(0.535 0.005 60)); } .ds-nav-item span { flex: 1; } .ds-nav-item:hover { background: color-mix(in oklch, var(--sel, oklch(0.932 0.005 75)) 55%, transparent); } .ds-nav-item[aria-current=\"page\"] { background: var(--sel, oklch(0.932 0.005 75)); color: var(--ink, oklch(0.2 0.006 60)); font-weight: 500; } .ds-nav-item[aria-current=\"page\"] svg { color: var(--ink, oklch(0.2 0.006 60)); } .ds-nav-item:focus-visible { outline: 2px solid var(--wax, oklch(0.55 0.185 31)); outline-offset: 1px; } .ds-nav-item em { font-style: normal; font-size: 12px; color: var(--ink3, oklch(0.535 0.005 60)); } .ds-nav-item em.ds-need { color: var(--wax-ink, oklch(0.5 0.18 31)); font-weight: 600; } .ds-nav-label { margin: 0; padding: 16px 8px 5px; font-size: 12px; font-weight: 600; color: var(--ink3, oklch(0.535 0.005 60)); }"
+    },
+    {
+      "name": "Popover Menu",
+      "kind": "card",
+      "refersTo": "popover",
+      "description": "Floating menu with the pop shadow and a check column for the chosen item.",
+      "html": "<div class=\"ds-pop\" role=\"menu\"><button class=\"ds-pop-item\"><span class=\"ds-pop-check\">✓</span>Day</button><button class=\"ds-pop-item\"><span class=\"ds-pop-check\" style=\"visibility:hidden\">✓</span>Sender</button></div>",
+      "css": ".ds-pop { font-family: system-ui, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 13px; line-height: 1.4; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; min-width: 140px; padding: 4px; border-radius: 10px; background: var(--raised, oklch(1 0 0)); box-shadow: 0 10px 32px oklch(0.2 0.01 60 / 0.16), 0 2px 6px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14); } .ds-pop-item { display: flex; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; font: inherit; text-align: left; color: var(--ink, oklch(0.2 0.006 60)); } .ds-pop-item:hover { background: var(--sel, oklch(0.932 0.005 75)); } .ds-pop-item:focus-visible { outline: 2px solid var(--wax, oklch(0.55 0.185 31)); outline-offset: 1px; } .ds-pop-check { width: 13px; font-size: 12px; }"
+    },
+    {
+      "name": "Key Hint Footer",
+      "kind": "custom",
+      "refersTo": "kbd",
+      "description": "The 30px footer: a count on the left, the keys that work here on the right.",
+      "html": "<footer class=\"ds-foot\"><span>1,776 in Inbox</span><span style=\"flex:1\"></span><span class=\"ds-k\"><kbd>J</kbd><kbd>K</kbd>Move</span><span class=\"ds-k\"><kbd>A</kbd>Approve</span><span class=\"ds-k\"><kbd>Z</kbd>Undo</span></footer>",
+      "css": ".ds-foot { font-family: system-ui, -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif; font-size: 13px; line-height: 1.4; letter-spacing: -0.003em; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 16px; height: 30px; padding: 0 14px 0 20px; border-top: 1px solid var(--line, oklch(0.912 0.004 75)); font-size: 12px; color: var(--ink3, oklch(0.535 0.005 60)); } .ds-k { display: flex; align-items: center; gap: 5px; } .ds-k kbd { display: inline-block; min-width: 17px; padding: 2px 4px; border: 1px solid var(--line, oklch(0.912 0.004 75)); border-radius: 4px; background: var(--bg, oklch(1 0 0)); font: 500 10.5px/1 system-ui, sans-serif; text-align: center; color: var(--ink3, oklch(0.535 0.005 60)); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Sealed Docket",
+    "overview": "The window is a docket, not a reading room. Every email is one quiet line that ends in what Tabellar did with it, and the only colour on a normal screen is the sealing-wax red that marks a decision waiting for the user, the primary action, and a reply counting down to send. Everything else is warm grey paper and near-black ink in graded steps, set in the system face at 13px with tabular numerals, so the window sits among native Mac productivity apps without copying one.\n\nDensity is high and calm. Rows are 32px, the top bar 52px, the key-hint footer 30px; hierarchy comes from ink weight and ink step, never from boxes, cards or coloured pills. The identity lives in two places only: the mark (three tablets, one sealed in wax, the channel between them forming a T) with its Ysabeau Office wordmark, and the state glyphs drawn as the seal itself. Light and dark are both first-class and share every token name.\n\nThe rejected direction is on record: a dashboard home of counts and cards, stat tiles, metaphor costumes, coloured pills on every row, and any trace of the Gmail-styled RuneMail look.",
+    "keyCharacteristics": [
+      "Warm neutral surfaces (hue 60 to 75, chroma under 0.007) with a tinted sidebar and white content.",
+      "Four ink steps carry all hierarchy; weight 650 marks a line that needs the user.",
+      "One accent, wax red, reserved for \"needs you\", the primary action and the outgoing countdown.",
+      "Amber only for held mail and cautions; red-pink danger only for failure.",
+      "Selection is a neutral grey fill on a 6px rounded row, never an accent tint.",
+      "Full keyboard triage, with key hints always shown in the footer."
+    ],
+    "rules": [
+      {
+        "name": "The One Seal Rule",
+        "body": "Wax appears only where the user's decision is needed, on the one primary action in a region, or on a reply about to go out. A screen of handled mail has no red on it at all.",
+        "section": "colors"
+      },
+      {
+        "name": "The Amber Is Held Rule",
+        "body": "Amber means held back or caution, nothing else. It is never used for emphasis, warnings of style, or a second accent.",
+        "section": "colors"
+      },
+      {
+        "name": "The Same Name Both Ways Rule",
+        "body": "Every colour is a token with a light and a dark value under one name. No component carries a literal colour.",
+        "section": "colors"
+      },
+      {
+        "name": "The Weight Is The Flag Rule",
+        "body": "A line that needs the user is set in weight 650 for the sender and 500 for the subject; handled lines stay at 400. Size never changes inside a list.",
+        "section": "typography"
+      },
+      {
+        "name": "The Wordmark Only Rule",
+        "body": "Ysabeau Office is for the wordmark. Every other piece of text is the system face.",
+        "section": "typography"
+      },
+      {
+        "name": "The Sentence Case Rule",
+        "body": "Labels and headings are plain sentence case at normal tracking. No uppercase, no letter-spaced small caps.",
+        "section": "typography"
+      },
+      {
+        "name": "The Two Shadows Rule",
+        "body": "Controls get the control shadow, floating layers get the pop shadow. Rows, panels, group headers and inset blocks never cast a shadow.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do let wax mark only needs you, the one primary action and the outgoing countdown.",
+      "Do say state in words at the end of each row (\"Reply ready, todo added\", \"Replying in 3:26\") beside the seal glyph.",
+      "Do carry hierarchy with ink steps and weight 650, at one body size of 13px with tabular numerals.",
+      "Do use the neutral selected tone (sel) on 6px rounded rows for selection and the active nav item.",
+      "Do build views from the shared parts: bar, segments, rows, group header, footer with key hints, popover, inset, empty state.",
+      "Do keep icons to the bundled Lucide set at about 1.4px stroke, 16px in navigation and bars.",
+      "Do give every motion a reduced-motion fallback; colour transitions run 150ms."
+    ],
+    "donts": [
+      "Don't build a dashboard of counts, stat tiles or cards.",
+      "Don't put coloured pills, badges or category chips on rows.",
+      "Don't use metaphor costumes (post office sorting cases, flight strips, ticket stubs).",
+      "Don't tint selection with the accent or use wax as decoration.",
+      "Don't use amber for anything but held mail and cautions.",
+      "Don't set any text but the wordmark in Ysabeau Office, and don't use uppercase or letter-spaced labels.",
+      "Don't add shadows to rows, panels or inset blocks, or put borders on inputs.",
+      "Don't keep any Gmail or RuneMail colours, green T icon or Google-blue accents.",
+      "Don't load fonts or icons from outside the app; both are bundled."
+    ]
+  }
+}

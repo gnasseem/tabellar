@@ -29,12 +29,26 @@ export function Glyph({ state, className = "" }: { state: MailState; className?:
 // Search field bound to the window's one search string. "/" focuses it.
 export function SearchBox({ placeholder = "Search" }: { placeholder?: string }) {
   const { search, setSearch } = useApp();
+  const [open, setOpen] = useState(false);
+  const field = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (open) field.current?.focus();
+  }, [open]);
+  const shut = !open && !search;
   return (
-    <label className="searchbox">
+    <>
+      {shut && (
+        <button className="iconbtn md:hidden" aria-label={placeholder} onClick={() => setOpen(true)}>
+          <Icon name="search" size={16} />
+        </button>
+      )}
+      <label className={`searchbox ${shut ? "!hidden md:!flex" : "max-md:flex-1"}`}>
       <Icon name="search" size={15} />
       <input
+        ref={field}
         data-search-input
         value={search}
+        onBlur={() => setOpen(false)}
         onChange={(e) => setSearch(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -52,7 +66,8 @@ export function SearchBox({ placeholder = "Search" }: { placeholder?: string }) 
       ) : (
         <kbd className="kbd hidden !bg-transparent md:inline-block">/</kbd>
       )}
-    </label>
+      </label>
+    </>
   );
 }
 
@@ -77,8 +92,21 @@ export function ViewBar({ title, children, right, search }: { title: ReactNode; 
 export type SegOption<T extends string> = { id: T; label: string; count?: number; need?: boolean };
 
 export function Seg<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: SegOption<T>[] }) {
+  const current = options.find((o) => o.id === value);
   return (
-    <div className="seg" role="group">
+    <>
+      <div className="md:hidden">
+        <Menu label="" align="left" value={value} onChange={onChange} options={options.map((o) => ({ id: o.id, label: o.count ? `${o.label} ${o.count.toLocaleString()}` : o.label }))} />
+        <span className="sr-only">{current?.label}</span>
+      </div>
+      <SegButtons value={value} onChange={onChange} options={options} />
+    </>
+  );
+}
+
+function SegButtons<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: SegOption<T>[] }) {
+  return (
+    <div className="seg !hidden md:!flex" role="group">
       {options.map((o) => (
         <button key={o.id} type="button" aria-pressed={value === o.id} onClick={() => onChange(o.id)}>
           {o.label}
@@ -108,7 +136,7 @@ export function Tick({ checked, onChange, label }: { checked: boolean; onChange:
 }
 
 // A labelled choice in the bar: "Group Day". Opens a small menu.
-export function Menu<T extends string>({ label, value, onChange, options }: { label: string; value: T; onChange: (v: T) => void; options: { id: T; label: string }[] }) {
+export function Menu<T extends string>({ label, value, onChange, options, align = "right" }: { label: string; value: T; onChange: (v: T) => void; options: { id: T; label: string }[]; align?: "left" | "right" }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -129,7 +157,7 @@ export function Menu<T extends string>({ label, value, onChange, options }: { la
         <Icon name="expand_more" size={13} className="text-ink3" />
       </button>
       {open && (
-        <div className="pop absolute right-0 top-8 min-w-[140px]" role="menu">
+        <div className={`pop absolute top-8 min-w-[140px] ${align === "left" ? "left-0" : "right-0"}`} role="menu">
           {options.map((o) => (
             <button
               key={o.id}

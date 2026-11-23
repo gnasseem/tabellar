@@ -337,7 +337,7 @@ export default function ComposeModal({
     null,
   );
   const SIGNATURE_SEPARATOR =
-    '<div data-tabellar-sig="1" style="margin-top:16px;padding-top:12px;border-top:1px solid #e5e7eb;">';
+    '<div data-tabellar-sig="1" style="margin-top:16px;padding-top:12px;border-top:1px solid #e4e0da;">';
 
   const getDefaultSignatureForAccount = (
     accountId: string,
@@ -725,80 +725,15 @@ export default function ComposeModal({
     });
     const locationLine = meetingLocation || "";
 
+    // A plain summary of the proposed meeting, written into the email. It is
+    // the user's own message, so it makes no claim to come from a calendar
+    // service and carries no buttons that do nothing.
     const meetingBlock = `
-<div style="font-family:Google Sans,Roboto,Arial,sans-serif;max-width:600px;margin:20px 0">
-  <table cellpadding="0" cellspacing="0" style="width:100%;border:1px solid #dadce0;border-radius:8px;overflow:hidden">
-    <tr>
-      <td style="background:#1a73e8;padding:0;width:6px"></td>
-      <td style="padding:24px 28px">
-        <table cellpadding="0" cellspacing="0" style="width:100%">
-          <tr>
-            <td>
-              <div style="font-size:22px;font-weight:400;color:#202124;margin-bottom:4px">${title}</div>
-              <div style="font-size:13px;color:#5f6368;margin-bottom:20px">Invitation from Google Calendar</div>
-            </td>
-            <td style="text-align:right;vertical-align:top">
-              <div style="display:inline-block;background:#f1f3f4;border-radius:4px;padding:8px 12px;text-align:center">
-                <div style="font-size:11px;color:#5f6368;text-transform:uppercase;letter-spacing:.5px;font-weight:500">${startDt.toLocaleDateString("en-US", { month: "short" })}</div>
-                <div style="font-size:28px;font-weight:400;color:#202124;line-height:1">${startDt.getDate()}</div>
-              </div>
-            </td>
-          </tr>
-        </table>
-        <table cellpadding="0" cellspacing="0" style="width:100%">
-          <tr>
-            <td style="padding:8px 0;border-top:1px solid #e8eaed">
-              <table cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="width:20px;vertical-align:top;padding-top:1px">
-                    <img src="https://ssl.gstatic.com/calendar/images/dynamiclogo_2020q4/calendar_20_2x.png" width="18" height="18" alt="" style="display:block" onerror="this.style.display='none'" />
-                  </td>
-                  <td style="padding-left:12px">
-                    <div style="font-size:13px;color:#202124;font-weight:500">${dayName}, ${dateStr}</div>
-                    <div style="font-size:13px;color:#5f6368">${timeStr} to ${endTimeStr} (${durationMin} min)</div>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-          ${
-            locationLine
-              ? `
-          <tr>
-            <td style="padding:8px 0;border-top:1px solid #e8eaed">
-              <table cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="width:20px;vertical-align:top;padding-top:1px">
-                    <span style="font-size:16px;color:#5f6368">📍</span>
-                  </td>
-                  <td style="padding-left:12px;font-size:13px;color:#202124">${locationLine}</td>
-                </tr>
-              </table>
-            </td>
-          </tr>`
-              : ""
-          }
-          <tr>
-            <td style="padding:16px 0 8px;border-top:1px solid #e8eaed">
-              <table cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="padding-right:8px">
-                    <a href="#" style="display:inline-block;padding:8px 20px;background:#1a73e8;color:#fff;border-radius:4px;font-size:13px;font-weight:500;text-decoration:none;font-family:Google Sans,Roboto,Arial,sans-serif">Accept</a>
-                  </td>
-                  <td style="padding-right:8px">
-                    <a href="#" style="display:inline-block;padding:8px 20px;background:#fff;color:#1a73e8;border:1px solid #dadce0;border-radius:4px;font-size:13px;font-weight:500;text-decoration:none;font-family:Google Sans,Roboto,Arial,sans-serif">Maybe</a>
-                  </td>
-                  <td>
-                    <a href="#" style="display:inline-block;padding:8px 20px;background:#fff;color:#1a73e8;border:1px solid #dadce0;border-radius:4px;font-size:13px;font-weight:500;text-decoration:none;font-family:Google Sans,Roboto,Arial,sans-serif">Decline</a>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
+<div style="font-family:-apple-system,system-ui,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:20px 0;padding:16px 18px;border:1px solid #e4e0da;border-radius:10px;color:#1c1a18">
+  <div style="font-size:16px;font-weight:600;margin-bottom:6px">${title}</div>
+  <div style="font-size:14px;line-height:1.5">${dayName}, ${dateStr}</div>
+  <div style="font-size:14px;line-height:1.5;color:#6a655f">${timeStr} to ${endTimeStr} (${durationMin} min)</div>
+  ${locationLine ? `<div style="font-size:14px;line-height:1.5;color:#6a655f">${locationLine}</div>` : ""}
 </div>`;
 
     setBody((prev) => prev + meetingBlock);

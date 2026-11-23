@@ -37,6 +37,7 @@ export type EngineStatus = {
 
 export type Overview = {
   byEmail: Map<string, Outcome[]>;
+  written: Set<string>; // addresses the user has written to
   outgoing: Outgoing[];
   counts: { need: number; replies: number; todos: number; meetings: number; followups: number; proposals: number; scheduled: number };
   engine: EngineStatus | null;
@@ -89,7 +90,25 @@ export function rowStatus(outcomes: Outcome[] | undefined): { state: MailState; 
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: any[]): Map<string, Outcome[]> {
+// What a draft says, in a line, and why it is waiting instead of sent.
+type Why = { level: string; written: Set<string>; knownOnly: boolean; cap: number; sentToday: number; names: Map<string, string> };
+
+function draftWhy(draft: any, w: Why): string {
+  const text = String(draft.body_html || "").replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+  const said = text.replace(/^(hi|hello|dear|hey)\b[^,.]*[,.]\s*/i, "");
+  const line = said ? `"${said.length > 110 ? `${said.slice(0, 110).replace(/\s+\S*$/, "")}..."` : `${said}"`} ` : "";
+  const to = String((draft.to_addresses || [])[0] || "").toLowerCase();
+  const who = w.names.get(to) || to || "them";
+  let held: string;
+  if (draft.source && draft.source !== "tabellar") held = "Written when you asked for it. Nothing is sent until you send it.";
+  else if (w.level !== "autopilot") held = `At ${w.level.charAt(0).toUpperCase()}${w.level.slice(1)}, Tabellar writes replies and never sends them.`;
+  else if (w.knownOnly && w.written.size && !w.written.has(to)) held = `You have not written to ${who} before, so Autopilot only drafted it.`;
+  else if (w.sentToday >= w.cap) held = `Autopilot had sent today's limit of ${w.cap} replies.`;
+  else held = "Autopilot judged that the answer needs your decision, so it only drafted it.";
+  return line + held;
+}
+
+function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: any[], w: Why): Map<string, Outcome[]> {
   const map = new Map<string, Outcome[]>();
   const push = (emailId: string | null, o: Outcome) => {
     if (!emailId) return;
@@ -117,7 +136,7 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
       const draft = draftById.get(d.draftId);
       if (draft) {
         seenDraft.add(draft.id);
-        push(r.email_id, { ...base, state: "need", short: "Reply ready", title: "Drafted a reply, not sent", why: "Saved as a draft. Nothing is sent until you send it.", act: { kind: "review", draftId: draft.id } });
+        push(r.email_id, { ...base, state: "need", short: "Reply ready", title: "Drafted a reply, not sent", why: draftWhy(draft, w), act: { kind: "review", draftId: draft.id } });
       } else push(r.email_id, { ...base, state: "info", short: "", title: "Drafted a reply", why: "The draft has since been sent or discarded." });
     } else if (r.status === "done" && r.kind === "todo") {
       seenTodoText.add(`${r.email_id}:${d.text}`);
@@ -128,7 +147,7 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
       if (m && m.status === "proposed") push(r.email_id, { ...base, state: "need", short: "Meeting to confirm", title: `Proposed a meeting: ${m.title}`, why: `${when(m.start_time)}. It goes on your calendar when you confirm it.`, act: { kind: "view", view: "meetings" } });
       else if (m && m.status === "confirmed") push(r.email_id, { ...base, state: "done", short: `On calendar, ${when(m.start_time)}`, title: `On your calendar: ${m.title}`, why: when(m.start_time), act: { kind: "view", view: "meetings" } });
     } else if (r.status === "done" && r.kind === "label") {
-      push(r.email_id, { ...base, state: "done", short: "", title: r.summary.replace(/^Label /, "Labelled "), act: { kind: "undo", id: r.id } });
+      push(r.email_id, { ...base, state: "done", short: "", title: r.summary.replace(/^Label /, "Labelled "), why: "Tabellar does not keep its reasons for a label. It is a Gmail label only, and Undo takes it off.", act: { kind: "undo", id: r.id } });
     } else if (r.status === "done" && r.kind === "archive") {
       push(r.email_id, { ...base, state: "done", short: "Archived", title: "Archived", act: { kind: "undo", id: r.id } });
     } else if (r.status === "done" && r.kind === "unsubscribe") {
@@ -143,7 +162,7 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
     }
   }
   // Drafts, meetings and todos made elsewhere (the agent, the assistant, by hand).
-  for (const d of drafts) if (d.email_id && !seenDraft.has(d.id)) push(d.email_id, { key: d.id, at: d.created_at, state: "need", short: "Reply ready", title: "A reply is drafted, not sent", act: { kind: "review", draftId: d.id } });
+  for (const d of drafts) if (d.email_id && !seenDraft.has(d.id)) push(d.email_id, { key: d.id, at: d.created_at, state: "need", short: "Reply ready", title: "A reply is drafted, not sent", why: draftWhy(d, w), act: { kind: "review", draftId: d.id } });
   for (const m of meetings) {
     if (!m.email_id || seenMeeting.has(m.id)) continue;
     if (m.status === "proposed") push(m.email_id, { key: m.id, at: m.created_at, state: "need", short: "Meeting to confirm", title: `Proposed a meeting: ${m.title}`, why: when(m.start_time), act: { kind: "view", view: "meetings" } });
@@ -164,7 +183,7 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
 
 export function useOverview(userId: string, live: Record<string, number>, onError: (message: string) => void): Overview {
   const supabase = createClient();
-  const [raw, setRaw] = useState<{ log: any[]; drafts: any[]; meetings: any[]; todos: any[]; sched: any[]; followups: number } | null>(null);
+  const [raw, setRaw] = useState<{ log: any[]; drafts: any[]; meetings: any[]; todos: any[]; sched: any[]; followups: number; written: Set<string>; names: Map<string, string>; knownOnly: boolean; cap: number } | null>(null);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const loading = useRef(false);
 
@@ -172,23 +191,35 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
     if (loading.current) return;
     loading.current = true;
     try {
-      const [log, drafts, meetings, todos, sched, followups] = await Promise.all([
+      const [log, drafts, meetings, todos, sched, followups, sent, prof] = await Promise.all([
         supabase.from("action_log").select("id, kind, status, source, email_id, summary, detail, hash, reason, error, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(4000),
-        supabase.from("draft_emails").select("id, email_id, subject, to_addresses, created_at").eq("user_id", userId).order("created_at", { ascending: false }),
+        supabase.from("draft_emails").select("id, email_id, subject, to_addresses, body_html, created_at").eq("user_id", userId).order("created_at", { ascending: false }),
         supabase.from("meetings").select("id, email_id, title, start_time, status, created_at").eq("user_id", userId),
         supabase.from("todos").select("id, email_id, text, is_completed, created_at").eq("user_id", userId).eq("is_completed", false),
         supabase.from("scheduled_emails").select("id, email_id, action_id, send_at, source, to_addresses, subject").eq("user_id", userId).eq("status", "pending").order("send_at", { ascending: true }),
         supabase.from("follow_up_reminders").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "waiting"),
+        supabase.from("emails").select("recipients").eq("user_id", userId).contains("label_ids", ["SENT"]).order("received_at", { ascending: false }).limit(3000),
+        supabase.from("profiles").select("autopilot_known_only, autopilot_daily_cap").eq("id", userId).maybeSingle(),
       ]);
+      // People the user has written to, from the sent mail kept here.
+      const written = new Set<string>();
+      for (const x of (sent.data || []) as any[]) for (const m of String(x.recipients || "").toLowerCase().match(/[^\s<>,;"]+@[^\s<>,;"]+/g) || []) written.add(m);
+      // Display names for draft recipients: the sender of the email each draft answers.
+      const names = new Map<string, string>();
+      const ids = ((drafts.data || []) as any[]).map((d) => d.email_id).filter(Boolean);
+      for (let i = 0; i < ids.length; i += 300) {
+        const { data } = await supabase.from("emails").select("sender, sender_email").in("id", ids.slice(i, i + 300));
+        for (const e of (data || []) as any[]) names.set(String(e.sender_email || "").toLowerCase(), String(e.sender || "").replace(/<.*>/, "").replace(/"/g, "").trim().split(" ")[0]);
+      }
       // Names for the replies on their way out: the person each one answers.
       const pendingIds = ((sched.data || []) as any[]).map((x) => x.email_id).filter(Boolean);
-      const names = new Map<string, string>();
+      const pendingNames = new Map<string, string>();
       if (pendingIds.length) {
         const { data } = await supabase.from("emails").select("id, sender").in("id", pendingIds);
-        for (const e of (data || []) as any[]) names.set(e.id, String(e.sender || "").replace(/<.*>/, "").replace(/"/g, "").trim());
+        for (const e of (data || []) as any[]) pendingNames.set(e.id, String(e.sender || "").replace(/<.*>/, "").replace(/"/g, "").trim());
       }
-      for (const x of (sched.data || []) as any[]) x.to_name = names.get(x.email_id) || "";
-      setRaw({ log: log.data || [], drafts: drafts.data || [], meetings: meetings.data || [], todos: todos.data || [], sched: sched.data || [], followups: followups.count ?? 0 });
+      for (const x of (sched.data || []) as any[]) x.to_name = pendingNames.get(x.email_id) || "";
+      setRaw({ log: log.data || [], drafts: drafts.data || [], meetings: meetings.data || [], todos: todos.data || [], sched: sched.data || [], followups: followups.count ?? 0, written, names, knownOnly: prof.data?.autopilot_known_only !== false, cap: Number(prof.data?.autopilot_daily_cap ?? 5) });
     } finally {
       loading.current = false;
     }
@@ -218,13 +249,16 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
   }, [raw, reload]);
 
   const derived = useMemo(() => {
-    if (!raw) return { byEmail: new Map<string, Outcome[]>(), outgoing: [] as Outgoing[], counts: { need: 0, replies: 0, todos: 0, meetings: 0, followups: 0, proposals: 0, scheduled: 0 } };
+    if (!raw) return { byEmail: new Map<string, Outcome[]>(), written: new Set<string>(), outgoing: [] as Outgoing[], counts: { need: 0, replies: 0, todos: 0, meetings: 0, followups: 0, proposals: 0, scheduled: 0 } };
     const auto = raw.sched.filter((s) => s.source === "autopilot");
-    const byEmail = build(raw.log, raw.drafts, raw.meetings, raw.todos, auto);
+    const today = new Date().toDateString();
+    const sentToday = raw.log.filter((r) => r.kind === "send" && r.status === "done" && new Date(r.created_at).toDateString() === today).length;
+    const byEmail = build(raw.log, raw.drafts, raw.meetings, raw.todos, auto, { level: engine?.level ?? "observe", written: raw.written, names: raw.names, knownOnly: raw.knownOnly, cap: raw.cap, sentToday });
     let need = 0;
     for (const list of byEmail.values()) if (list[0]?.state === "need") need++;
     return {
       byEmail,
+      written: raw.written,
       outgoing: auto.map((s) => ({ id: s.id, actionId: s.action_id, emailId: s.email_id, to: s.to_name || (s.to_addresses || [])[0] || "", subject: s.subject || "", sendAt: s.send_at })),
       counts: {
         need,
@@ -236,7 +270,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
         scheduled: raw.sched.length - auto.length,
       },
     };
-  }, [raw]);
+  }, [raw, engine?.level]);
 
   const run = useCallback(
     async (path: string, body: unknown) => {

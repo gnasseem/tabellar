@@ -126,6 +126,27 @@ export default function InboxView() {
     invalidateViewCache("inbox");
     return load();
   }, [load]);
+
+  // Mail that needs the user, is going out, or was held may be older than the
+  // rows loaded so far. It is fetched by id, so "Needs you" finds all of it.
+  const [attention, setAttention] = useState<Email[]>([]);
+  useEffect(() => {
+    const have = new Set(emails.map((e) => e.id));
+    const ids = [...mail.byEmail].filter(([id, list]) => !have.has(id) && ["need", "going", "held", "failed"].includes(list[0]?.state)).map(([id]) => id);
+    if (!ids.length || search) return setAttention([]);
+    let live = true;
+    (async () => {
+      const found: Email[] = [];
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data } = await supabase.from("emails").select(SELECT).in("id", ids.slice(i, i + 200)).eq("is_archived", false).not("label_ids", "cs", '{"SENT"}');
+        found.push(...((data || []) as any[]).map((e) => ({ ...e, email_processed: Array.isArray(e.email_processed) ? e.email_processed[0] : e.email_processed })));
+      }
+      if (live) setAttention(found);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [mail.byEmail, emails, search]);
   const { syncInbox, syncing, syncError, initialPhase, syncMode, noAccountsConnected } = useInboxSync(reload);
 
   useEffect(() => {
@@ -151,7 +172,9 @@ export default function InboxView() {
   // One row per conversation: the newest message stands for the thread.
   const threads = useMemo(() => {
     const byKey = new Map<string, Thread>();
-    for (const e of emails) {
+    const have = new Set(emails.map((e) => e.id));
+    const all = [...emails, ...attention.filter((e) => !have.has(e.id))].sort((a, b) => b.received_at.localeCompare(a.received_at));
+    for (const e of all) {
       const key = e.thread_id || e.id;
       const t = byKey.get(key);
       if (t) {
@@ -170,13 +193,16 @@ export default function InboxView() {
       t.sendAt = s.sendAt;
     }
     return list;
-  }, [emails, mail.byEmail, labels]);
+  }, [emails, attention, mail.byEmail, labels]);
 
   const counts = useMemo(() => ({ need: threads.filter((t) => t.state === "need").length, going: threads.filter((t) => t.state === "going").length }), [threads]);
 
   const items = useMemo(() => {
+    // Older mail fetched only because it needs attention stays out of the
+    // plain listing until scrolling reaches it.
+    const oldest = hasMore && emails.length ? emails[emails.length - 1].received_at : "";
     const shown = threads.filter((t) =>
-      filter === "all" ? true : filter === "need" ? t.state === "need" : filter === "going" ? t.state === "going" : filter === "filed" ? t.state === "filed" : t.state === "done" || t.state === "held" || t.state === "failed",
+      (filter === "all" || filter === "filed") && t.latest.received_at < oldest ? false : filter === "all" ? true : filter === "need" ? t.state === "need" : filter === "going" ? t.state === "going" : filter === "filed" ? t.state === "filed" : t.state === "done" || t.state === "held" || t.state === "failed",
     );
     const out: Item[] = [];
     const add = (key: string, name: string, note: string, list: Thread[]) => {
@@ -208,7 +234,7 @@ export default function InboxView() {
       add(day.key, day.name, day.date, run);
     }
     return out;
-  }, [threads, filter, group]);
+  }, [threads, filter, group, hasMore, emails]);
 
   const rows = useMemo(() => items.filter((i): i is Thread => !("head" in i)), [items]);
   const cursor = rows.find((t) => t.key === cursorKey) || rows[0] || null;
@@ -588,6 +614,27 @@ function GroupHead({ head }: { head: Head }) {
 function Details({ thread, primary, onOpen, onArchive }: { thread: Thread; primary: { label: string; run: () => void }; onOpen: () => void; onArchive: () => void }) {
   const { mail, setView, setViewCache, addToast } = useApp();
   const e = thread.latest;
+  // The email's own words, fetched when the panel shows it; long ones are cut
+  // with a way to open the whole thing.
+  const [body, setBody] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    setBody(null);
+    createClient()
+      .from("emails")
+      .select("body_text, body_html")
+      .eq("id", e.id)
+      .single()
+      .then(({ data }: { data: { body_text: string | null; body_html: string | null } | null }) => {
+        if (!live) return;
+        const text = (data?.body_text || (data?.body_html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">") || "").replace(/\n{3,}/g, "\n\n").trim();
+        setBody(text);
+      });
+    return () => {
+      live = false;
+    };
+  }, [e.id]);
+  const LIMIT = 1400;
   const act = (o: Outcome) => {
     const a = o.act;
     if (!a) return null;
@@ -664,10 +711,21 @@ function Details({ thread, primary, onOpen, onArchive }: { thread: Thread; prima
         ) : (
           <p className="py-2 text-[12.5px] leading-snug text-ink2">Sorted as {thread.text || "mail"} and left alone. There was nothing to reply to, add or schedule.</p>
         )}
-        {e.snippet && (
+        <h3 className="label mb-1 mt-4">The email</h3>
+        {body === null ? (
+          <div className="space-y-2 pt-1" aria-busy="true">
+            <span className="skel block h-2.5 w-full" />
+            <span className="skel block h-2.5 w-11/12" />
+            <span className="skel block h-2.5 w-3/5" />
+          </div>
+        ) : (
           <>
-            <h3 className="label mb-1 mt-4">The email</h3>
-            <p className="text-[12.5px] leading-relaxed text-ink2">{e.snippet}</p>
+            <p className="whitespace-pre-line text-[12.5px] leading-relaxed text-ink2">{body.length > LIMIT ? `${body.slice(0, LIMIT).replace(/\s+\S*$/, "")}...` : body || e.snippet}</p>
+            {body.length > LIMIT && (
+              <button className="link mt-1.5" onClick={onOpen}>
+                Read the whole email
+              </button>
+            )}
           </>
         )}
       </div>

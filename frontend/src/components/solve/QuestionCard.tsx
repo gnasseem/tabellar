@@ -65,12 +65,6 @@ export default function QuestionCard({ question, onAnswer, onChange, initialAnsw
 
   return (
     <div className={compact ? "border-b border-line-soft py-4 last:border-0" : "py-1"} role="group" aria-label={question.question}>
-      {question.eyebrow && (
-        <p className="label mb-1">
-          {question.eyebrow}
-          {question.bucket && question.bucket !== "single" && <span className="font-normal">, {question.bucket}</span>}
-        </p>
-      )}
       <h3 className="text-[15px] font-[650] leading-snug tracking-[-0.01em] text-ink">{question.question}</h3>
       {question.brief && <p className="mt-1 max-w-[68ch] leading-normal text-ink2">{question.brief}</p>}
 

@@ -914,7 +914,7 @@ export default function BriefingView() {
               onChange={setFilter}
               options={[
                 { id: "all", label: "All" },
-                { id: "replyNeeded", label: "Reply needed", count: displayReplyNeeded.length, need: displayReplyNeededIncoming.length > 0 },
+                { id: "replyNeeded", label: "Reply needed", count: displayReplyNeededIncoming.length, need: displayReplyNeededIncoming.length > 0 },
                 { id: "deadlines", label: "Deadlines", count: displayDeadlines.length },
                 { id: "crucial", label: "Crucial", count: displayCrucial.length },
                 { id: "nonEssential", label: "Non-essential", count: nonEssentialTotal },
@@ -973,10 +973,9 @@ export default function BriefingView() {
                   </p>
                 ) : null}
 
-                {show("replyNeeded") && displayReplyNeeded.length > 0 && (
-                  <Section title="Reply needed" count={displayReplyNeeded.length} need={displayReplyNeededIncoming.length > 0}>
+                {show("replyNeeded") && displayReplyNeededIncoming.length > 0 && (
+                  <Section title="Reply needed" count={displayReplyNeededIncoming.length} need>
                     {threads(displayReplyNeededIncoming, true)}
-                    {resolvedLast(displayNoReplyYet).map((e) => row(e))}
                   </Section>
                 )}
 
@@ -995,6 +994,12 @@ export default function BriefingView() {
                         {importantExpanded ? "Show only the most urgent" : `${crucialsImportant.length} also important`}
                       </button>
                     )}
+                  </Section>
+                )}
+
+                {filter === "all" && displayNoReplyYet.length > 0 && (
+                  <Section title="Waiting on others" count={displayNoReplyYet.length}>
+                    {resolvedLast(displayNoReplyYet).map((e) => row(e))}
                   </Section>
                 )}
 
