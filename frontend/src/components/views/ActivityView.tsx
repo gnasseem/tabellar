@@ -8,7 +8,7 @@ import { useApp } from "../AppShell";
 
 type LogRow = {
   id: string;
-  kind: "label" | "archive" | "draft" | "todo" | "meeting" | "send";
+  kind: "label" | "archive" | "draft" | "todo" | "meeting" | "send" | "unsubscribe";
   status: "proposed" | "running" | "done" | "undone" | "dismissed" | "blocked" | "failed";
   source: "engine" | "agent" | "assistant" | "user";
   summary: string;
@@ -21,7 +21,7 @@ type LogRow = {
 };
 
 type EngineStatus = {
-  level: "observe" | "suggest" | "assist";
+  level: "observe" | "suggest" | "assist" | "autopilot";
   paused: boolean;
   lastCycleAt: string | null;
   lastError: string | null;
@@ -36,6 +36,7 @@ const KIND_ICON: Record<string, string> = {
   todo: "checklist",
   meeting: "event",
   send: "send",
+  unsubscribe: "unsubscribe",
 };
 
 const UNDOABLE = new Set(["label", "archive", "draft", "todo", "meeting"]);
@@ -44,7 +45,27 @@ export const LEVELS: { id: EngineStatus["level"]; label: string; text: string }[
   { id: "observe", label: "Observe", text: "Sorts and notifies. Changes nothing." },
   { id: "suggest", label: "Suggest", text: "Proposes labels, drafts, todos and meetings for you to approve." },
   { id: "assist", label: "Assist", text: "Does those on its own. Never sends, archives or deletes." },
+  {
+    id: "autopilot",
+    label: "Autopilot",
+    text: "As Assist, and also replies on its own to the person who wrote, inside the thread, after a wait you can cancel in. Never copies anyone in, forwards, archives or deletes.",
+  },
 ];
+
+// Turning Autopilot on is the one change that lets Tabellar send mail, so it
+// is confirmed first.
+export function confirmLevel(level: string): boolean {
+  if (level !== "autopilot") return true;
+  return window.confirm(
+    "Turn on Autopilot?\n\nTabellar will reply on its own to emails that need an answer it can give, only to the person who wrote and only inside the thread. " +
+      "Each reply waits before sending so you can cancel it in Activity, and there is a daily limit. Pause stops everything at once.",
+  );
+}
+
+// An Autopilot reply that has not gone out yet can still be cancelled.
+function pendingSend(r: LogRow): boolean {
+  return r.kind === "send" && r.status === "done" && !r.detail.sentAt && typeof r.detail.sendAt === "string" && new Date(r.detail.sendAt).getTime() > Date.now();
+}
 
 function timeAgo(iso: string): string {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -143,7 +164,7 @@ export default function ActivityView() {
   const undo = (r: LogRow) =>
     withBusy([r.id], async () => {
       await engineFetch("/actions/undo", { id: r.id });
-      addToast("success", "Undone");
+      addToast("success", r.kind === "send" ? "Cancelled. The reply will not be sent." : "Undone");
     });
 
   // Oldest first, so proposals arriving while you read land at the bottom
@@ -158,6 +179,7 @@ export default function ActivityView() {
     });
 
   const setLevel = async (level: EngineStatus["level"]) => {
+    if (!confirmLevel(level)) return;
     await supabase.from("profiles").update({ autonomy_level: level }).eq("id", user.id);
     updateProfile({ autonomy_level: level });
     setStatus((s) => (s ? { ...s, level } : s));
@@ -234,7 +256,7 @@ export default function ActivityView() {
         </div>
 
         {/* Level */}
-        <div className="grid grid-cols-3 gap-1 p-1 rounded-xl bg-[var(--surface-2)] mb-2">
+        <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-[var(--surface-2)] mb-2">
           {LEVELS.map((l) => (
             <button
               key={l.id}
@@ -331,13 +353,47 @@ export default function ActivityView() {
                     {(r.status === "blocked" || r.status === "failed") && (r.reason || r.error) && (
                       <p className="text-xs text-[var(--muted)] mt-0.5">{r.error || r.reason}</p>
                     )}
+                    {r.kind === "send" && r.status === "done" && (
+                      <p className={`text-xs mt-0.5 ${pendingSend(r) ? "text-[var(--accent)] font-medium" : "text-[var(--muted)]"}`}>
+                        {r.detail.sentAt
+                          ? `Sent ${timeAgo(String(r.detail.sentAt))}`
+                          : pendingSend(r)
+                            ? `Sends at ${new Date(String(r.detail.sendAt)).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} unless you cancel`
+                            : "Sending..."}
+                      </p>
+                    )}
+                    {r.kind === "send" && typeof r.detail.body === "string" && (
+                      <>
+                        <button
+                          onClick={() => setOpen((o) => { const n = new Set(o); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); return n; })}
+                          className="text-xs text-[var(--accent)] mt-0.5 hover:underline cursor-pointer"
+                        >
+                          {open.has(r.id) ? "Hide reply" : "Read reply"}
+                        </button>
+                        {open.has(r.id) && (
+                          <div className="mt-1.5 text-xs">
+                            <p className="text-[var(--muted)] mb-1">To {(r.detail.to as string[] | undefined)?.join(", ")} · {String(r.detail.subject ?? "")}</p>
+                            <pre className="whitespace-pre-wrap font-sans text-[var(--foreground)] bg-[var(--surface-2)] rounded-lg p-2.5">{String(r.detail.body)}</pre>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                   <div className="flex flex-col items-end gap-0.5 shrink-0">
                     <span className={`text-[11px] font-medium ${STATUS_STYLE[r.status] ?? ""}`}>
-                      {STATUS_LABEL[r.status] ?? r.status}
+                      {r.kind === "send" && r.status === "undone" ? "Cancelled" : (STATUS_LABEL[r.status] ?? r.status)}
                       {r.source !== "engine" ? ` · ${r.source === "agent" ? "agent" : r.source === "assistant" ? "assistant" : "you"}` : ""}
                     </span>
                     <span className="text-[10px] text-[var(--muted)]">{timeAgo(r.created_at)}</span>
+                    {pendingSend(r) && (
+                      <button
+                        onClick={() => undo(r)}
+                        disabled={busy.has(r.id)}
+                        className="mt-0.5 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 disabled:opacity-50 cursor-pointer"
+                      >
+                        Cancel send
+                      </button>
+                    )}
                     {r.status === "done" && UNDOABLE.has(r.kind) && (
                       <button
                         onClick={() => undo(r)}

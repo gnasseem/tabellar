@@ -13,6 +13,7 @@ const aiItems = [
   { id: "briefing", icon: "summarize", label: "Briefing" },
   { id: "activity", icon: "smart_toy", label: "Activity" },
   { id: "followups", icon: "schedule_send", label: "Follow-ups" },
+  { id: "newsletters", icon: "unsubscribe", label: "Newsletters" },
   { id: "todos", icon: "checklist", label: "Todos" },
   { id: "meetings", icon: "event", label: "Meetings" },
   { id: "categories", icon: "label", label: "Categories" },

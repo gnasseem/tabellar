@@ -23,7 +23,8 @@ const macos: Channel = (n) => {
   child.on("error", () => {});
 };
 
-const CHANNELS: Channel[] = [macos];
+// `tabellar check` empties this so its test emails stay quiet.
+export const CHANNELS: Channel[] = [macos];
 
 export function notify(n: Note): void {
   for (const send of CHANNELS) {

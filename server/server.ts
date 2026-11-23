@@ -21,7 +21,7 @@ import type { QuerySpec } from "./query.ts";
 import { handleApi } from "./api.ts";
 import { handleSetup, startOllama } from "./setup.ts";
 import { signInUrl, finishSignIn, forgetTokens } from "./google.ts";
-import { sendEmail } from "./gmail.ts";
+import { sendDueEmails } from "./outbox.ts";
 import { modelConfigured } from "./llm.ts";
 import { startEngine } from "./engine.ts";
 
@@ -124,48 +124,6 @@ async function completeSignIn(code: string, state: string): Promise<boolean> {
   if (saved.error) throw new Error(saved.error.message);
   const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId);
   return (count ?? 0) === 0;
-}
-
-// ── Scheduled sends ─────────────────────────────────────────────────────────
-// Undo-send and send-later both go through scheduled_emails; this sends what
-// is due. A row is claimed by moving it out of "pending" before sending, so a
-// slow send is never picked up twice.
-
-async function sendDueEmails() {
-  const { data: due } = await db
-    .from("scheduled_emails")
-    .select("*, gmail_accounts(token_ref)")
-    .eq("status", "pending")
-    .lte("send_at", new Date().toISOString());
-  for (const row of due ?? []) {
-    const claimed = await db.from("scheduled_emails").update({ status: "sending" }).eq("id", row.id).eq("status", "pending").select("id");
-    if (!claimed.data?.length) continue;
-    const tokenRef = (row.gmail_accounts as { token_ref?: string } | null)?.token_ref;
-    try {
-      if (!tokenRef) throw new Error("The Gmail account for this email is no longer connected");
-      const result = await sendEmail(tokenRef, row.to_addresses, row.subject, row.body_html, row.in_reply_to ?? undefined, row.thread_id ?? undefined, undefined, row.cc_addresses ?? undefined, row.bcc_addresses ?? undefined);
-      await db.from("scheduled_emails").update({ status: "sent" }).eq("id", row.id);
-      await db.from("emails").upsert(
-        {
-          user_id: row.user_id,
-          gmail_id: result.id,
-          thread_id: row.thread_id,
-          gmail_account_id: row.gmail_account_id,
-          subject: row.subject,
-          recipients: (row.to_addresses as string[]).join(", "),
-          body_html: row.body_html,
-          received_at: new Date().toISOString(),
-          is_read: true,
-          label_ids: ["SENT"],
-        },
-        { onConflict: "user_id,gmail_id" },
-      );
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error(`[scheduled] send failed for ${row.id}: ${msg}`);
-      await db.from("scheduled_emails").update({ status: "failed", error_message: msg.slice(0, 500) }).eq("id", row.id);
-    }
-  }
 }
 
 // ── Server ──────────────────────────────────────────────────────────────────

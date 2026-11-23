@@ -10,14 +10,17 @@
 // The model that reads the email has no tools: it returns a category, a
 // summary and suggested actions as JSON. What those suggestions can turn into
 // is fixed here in code: a draft always goes back to the sender of the email,
-// a todo is only text, a meeting is only a proposal, and nothing is ever sent.
+// a todo is only text, a meeting is only a proposal. Only at Autopilot is a
+// reply sent, and then only to the person who wrote, inside the thread, after
+// a cancel window (policy.checkAutoSend, outbox.ts).
 
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { generateDraft } from "./ai.ts";
+import { messageHeaders } from "./gmail.ts";
 import { syncMail, analyzeInbox, serial } from "./sync.ts";
 import { act, engineSettings, type Planned } from "./actions.ts";
-import { decide, looksLikeInstructions } from "./policy.ts";
+import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
 import { notify } from "./notify.ts";
 
@@ -58,7 +61,33 @@ type EmailRow = {
   snippet: string | null;
   received_at: string | null;
   thread_id?: string | null;
+  gmail_id?: string | null;
+  gmail_account_id?: string | null;
 };
+
+// Added to the drafting instructions when the reply will go out without the
+// user reading it. The model's answer is only text; who it goes to is fixed in
+// code. HOLD turns the reply back into a draft for the user.
+const AUTOPILOT_INSTRUCTIONS =
+  "This reply will be sent automatically, without the user reading it first. Answer only what the email and the background context let you answer. " +
+  "If a good reply needs a decision, a commitment (money, a date, attending something, agreeing to something), an attachment, or facts you do not have, write only the word HOLD and nothing else.";
+
+const HOLD = /^\W*HOLD\W*$/;
+
+// `tabellar check` swaps this for canned text so Autopilot can be run without a model.
+export const drafter = { draft: (userId: string, e: EmailRow, instructions: string) => draftReply(userId, e, instructions) };
+
+// Has the user written to this address before? Autopilot can be limited to
+// people the user already corresponds with.
+async function wroteTo(userId: string, address: string): Promise<boolean> {
+  const { count } = await db
+    .from("emails")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .contains("label_ids", ["SENT"])
+    .ilike("recipients", `%${address.replace(/[%_]/g, "")}%`);
+  return (count ?? 0) > 0;
+}
 
 // A reply to one email in the user's writing style, with what Tabellar knows
 // about the sender. Used by the engine and by /generate-draft.
@@ -123,17 +152,23 @@ export const planNew = serial(async (userId: string): Promise<void> => {
 
   const { data: rows } = await db
     .from("email_processed")
-    .select("id, category, urgency, summary, quick_actions, emails!inner(id, subject, sender, sender_email, reply_to_email, body_text, body_html, snippet, received_at, thread_id)")
+    .select("id, category, urgency, summary, quick_actions, emails!inner(id, subject, sender, sender_email, reply_to_email, body_text, body_html, snippet, received_at, thread_id, gmail_id, gmail_account_id)")
     .eq("user_id", userId)
     .is("engine_at", null)
     .limit(100);
   if (!rows?.length) return;
 
-  const { data: profile } = await db.from("profiles").select("working_hours, notification_level, notification_preview").eq("id", userId).maybeSingle();
+  const { data: profile } = await db
+    .from("profiles")
+    .select("working_hours, notification_level, notification_preview, autopilot_delay_min, autopilot_daily_cap, autopilot_known_only")
+    .eq("id", userId)
+    .maybeSingle();
+  const delayMinutes = Math.min(Math.max(Number(profile?.autopilot_delay_min) || 5, 1), 120);
+  const sendCap = Math.max(0, Number(profile?.autopilot_daily_cap ?? 5));
   const timezone = (profile?.working_hours as { timezone?: string } | null)?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const today = await countsToday(userId);
   let cycleCount = 0;
-  const notes: { sender: string; summary: string; drafted: boolean }[] = [];
+  const notes: { sender: string; summary: string; drafted: boolean; replying?: boolean }[] = [];
 
   const sorted = [...rows].sort((a, b) =>
     String((a.emails as EmailRow).received_at).localeCompare(String((b.emails as EmailRow).received_at)),
@@ -148,8 +183,8 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     const suspicious = looksLikeInstructions(email.subject, email.body_text, email.body_html);
     const actions = (Array.isArray(row.quick_actions) ? row.quick_actions : []) as QuickAction[];
     const from = email.sender?.split("<")[0]?.trim() || email.sender_email || "someone";
-    const run = async (p: Planned) => {
-      const r = await act(userId, p, { ...settings, source: "engine", suspicious, todayCount: today[p.kind] ?? 0, cycleCount });
+    const run = async (p: Planned, send?: AutoSend) => {
+      const r = await act(userId, p, { ...settings, source: "engine", suspicious, todayCount: today[p.kind] ?? 0, cycleCount, send, sendCap });
       if (r === "done" || r === "proposed") {
         today[p.kind] = (today[p.kind] ?? 0) + 1;
         cycleCount++;
@@ -161,23 +196,56 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     const label = suspicious ? SUSPICIOUS_LABEL : LABELS[category];
     if (label) await run({ kind: "label", emailId: email.id, summary: `Label "${label.replace("Tabellar/", "")}"`, detail: { label } });
 
-    // Reply draft, only to a real person who is waiting on the user.
+    // Reply, only to a real person who is waiting on the user: sent by
+    // Autopilot when everything allows it, otherwise saved as a draft.
     let drafted = false;
+    let replying = false;
     const replyTo = (email.reply_to_email || email.sender_email || "").trim();
     const reply = actions.find((a) => a.action === "reply");
     if (category === "action-required" && reply && replyTo && !NO_REPLY.test(replyTo)) {
       const subject = /^re:/i.test(email.subject ?? "") ? email.subject! : `Re: ${email.subject ?? ""}`;
       const base: Planned = { kind: "draft", emailId: email.id, summary: `Draft a reply to ${from}`, detail: { to: [replyTo], subject } };
+      const autoSend: AutoSend = { to: [replyTo], threadId: email.thread_id, writer: replyTo };
+      const sendCtx = { ...settings, source: "engine" as const, suspicious, todayCount: today.send ?? 0, cycleCount, send: autoSend, sendCap };
+      const trySend =
+        settings.level === "autopilot" &&
+        decide({ kind: "send", ...sendCtx }).verdict === "do" &&
+        (!profile?.autopilot_known_only || (await wroteTo(userId, replyTo)));
       // Ask before paying for the model call; a refusal is logged by act().
       const pre = decide({ kind: "draft", ...settings, source: "engine", suspicious, todayCount: today.draft ?? 0, cycleCount });
       const { count: existing } = await db.from("draft_emails").select("id", { count: "exact", head: true }).eq("email_id", email.id);
-      if (pre.verdict === "refuse") await run(base);
+      if (pre.verdict === "refuse" && !trySend) await run(base);
       else if (!existing) {
         try {
-          const body = (await draftReply(userId, email, reply.text || reply.label || "")).trim();
-          if (body) drafted = (await run({ ...base, detail: { ...base.detail, body } })) === "done";
+          const instructions = reply.text || reply.label || "";
+          let body = (await drafter.draft(userId, email, trySend ? `${instructions}\n\n${AUTOPILOT_INSTRUCTIONS}` : instructions)).trim();
+          if (trySend && HOLD.test(body)) {
+            body = pre.verdict === "refuse" ? "" : (await drafter.draft(userId, email, instructions)).trim();
+          } else if (trySend && body) {
+            let inReplyTo: string | null = null;
+            try {
+              const { data: acct } = await db.from("gmail_accounts").select("token_ref").eq("id", email.gmail_account_id ?? "").maybeSingle();
+              if (acct?.token_ref && email.gmail_id) inReplyTo = (await messageHeaders(acct.token_ref as string, email.gmail_id, ["Message-ID"]))["message-id"] ?? null;
+            } catch {
+              // Without the Message-ID the reply still lands in the thread by its thread id.
+            }
+            const r = await run(
+              {
+                kind: "send",
+                emailId: email.id,
+                summary: `Reply to ${from}`,
+                detail: { to: [replyTo], subject, body, threadId: email.thread_id, accountId: email.gmail_account_id, inReplyTo, delayMinutes },
+              },
+              autoSend,
+            );
+            replying = r === "done";
+          }
+          if (replying) {
+            // Sent (after the cancel window); no draft as well.
+          } else if (pre.verdict === "refuse") await run(base);
+          else if (body) drafted = (await run({ ...base, detail: { ...base.detail, body } })) === "done";
         } catch (e) {
-          console.error("[engine] draft failed:", (e as Error).message);
+          console.error("[engine] reply failed:", (e as Error).message);
         }
       }
     }
@@ -211,11 +279,23 @@ export const planNew = serial(async (userId: string): Promise<void> => {
 
     const level = String(profile?.notification_level ?? "important");
     const worthIt = level === "all" || (level === "important" && (category === "action-required" || category === "important"));
-    if (worthIt && !suspicious) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted });
+    if (replying) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted: false, replying: true });
+    else if (worthIt && !suspicious) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted });
   }
 
   // One notification per email, or one summary when several arrive together.
   const preview = profile?.notification_preview !== false;
+  // Autopilot replies are always announced, with the window to cancel them.
+  for (const n of notes.filter((n) => n.replying)) {
+    notify({
+      title: preview ? n.sender : "Tabellar",
+      subtitle: `Autopilot replies in ${delayMinutes} min`,
+      body: preview ? `${n.summary} Cancel it in Activity.` : "Autopilot will send a reply. Cancel it in Activity.",
+    });
+  }
+  const rest = notes.filter((n) => !n.replying);
+  notes.length = 0;
+  notes.push(...rest);
   if (notes.length > 3) {
     notify({ title: "Tabellar", body: `${notes.length} new emails need your attention${notes.some((n) => n.drafted) ? ", with reply drafts ready" : ""}.` });
   } else {

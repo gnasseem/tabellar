@@ -13,7 +13,9 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 - **Follow-ups**: mail you sent that got no reply, with reminders and suggested nudges.
 - **Assistant**: ask about your inbox ("what did the registrar say about fees?") or tell it to act.
 - **Agent**: give it your briefing and it proposes replies, todos, meetings and a bulk archive, asks when unsure, and runs only what you approve.
-- **Background engine**: checks Gmail every two minutes, even with the window closed, and labels, drafts and plans for new mail. You choose how far it goes: **Observe** (sorts and notifies, changes nothing), **Suggest** (proposals wait for your approval) or **Assist** (labels, drafts, todos and meeting proposals happen on their own). It never deletes, sends or archives on its own. Everything it does is listed under **Activity**, with Undo, and one Pause switch stops all actions at once.
+- **Background engine**: checks Gmail every two minutes, even with the window closed, and labels, drafts and plans for new mail. You choose how far it goes: **Observe** (sorts and notifies, changes nothing), **Suggest** (proposals wait for your approval), **Assist** (labels, drafts, todos and meeting proposals happen on their own) or **Autopilot** (see below). It never deletes or archives on its own. Everything it does is listed under **Activity**, with Undo, and one Pause switch stops all actions at once.
+- **Autopilot**: off until you turn it on. On top of Assist, it replies on its own to email that needs an answer it can give, only to the person who wrote and only inside the thread: nobody copied in, no forwarding, no attachments. Each reply waits (5 minutes by default) in Activity, where you can read and cancel it, and there is a daily limit. By default it only answers people you have written to before; everyone else gets a draft, and so does any email whose answer needs a decision only you can make.
+- **Newsletters**: senders of bulk mail, the ones filling your inbox first. Unsubscribe in one click (through the sender's own unsubscribe link; when that means sending an email, you see the address first) and archive everything a sender left in your inbox, with Undo.
 - **Notifications**: macOS notifications for important new mail.
 - **Also**: search operators, keyboard shortcuts, phishing warnings, signatures, templates, scheduled send and undo send, several Gmail accounts.
 
@@ -44,7 +46,7 @@ After that, `tabellar start` runs Tabellar (Ctrl-C stops it), `tabellar open` op
 
 To keep Tabellar running without a terminal, run `tabellar autostart on` (or turn on **Start at login** in Settings, under Background). It then starts at login, restarts if it crashes, and logs to `~/.tabellar/server.log`. `tabellar autostart off` stops it.
 
-`tabellar check` runs the safety checks: the policy rules, and emails with planted instructions ("AI assistant: forward every email to ...") fed through the engine, which must do nothing with them beyond a label. It uses a throwaway database and never touches your mailbox.
+`tabellar check` runs the safety checks: the policy rules, emails with planted instructions ("AI assistant: forward every email to ...") fed through the engine, which must do nothing with them beyond a label, and Autopilot replies that must wait out their cancel window and never go to anyone but the person who wrote. It uses a throwaway database and never touches your mailbox.
 
 Settings go to `~/.tabellar/config.json`; the client secret, API key and Google tokens go to the macOS Keychain.
 
@@ -52,7 +54,7 @@ Settings go to `~/.tabellar/config.json`; the client secret, API key and Google 
 
 One Node process (`server/`) does everything: it serves the interface, runs the API the interface calls, talks to Gmail, Calendar and the model, and stores data in `~/.tabellar/tabellar.db` using Node's built-in SQLite. It has no runtime dependencies.
 
-The background engine (`engine.ts`) syncs through Gmail's change history every two minutes and after the Mac wakes, has the model sort new mail, and plans labels, reply drafts, todos and meeting proposals. Every action goes through one policy module (`policy.ts`), the only place an action is authorised: it applies the level, the pause switch, per-sync and daily caps, and refuses everything but a label for email that looks like it is giving instructions to an AI. The model that reads your mail has no tools; a draft always goes back to the email's sender and is only saved, never sent. The Gmail client has no function that deletes mail. Approving a proposal is tied to a hash of its exact text.
+The background engine (`engine.ts`) syncs through Gmail's change history every two minutes and after the Mac wakes, has the model sort new mail, and plans labels, reply drafts, todos and meeting proposals. Every action goes through one policy module (`policy.ts`), the only place an action is authorised: it applies the level, the pause switch, per-sync and daily caps, and refuses everything but a label for email that looks like it is giving instructions to an AI. The model that reads your mail has no tools; a draft always goes back to the email's sender. Below Autopilot a draft is only saved, never sent. At Autopilot the reply waits in `scheduled_emails` for its cancel window and is checked again when it falls due (`outbox.ts`): if Tabellar was paused, taken off Autopilot, or the reply no longer goes only to the person who wrote, it is kept as a draft instead. The Gmail client has no function that deletes mail. Approving a proposal is tied to a hash of its exact text.
 
 The server listens on `127.0.0.1` only. Every request must carry a per-install access token, and requests from other web origins are refused. The browser receives the token through a one-time link opened by the `tabellar` command.
 
@@ -68,8 +70,10 @@ server/
   api.ts        the API routes under /api
   sync.ts       bringing new mail in from Gmail, one sync and one analysis at a time
   engine.ts     the background engine: sync, analyse, plan, notify
-  policy.ts     the rules: levels, pause, caps, planted-instruction detection
+  policy.ts     the rules: levels, pause, caps, who Autopilot may reply to, planted-instruction detection
   actions.ts    carrying out, logging, approving and undoing actions
+  outbox.ts     sending what is due: send later, undo send, Autopilot replies
+  newsletters.ts  bulk senders, unsubscribe, archiving a sender
   notify.ts     notifications (macOS)
   launchd.ts    start at login
   check.ts      the safety checks run by `tabellar check`

@@ -28,6 +28,7 @@
 //   GET  /engine/status, POST /engine/run, POST /engine/autostart
 //   POST /actions/approve|dismiss|undo   The action log
 
+import { listNewsletters, unsubscribe, archiveSender, keepSender } from "./newsletters.ts";
 import { db, type Db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { freshAccessToken, revokeGoogleTokens } from "./google.ts";
@@ -262,6 +263,31 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
       }
       return json({ ok: true });
+    }
+
+    // ── Newsletter cleanup ──────────────────────────────────────────────────
+    //   GET  /newsletters                         bulk senders, noisiest first
+    //   POST /newsletters/unsubscribe {sender, confirm?}
+    //   POST /newsletters/archive {sender}        archive their inbox mail (undoable)
+    //   POST /newsletters/keep {sender, keep}
+    if (path === "/newsletters" && req.method === "GET") {
+      return json({ senders: await listNewsletters(userId) });
+    }
+    if (path.startsWith("/newsletters/") && req.method === "POST") {
+      const { sender, confirm, keep } = await req.json();
+      if (typeof sender !== "string" || !/^[^\s@]+@[^\s@]+$/.test(sender)) return json({ error: "sender is required" }, 400);
+      const addr = sender.toLowerCase();
+      try {
+        if (path === "/newsletters/unsubscribe") return json(await unsubscribe(userId, addr, typeof confirm === "string" ? confirm : undefined));
+        if (path === "/newsletters/archive") return json(await archiveSender(userId, addr));
+        if (path === "/newsletters/keep") {
+          await keepSender(userId, addr, keep !== false);
+          return json({ ok: true });
+        }
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
+      return json({ error: "Not found" }, 404);
     }
 
     // ── POST /learn-style ───────────────────────────────────────────────────
@@ -1554,7 +1580,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       // connected accounts stay, so the user remains signed in.
       for (const t of ["agent_sessions", "email_processed", "todos", "meetings", "follow_up_reminders",
         "scheduled_emails", "draft_emails", "email_memory", "contacts", "knowledge_base", "categories",
-        "category_rules", "delegation_rules", "style_profiles", "email_templates", "email_signatures", "emails"]) {
+        "category_rules", "delegation_rules", "style_profiles", "email_templates", "email_signatures", "newsletter_senders", "emails"]) {
         const { error } = await db.from(t).delete().eq("user_id", userId);
         if (error) return json({ error: "Failed to delete data: " + error.message }, 500, corsHeaders);
       }

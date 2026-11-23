@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
-import { LEVELS, engineFetch } from "./ActivityView";
+import { LEVELS, confirmLevel, engineFetch } from "./ActivityView";
 import { EmailField, useContacts } from "../EmailAutocomplete";
 import { ModelSettings } from "../ModelSetup";
 
@@ -269,6 +269,9 @@ function BackgroundSettings() {
   const [notify, setNotify] = useState<string>(profile.notification_level ?? "important");
   const [preview, setPreview] = useState<boolean>(profile.notification_preview !== false);
   const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [delay, setDelay] = useState<number>(profile.autopilot_delay_min ?? 5);
+  const [cap, setCap] = useState<number>(profile.autopilot_daily_cap ?? 5);
+  const [knownOnly, setKnownOnly] = useState<boolean>(profile.autopilot_known_only !== false);
 
   useEffect(() => {
     engineFetch("/engine/status")
@@ -305,6 +308,7 @@ function BackgroundSettings() {
             key={l.id}
             type="button"
             onClick={() => {
+              if (!confirmLevel(l.id)) return;
               setLevel(l.id);
               save({ autonomy_level: l.id });
             }}
@@ -332,6 +336,56 @@ function BackgroundSettings() {
       <p className="text-xs text-[var(--muted)] px-1 -mt-1">
         It never deletes mail. Everything it does is listed in Activity, where labels, drafts, todos and meeting proposals can be undone.
       </p>
+
+      {level === "autopilot" && (
+        <>
+          <SectionLabel>Autopilot limits</SectionLabel>
+          <SectionCard>
+            <SettingRow label="Wait before sending" description="Each reply waits this long in Activity, where you can read it and cancel it.">
+              <select
+                value={delay}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setDelay(v);
+                  save({ autopilot_delay_min: v });
+                }}
+                className="text-sm bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-[var(--foreground)]"
+              >
+                {[2, 5, 10, 30, 60].map((m) => (
+                  <option key={m} value={m}>{m} minutes</option>
+                ))}
+              </select>
+            </SettingRow>
+            <SettingRow label="Replies per day" description="After this many, replies are saved as drafts until tomorrow.">
+              <select
+                value={cap}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setCap(v);
+                  save({ autopilot_daily_cap: v });
+                }}
+                className="text-sm bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-[var(--foreground)]"
+              >
+                {[1, 3, 5, 10, 20].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </SettingRow>
+            <SettingRow label="Only people I have written to" description="Anyone else gets a draft for you to send yourself.">
+              <Toggle
+                value={knownOnly}
+                onChange={(v) => {
+                  setKnownOnly(v);
+                  save({ autopilot_known_only: v });
+                }}
+              />
+            </SettingRow>
+          </SectionCard>
+          <p className="text-xs text-[var(--muted)] px-1 -mt-1">
+            Autopilot only answers the person who wrote, inside the same thread, with nobody copied in and no attachments. When a good answer needs a decision or facts it does not have, it saves a draft instead.
+          </p>
+        </>
+      )}
 
       <SectionLabel>Notifications</SectionLabel>
       <SectionCard>

@@ -478,6 +478,30 @@ export async function modifyLabels(tokenRef: string, gmailId: string, add: strin
   return ((await res.json()).labelIds ?? []) as string[];
 }
 
+// Change labels on many messages at once (archiving a whole sender).
+export async function batchModifyLabels(tokenRef: string, gmailIds: string[], add: string[], drop: string[]): Promise<void> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  for (let i = 0; i < gmailIds.length; i += 1000) {
+    const res = await gmailRequest(tokenData.token, "/messages/batchModify", {
+      method: "POST",
+      body: JSON.stringify({ ids: gmailIds.slice(i, i + 1000), addLabelIds: add, removeLabelIds: drop }),
+    });
+    if (!res.ok) throw new Error(`Gmail label change failed (${res.status}): ${await res.text().catch(() => "")}`);
+  }
+}
+
+// A few headers of one message, keyed by lower-case name. Used for the
+// Message-ID an automatic reply points at and for List-Unsubscribe.
+export async function messageHeaders(tokenRef: string, gmailId: string, names: string[]): Promise<Record<string, string>> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const q = names.map((n) => `metadataHeaders=${encodeURIComponent(n)}`).join("&");
+  const res = await gmailRequest(tokenData.token, `/messages/${encodeURIComponent(gmailId)}?format=metadata&${q}`);
+  if (!res.ok) throw new Error(`Gmail message lookup failed (${res.status})`);
+  const headers: Record<string, string> = {};
+  for (const h of ((await res.json()).payload?.headers ?? []) as { name: string; value: string }[]) headers[h.name.toLowerCase()] = h.value;
+  return headers;
+}
+
 export async function sendEmail(
   tokenRef: string,
   to: string[],

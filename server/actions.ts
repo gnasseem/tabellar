@@ -3,11 +3,13 @@
 // act() asks policy.decide() and then does the action, records it as a
 // proposal waiting for approval, or records why it was refused. Every action
 // that happens is a row in action_log, and labels, archives, drafts, todos and
-// meeting proposals can be undone from there.
+// meeting proposals can be undone from there. An Autopilot reply is a row in
+// scheduled_emails until its cancel window passes, and undo cancels it.
 
+import { randomUUID } from "node:crypto";
 import { db } from "./db.ts";
-import { ensureLabel, modifyLabels } from "./gmail.ts";
-import { decide, normalizeLevel, proposalHash, type Kind, type Source } from "./policy.ts";
+import { batchModifyLabels, ensureLabel, modifyLabels } from "./gmail.ts";
+import { decide, normalizeLevel, proposalHash, type AutoSend, type Kind, type Source } from "./policy.ts";
 
 export type Planned = {
   kind: Kind;
@@ -23,10 +25,10 @@ export async function engineSettings(userId: string): Promise<Settings> {
   return { level: normalizeLevel(data?.autonomy_level), paused: !!data?.engine_paused };
 }
 
-async function log(userId: string, p: Planned, row: Record<string, unknown>) {
+async function log(userId: string, p: Planned, row: Record<string, unknown>, id: string = randomUUID()) {
   const { data, error } = await db
     .from("action_log")
-    .insert({ user_id: userId, kind: p.kind, email_id: p.emailId, summary: p.summary, detail: p.detail, ...row })
+    .insert({ id, user_id: userId, kind: p.kind, email_id: p.emailId, summary: p.summary, detail: p.detail, ...row })
     .select("id")
     .single();
   if (error) throw new Error(error.message);
@@ -50,9 +52,57 @@ function textToHtml(text: string): string {
   return esc.split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
 }
 
+// Archive (or, undoing, return to the inbox) a batch of emails, grouped by
+// the account each belongs to.
+async function setArchived(userId: string, emailIds: string[], archived: boolean) {
+  const { data } = await db
+    .from("emails")
+    .select("id, gmail_id, gmail_accounts(token_ref)")
+    .eq("user_id", userId)
+    .in("id", emailIds);
+  const byAccount = new Map<string, { ids: string[]; gmailIds: string[] }>();
+  for (const e of data ?? []) {
+    const ref = (e.gmail_accounts as { token_ref?: string } | null)?.token_ref;
+    if (!ref) continue;
+    const g = byAccount.get(ref) ?? { ids: [], gmailIds: [] };
+    g.ids.push(e.id as string);
+    g.gmailIds.push(e.gmail_id as string);
+    byAccount.set(ref, g);
+  }
+  for (const [ref, g] of byAccount) {
+    await batchModifyLabels(ref, g.gmailIds, archived ? [] : ["INBOX"], archived ? ["INBOX"] : []);
+    for (const id of g.ids) {
+      const { data: row } = await db.from("emails").select("label_ids").eq("id", id).single();
+      const labels = ((row?.label_ids as string[] | null) ?? []).filter((l) => l !== "INBOX");
+      await db.from("emails").update({ is_archived: archived, label_ids: archived ? labels : ["INBOX", ...labels] }).eq("id", id);
+    }
+  }
+}
+
 // Make the change. Returns what undo will need (label id, row ids).
-async function execute(userId: string, p: Planned): Promise<Record<string, unknown>> {
+async function execute(userId: string, p: Planned, actionId: string): Promise<Record<string, unknown>> {
   const d = p.detail;
+  if (p.kind === "archive" && Array.isArray(d.emailIds)) {
+    await setArchived(userId, d.emailIds as string[], true);
+    return {};
+  }
+  if (p.kind === "send") {
+    // Only Autopilot reaches here (the window sends through /send-email), and
+    // decide() has already checked the recipient. It waits out the cancel
+    // window in scheduled_emails, where outbox.ts checks it again.
+    const sendAt = new Date(Date.now() + Number(d.delayMinutes ?? 5) * 60_000).toISOString();
+    const { data, error } = await db
+      .from("scheduled_emails")
+      .insert({
+        user_id: userId, gmail_account_id: d.accountId, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body)),
+        body_text: d.body, in_reply_to: d.inReplyTo ?? null, thread_id: d.threadId, send_at: sendAt,
+        source: "autopilot", email_id: p.emailId, action_id: actionId,
+      })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    return { scheduledId: data.id, sendAt };
+  }
   if (p.kind === "label" || p.kind === "archive") {
     const email = await emailWithToken(p.emailId!);
     if (p.kind === "label") {
@@ -103,7 +153,7 @@ async function execute(userId: string, p: Planned): Promise<Record<string, unkno
 export async function act(
   userId: string,
   p: Planned,
-  ctx: Settings & { source: Source; suspicious?: boolean; todayCount?: number; cycleCount?: number },
+  ctx: Settings & { source: Source; suspicious?: boolean; todayCount?: number; cycleCount?: number; send?: AutoSend; sendCap?: number },
 ): Promise<"done" | "proposed" | "refused" | "failed"> {
   const decision = decide({ kind: p.kind, ...ctx });
   if (decision.verdict === "refuse") {
@@ -116,12 +166,17 @@ export async function act(
     await log(userId, p, { status: "proposed", source: ctx.source, reason: decision.reason, hash: proposalHash(p.kind, p.emailId, p.detail) });
     return "proposed";
   }
+  const id = randomUUID();
   try {
-    const undoInfo = await execute(userId, p);
-    await log(userId, { ...p, detail: { ...p.detail, ...undoInfo } }, { status: "done", source: ctx.source, reason: decision.reason, decided_at: new Date().toISOString() });
+    // Log first, so a scheduled send already has its row to report back to.
+    await log(userId, p, { status: "running", source: ctx.source, reason: decision.reason }, id);
+    const undoInfo = await execute(userId, p, id);
+    await db.from("action_log").update({ status: "done", detail: { ...p.detail, ...undoInfo }, decided_at: new Date().toISOString() }).eq("id", id);
     return "done";
   } catch (e) {
-    await log(userId, p, { status: "failed", source: ctx.source, error: (e as Error).message.slice(0, 500) });
+    const error = (e as Error).message.slice(0, 500);
+    const updated = await db.from("action_log").update({ status: "failed", error }).eq("id", id).select("id");
+    if (!updated.data?.length) await log(userId, p, { status: "failed", source: ctx.source, error });
     return "failed";
   }
 }
@@ -155,7 +210,7 @@ export async function approve(userId: string, id: string, hash: string): Promise
   if (!claimed.data?.length) throw Object.assign(new Error("This proposal was already handled"), { status: 409 });
   const p: Planned = { kind: row.kind as Kind, emailId: row.email_id as string | null, summary: row.summary as string, detail: row.detail as Record<string, unknown> };
   try {
-    const undoInfo = await execute(userId, p);
+    const undoInfo = await execute(userId, p, id);
     await db.from("action_log").update({ status: "done", detail: { ...p.detail, ...undoInfo }, decided_at: new Date().toISOString(), reason: "Approved" }).eq("id", id);
   } catch (e) {
     await db.from("action_log").update({ status: "failed", error: (e as Error).message.slice(0, 500), decided_at: new Date().toISOString() }).eq("id", id);
@@ -174,7 +229,13 @@ export async function undo(userId: string, id: string): Promise<void> {
   if (row.status !== "done") throw Object.assign(new Error("Only completed actions can be undone"), { status: 409 });
   const d = row.detail as Record<string, unknown>;
   const kind = row.kind as string;
-  if (kind === "label" || kind === "archive") {
+  if (kind === "send") {
+    // Cancelling an Autopilot reply still inside its window.
+    const res = await db.from("scheduled_emails").update({ status: "cancelled", error_message: "Cancelled" }).eq("id", String(d.scheduledId ?? "")).eq("user_id", userId).eq("status", "pending").select("id");
+    if (!res.data?.length) throw Object.assign(new Error("This reply was already sent"), { status: 409 });
+  } else if (kind === "archive" && Array.isArray(d.emailIds)) {
+    await setArchived(userId, d.emailIds as string[], false);
+  } else if (kind === "label" || kind === "archive") {
     const email = await emailWithToken(row.email_id as string);
     const labels = kind === "label"
       ? await modifyLabels(email.tokenRef, email.gmail_id as string, [], [String(d.labelId)])

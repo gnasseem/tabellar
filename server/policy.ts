@@ -7,24 +7,27 @@
 //   observe  syncs, sorts and notifies, but changes nothing and proposes nothing
 //   suggest  everything waits in Activity for approval
 //   assist   labels, drafts, todos and meeting proposals happen on their own
+//   autopilot  as Assist, and it may also send a reply on its own, but only
+//            inside the thread and only to the person who wrote (checkAutoSend),
+//            after a cancel window, within a daily cap
 //
 // Never, at any level: deleting or trashing mail (there is no such action, and
-// gmail.ts has no function for it), sending on its own, or archiving on its
-// own. Drafts are saved for the user to send; they never leave the machine by
-// themselves.
+// gmail.ts has no function for it), archiving, forwarding or unsubscribing on
+// its own, or sending to anyone other than the person who wrote.
 
 import { createHash } from "node:crypto";
 
-export const LEVELS = ["observe", "suggest", "assist"] as const;
+export const LEVELS = ["observe", "suggest", "assist", "autopilot"] as const;
 export type Level = (typeof LEVELS)[number];
 
-export const KINDS = ["label", "archive", "draft", "todo", "meeting", "send"] as const;
+export const KINDS = ["label", "archive", "draft", "todo", "meeting", "send", "unsubscribe"] as const;
 export type Kind = (typeof KINDS)[number];
 
 // "engine" acts on its own; the others act because the user asked in the window.
 export type Source = "engine" | "agent" | "assistant" | "user";
 
-// What the engine may do on its own at Assist. Archive and send are never here.
+// What the engine may do on its own at Assist. Archive and unsubscribe are
+// never here, and send only at Autopilot.
 const ENGINE_KINDS: ReadonlySet<string> = new Set(["label", "draft", "todo", "meeting"]);
 
 // Kinds the user's own window actions may carry out (agent plans, assistant
@@ -34,7 +37,36 @@ const USER_KINDS: ReadonlySet<string> = new Set(KINDS);
 // Caps on what the engine does or proposes: per cycle (one sync and analysis
 // pass) and per calendar day.
 export const CAP_PER_CYCLE = 60;
-export const CAP_PER_DAY: Record<string, number> = { label: 500, draft: 25, todo: 60, meeting: 30 };
+export const CAP_PER_DAY: Record<string, number> = { label: 500, draft: 25, todo: 60, meeting: 30, send: 20 };
+
+// An automatic reply, as the engine wants to send it. `writer` is the address
+// of the person whose email is being answered (Reply-To if set, else From),
+// taken from the stored email, never from the model.
+export type AutoSend = {
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  attachments?: number;
+  threadId?: string | null;
+  writer: string;
+};
+
+const ADDRESS = /^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/;
+
+// The only shape of send Autopilot may make: one recipient, the person who
+// wrote, in the same thread, with nothing copied and nothing attached.
+// Returns why it is refused, or null.
+export function checkAutoSend(s: AutoSend | undefined): string | null {
+  if (!s) return "No reply to check";
+  const writer = s.writer.trim().toLowerCase();
+  if (!ADDRESS.test(writer)) return "The sender's address is not usable";
+  if (!s.threadId) return "Autopilot only replies inside an existing thread";
+  if (s.to.length !== 1) return "Autopilot only replies to the one person who wrote";
+  if (s.to[0].trim().toLowerCase() !== writer) return `Autopilot only replies to the person who wrote (${writer}), not ${s.to[0]}`;
+  if (s.cc?.length || s.bcc?.length) return "Autopilot never copies anyone in";
+  if (s.attachments) return "Autopilot never sends attachments";
+  return null;
+}
 
 export type Decision = { verdict: "do" | "propose" | "refuse"; reason: string };
 
@@ -46,6 +78,8 @@ export type Request = {
   suspicious?: boolean; // the email looks like it is trying to instruct the AI
   todayCount?: number; // engine actions of this kind so far today
   cycleCount?: number; // engine actions so far in this cycle
+  send?: AutoSend; // for an engine send: the reply as it would go out
+  sendCap?: number; // the user's own daily limit on automatic replies
 };
 
 // Anything unrecognised, including levels from a later version, is Observe.
@@ -61,17 +95,23 @@ export function decide(r: Request): Decision {
     return USER_KINDS.has(r.kind) ? { verdict: "do", reason: "Requested in the window" } : { verdict: "refuse", reason: "Not allowed" };
   }
 
-  if (!ENGINE_KINDS.has(r.kind)) return { verdict: "refuse", reason: `Tabellar never does "${r.kind}" on its own` };
+  const level = normalizeLevel(r.level);
+  const autoSend = r.kind === "send" && level === "autopilot";
+  if (!ENGINE_KINDS.has(r.kind) && !autoSend) return { verdict: "refuse", reason: `Tabellar never does "${r.kind}" on its own` };
   if (r.suspicious && r.kind !== "label") {
     return { verdict: "refuse", reason: "The email looks like it is giving instructions to an AI, so it is only labelled" };
   }
-  const level = normalizeLevel(r.level);
   if (level === "observe") return { verdict: "refuse", reason: "Observe changes nothing" };
+  if (autoSend) {
+    const why = checkAutoSend(r.send);
+    if (why) return { verdict: "refuse", reason: why };
+  }
   if ((r.cycleCount ?? 0) >= CAP_PER_CYCLE) return { verdict: "refuse", reason: `Limit of ${CAP_PER_CYCLE} actions per sync reached` };
-  const cap = CAP_PER_DAY[r.kind] ?? 0;
+  let cap = CAP_PER_DAY[r.kind] ?? 0;
+  if (autoSend && r.sendCap !== undefined) cap = Math.min(cap, Math.max(0, r.sendCap));
   if ((r.todayCount ?? 0) >= cap) return { verdict: "refuse", reason: `Daily limit of ${cap} for ${r.kind} reached` };
   if (level === "suggest") return { verdict: "propose", reason: "Waiting for your approval" };
-  return { verdict: "do", reason: "Assist" };
+  return { verdict: "do", reason: level === "autopilot" ? "Autopilot" : "Assist" };
 }
 
 // An approval is bound to the exact proposal the user saw: the hash covers the

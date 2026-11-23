@@ -28,6 +28,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       briefing_scope: 'text ! ="today_new"', calendar_send_invites: "bool ! =true",
       notification_level: 'text ! ="important"', notification_preview: "bool ! =true",
       autonomy_level: 'text ! ="suggest"', engine_paused: "bool ! =false",
+      autopilot_delay_min: "int ! =5", autopilot_daily_cap: "int ! =5", autopilot_known_only: "bool ! =true",
       created_at: "time ! =now", updated_at: "time ! =now",
     },
   },
@@ -80,7 +81,17 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       to_addresses: "json !", cc_addresses: "json", bcc_addresses: "json", subject: "text !",
       body_html: "text !", body_text: "text", in_reply_to: "text", thread_id: "text",
       send_at: "time !", status: 'text ! ="pending"', error_message: "text", created_at: "time ! =now",
+      // "autopilot" rows are Tabellar's own replies, re-checked when they fall due.
+      source: 'text ! ="user"', email_id: "uuid >emails:null", action_id: "uuid",
     },
+  },
+  // Senders the user dealt with in Newsletters: kept, or unsubscribed from.
+  newsletter_senders: {
+    cols: {
+      id: "uuid pk =uuid", user_id: "uuid !", sender_email: "text !", status: "text !",
+      method: "text", created_at: "time ! =now", updated_at: "time ! =now",
+    },
+    unique: [["user_id", "sender_email"]],
   },
   meetings: {
     cols: {

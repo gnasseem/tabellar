@@ -52,6 +52,9 @@ type Profile = {
   calendar_send_invites?: boolean | null;
   autonomy_level?: string | null;
   engine_paused?: boolean | null;
+  autopilot_delay_min?: number | null;
+  autopilot_daily_cap?: number | null;
+  autopilot_known_only?: boolean | null;
   notification_level?: string | null;
   notification_preview?: boolean | null;
 };

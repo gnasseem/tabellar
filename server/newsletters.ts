@@ -1,0 +1,208 @@
+// Newsletter cleanup: the senders of bulk mail, how much of the inbox each
+// fills, and unsubscribing from them or archiving all they sent.
+//
+// Everything here is done because the user clicked in the window; the engine
+// never unsubscribes (policy.ts refuses it). Unsubscribing follows the
+// sender's List-Unsubscribe header, read fresh from Gmail each time:
+//   one-click  RFC 8058: a POST to the sender's https link, done here
+//   mailto     an email to the address in the header, only after the user has
+//              seen and confirmed that exact address (the header is written by
+//              the sender, so it could name anyone)
+//   web        a page the user has to finish on; the window opens it
+
+import { db } from "./db.ts";
+import { messageHeaders, sendEmail } from "./gmail.ts";
+import { act, engineSettings, record } from "./actions.ts";
+import { decide } from "./policy.ts";
+
+type Sender = {
+  sender_email: string;
+  name: string;
+  total: number;
+  inbox: number;
+  unread: number;
+  last_at: string;
+  can_unsubscribe: boolean;
+  status: "kept" | "unsubscribed" | null;
+  method: string | null;
+};
+
+const BULK_CATEGORIES = new Set(["promotions", "newsletter"]);
+
+// Senders of bulk mail, noisiest in the inbox first.
+export async function listNewsletters(userId: string): Promise<Sender[]> {
+  const [{ data: rows }, { data: marks }] = await Promise.all([
+    db
+      .from("emails")
+      .select("sender, sender_email, recipients, received_at, is_read, is_archived, label_ids, has_list_unsubscribe, precedence_header, email_processed(category)")
+      .eq("user_id", userId)
+      .order("received_at", { ascending: false })
+      .limit(20000),
+    db.from("newsletter_senders").select("sender_email, status, method").eq("user_id", userId),
+  ]);
+  const marked = new Map<string, { status?: unknown; method?: unknown }>((marks ?? []).map((m: Record<string, unknown>) => [String(m.sender_email), m]));
+  // People the user has written to are correspondents, even when their mail
+  // comes through a list.
+  const wroteTo = new Set<string>();
+  for (const e of rows ?? []) {
+    if (!((e.label_ids as string[] | null) ?? []).includes("SENT")) continue;
+    for (const m of String(e.recipients ?? "").matchAll(/[^\s<>,;"]+@[^\s<>,;"]+/g)) wroteTo.add(m[0].toLowerCase());
+  }
+  const by = new Map<string, Sender & { bulk: number }>();
+  for (const e of rows ?? []) {
+    const labels = (e.label_ids as string[] | null) ?? [];
+    if (labels.includes("SENT") || !e.sender_email) continue;
+    const addr = String(e.sender_email).toLowerCase();
+    if (wroteTo.has(addr)) continue;
+    const processed = (Array.isArray(e.email_processed) ? e.email_processed[0] : e.email_processed) as { category?: string } | null;
+    const bulk = !!e.has_list_unsubscribe || BULK_CATEGORIES.has(String(processed?.category)) || /^(bulk|list)$/i.test(String(e.precedence_header ?? ""));
+    let s = by.get(addr);
+    if (!s) {
+      const m = marked.get(addr);
+      s = {
+        sender_email: addr,
+        name: String(e.sender ?? "").split("<")[0].replace(/"/g, "").trim() || addr,
+        total: 0, inbox: 0, unread: 0, bulk: 0,
+        last_at: String(e.received_at),
+        can_unsubscribe: false,
+        status: (m?.status as Sender["status"]) ?? null,
+        method: (m?.method as string) ?? null,
+      };
+      by.set(addr, s);
+    }
+    s.total++;
+    if (bulk) s.bulk++;
+    if (!e.is_archived && labels.includes("INBOX")) s.inbox++;
+    if (!e.is_read) s.unread++;
+    if (e.has_list_unsubscribe) s.can_unsubscribe = true;
+  }
+  return [...by.values()]
+    .filter((s) => s.bulk > 0 && s.bulk * 2 >= s.total)
+    .sort((a, b) => b.inbox - a.inbox || b.total - a.total)
+    .slice(0, 300)
+    .map(({ bulk: _bulk, ...s }) => s);
+}
+
+async function mailFrom(userId: string, sender: string, inboxOnly: boolean) {
+  let q = db
+    .from("emails")
+    .select("id, gmail_id, has_list_unsubscribe, label_ids, is_archived, gmail_accounts(token_ref)")
+    .eq("user_id", userId)
+    .ilike("sender_email", sender.replace(/[%_]/g, ""))
+    .order("received_at", { ascending: false });
+  if (inboxOnly) q = q.eq("is_archived", false).contains("label_ids", ["INBOX"]);
+  const { data } = await q.limit(5000);
+  return data ?? [];
+}
+
+async function mark(userId: string, sender: string, status: "kept" | "unsubscribed", method: string | null) {
+  await db
+    .from("newsletter_senders")
+    .upsert({ user_id: userId, sender_email: sender, status, method, updated_at: new Date().toISOString() }, { onConflict: "user_id,sender_email" });
+}
+
+export async function keepSender(userId: string, sender: string, keep: boolean): Promise<void> {
+  if (keep) await mark(userId, sender, "kept", null);
+  else await db.from("newsletter_senders").delete().eq("user_id", userId).eq("sender_email", sender);
+}
+
+// Archive everything from one sender still in the inbox, as one action that
+// undo returns to the inbox in one go.
+export async function archiveSender(userId: string, sender: string): Promise<{ archived: number; result: string }> {
+  const mail = await mailFrom(userId, sender, true);
+  if (!mail.length) return { archived: 0, result: "done" };
+  const settings = await engineSettings(userId);
+  const result = await act(
+    userId,
+    { kind: "archive", emailId: null, summary: `Archive ${mail.length} email${mail.length === 1 ? "" : "s"} from ${sender}`, detail: { emailIds: mail.map((e) => e.id), sender } },
+    { ...settings, source: "user" },
+  );
+  if (result === "refused") throw Object.assign(new Error("Tabellar is paused"), { status: 409 });
+  if (result === "failed") throw new Error("Gmail did not archive them; see Activity");
+  return { archived: mail.length, result };
+}
+
+type Target = { method: "one-click" | "mailto" | "web"; url?: string; to?: string; subject?: string; body?: string };
+
+export function parseListUnsubscribe(header: string, post: string): Target | null {
+  const links = [...header.matchAll(/<([^>]+)>/g)].map((m) => m[1].trim());
+  const https = links.find((l) => /^https:\/\//i.test(l));
+  if (https && /List-Unsubscribe=One-Click/i.test(post)) return { method: "one-click", url: https };
+  const mailto = links.find((l) => /^mailto:/i.test(l));
+  if (mailto) {
+    const u = new URL(mailto);
+    const to = decodeURIComponent(u.pathname).trim();
+    if (/^[^\s@<>,;]+@[^\s@<>,;]+\.[^\s@<>,;]+$/.test(to)) {
+      return { method: "mailto", to, subject: u.searchParams.get("subject") || "unsubscribe", body: u.searchParams.get("body") || "unsubscribe" };
+    }
+  }
+  const web = https ?? links.find((l) => /^http:\/\//i.test(l));
+  return web ? { method: "web", url: web } : null;
+}
+
+// The one-click POST goes to a link from the email's header, so it must be a
+// public https host, never this machine or the local network.
+export function publicHttps(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  const h = u.hostname.toLowerCase();
+  if (u.protocol !== "https:" || !h.includes(".")) return false;
+  if (/^\[|^\d+\.\d+\.\d+\.\d+$/.test(h)) return false;
+  return !/(^|\.)(localhost|local|internal|lan|home|arpa)$/.test(h);
+}
+
+function textToHtml(text: string): string {
+  return `<p>${text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>")}</p>`;
+}
+
+export type UnsubscribeResult =
+  | { done: true; method: string }
+  | { confirm: { to: string; subject: string } }
+  | { open: string };
+
+// Unsubscribe from one sender. A mailto unsubscribe first comes back asking
+// for confirmation; the window repeats the call with `confirm` set to the
+// address it showed, and only an exact match sends.
+export async function unsubscribe(userId: string, sender: string, confirm?: string): Promise<UnsubscribeResult> {
+  const { paused } = await engineSettings(userId);
+  const decision = decide({ kind: "unsubscribe", source: "user", level: "suggest", paused });
+  if (decision.verdict !== "do") throw Object.assign(new Error(decision.reason), { status: 409 });
+
+  const latest = (await mailFrom(userId, sender, false)).find((e) => e.has_list_unsubscribe);
+  const tokenRef = (latest?.gmail_accounts as { token_ref?: string } | null)?.token_ref;
+  if (!latest || !tokenRef) throw Object.assign(new Error("This sender gives no way to unsubscribe. Archive their mail instead."), { status: 422 });
+  const h = await messageHeaders(tokenRef, latest.gmail_id as string, ["List-Unsubscribe", "List-Unsubscribe-Post"]);
+  const target = parseListUnsubscribe(h["list-unsubscribe"] ?? "", h["list-unsubscribe-post"] ?? "");
+  if (!target) throw Object.assign(new Error("This sender gives no usable way to unsubscribe. Archive their mail instead."), { status: 422 });
+  const log = (how: string) =>
+    record(userId, { kind: "unsubscribe", emailId: latest.id as string, summary: `Unsubscribe from ${sender} (${how})`, detail: { sender, ...target } }, "user");
+
+  if (target.method === "one-click") {
+    if (!publicHttps(target.url!)) throw Object.assign(new Error("The unsubscribe link points somewhere Tabellar will not post to"), { status: 422 });
+    const res = await fetch(target.url!, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "List-Unsubscribe=One-Click",
+      redirect: "manual",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.status >= 400) throw new Error(`The sender's unsubscribe link answered ${res.status}`);
+    await mark(userId, sender, "unsubscribed", "one-click");
+    await log("one click");
+    return { done: true, method: "one-click" };
+  }
+  if (target.method === "mailto") {
+    if (!confirm || confirm.toLowerCase() !== target.to!.toLowerCase()) return { confirm: { to: target.to!, subject: target.subject! } };
+    await sendEmail(tokenRef, [target.to!], target.subject!, textToHtml(target.body!));
+    await mark(userId, sender, "unsubscribed", "mailto");
+    await log(`email to ${target.to}`);
+    return { done: true, method: "mailto" };
+  }
+  await mark(userId, sender, "unsubscribed", "web");
+  await log("their web page");
+  return { open: target.url! };
+}
