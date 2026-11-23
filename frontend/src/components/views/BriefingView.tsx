@@ -6,7 +6,7 @@ import { useApp } from "../AppShell";
 import EmailDetail from "../EmailDetail";
 import SolveAgentButton from "../solve/SolveAgentButton";
 import { useSetupState } from "../ModelSetup";
-import { Empty, Glyph, KeyHints, Menu, Seg, SkeletonRows, ViewBar, clock, dayLabel } from "../ui";
+import { Empty, Glyph, Menu, Seg, SkeletonRows, ViewBar, clock } from "../ui";
 
 // The briefing: a short written summary of the mail in a chosen range, then
 // what it found in four groups (reply needed, deadlines, crucial, and what
@@ -412,13 +412,10 @@ function Thread({ group, row }: { group: BriefingEmail[]; row: (e: BriefingEmail
   );
 }
 
-function Section({ title, count, need, children }: { title: string; count: number; need?: boolean; children: ReactNode }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="pt-5">
-      <h2 className="label flex items-baseline gap-1.5 px-5 pb-1">
-        {title}
-        <span className={need ? "count-need" : "font-normal"}>{count.toLocaleString()}</span>
-      </h2>
+      <h2 className="label px-5 pb-1">{title}</h2>
       {children}
     </section>
   );
@@ -433,7 +430,7 @@ function Schedule({ items }: { items: any[] }) {
         <span className="font-normal">{new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}</span>
       </h2>
       {items.length === 0 ? (
-        <p className="mt-2 text-ink3">Nothing on your calendar today.</p>
+        <p className="mt-2 text-ink3">Nothing today</p>
       ) : (
         <ul className="mt-1">
           {items.map((m) => (
@@ -492,7 +489,6 @@ const BRIEFING_SCOPE_OPTIONS: { id: BriefingScope; label: string }[] = [
 
 export default function BriefingView() {
   const { state: setup } = useSetupState();
-  const writer = setup?.model;
   const {
     user,
     profile,
@@ -509,7 +505,6 @@ export default function BriefingView() {
   } = useApp();
   const supabase = createClient();
   const [briefing, setBriefing] = useState<BriefingResult | null>(null);
-  const [briefingAt, setBriefingAt] = useState<string | null>(null);
   const [meetings, setMeetings] = useState<any[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -550,7 +545,6 @@ export default function BriefingView() {
     invalidateViewCache("briefing");
     try { localStorage.removeItem(`tabellar_briefing_cache_${user.id}`); } catch { /* ignore */ }
     setBriefing(null);
-    setBriefingAt(null);
     // Pass scope explicitly so the API call uses the correct scope even if locked
     void requestBriefingRegeneration(scope);
   }, [supabase, user.id, updateProfile, invalidateViewCache, requestBriefingRegeneration]);
@@ -579,7 +573,6 @@ export default function BriefingView() {
       const scopeMismatch = memScope && memScope !== currentScope;
       if (!scopeMismatch && !briefingIsEmpty(memCached.data)) {
         setBriefing(memCached.data);
-        setBriefingAt(memCached.at);
         setLoading(false);
         const cachedTs = memCached.at ? new Date(memCached.at).getTime() : null;
         if (!isFromToday(cachedTs) || !dbHasBriefing) generateBriefingOnDemandRef.current?.();
@@ -596,7 +589,6 @@ export default function BriefingView() {
         if (data?.executiveSummary !== undefined && !scopeMismatch && !briefingIsEmpty(data)) {
           const at = ts ? new Date(ts).toISOString() : null;
           setBriefing(data);
-          if (at) setBriefingAt(at);
           setViewCache("briefing", { data, at, scope: cachedScope } as any);
           setLoading(false);
           // If DB has no briefing, treat local copy as unverified and regenerate
@@ -614,7 +606,6 @@ export default function BriefingView() {
         .single();
       if (row?.last_briefing) {
         setBriefing(row.last_briefing as unknown as BriefingResult);
-        setBriefingAt(row.last_briefing_at ?? null);
         setViewCache("briefing", { data: row.last_briefing, at: row.last_briefing_at ?? null, scope: currentScope } as any);
         const dbTs = row.last_briefing_at ? new Date(row.last_briefing_at).getTime() : null;
         localStorage.setItem(
@@ -874,11 +865,6 @@ export default function BriefingView() {
     );
 
   const noModel = setup !== null && !setup.model;
-  const written = (() => {
-    if (!briefingAt) return new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
-    const d = dayLabel(briefingAt);
-    return `Written ${d.name === "Today" || d.name === "Yesterday" ? d.name.toLowerCase() : `on ${d.name} ${d.date}`} at ${clock(briefingAt)}`;
-  })();
   const nonEssentialTotal = normalized?.stats.nonEssential ?? 0;
   const quietSenders = [...new Set(displayNonEssential.map(senderOf).filter(Boolean))];
   const show = (f: Filter) => filter === "all" || filter === f;
@@ -888,7 +874,7 @@ export default function BriefingView() {
   return (
     <>
       <ViewBar
-        title="Briefing"
+        title="Brief"
         search={false}
         right={
           <>
@@ -906,7 +892,6 @@ export default function BriefingView() {
           </>
         }
       >
-        <span className="hidden whitespace-nowrap text-xs text-ink3 xl:block">{written}</span>
         {hasContent && (
           <div className="hidden lg:block">
             <Seg
@@ -915,9 +900,7 @@ export default function BriefingView() {
               options={[
                 { id: "all", label: "All" },
                 { id: "replyNeeded", label: "Reply needed", count: displayReplyNeededIncoming.length, need: displayReplyNeededIncoming.length > 0 },
-                { id: "deadlines", label: "Deadlines", count: displayDeadlines.length },
-                { id: "crucial", label: "Crucial", count: displayCrucial.length },
-                { id: "nonEssential", label: "Non-essential", count: nonEssentialTotal },
+                { id: "deadlines", label: "Deadlines" },
               ]}
             />
           </div>
@@ -928,14 +911,14 @@ export default function BriefingView() {
           <div className="max-w-[780px] pb-10">
             {noModel ? (
               <p className="px-5 pt-4 leading-normal text-danger" role="alert">
-                No model is set up, so Tabellar cannot write a briefing. Choose one in Settings, under Models.{" "}
+                No model set up.{" "}
                 <button className="link" onClick={() => setView("settings")}>
-                  Open Settings
+                  Choose one in Settings
                 </button>
               </p>
             ) : failed && !briefingRegenerating ? (
               <p className="px-5 pt-4 leading-normal text-danger" role="alert">
-                The briefing could not be written. Check that the model in Settings, under Models, is running, then try again.{" "}
+                Could not write the brief.{" "}
                 <button className="link" onClick={() => void requestBriefingRegeneration()}>
                   Try again
                 </button>{" "}
@@ -945,7 +928,7 @@ export default function BriefingView() {
               </p>
             ) : briefingRegenerating ? (
               <p className="px-5 pt-4 text-xs text-ink3" role="status">
-                {hasContent ? "Writing a new briefing. This one stays until it is ready." : "Writing your briefing. It can take a minute, and you can keep using Tabellar meanwhile."}
+                Writing
               </p>
             ) : null}
 
@@ -954,10 +937,9 @@ export default function BriefingView() {
             ) : !hasContent ? (
               <div className="empty">
                 <Icon name="description" size={22} className="text-ink3" />
-                <h3>No briefing yet</h3>
-                <p>A briefing sums up the mail in the range you choose: what needs a reply, what has a deadline, what matters, and what you can skip.</p>
+                <h3>No brief yet</h3>
                 <button className="btn btn-pri mt-4" disabled={noModel} onClick={() => void requestBriefingRegeneration()}>
-                  Write a briefing
+                  Write one
                 </button>
               </div>
             ) : (
@@ -974,19 +956,19 @@ export default function BriefingView() {
                 ) : null}
 
                 {show("replyNeeded") && displayReplyNeededIncoming.length > 0 && (
-                  <Section title="Reply needed" count={displayReplyNeededIncoming.length} need>
+                  <Section title="Reply needed">
                     {threads(displayReplyNeededIncoming, true)}
                   </Section>
                 )}
 
                 {show("deadlines") && displayDeadlines.length > 0 && (
-                  <Section title="Deadlines" count={displayDeadlines.length}>
+                  <Section title="Deadlines">
                     {threads(displayDeadlines)}
                   </Section>
                 )}
 
                 {show("crucial") && displayCrucial.length > 0 && (
-                  <Section title="Crucial" count={displayCrucial.length}>
+                  <Section title="Crucial">
                     {threads(crucialsHigh)}
                     {(importantExpanded || filter === "crucial") && threads(crucialsImportant)}
                     {crucialsImportant.length > 0 && filter !== "crucial" && (
@@ -998,13 +980,13 @@ export default function BriefingView() {
                 )}
 
                 {filter === "all" && displayNoReplyYet.length > 0 && (
-                  <Section title="Waiting on others" count={displayNoReplyYet.length}>
+                  <Section title="Waiting on others">
                     {resolvedLast(displayNoReplyYet).map((e) => row(e))}
                   </Section>
                 )}
 
                 {show("nonEssential") && nonEssentialTotal > 0 && (
-                  <Section title="Non-essential" count={nonEssentialTotal}>
+                  <Section title="Non-essential">
                     {displayNonEssential.length === 0 ? (
                       <p className="px-5 py-1.5 text-ink3">You dismissed all of these.</p>
                     ) : (
@@ -1050,7 +1032,6 @@ export default function BriefingView() {
 
                 {filter !== "all" && shownCount === 0 && (
                   <Empty icon="description" title="Nothing in this group">
-                    This briefing found nothing here.{" "}
                     <button className="link" onClick={() => setFilter("all")}>
                       Show the whole briefing
                     </button>
@@ -1068,7 +1049,6 @@ export default function BriefingView() {
           <Schedule items={todayScheduleItems} />
         </aside>
       </div>
-      <KeyHints left={writer ? `Written by ${writer.model}${writer.format === "ollama" ? " on this Mac" : " in the cloud"}` : ""} keys={[]} />
     </>
   );
 }

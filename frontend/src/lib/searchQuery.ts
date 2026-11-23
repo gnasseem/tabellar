@@ -20,6 +20,8 @@ export type ParsedSearch = {
   isResolved?: boolean;
   isUnresolved?: boolean;
   hasAttachment?: boolean;
+  /** What Tabellar made of it: is:need, is:going, is:handled, is:filed. */
+  state?: "need" | "going" | "handled" | "filed";
 };
 
 export const SEARCH_OPERATORS = [
@@ -30,6 +32,7 @@ export const SEARCH_OPERATORS = [
   { syntax: "after:2026-08-01", description: "Received on or after" },
   { syntax: "before:2026-08-15", description: "Received before" },
   { syntax: "is:unread", description: "Also read, starred, resolved, unresolved" },
+  { syntax: "is:going", description: "Also need, handled, filed" },
   { syntax: "has:attachment", description: "Has at least one attachment" },
 ];
 
@@ -112,6 +115,12 @@ export function parseSearch(raw: string): ParsedSearch {
             break;
           case "unresolved":
             result.isUnresolved = true;
+            break;
+          case "need":
+          case "going":
+          case "handled":
+          case "filed":
+            result.state = value.toLowerCase() as ParsedSearch["state"];
             break;
           default:
             return match; // unknown value, treat as plain text

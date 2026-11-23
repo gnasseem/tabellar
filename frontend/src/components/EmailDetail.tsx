@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, useMemo, Fragment } from "react";
 import Icon from "@/components/Icon";
 import DOMPurify from "dompurify";
 import { emailFrameThemeCss, measureEmailIframeBodyHeight } from "@/lib/emailIframe";
-import { Glyph, Kbd, shortWhen } from "./ui";
+import { Glyph, shortWhen } from "./ui";
 
 // Module-level attachment blob cache -- survives across email navigations.
 //
@@ -1175,7 +1175,7 @@ export default function EmailDetail({
       {isTracked && (
         <p className="flex items-center gap-1.5">
           <Glyph state="info" />
-          Tabellar reminds you if nobody replies.
+          Follow-up if nobody replies
           <button className="link" onClick={() => setView("followups")}>
             Open in Follow-ups
           </button>
@@ -1192,7 +1192,6 @@ export default function EmailDetail({
   const outcomes = (mail?.byEmail.get(email.id) || []).filter((o: any) => o.state !== "info" || o.title);
   const doneBlock = outcomes.length > 0 && (
     <div className="mt-4">
-      <p className="label mb-0.5">What Tabellar did</p>
       {outcomes.map((o: any) => (
         <div key={o.key} className="grid grid-cols-[22px_1fr_auto] items-start gap-x-1 border-b border-line-soft py-2 last:border-0">
           <Glyph state={o.state} className="mt-px" />
@@ -1469,7 +1468,7 @@ export default function EmailDetail({
                 {extractingTodos ? "Looking for todos" : "Look for todos"}
               </button>
               <button role="menuitem" className="pop-item disabled:opacity-45" disabled={rethinking} onClick={() => (setMenu(""), handleRethink())}>
-                Read it again with Tabellar
+                Read it again
               </button>
             </div>
           )}
@@ -1490,7 +1489,7 @@ export default function EmailDetail({
         </div>
         {needsReply && (
           <button className="btn btn-pri ml-1.5" onClick={reply}>
-            Reply <Kbd>R</Kbd>
+            Reply
           </button>
         )}
       </header>

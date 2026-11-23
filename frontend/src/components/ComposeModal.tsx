@@ -4,7 +4,6 @@ import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
 import { EmailField, useContacts } from "./EmailAutocomplete";
 import DateTimePicker from "./DateTimePicker";
-import { Kbd } from "./ui";
 
 // Gmail rejects messages over 25 MB once encoded. Attachments go out base64
 // encoded (~4 bytes per 3 bytes of input), so cap the raw total below that to
@@ -1024,7 +1023,7 @@ export default function ComposeModal({
 
   // What the window says while Tabellar is writing.
   const busy = generatingDraft
-    ? "Tabellar is writing a draft. A local model can take a moment."
+    ? "Writing a draft"
     : rephrasingTone
       ? `Rewriting to sound ${TONES.find((t) => t.id === rephrasingTone)?.label.toLowerCase()}.`
       : refining
@@ -1187,7 +1186,7 @@ export default function ComposeModal({
             setBody(e.target.value);
             if (aiGenerated) setAiGenerated(false);
           }}
-          placeholder="Write your message. Or note what you want to say, then choose Rewrite and Draft with Tabellar."
+          placeholder="Write your message"
           rows={showMeetingPanel ? 6 : 10}
           className="block w-full resize-none bg-transparent py-3 text-sm leading-[1.6] text-ink outline-none"
         />
@@ -1223,7 +1222,7 @@ export default function ComposeModal({
             />
             <div className="mt-2 flex items-center gap-2">
               <button className="btn btn-sm" onClick={refineWithFeedback} disabled={!refineFeedback.trim() || !body}>
-                Apply <Kbd>⌘↵</Kbd>
+                Apply
               </button>
               <button
                 className="btn btn-sm btn-plain"
@@ -1234,14 +1233,14 @@ export default function ComposeModal({
               >
                 Cancel
               </button>
-              <span className="text-xs text-ink3">Tabellar remembers this for later drafts.</span>
+              <span className="text-xs text-ink3">Kept for later drafts</span>
             </div>
           </div>
         )}
 
         {!busy && !showRefinePanel && aiGenerated && (
           <p className="pb-2.5 text-xs text-ink3">
-            Drafted by Tabellar. Read it before you send.{" "}
+            Drafted for you{" "}
             <button className="link" onClick={() => setShowRefinePanel(true)}>
               Ask for changes
             </button>
@@ -1273,7 +1272,7 @@ export default function ComposeModal({
 
       <div ref={footerRef} className="flex flex-none flex-wrap items-center gap-2 border-t border-line px-3 py-2.5">
         <button className="btn btn-pri" onClick={() => handleSend()} disabled={!canSend}>
-          {sending ? "Sending" : scheduleAt ? "Schedule" : "Send"} <Kbd>⌘↵</Kbd>
+          {sending ? "Sending" : scheduleAt ? "Schedule" : "Send"}
         </button>
 
         <div className="relative">
@@ -1342,7 +1341,7 @@ export default function ComposeModal({
                   generateDraft();
                 }}
               >
-                Draft with Tabellar
+                Draft it
               </button>
               <div className="mx-2 my-1 border-t border-line-soft" />
               <p className="label px-2 py-1">Change the tone</p>

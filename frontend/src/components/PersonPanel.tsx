@@ -221,9 +221,7 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
   if (!insights) {
     return (
       <aside className={pane} aria-label="About the sender">
-        <Empty icon="person_off" title="Nothing known about this sender">
-          Tabellar could not read what it has on {senderEmail || "this address"}. Close this panel and open it again to retry.
-        </Empty>
+        <Empty icon="person_off" title="Could not load this sender" />
       </aside>
     );
   }
@@ -320,7 +318,7 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
           id="person-notes"
           value={notes}
           onChange={(e) => handleNotesChange(e.target.value)}
-          placeholder="Private notes about this person. Tabellar uses them in the briefing and when you ask about them."
+          placeholder="Private notes"
           rows={4}
           className="input resize-none"
         />

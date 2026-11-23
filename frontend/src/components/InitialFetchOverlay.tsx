@@ -10,7 +10,6 @@ export default function InitialFetchOverlay({ phaseIndex }: { phaseIndex: number
     <div className="fixed inset-y-0 left-0 right-0 z-30 grid place-items-center bg-canvas/80 p-4 lg:left-56">
       <div className="w-full max-w-[400px] rounded-[12px] bg-raised px-5 pb-4 pt-[18px] shadow-pop" role="status" aria-live="polite">
         <h2 className="text-[15px] font-[650] tracking-[-0.01em] text-ink">Getting your mail ready</h2>
-        <p className="mt-1 text-xs leading-normal text-ink2">The newest mail first. The rest is read in the background.</p>
         <ol className="mt-3 border-t border-line-soft pt-2">
           {PHASES.map((label, i) => {
             const done = i < phaseIndex;

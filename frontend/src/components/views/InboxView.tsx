@@ -9,7 +9,7 @@ import { useApp } from "../AppShell";
 import EmailDetail from "../EmailDetail";
 import InitialFetchOverlay from "../InitialFetchOverlay";
 import { Questions } from "../Profile";
-import { Countdown, Empty, Glyph, KeyHints, Kbd, Menu, Seg, SkeletonRows, Tick, ViewBar, VirtualList, dayLabel, shortWhen, type MailState } from "../ui";
+import { Countdown, Empty, Glyph, Menu, Seg, SkeletonRows, Tick, ViewBar, VirtualList, dayLabel, shortWhen, type MailState } from "../ui";
 
 // The inbox: every email on one quiet line that ends in what Tabellar did
 // with it. Only mail that needs the user is set in strong type and wax red.
@@ -33,10 +33,10 @@ type Email = {
 };
 
 type Thread = { key: string; latest: Email; ids: string[]; count: number; outcomes: Outcome[]; state: MailState; text: string; sendAt?: string };
-type Head = { head: true; key: string; name: string; note: string; count: number; need: number; going: number };
+type Head = { head: true; key: string; name: string; fold?: boolean };
 type Item = Head | Thread;
-type Filter = "all" | "need" | "going" | "handled" | "filed";
-type Group = "day" | "sender" | "outcome";
+type Filter = "need" | "all";
+type Group = "priority" | "day" | "sender";
 
 const CHUNK = 300;
 // Narrow windows drop the subject column; the status stays.
@@ -44,14 +44,29 @@ const COLUMNS = "!grid grid-cols-[26px_minmax(0,1fr)_minmax(0,auto)_44px] md:gri
 const SELECT =
   "id, user_id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, snippet, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed(*)";
 const CATEGORY: Record<string, string> = { important: "Important", "action-required": "Action required", promotions: "Promotions", updates: "Updates" };
-const OUTCOME_GROUPS: [MailState, string, string][] = [
-  ["need", "Needs you", "Waiting on a decision from you"],
-  ["going", "Going out", "Replies Autopilot is about to send"],
-  ["failed", "Could not finish", "Something went wrong"],
-  ["held", "Held", "Only labelled, nothing else was done"],
-  ["done", "Handled", "Tabellar took care of it"],
-  ["filed", "Filed", "Sorted, nothing to do"],
+// Priority grouping: what waits on the user, then mail from people, then
+// updates, then promotions (folded until opened).
+const PRIORITY: [string, string][] = [
+  ["need", "Needs you"],
+  ["people", "People"],
+  ["updates", "Updates"],
+  ["promotions", "Promotions"],
 ];
+
+function priorityOf(t: Thread): string {
+  if (t.state === "need" || t.state === "going" || t.state === "failed") return "need";
+  const cat = t.latest.email_processed?.category;
+  return cat === "updates" || cat === "promotions" ? cat : "people";
+}
+
+function readFolded(): Set<string> {
+  try {
+    const saved = localStorage.getItem("tabellar_inbox_folded");
+    return new Set(saved ? (JSON.parse(saved) as string[]) : ["promotions"]);
+  } catch {
+    return new Set(["promotions"]);
+  }
+}
 
 function senderName(e: Email): string {
   return (e.sender || e.sender_email || "Unknown").replace(/<.*>/, "").replace(/"/g, "").trim() || e.sender_email;
@@ -63,10 +78,13 @@ export default function InboxView() {
   const [emails, setEmails] = useState<Email[]>(() => getViewCache("inbox")?.emails ?? []);
   const [loading, setLoading] = useState(() => !getViewCache("inbox"));
   const [hasMore, setHasMore] = useState(false);
-  const [total, setTotal] = useState<number | null>(null);
   const [labels, setLabels] = useState<Record<string, string>>({});
-  const [filter, setFilter] = useState<Filter>("all");
-  const [group, setGroup] = useState<Group>(() => (localStorage.getItem("tabellar_inbox_group") as Group) || "day");
+  const [filter, setFilter] = useState<Filter>(() => (localStorage.getItem("tabellar_inbox_filter") === "need" ? "need" : "all"));
+  const [group, setGroup] = useState<Group>(() => {
+    const g = localStorage.getItem("tabellar_inbox_group");
+    return g === "day" || g === "sender" ? g : "priority";
+  });
+  const [folded, setFolded] = useState<Set<string>>(readFolded);
   const [details, setDetails] = useState(() => localStorage.getItem("tabellar_inbox_details") !== "off");
   const [cursorKey, setCursorKey] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -136,7 +154,9 @@ export default function InboxView() {
   useEffect(() => {
     const have = new Set(emails.map((e) => e.id));
     const ids = [...mail.byEmail].filter(([id, list]) => !have.has(id) && ["need", "going", "held", "failed"].includes(list[0]?.state)).map(([id]) => id);
-    if (!ids.length || search) return setAttention([]);
+    const q = parseSearch(search);
+    const stateOnly = !!q.state && !q.text && Object.keys(q).filter((k) => k !== "text" && k !== "state").length === 0;
+    if (!ids.length || (search && !stateOnly)) return setAttention([]);
     let live = true;
     (async () => {
       const found: Email[] = [];
@@ -158,13 +178,6 @@ export default function InboxView() {
   }, [load, liveChanges.emails, liveChanges.email_processed]);
 
   useEffect(() => {
-    supabase
-      .from("emails")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .eq("is_archived", false)
-      .not("label_ids", "cs", '{"SENT"}')
-      .then(({ count }: { count: number | null }) => setTotal(count));
     supabase
       .from("categories")
       .select("slug, display_name")
@@ -200,46 +213,68 @@ export default function InboxView() {
     return list;
   }, [emails, attention, mail.byEmail, mail.engine?.model, labels]);
 
-  const counts = useMemo(() => ({ need: threads.filter((t) => t.state === "need").length, going: threads.filter((t) => t.state === "going").length }), [threads]);
+  const counts = useMemo(() => ({ need: threads.filter((t) => t.state === "need").length }), [threads]);
 
   const items = useMemo(() => {
     // Older mail fetched only because it needs attention stays out of the
     // plain listing until scrolling reaches it.
     const oldest = hasMore && emails.length ? emails[emails.length - 1].received_at : "";
-    const shown = threads.filter((t) =>
-      (filter === "all" || filter === "filed") && t.latest.received_at < oldest ? false : filter === "all" ? true : filter === "need" ? t.state === "need" : filter === "going" ? t.state === "going" : filter === "filed" ? t.state === "filed" : t.state === "done" || t.state === "held" || t.state === "failed",
-    );
+    const state = search ? parseSearch(search).state : undefined;
+    const shown = threads.filter((t) => {
+      if (filter === "need" && t.state !== "need") return false;
+      if (state === "need" && t.state !== "need") return false;
+      if (state === "going" && t.state !== "going") return false;
+      if (state === "filed" && t.state !== "filed") return false;
+      if (state === "handled" && t.state !== "done" && t.state !== "held" && t.state !== "failed") return false;
+      if (filter === "need" || state === "need" || state === "going" || state === "handled") return true;
+      if (group === "priority" && priorityOf(t) === "need") return true;
+      return !(oldest && t.latest.received_at < oldest);
+    });
     const out: Item[] = [];
-    const add = (key: string, name: string, note: string, list: Thread[]) => {
+    const add = (key: string, name: string, list: Thread[], fold = false) => {
       if (!list.length) return;
-      out.push({ head: true, key: `head:${key}`, name, note, count: list.reduce((n, t) => n + t.count, 0), need: list.filter((t) => t.state === "need").length, going: list.filter((t) => t.state === "going").length });
-      out.push(...list);
+      out.push({ head: true, key: `head:${key}`, name, fold });
+      if (!(fold && folded.has(key))) out.push(...list);
     };
-    if (group === "outcome") {
-      for (const [state, name, note] of OUTCOME_GROUPS) add(state, name, note, shown.filter((t) => t.state === state));
+    if (group === "priority") {
+      for (const [key, name] of PRIORITY) add(key, name, shown.filter((t) => priorityOf(t) === key), key !== "need");
     } else if (group === "sender") {
       const by = new Map<string, Thread[]>();
       for (const t of shown) {
         const k = t.latest.sender_email || senderName(t.latest);
         by.set(k, [...(by.get(k) || []), t]);
       }
-      for (const [k, list] of by) add(k, senderName(list[0].latest), k, list);
+      for (const [k, list] of by) add(k, senderName(list[0].latest), list);
     } else {
       let run: Thread[] = [];
-      let day = { name: "", date: "", key: "" };
+      let day = { head: "", key: "" };
       for (const t of shown) {
         const d = dayLabel(t.latest.received_at);
         if (d.key !== day.key) {
-          add(day.key, day.name, day.date, run);
+          add(day.key, day.head, run);
           run = [];
           day = d;
         }
         run.push(t);
       }
-      add(day.key, day.name, day.date, run);
+      add(day.key, day.head, run);
     }
     return out;
-  }, [threads, filter, group, hasMore, emails]);
+  }, [threads, filter, group, folded, hasMore, emails, search]);
+
+  const fold = (key: string) =>
+    setFolded((prev) => {
+      const next = new Set(prev);
+      const k = key.replace(/^head:/, "");
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      try {
+        localStorage.setItem("tabellar_inbox_folded", JSON.stringify([...next]));
+      } catch {
+        // a remembered fold is a convenience
+      }
+      return next;
+    });
 
   const rows = useMemo(() => items.filter((i): i is Thread => !("head" in i)), [items]);
   const cursor = rows.find((t) => t.key === cursorKey) || rows[0] || null;
@@ -409,7 +444,7 @@ export default function InboxView() {
   const waiting = selected.flatMap((t) => t.outcomes).filter((o) => o.act?.kind === "approve").length;
 
   const renderItem = (item: Item) => {
-    if ("head" in item) return <GroupHead key={item.key} head={item} />;
+    if ("head" in item) return <GroupHead key={item.key} head={item} folded={folded.has(item.key.replace(/^head:/, ""))} onFold={fold} />;
     const t = item;
     const e = t.latest;
     const isCursor = cursor === t;
@@ -469,17 +504,17 @@ export default function InboxView() {
           <b className="bar-title mr-1.5">{picked.size} selected</b>
           {waiting > 0 && (
             <button className="btn btn-pri" onClick={() => approve(selected)}>
-              Approve {waiting} <Kbd>A</Kbd>
+              Approve {waiting}
             </button>
           )}
           <button className="btn" onClick={() => archive(selected)}>
-            Archive <Kbd>E</Kbd>
+            Archive
           </button>
           <button className="btn" onClick={() => markRead(selected, true)}>
             Mark read
           </button>
           <button className="btn btn-plain" onClick={() => setPicked(new Set())}>
-            Clear <Kbd>esc</Kbd>
+            Clear
           </button>
         </header>
       ) : (
@@ -493,9 +528,9 @@ export default function InboxView() {
                 value={group}
                 onChange={(g) => (localStorage.setItem("tabellar_inbox_group", g), setGroup(g))}
                 options={[
+                  { id: "priority", label: "Priority" },
                   { id: "day", label: "Day" },
                   { id: "sender", label: "Sender" },
-                  { id: "outcome", label: "Outcome" },
                 ]}
               />
               <button className="iconbtn" title="Details (Space)" aria-label="Details" aria-pressed={details} onClick={() => (localStorage.setItem("tabellar_inbox_details", details ? "off" : "on"), setDetails(!details))}>
@@ -506,13 +541,10 @@ export default function InboxView() {
         >
           <Seg
             value={filter}
-            onChange={setFilter}
+            onChange={(f) => (localStorage.setItem("tabellar_inbox_filter", f), setFilter(f))}
             options={[
-              { id: "all", label: "All" },
               { id: "need", label: "Needs you", count: counts.need, need: true },
-              { id: "going", label: "Going out", count: counts.going },
-              { id: "handled", label: "Handled" },
-              { id: "filed", label: "Filed" },
+              { id: "all", label: "All" },
             ]}
           />
         </ViewBar>
@@ -535,28 +567,22 @@ export default function InboxView() {
               <SkeletonRows count={22} />
             </div>
           ) : noAccountsConnected && !emails.length ? (
-            <Empty icon="link_off" title="No Gmail account is connected">
-              Connect one in Settings, under General, and your mail appears here.{" "}
+            <Empty icon="link_off" title="No Gmail account connected">
               <button className="link" onClick={() => setView("settings")}>
-                Open Settings
+                Connect one in Settings
               </button>
             </Empty>
-          ) : !rows.length ? (
+          ) : !rows.length && !items.length ? (
             search ? (
-              <Empty icon="search" title="No mail matches that search">
-                Try fewer words, or an operator such as from:, subject:, is:unread or has:attachment.
-              </Empty>
-            ) : filter !== "all" ? (
-              <Empty icon="inbox" title={filter === "need" ? "Nothing needs you" : filter === "going" ? "Nothing is going out" : "Nothing here"}>
-                {filter === "need" ? "When a reply is ready to send or a proposal waits for approval, it shows here in red." : "Mail in this state will appear here."}{" "}
-                <button className="link" onClick={() => setFilter("all")}>
+              <Empty icon="search" title="Nothing matches that search" />
+            ) : filter === "need" ? (
+              <Empty icon="inbox" title="Nothing needs you">
+                <button className="link" onClick={() => (localStorage.setItem("tabellar_inbox_filter", "all"), setFilter("all"))}>
                   Show all mail
                 </button>
               </Empty>
             ) : (
-              <Empty icon="inbox" title="Your inbox is empty">
-                New mail arrives here within two minutes, already sorted, with what Tabellar did on the right of each line.
-              </Empty>
+              <Empty icon="inbox" title="Inbox is empty" />
             )
           ) : (
             <VirtualList
@@ -567,7 +593,7 @@ export default function InboxView() {
               onEnd={hasMore ? () => load(true) : undefined}
               sticky={(first) => {
                 const h = firstHead(first);
-                return h ? <GroupHead head={h} /> : null;
+                return h ? <GroupHead head={h} folded={folded.has(h.key.replace(/^head:/, ""))} onFold={fold} /> : null;
               }}
             />
           )}
@@ -575,19 +601,6 @@ export default function InboxView() {
         </div>
         {details && cursor && rows.length > 0 && <Details thread={cursor} primary={primary(cursor)} onOpen={() => open(cursor)} onArchive={() => archive([cursor])} />}
       </div>
-      <KeyHints
-        left={total === null ? "" : `${total.toLocaleString()} in Inbox${hasMore ? `, ${emails.length.toLocaleString()} loaded` : ""}`}
-        keys={[
-          ["J K", "Move"],
-          ["X", "Select"],
-          ["Space", "Details"],
-          ["↵", "Act"],
-          ["A", "Approve"],
-          ["E", "Archive"],
-          ["Z", "Undo"],
-          ["?", "All keys"],
-        ]}
-      />
     </>
   );
 }
@@ -596,21 +609,19 @@ function rank(s: MailState): number {
   return { going: 0, need: 1, failed: 2, held: 3, done: 4, info: 5, filed: 6 }[s];
 }
 
-function GroupHead({ head }: { head: Head }) {
+function GroupHead({ head, folded, onFold }: { head: Head; folded: boolean; onFold: (key: string) => void }) {
+  if (!head.fold)
+    return (
+      <div className="day !static">
+        <b>{head.name}</b>
+      </div>
+    );
   return (
     <div className="day !static">
-      <b>{head.name}</b>
-      <span className="truncate">{head.note}</span>
-      <span className="flex-1" />
-      <span className="whitespace-nowrap">
-        {head.count.toLocaleString()} {head.count === 1 ? "email" : "emails"}
-        {head.need > 0 && (
-          <>
-            , <b className="count-need">{head.need} need you</b>
-          </>
-        )}
-        {head.going > 0 && `, ${head.going} going out`}
-      </span>
+      <button className="flex items-center gap-1 text-ink3 hover:text-ink" aria-expanded={!folded} onClick={() => onFold(head.key)}>
+        <b className="font-[650] text-ink">{head.name}</b>
+        <Icon name={folded ? "chevron_right" : "expand_more"} size={13} />
+      </button>
     </div>
   );
 }
@@ -695,9 +706,9 @@ function Details({ thread, primary, onOpen, onArchive }: { thread: Thread; prima
         {e.email_processed?.summary && <p className="mt-1.5 leading-normal text-ink2">{e.email_processed.summary}</p>}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
-        <h3 className="label mb-1 mt-4">What Tabellar did</h3>
-        {thread.outcomes.length ? (
-          thread.outcomes.map((o) => (
+        {thread.outcomes.length > 0 && (
+          <div className="mt-2">
+          {thread.outcomes.map((o) => (
             <div key={o.key} className="grid grid-cols-[22px_1fr_auto] items-start gap-x-1 border-b border-line-soft py-[9px] last:border-0">
               <Glyph state={o.state} className="mt-px" />
               <div className="min-w-0">
@@ -711,9 +722,8 @@ function Details({ thread, primary, onOpen, onArchive }: { thread: Thread; prima
               </div>
               <div className="pt-px">{act(o)}</div>
             </div>
-          ))
-        ) : (
-          <p className="py-2 text-[12.5px] leading-snug text-ink2">Sorted as {thread.text || "mail"} and left alone. There was nothing to reply to, add or schedule.</p>
+          ))}
+          </div>
         )}
         <h3 className="label mb-1 mt-4">The email</h3>
         {body === null ? (
@@ -735,10 +745,10 @@ function Details({ thread, primary, onOpen, onArchive }: { thread: Thread; prima
       </div>
       <div className="flex flex-none items-center gap-2 border-t border-line py-2.5 pl-5 pr-3.5">
         <button className="btn btn-pri" onClick={primary.run}>
-          {primary.label} <Kbd>↵</Kbd>
+          {primary.label}
         </button>
         <button className="btn" onClick={onArchive}>
-          Archive <Kbd>E</Kbd>
+          Archive
         </button>
         <span className="flex-1" />
         {primary.label !== "Open email" && (

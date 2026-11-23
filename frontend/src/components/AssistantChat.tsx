@@ -242,7 +242,7 @@ export default function AssistantChat({ className, visible }: { className?: stri
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
         {messages.length === 0 && !loading ? (
           <div>
-            <p className="leading-normal text-ink2">Ask about your mail, or tell Tabellar to add a todo, save a draft or set up a meeting.</p>
+            <p className="leading-normal text-ink2">Ask about your mail, or ask for a todo, a draft or a meeting.</p>
             <p className="label mb-1 mt-5">For example</p>
             <div className="-mx-2 flex flex-col">
               {STARTERS.map((q) => (

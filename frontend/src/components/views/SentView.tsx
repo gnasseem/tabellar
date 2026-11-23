@@ -5,7 +5,7 @@ import { createClient } from "@/lib/db";
 import { measureEmailIframeBodyHeight } from "@/lib/emailIframe";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import { Empty, Glyph, KeyHints, SkeletonRows, ViewBar, VirtualList, dayLabel, shortWhen } from "../ui";
+import { Empty, Glyph, SkeletonRows, ViewBar, VirtualList, dayLabel, shortWhen } from "../ui";
 
 // Sent: everything that went out, one line each, grouped by day. A line ends
 // in whether a follow-up is waiting on it. Opening one shows it on the right.
@@ -23,7 +23,7 @@ type Sent = {
 };
 type Body = { body_text: string | null; body_html: string | null; attachments: { filename: string; mime_type: string; size: number; attachment_id: string }[] | null };
 type FollowUp = { thread_id: string; status: string; remind_at: string; snooze_until: string | null };
-type Head = { head: true; key: string; name: string; note: string; count: number };
+type Head = { head: true; key: string; name: string };
 type Item = Head | Sent;
 
 const CHUNK = 300;
@@ -121,7 +121,6 @@ export default function SentView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
-  const [total, setTotal] = useState<number | null>(null);
   const [followUps, setFollowUps] = useState<Map<string, FollowUp>>(new Map());
   const [bodies, setBodies] = useState<Record<string, Body>>({});
   const [cursorId, setCursorId] = useState<string | null>(null);
@@ -165,12 +164,6 @@ export default function SentView() {
 
   useEffect(() => {
     supabase
-      .from("emails")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .contains("label_ids", ["SENT"])
-      .then(({ count }: { count: number | null }) => setTotal(count));
-    supabase
       .from("follow_up_reminders")
       .select("thread_id, status, remind_at, snooze_until")
       .eq("user_id", user.id)
@@ -189,8 +182,8 @@ export default function SentView() {
   const items = useMemo(() => {
     const out: Item[] = [];
     let run: Sent[] = [];
-    let day = { name: "", date: "", key: "" };
-    const flush = () => run.length && out.push({ head: true, key: `head:${day.key}`, name: day.name, note: day.date, count: run.length }, ...run);
+    let day = { head: "", key: "" };
+    const flush = () => run.length && out.push({ head: true, key: `head:${day.key}`, name: day.head }, ...run);
     for (const e of emails) {
       const d = dayLabel(e.received_at);
       if (d.key !== day.key) {
@@ -305,13 +298,9 @@ export default function SentView() {
             </p>
           ) : !rows.length ? (
             search ? (
-              <Empty icon="search" title="No sent mail matches that search">
-                Try the name or address of the person you wrote to, or a word from the subject.
-              </Empty>
+              <Empty icon="search" title="Nothing matches that search" />
             ) : (
-              <Empty icon="send" title="Nothing has been sent yet">
-                Mail you send, from here or from Gmail, and the replies Autopilot sends for you are listed here, newest first.
-              </Empty>
+              <Empty icon="send" title="Nothing sent yet" />
             )
           ) : (
             <VirtualList
@@ -388,14 +377,6 @@ export default function SentView() {
           </article>
         )}
       </div>
-      <KeyHints
-        left={total === null ? "" : `${total.toLocaleString()} sent${hasMore ? `, ${emails.length.toLocaleString()} loaded` : ""}`}
-        keys={[
-          ["J K", "Move"],
-          ["↵", "Open"],
-          ["esc", "Close"],
-        ]}
-      />
     </>
   );
 }
@@ -404,9 +385,7 @@ function GroupHead({ head }: { head: Head }) {
   return (
     <div className="day !static">
       <b>{head.name}</b>
-      <span className="truncate">{head.note}</span>
       <span className="flex-1" />
-      <span className="whitespace-nowrap">{head.count.toLocaleString()} sent</span>
     </div>
   );
 }

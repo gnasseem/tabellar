@@ -82,7 +82,6 @@ spacing:
   control-height: "28px"
   group-header: "34px"
   bar-height: "52px"
-  foot-height: "30px"
   sidebar-width: "224px"
   details-width: "404px"
 components:
@@ -135,7 +134,7 @@ components:
     rounded: "{rounded.control}"
     padding: "0 6px 0 8px"
     height: "28px"
-    width: "248px"
+    width: "380px"
   segment:
     textColor: "{colors.ink2}"
     rounded: "{rounded.row}"
@@ -204,7 +203,7 @@ components:
 
 The window is a docket, not a reading room. Every email is one quiet line that ends in what Tabellar did with it, and the only colour on a normal screen is the sealing-wax red that marks a decision waiting for the user, the primary action, and a reply counting down to send. Everything else is warm grey paper and near-black ink in graded steps, set in the system face at 13px with tabular numerals, so the window sits among native Mac productivity apps without copying one.
 
-Density is high and calm. Rows are 32px, the top bar 52px, the key-hint footer 30px; hierarchy comes from ink weight and ink step, never from boxes, cards or coloured pills. The identity lives in two places only: the mark (three tablets, one sealed in wax, the channel between them forming a T) with its Ysabeau Office wordmark, and the state glyphs drawn as the seal itself. Light and dark are both first-class and share every token name.
+Density is high and calm. Rows are 32px and the top bar 52px, with no footer; hierarchy comes from ink weight and ink step, never from boxes, cards or coloured pills. The identity lives in two places only: the mark (three tablets, one sealed in wax, the channel between them forming a T) with its Ysabeau Office wordmark, and the state glyphs drawn as the seal itself. Light and dark are both first-class and share every token name.
 
 The rejected direction is on record: a dashboard home of counts and cards, stat tiles, metaphor costumes, coloured pills on every row, and any trace of the Gmail-styled RuneMail look.
 
@@ -214,7 +213,8 @@ The rejected direction is on record: a dashboard home of counts and cards, stat 
 - One accent, wax red, reserved for "needs you", the primary action and the outgoing countdown.
 - Amber only for held mail and cautions; red-pink danger only for failure.
 - Selection is a neutral grey fill on a 6px rounded row, never an accent tint.
-- Full keyboard triage, with key hints always shown in the footer.
+- Full keyboard triage; the keys are listed only in the "?" sheet, never on screen.
+- No sentence explains the product or speaks for Tabellar: titles, names and one-line empty states only.
 
 ## Colors
 
@@ -261,7 +261,7 @@ A warm, almost colourless paper-and-ink palette with one sealing-wax red, define
 - **Title** (650, 15px, tracking -0.01em): the view title in the top bar, the subject in the details panel, empty-state headings.
 - **Body** (400, 13px, line-height 1.4, tracking -0.003em, tabular numerals): every row, control, menu item and panel paragraph. Panel prose loosens to line-height 1.625.
 - **Status** (12.5px, 400 to 600): the status column at the end of a row and panel notes; weight rises with urgency (600 for needs you, 500 for going out, held, failed).
-- **Label** (600, 12px, ink 3, sentence case): section labels such as "From your mail", "Going out", "What Tabellar did". Plain 12px ink 3 carries meta lines and counts.
+- **Label** (600, 12px, ink 3, sentence case): section labels such as "Going out", "Level", "The email". Plain 12px ink 3 carries meta lines.
 - **Key** (500, 10.5px): keyboard hints in the kbd chip.
 
 ### Named Rules
@@ -273,11 +273,11 @@ A warm, almost colourless paper-and-ink palette with one sealing-wax red, define
 
 ## Layout
 
-A three-column window: a 224px sidebar, a flexible list, and a 404px details panel on the right, each separated by a single hairline. Every view stacks the same three bands: a 52px bar (title, filter segments, a flexible gap, search, menus), the scrolling content, and a 30px footer with a count on the left and key hints on the right.
+A three-column window: a 224px sidebar, a flexible list, and a 404px details panel on the right, each separated by a single hairline. Every view stacks two bands: one 52px bar (title, two or three filter segments, a flexible gap, one wide search field, at most two icons or menus) and the scrolling content. There is no footer and no second bar; a selection replaces the bar with its own actions.
 
-Content is inset 20px from the left edge of the main column (bar, group headers, footer, panel); list rows sit 8px in from each side so their rounded selection floats inside the column. The inbox row is a fixed grid: 26px glyph, 164px sender, flexible subject and summary, 172px status, 46px time. Sticky group headers are 34px and bottom-aligned (Today, Yesterday, Ready to send) with counts flushed right. Lists are windowed, so row heights are fixed and exact (32px one-line, about 58px two-line).
+Content is inset 20px from the left edge of the main column (bar, group headers, panel); list rows sit 8px in from each side so their rounded selection floats inside the column. The inbox row is a fixed grid: 26px glyph, 164px sender, flexible subject and summary, 172px status, 46px time. Sticky group headers are 34px and bottom-aligned, and show the name only (Today, Needs you, Going out): no notes, no counts. Lists are windowed, so row heights are fixed and exact (32px one-line, about 58px two-line).
 
-Rhythm is 2, 4, 8, 12 and 20px; controls are 24, 26 or 28px tall. Below 768px the filter segments collapse into a menu, the search becomes an icon button, the details panel and footer key hints hide, and the inbox grid drops to glyph, sender, status and time. Below 1024px the sidebar becomes a drawer over a 30% black scrim, sliding in over 200ms.
+Rhythm is 2, 4, 8, 12 and 20px; controls are 24, 26 or 28px tall. Below 768px the filter segments collapse into a menu, the search becomes an icon button, the details panel hides, and the inbox grid drops to glyph, sender, status and time. Below 1024px the sidebar becomes a drawer over a 30% black scrim, sliding in over 200ms.
 
 ## Elevation & Depth
 
@@ -300,22 +300,22 @@ Soft, small, consistent corners on a square-edged window. Rows, icon buttons, se
 
 ### Buttons
 Quiet, native and compact.
-- **Shape:** gently rounded (7px), 28px tall, 13px medium text, 6px gap to an icon or key hint.
+- **Shape:** gently rounded (7px), 28px tall, 13px medium text, 6px gap to an icon.
 - **Standard:** raised fill with the control shadow; hover moves to the hover tone over 150ms.
-- **Primary:** wax fill, on-wax text, its own wax shadow; hover deepens to wax ink. One per region, and it carries its key hint inside at 78% opacity.
+- **Primary:** wax fill, on-wax text, its own wax shadow; hover deepens to wax ink. One per region.
 - **Plain:** transparent, ink 2, no shadow, 8px padding; hover fills and darkens to ink.
 - **Small:** 24px tall, 6px corners, 12px text. **Danger:** standard with danger text.
 - **Icon button:** 28px square, 6px corners, ink 2; hover fills with the selected tone.
 - **Disabled:** 45% opacity, no pointer events.
 
 ### Segments
-- **Style:** a row of 26px text buttons, 2px apart, 6px corners, ink 2, with a 12px ink 3 count after the label.
-- **State:** pressed fills with the selected tone and goes to medium ink; a count that needs the user turns wax ink and semibold.
+- **Style:** a row of 26px text buttons, 2px apart, 6px corners, ink 2. Two or three per bar. Only a segment whose items wait on the user carries a count, in wax ink and semibold.
+- **State:** pressed fills with the selected tone and goes to medium ink.
 
 ### Rows
 - **One-line row (32px):** 6px corners, inset 8px; the seal glyph in the first column swaps to a tick on hover or selection. Hover tone on hover, selected tone for the keyboard cursor.
 - **Two-line row:** 7px corners, 9px vertical padding, a soft hairline under it starting at 32px from the left, hidden next to a selected row.
-- **Group header:** 34px, sticky, paper fill, bold name in ink then a note and counts in ink 3.
+- **Group header:** 34px, sticky, paper fill, the bold name in ink and nothing else. A foldable group (Inbox Priority: People, Updates, Promotions) adds a 13px ink 3 chevron after the name; Promotions starts folded.
 
 ### Seal glyphs
 The state of a piece of mail, drawn as the seal in a 16px box: a filled wax dot (r 4) when it needs the user, a wax ring (r 3.4, 1.5 stroke) while a reply is going out, an ink 3 check when handled, an amber triangle when held, a danger triangle when failed, an ink 3 info ring for notes. Filed mail has no glyph.
@@ -323,30 +323,30 @@ The state of a piece of mail, drawn as the seal in a 16px box: a filled wax dot 
 ### Inputs / Fields
 - **Style:** field tone well, no border, 7px corners, 28px tall, 10px padding; placeholder in ink 3, caret in wax.
 - **Focus:** a 2px wax ring at 55% drawn as a shadow.
-- **Search:** the same well at 248px with a search icon and a "/" key chip, shrinking to an icon button on narrow screens.
+- **Search:** the same well at 380px with a search icon, shrinking with the bar and to an icon button on narrow screens. In the Inbox, `is:going`, `is:handled`, `is:filed` and `is:need` filter by what Tabellar made of the mail.
 
 ### Navigation
-- **Sidebar:** tray fill, hairline right edge, logo and compose button in a 52px head. Items are 28px, 6px corners, 16px icon in ink 3 then label in ink 2, count flushed right in 12px ink 3 (wax ink and semibold when it needs the user). Active item fills with the selected tone and goes to medium ink.
-- **Groups:** sentence-case labels (Inbox alone, then "From your mail", "Tabellar", "Mail").
-- **Foot:** "Going out" with each reply's recipient, countdown in wax ink and an underlined Cancel; then the engine row with a 7px state dot (run green, amber paused, danger failed), level menu, pause and settings, and a 12px line only when paused or when Gmail cannot be reached.
+- **Sidebar:** tray fill, hairline right edge, logo and compose button in a 52px head. Items are 28px, 6px corners, 16px icon in ink 3 then label in ink 2, count flushed right in 12px ink 3 (wax ink and semibold for the Inbox), shown only where something waits. Active item fills with the selected tone and goes to medium ink.
+- **Groups:** three, separated by 12px of space with no labels: Inbox, Replies, Todos, Meetings, Follow-ups; Brief, Ask; Sent, Scheduled, Labels, Newsletters.
+- **Foot:** "Going out" with each reply's recipient, countdown in wax ink and an underlined Cancel; then, under a hairline, the level row (7px state dot: run green, amber paused, danger failed; the level name opening the level control; pause at the right), a 12px danger line only when Gmail cannot be reached or the last check failed, and Settings as a nav item. History is inside Settings.
+- **Level control:** four 28px rows, a check column, the level name in a 68px column and one short line in ink 3: Observe, Sorts only; Suggest, Asks first; Assist, Drafts, todos, meetings on its own; Autopilot, Also sends replies. The same control sits in the sidebar's popover and in Settings; choosing Autopilot asks to confirm.
 
 ### Popovers and dialogs
 - **Popover:** raised fill, 10px corners, 4px padding, pop shadow; items are 28px, 6px corners, a check column for the chosen option, selected tone on hover.
 - **Dialog:** raised fill, 12px corners, 20px padding, pop shadow.
 
-### Key hints
-- **Kbd chip:** 10.5px medium ink 3 on paper, 1px hairline border, 4px corners, at least 17px wide. Inside a button it drops the chip and shows as 11px ink 3 text.
-- **Footer:** every list view ends in a 30px footer listing the keys that work there.
+### Keyboard shortcuts
+- **Sheet:** "?" opens a dialog listing every key, grouped by view, each in the kbd chip (10.5px medium ink 3 on paper, 1px hairline border, 4px corners, at least 17px wide). Keys are not shown anywhere else: no footer, no chips in buttons or the search field. A tooltip may name a key.
 
 ### Details panel
-404px, hairline left edge: sender, address and time, the subject as a title, a summary in ink 2, then "What Tabellar did" as a list of seal-glyph items each with a right-aligned Undo or Review link, then the email itself. Actions sit in a hairline-topped strip at the bottom, primary first.
+404px, hairline left edge: sender, address and time, the subject as a title, a summary in ink 2, then the outcomes as a list of seal-glyph items each with a right-aligned Undo or Review link, then the email itself. Actions sit in a hairline-topped strip at the bottom, primary first.
 
 ### Questions and "Not this"
-- **Question row:** one 32px row at the top of the Inbox list, an ink 3 info ring, "Tabellar has a question" in medium ink and a chevron. It opens in place: each question in ink, what Tabellar would do in 12.5px ink 3, then its answers as small buttons, the last ("Not now") plain. No wax: a question is asked, not demanded. Hidden when nothing is open.
+- **Question row:** one 32px row at the top of the Inbox list, an ink 3 info ring, "A question" (or "2 questions") in medium ink and a chevron. It opens in place: each question in ink, what Tabellar would do in 12.5px ink 3, then its answers as small buttons, the last ("Not now") plain. No wax: a question is asked, not demanded. Hidden when nothing is open.
 - **Not this menu:** a 28px "more" icon button at the end of a todo, proposed meeting, follow-up or newsletter row, shown on hover, on the cursor row and while open. Its popover holds "Not this" (for a newsletter, "Not a newsletter"), "Never for <sender>" and "Not interested in this topic", which turns into a field and Save in place.
 
 ### Empty and loading
-- **Empty:** centred column at most 380px wide, 22px ink 3 icon, 15px title, 13px ink 2 sentence with an inline link to the way out.
+- **Empty:** centred column at most 380px wide, 22px ink 3 icon, 15px title, and at most one line under it: a link to the way out. No explaining paragraph.
 - **Loading:** skeleton bars in the field tone at row height, pulsing to 45% over 1.4s. No spinners.
 
 ## Do's and Don'ts
@@ -356,7 +356,7 @@ The state of a piece of mail, drawn as the seal in a 16px box: a filled wax dot 
 - **Do** say state in words at the end of each row ("Reply ready, todo added", "Replying in 3:26") beside the seal glyph.
 - **Do** carry hierarchy with ink steps and weight 650, at one body size of 13px with tabular numerals.
 - **Do** use the neutral selected tone (sel) on 6px rounded rows for selection and the active nav item.
-- **Do** build views from the shared parts: bar, segments, rows, group header, footer with key hints, popover, inset, empty state.
+- **Do** build views from the shared parts: bar, segments, rows, group header, popover, inset, empty state.
 - **Do** keep icons to the bundled Lucide set at about 1.4px stroke, 16px in navigation and bars.
 - **Do** give every motion a reduced-motion fallback; colour transitions run 150ms.
 

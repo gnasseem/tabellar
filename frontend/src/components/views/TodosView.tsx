@@ -5,7 +5,7 @@ import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import EmailDetail from "../EmailDetail";
-import { Empty, KeyHints, Menu, Seg, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
+import { Empty, Menu, Seg, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
 import { NotThis, usePrefStops } from "../Profile";
 
 // Todos: what the user has to do, typed in by hand or pulled out of their mail
@@ -15,7 +15,7 @@ import { NotThis, usePrefStops } from "../Profile";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Todo = { id: string; text: string; is_completed: boolean; source: string; created_at: string; email_id?: string | null };
 type Suggestion = { key: string; emailId: string; task: string; subject: string; sender: string; receivedAt: string; category: string };
-type Head = { head: true; key: string; name: string; note: string; count: number };
+type Head = { head: true; key: string; name: string };
 type Row = { key: string; todo?: Todo; suggestion?: Suggestion };
 
 const CATEGORY_PRIORITY: Record<string, number> = { "action-required": 4, important: 3, updates: 2, promotions: 1 };
@@ -126,14 +126,13 @@ export default function TodosView() {
   const items = useMemo(() => {
     const out: (Head | Row)[] = [];
     if (filter === "open" && suggested.length) {
-      out.push({ head: true, key: "suggested", name: "Suggested by Tabellar", note: "From mail in the last 3 days", count: suggested.length });
+      out.push({ head: true, key: "suggested", name: "Suggested" });
       if (showSuggested) for (const s of allSuggested ? suggested : suggested.slice(0, SUGGESTED_SHOWN)) out.push({ key: s.key, suggestion: s });
     }
-    const groups = new Map<string, { name: string; note: string; list: Todo[] }>();
+    const groups = new Map<string, { name: string; list: Todo[] }>();
     for (const t of shown) {
       let key: string;
       let name: string;
-      let note = "";
       if (group === "sender") {
         const s = t.email_id ? sources.get(t.email_id) : undefined;
         name = s?.sender || (t.email_id || t.source !== "manual" ? "From your mail" : "Added by you");
@@ -141,21 +140,18 @@ export default function TodosView() {
       } else {
         const d = dayLabel(t.created_at);
         key = `d:${d.key}`;
-        name = d.name;
-        note = d.date;
+        name = d.head;
       }
-      const g = groups.get(key) || { name, note, list: [] };
+      const g = groups.get(key) || { name, list: [] };
       g.list.push(t);
       groups.set(key, g);
     }
-    for (const [key, g] of groups) out.push({ head: true, key, name: g.name, note: g.note, count: g.list.length }, ...g.list.map((t) => ({ key: t.id, todo: t })));
+    for (const [key, g] of groups) out.push({ head: true, key, name: g.name }, ...g.list.map((t) => ({ key: t.id, todo: t })));
     return out;
   }, [shown, suggested, showSuggested, allSuggested, filter, group, sources]);
 
   const rows = useMemo(() => items.filter((i): i is Row => !("head" in i)), [items]);
   const cursor = rows.find((r) => r.key === cursorKey) || rows[0] || null;
-  const openCount = todos.filter((t) => !t.is_completed).length;
-  const doneCount = todos.length - openCount;
 
   useEffect(() => {
     listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
@@ -330,7 +326,7 @@ export default function TodosView() {
           value={filter}
           onChange={setFilter}
           options={[
-            { id: "open", label: "Open", count: openCount },
+            { id: "open", label: "Open" },
             { id: "done", label: "Done" },
           ]}
         />
@@ -347,7 +343,7 @@ export default function TodosView() {
             <span className="grid w-[26px] flex-none place-items-center text-ink3">
               <Icon name="add" size={15} />
             </span>
-            <input ref={inputRef} className="input" value={newTodo} onChange={(e) => setNewTodo(e.target.value)} placeholder="Add a todo, then press Return" aria-label="Add a todo" />
+            <input ref={inputRef} className="input" value={newTodo} onChange={(e) => setNewTodo(e.target.value)} placeholder="Add a todo" aria-label="Add a todo" />
           </form>
         )}
         {loadError && (
@@ -364,17 +360,11 @@ export default function TodosView() {
           </div>
         ) : loadError && !todos.length ? null : !items.length ? (
           q ? (
-            <Empty icon="search" title="No todos match that search">
-              Try a word from the todo, or the name of the person whose email it came from.
-            </Empty>
+            <Empty icon="search" title="Nothing matches that search" />
           ) : filter === "done" ? (
-            <Empty icon="task_alt" title="Nothing is done yet">
-              Todos you tick off are kept here, so you can look back or untick one.
-            </Empty>
+            <Empty icon="task_alt" title="Nothing done yet" />
           ) : (
-            <Empty icon="checklist" title="No open todos">
-              When an email asks something of you, Tabellar adds it here with the email it came from. To add your own, type it in the field above.
-            </Empty>
+            <Empty icon="checklist" title="No open todos" />
           )
         ) : (
           items.map((item) => {
@@ -382,7 +372,6 @@ export default function TodosView() {
               return (
                 <div key={item.key} className="day">
                   <b>{item.name}</b>
-                  <span className="truncate">{item.note}</span>
                   <span className="flex-1" />
                   {item.key === "suggested" && (
                     <button
@@ -395,7 +384,6 @@ export default function TodosView() {
                       {showSuggested ? "Hide" : "Show"}
                     </button>
                   )}
-                  <span>{item.count}</span>
                 </div>
               );
             const isCursor = cursor?.key === item.key;
@@ -448,15 +436,6 @@ export default function TodosView() {
           })
         )}
       </div>
-      <KeyHints
-        left={loading ? "" : `${openCount.toLocaleString()} open, ${doneCount.toLocaleString()} done${suggested.length ? `, ${suggested.length} suggested` : ""}`}
-        keys={[
-          ["J K", "Move"],
-          ["Space", filter === "open" ? "Done" : "Reopen"],
-          ["N", "New"],
-          ["⌫", "Delete"],
-        ]}
-      />
     </>
   );
 }

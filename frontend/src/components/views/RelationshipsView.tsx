@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
-import { Empty, KeyHints, Menu, Seg, SkeletonRows, ViewBar, shortWhen } from "../ui";
+import { Empty, Menu, Seg, SkeletonRows, ViewBar, shortWhen } from "../ui";
 import KnowledgeView from "./KnowledgeView";
 
 // Knowledge, people: everyone Tabellar has seen mail from, how often and how
@@ -121,7 +121,7 @@ function People({ onFacts }: { onFacts: () => void }) {
           value="people"
           onChange={(v) => v === "facts" && onFacts()}
           options={[
-            { id: "people", label: "People", count: contacts.length },
+            { id: "people", label: "People" },
             { id: "facts", label: "Facts" },
           ]}
         />
@@ -133,11 +133,7 @@ function People({ onFacts }: { onFacts: () => void }) {
               <SkeletonRows />
             </div>
           ) : !filtered.length ? (
-            <Empty icon="group" title={contacts.length ? "Nobody matches" : "No people yet"}>
-              {contacts.length
-                ? "Try another name or address, or set Show back to Everyone."
-                : "Everyone who writes to you appears here once Tabellar has read their mail, with how often you hear from them and any notes you keep."}
-            </Empty>
+            <Empty icon="group" title={contacts.length ? "Nobody matches" : "No people yet"} />
           ) : (
             <>
               <div className={`${COLS} sticky top-0 z-[2] mx-2 h-[34px] items-end bg-canvas pb-[7px] pl-3 pr-3 text-xs text-ink3`}>
@@ -188,7 +184,7 @@ function People({ onFacts }: { onFacts: () => void }) {
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   rows={6}
-                  placeholder="Role, company, how you know them. Tabellar reads these when it drafts a reply to this person."
+                  placeholder="Role, company, how you know them"
                   className="input resize-none"
                 />
               </label>
@@ -205,7 +201,6 @@ function People({ onFacts }: { onFacts: () => void }) {
           </div>
         )}
       </div>
-      <KeyHints left={loading ? "" : filtered.length === contacts.length ? `${contacts.length} ${contacts.length === 1 ? "person" : "people"}` : `${filtered.length} of ${contacts.length} people`} keys={[]} />
     </>
   );
 }

@@ -3,7 +3,7 @@ import DOMPurify from "dompurify";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
-import { LEVELS, confirmLevel } from "../Sidebar";
+import { LevelControl } from "../Sidebar";
 import { engineFetch } from "./ActivityView";
 import { EmailField, useContacts } from "../EmailAutocomplete";
 import { ModelSettings, RadioDot } from "../ModelSetup";
@@ -182,23 +182,17 @@ function EngineSettings() {
 
   return (
     <>
-      <Group title="How far Tabellar goes on its own" note="It never deletes mail. Everything it does is listed in Activity, where labels, drafts, todos and meeting proposals can be undone.">
-        <div role="radiogroup" aria-label="Level" className="divide-y divide-line-soft">
-          {LEVELS.map((l) => (
-            <ChoiceRow
-              key={l.id}
-              on={level === l.id}
-              name={l.label}
-              text={l.text}
-              onClick={() => {
-                if (l.id === level || !confirmLevel(l.id)) return;
-                setLevel(l.id);
-                save({ autonomy_level: l.id });
-              }}
-            />
-          ))}
+      <Group title="Level">
+        <div className="-mx-2 py-1">
+          <LevelControl
+            value={level}
+            onChange={(l) => {
+              setLevel(l);
+              save({ autonomy_level: l });
+            }}
+          />
         </div>
-        <Row name="Pause" text="Stops every action at once, including the agent and Ask. Mail still syncs.">
+        <Row name="Pause" text="Mail still syncs">
           <Switch
             label="Pause"
             on={paused}
@@ -212,13 +206,9 @@ function EngineSettings() {
 
       <Group
         title="Autopilot limits"
-        note={
-          autopilot
-            ? "Autopilot answers only the person who wrote, inside the same thread, with nobody copied in and no attachments. When an answer needs a decision or facts it does not have, it saves a draft instead."
-            : "These apply only at Autopilot."
-        }
+        note={autopilot ? "Only to the person who wrote, in the same thread, with no cc and no attachments." : "Only at Autopilot."}
       >
-        <Row name="Wait before sending" text="Each reply waits this long under Going out, in Replies and the sidebar, where you can cancel it." disabled={!autopilot}>
+        <Row name="Wait before sending" text="Time to cancel each reply" disabled={!autopilot}>
           <select
             className="input w-auto"
             disabled={!autopilot}
@@ -236,7 +226,7 @@ function EngineSettings() {
             ))}
           </select>
         </Row>
-        <Row name="Replies per day" text="After this many, replies are saved as drafts until tomorrow." disabled={!autopilot}>
+        <Row name="Replies per day" text="Then drafts until tomorrow" disabled={!autopilot}>
           <select
             className="input w-auto"
             disabled={!autopilot}
@@ -254,7 +244,7 @@ function EngineSettings() {
             ))}
           </select>
         </Row>
-        <Row name="Only people you have written to" text="Anyone else gets a draft for you to send yourself." disabled={!autopilot}>
+        <Row name="Only people you have written to" text="Anyone else gets a draft" disabled={!autopilot}>
           <Switch
             label="Only people you have written to"
             disabled={!autopilot}
@@ -268,7 +258,7 @@ function EngineSettings() {
       </Group>
 
       <Group title="Notifications">
-        <Row name="Notify me about" text="macOS notifications for new mail, while Tabellar runs, with the window open or closed.">
+        <Row name="Notify me about">
           <select
             className="input w-auto"
             value={notify}
@@ -282,7 +272,7 @@ function EngineSettings() {
             <option value="none">Nothing</option>
           </select>
         </Row>
-        <Row name="Show sender and summary" text="Off shows only that something arrived, for privacy on a shared screen.">
+        <Row name="Show sender and summary" text="Off shows only that mail arrived">
           <Switch
             label="Show sender and summary"
             on={preview}
@@ -295,7 +285,7 @@ function EngineSettings() {
       </Group>
 
       <Group title="Running in the background">
-        <Row name="Start at login" text="Keeps Tabellar running after you close this window and the terminal, and restarts it if it stops unexpectedly.">
+        <Row name="Start at login" text="Keeps running with the window closed">
           {autostart === null ? <span className="skel block h-[18px] w-8" aria-label="Loading" /> : <Switch label="Start at login" on={autostart} onChange={toggleAutostart} />}
         </Row>
       </Group>
@@ -373,7 +363,7 @@ function SignatureBody({ initial, onChange }: { initial: string; onChange: (html
 }
 
 export default function SettingsView() {
-  const { user, profile, updateProfile, addToast, theme, setTheme, setView, mail } = useApp();
+  const { user, profile, updateProfile, addToast, theme, setTheme, setView } = useApp();
   const supabase = createClient();
   const { contacts } = useContacts(user.id);
 
@@ -916,6 +906,9 @@ export default function SettingsView() {
               {s.label}
             </button>
           ))}
+          <button onClick={() => setView("activity")} className="flex h-7 w-full items-center rounded-md px-2 text-left text-ink2 transition-colors duration-150 hover:bg-hover">
+            History
+          </button>
         </nav>
 
         <div className={`min-h-0 min-w-0 flex-1 overflow-y-auto md:block ${listOpen ? "hidden" : "block"}`}>
@@ -940,9 +933,9 @@ export default function SettingsView() {
                   {!accountsLoaded
                     ? loadingLines
                     : gmailAccounts.length === 0
-                      ? emptyLine("No Gmail account is connected. Connect one and Tabellar starts fetching your mail.")
+                      ? emptyLine("No Gmail account connected")
                       : gmailAccounts.map((acc) => (
-                          <Row key={acc.id} name={acc.gmail_address || "Connected account"} text="Tabellar reads this mailbox and acts on it at the level you set under Engine.">
+                          <Row key={acc.id} name={acc.gmail_address || "Connected account"}>
                             <button className="btn" onClick={() => connectGmail(false)}>
                               Reconnect
                             </button>
@@ -954,7 +947,7 @@ export default function SettingsView() {
                 </Group>
 
                 <Group title="Appearance">
-                  <Row name="Theme" text="How this window looks. Notifications follow macOS.">
+                  <Row name="Theme">
                     <Seg
                       value={theme}
                       onChange={chooseTheme}
@@ -966,8 +959,8 @@ export default function SettingsView() {
                   </Row>
                 </Group>
 
-                <Group title="Your data" note="Everything Tabellar keeps is in one file on this Mac. Keys and sign-in tokens are in the macOS Keychain.">
-                  <Row name="Knowledge" text="The people and facts Tabellar has noted from your mail. Drafts and Ask draw on them.">
+                <Group title="Your data" note="All of it is in one file on this Mac. Keys and tokens are in the Keychain.">
+                  <Row name="Knowledge" text="People and facts noted from your mail">
                     <button className="btn" onClick={() => setView("relationships")}>
                       Open Knowledge
                     </button>
@@ -980,9 +973,6 @@ export default function SettingsView() {
 
             {activeTab === "ai" && (
               <section>
-                <p className="mb-4 text-xs leading-normal text-ink2">
-                  Tabellar uses two models. The careful one writes and plans; the fast one reads each new email. Both can run on this Mac or with a cloud provider.
-                </p>
                 <ModelSettings />
               </section>
             )}
@@ -998,8 +988,8 @@ export default function SettingsView() {
                   }
                   note={
                     detectedStyle?.last_learned_at
-                      ? `Learned from your sent mail on ${new Date(detectedStyle.last_learned_at).toLocaleDateString([], { day: "numeric", month: "long" })}. Change any of it here.`
-                      : "Tabellar can learn these from your recent sent mail, or you can fill them in."
+                      ? `Learned ${new Date(detectedStyle.last_learned_at).toLocaleDateString([], { day: "numeric", month: "long" })}`
+                      : undefined
                   }
                 >
                   {(
@@ -1018,7 +1008,7 @@ export default function SettingsView() {
 
                 <Group title="Notes for drafts">
                   <div className="py-3">
-                    <p className="mb-2 text-xs text-ink2">Anything the fields above miss. Tabellar reads this every time it drafts a reply.</p>
+                    <p className="mb-2 text-xs text-ink2">Anything the fields above miss</p>
                     <textarea className="input resize-none" rows={3} value={styleNotes} onChange={(e) => setStyleNotes(e.target.value)} placeholder="Such as: Always sign off with 'Best, George'. Never use bullet points." aria-label="Notes for drafts" />
                   </div>
                 </Group>
@@ -1033,7 +1023,6 @@ export default function SettingsView() {
                     New signature
                   </button>
                 }
-                note="The default signature is added when you open a new email. You can switch or remove it while composing."
               >
                 {showSigEditor && !editingSignature && signatureEditor}
                 {!signaturesLoaded
@@ -1075,7 +1064,6 @@ export default function SettingsView() {
                     New template
                   </button>
                 }
-                note="Templates are applied while composing an email. You can also save a message you are writing as a template."
               >
                 {showTemplateEditor && !editingTemplate && templateEditor}
                 {!templatesLoaded
@@ -1097,7 +1085,7 @@ export default function SettingsView() {
             )}
 
             {activeTab === "schedule" && (
-              <Group title="Working hours" note={`Meetings proposes free times inside these hours, in your time zone (${Intl.DateTimeFormat().resolvedOptions().timeZone}).`}>
+              <Group title="Working hours" note={Intl.DateTimeFormat().resolvedOptions().timeZone}>
                 <Row name="Work days">
                   <div className="seg" role="group" aria-label="Work days">
                     {WEEK.map(([n, label]) => (
@@ -1113,7 +1101,7 @@ export default function SettingsView() {
                 <Row name="Day ends">
                   <input type="time" className="input w-[120px]" value={workEnd} onChange={(e) => e.target.value && setWorkEnd(e.target.value)} aria-label="Day ends" />
                 </Row>
-                {workEnd <= workStart && <p className="py-2 text-xs text-warn">The day ends before it starts, so no free time can be proposed.</p>}
+                {workEnd <= workStart && <p className="py-2 text-xs text-warn">The day ends before it starts</p>}
               </Group>
             )}
 
@@ -1135,7 +1123,7 @@ export default function SettingsView() {
                 </Group>
 
                 <Group title="Calendar">
-                  <Row name="Send invitations to attendees" text="When Tabellar creates or moves a meeting, Google Calendar emails the people invited.">
+                  <Row name="Send invitations to attendees" text="Google Calendar emails the people invited">
                     <Switch label="Send invitations to attendees" on={calendarSendInvites} onChange={setCalendarSendInvites} />
                   </Row>
                 </Group>
@@ -1143,7 +1131,7 @@ export default function SettingsView() {
             )}
 
             {activeTab === "automation" && (
-              <Group title="Forwarding rules" note="When an email matches a rule, Tabellar marks it to be forwarded to that address.">
+              <Group title="Forwarding rules">
                 <form
                   className="flex flex-wrap items-center gap-2 py-2.5"
                   onSubmit={(e) => {

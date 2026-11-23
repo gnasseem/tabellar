@@ -5,10 +5,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import Icon from "./Icon";
 import { useApp } from "./AppShell";
 
-export function Kbd({ children }: { children: ReactNode }) {
-  return <kbd className="kbd">{children}</kbd>;
-}
-
 // The state of a piece of mail, drawn as the seal: filled when it needs the
 // user, a ring while a reply is on its way out, a check once handled, a
 // triangle when held back.
@@ -59,12 +55,10 @@ export function SearchBox({ placeholder = "Search" }: { placeholder?: string }) 
         placeholder={placeholder}
         spellCheck={false}
       />
-      {search ? (
+      {search && (
         <button type="button" className="text-ink3 hover:text-ink" onClick={() => setSearch("")} aria-label="Clear search">
           <Icon name="close" size={13} />
         </button>
-      ) : (
-        <kbd className="kbd hidden !bg-transparent md:inline-block">/</kbd>
       )}
       </label>
     </>
@@ -203,24 +197,6 @@ export function SkeletonRows({ count = 12, tall = false }: { count?: number; tal
   );
 }
 
-// The footer line: a count on the left, the keys that work here on the right.
-export function KeyHints({ left, keys }: { left?: ReactNode; keys: [string, string][] }) {
-  return (
-    <footer className="foot">
-      <span className="truncate">{left}</span>
-      <span className="flex-1" />
-      {keys.map(([k, label]) => (
-        <span key={label} className="k">
-          {k.split(" ").map((x) => (
-            <kbd key={x} className="kbd">{x}</kbd>
-          ))}
-          {label}
-        </span>
-      ))}
-    </footer>
-  );
-}
-
 // A windowed list: only the rows on screen are in the page, so ten thousand
 // rows scroll like fifty. Row heights are known up front (rows and group
 // headers), so positions are exact and nothing is measured.
@@ -329,13 +305,17 @@ export function shortWhen(iso: string): string {
   return d.toLocaleDateString([], { day: "numeric", month: "short" });
 }
 
-export function dayLabel(iso: string): { name: string; date: string; key: string } {
+// A day as a list shows it. `head` is the group heading on its own: Today,
+// Yesterday, the weekday within the week, else the date.
+export function dayLabel(iso: string): { name: string; date: string; key: string; head: string } {
   const d = new Date(iso);
   const now = new Date();
   const days = Math.floor((new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()) / 86400000);
   const date = d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
   const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-  if (days <= 0) return { name: "Today", date, key };
-  if (days === 1) return { name: "Yesterday", date, key };
-  return { name: d.toLocaleDateString([], { weekday: "long" }), date: d.toLocaleDateString([], { day: "numeric", month: "long", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" }), key };
+  const full = d.toLocaleDateString([], { day: "numeric", month: "long", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
+  const weekday = d.toLocaleDateString([], { weekday: "long" });
+  if (days <= 0) return { name: "Today", date, key, head: "Today" };
+  if (days === 1) return { name: "Yesterday", date, key, head: "Yesterday" };
+  return { name: weekday, date: full, key, head: days < 7 ? weekday : full };
 }

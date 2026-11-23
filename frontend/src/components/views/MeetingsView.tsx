@@ -7,7 +7,7 @@ import { useApp } from "../AppShell";
 import DateTimePicker from "../DateTimePicker";
 import EmailDetail from "../EmailDetail";
 import { EmailField, useContacts } from "../EmailAutocomplete";
-import { Empty, Glyph, KeyHints, Kbd, Seg, SkeletonRows, ViewBar, clock, dayLabel } from "../ui";
+import { Empty, Glyph, Seg, SkeletonRows, ViewBar, clock, dayLabel } from "../ui";
 import { NotThis, usePrefStops } from "../Profile";
 
 // Meetings: the ones Tabellar proposed from mail and that wait to be confirmed,
@@ -48,7 +48,7 @@ type SchedulerStep = "form" | "slots";
 type SchedulingMode = "find" | "specific";
 type WorkingHours = { start?: string; end?: string; days?: number[] } | null;
 type Filter = "confirm" | "upcoming" | "past";
-type Head = { head: true; key: string; name: string; note: string; count: number };
+type Head = { head: true; key: string; name: string };
 type Row = { key: string; meeting?: Meeting; suggestion?: SuggestedMeeting };
 
 const DURATIONS = [
@@ -159,14 +159,14 @@ function longDate(iso: string | Date): string {
 }
 
 // Group header for a day that may lie ahead: Today, Tomorrow, then the weekday.
-function dayHead(iso: string): { key: string; name: string; note: string } {
+function dayHead(iso: string): { key: string; name: string } {
   const d = new Date(iso);
   const now = new Date();
   const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86400000);
   const weekday = d.toLocaleDateString([], { weekday: "long" });
   const date = d.toLocaleDateString([], { day: "numeric", month: "long", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
   const near = days === 0 ? "Today" : days === 1 ? "Tomorrow" : days === -1 ? "Yesterday" : "";
-  return { key: dateKey(d), name: near || weekday, note: near ? `${weekday} ${date}` : date };
+  return { key: dateKey(d), name: near || `${weekday} ${date}` };
 }
 
 // When an email arrived, in words: "today 12:31", "Monday 17 November".
@@ -194,7 +194,7 @@ function SlotGrid({ slots, failed, selected, onPick, onRetry }: { slots: FreeSlo
         </button>
       </p>
     );
-  if (!slots.length) return <p className="py-3 text-ink3">Nothing is free on this day within your working hours. Try the next working day.</p>;
+  if (!slots.length) return <p className="py-3 text-ink3">Nothing free within your working hours</p>;
   return (
     <div>
       {Object.entries(groupSlotsByHour(slots)).map(([hour, list]) => (
@@ -607,7 +607,6 @@ export default function MeetingsView() {
   const matches = (text: string) => !q || text.toLowerCase().includes(q);
   const sourceOf = (m: Meeting) => (m.email_id ? sources.get(m.email_id) : undefined);
   const proposed = meetings.filter((m) => m.status === "proposed");
-  const upcomingCount = meetings.filter((m) => m.status !== "cancelled" && new Date(m.start_time).getTime() >= now).length;
   const suggested = suggestedMeetings.filter((s) => !dismissed.has(s.email_id) && !meetings.some((m) => m.email_id === s.email_id) && matches(`${s.title} ${s.email_sender} ${s.email_subject}`));
   const filter: Filter = chosen ?? (proposed.length || suggested.length ? "confirm" : "upcoming");
 
@@ -620,12 +619,11 @@ export default function MeetingsView() {
   for (const m of listed) {
     const d = dayHead(m.start_time);
     const head = items.findLast((i): i is Head => "head" in i);
-    if (head?.key === d.key) head.count++;
-    else items.push({ head: true, key: d.key, name: d.name, note: d.note, count: 1 });
+    if (head?.key !== d.key) items.push({ head: true, key: d.key, name: d.name });
     items.push({ key: m.id, meeting: m });
   }
   if (filter === "confirm" && suggested.length) {
-    items.push({ head: true, key: "suggested", name: "Suggested by Tabellar", note: "From mail in the last 3 days", count: suggested.length });
+    items.push({ head: true, key: "suggested", name: "Suggested" });
     for (const s of suggested) items.push({ key: `s:${s.email_id}`, suggestion: s });
   }
 
@@ -816,12 +814,10 @@ export default function MeetingsView() {
                     ]}
                   />
                 </div>
-                {schedulingMode === "find" ? (
-                  <p className="mt-2 text-xs leading-normal text-ink3">Tabellar looks at your working hours and what is already on your Google Calendar, one day at a time.</p>
-                ) : (
+                {schedulingMode !== "find" && (
                   <div className="mt-2">
                     <DateTimePicker value={specificDateTime} onChange={setSpecificDateTime} placeholder="Pick date and time" showWarning={specificOutside} />
-                    {specificOutside && <p className="mt-1.5 text-xs text-warn">This is outside your working hours.</p>}
+                    {specificOutside && <p className="mt-1.5 text-xs text-warn">Outside your working hours</p>}
                   </div>
                 )}
               </>
@@ -954,7 +950,7 @@ export default function MeetingsView() {
                 {m.as_written && <span className="text-ink3"> ({m.as_written} in the email)</span>}
               </dd>
               <dt className="text-ink3">Who</dt>
-              <dd>{(m.attendees || []).join(", ") || (src ? `${nameOf(src.sender) || src.sender_email}, who wrote the email. Nobody is invited yet.` : "Nobody is invited")}</dd>
+              <dd>{(m.attendees || []).join(", ") || (src ? nameOf(src.sender) || src.sender_email : "Nobody is invited")}</dd>
               <dt className="text-ink3">Where</dt>
               <dd>{m.location || "No place given"}</dd>
             </dl>
@@ -988,29 +984,20 @@ export default function MeetingsView() {
             )}
             <div className="mt-[22px] grid grid-cols-[22px_1fr] border-t border-line-soft pt-3.5 text-[12.5px] leading-normal text-ink2">
               <Glyph state="info" />
-              {m.status === "proposed" ? (
-                <p>
-                  <b className="font-semibold text-ink">Why this is waiting for you.</b> {src ? "Tabellar read this in an email and proposes the time." : "This is a proposal kept in Tabellar."} {m.calendar_event_id ? "" : "It is not on your Google Calendar and nobody has been invited. "}
-                  Confirm marks it as agreed.
-                </p>
-              ) : m.status === "confirmed" ? (
-                <p>{m.calendar_event_id ? "This is on your Google Calendar. Changing it updates the event and tells the people invited." : "Confirmed in Tabellar. It is not on your Google Calendar."}</p>
-              ) : (
-                <p>Cancelled in Tabellar.{m.calendar_event_id ? " The event is still on your Google Calendar; remove it there if it should go." : ""}</p>
-              )}
+              <p>{m.status === "cancelled" ? (m.calendar_event_id ? "Cancelled here, still on your Google Calendar" : "Cancelled") : m.calendar_event_id ? "On your Google Calendar" : "Not on your Google Calendar"}</p>
             </div>
           </div>
         </div>
         <div className={paneBar}>
           {m.status === "proposed" && (
             <button className="btn btn-pri" onClick={() => confirmMeeting(m)}>
-              Confirm <Kbd>↵</Kbd>
+              Confirm
             </button>
           )}
           {m.status !== "cancelled" && (
             <>
               <button className="btn" onClick={() => openEdit(m)}>
-                Change time <Kbd>E</Kbd>
+                Change time
               </button>
               <button className="btn" onClick={() => cancelMeeting(m)}>
                 Cancel meeting
@@ -1041,7 +1028,7 @@ export default function MeetingsView() {
           <div className="max-w-[580px]">
             {back}
             <h2 className={paneTitle}>{s.title}</h2>
-            <p className="mt-1 text-xs text-ink3">Suggested by Tabellar, not a meeting yet</p>
+            <p className="mt-1 text-xs text-ink3">Suggested</p>
             <dl className="mt-4 grid grid-cols-[58px_1fr] gap-y-[5px] border-b border-line-soft pb-4 text-[12.5px] text-ink2">
               <dt className="text-ink3">When</dt>
               <dd>
@@ -1061,15 +1048,11 @@ export default function MeetingsView() {
               <dd>{s.location || "No place given"}</dd>
             </dl>
             {sourceInset(s.email_id, s.email_sender, s.email_subject)}
-            <div className="mt-[22px] grid grid-cols-[22px_1fr] border-t border-line-soft pt-3.5 text-[12.5px] leading-normal text-ink2">
-              <Glyph state="info" />
-              <p>Tabellar noticed a meeting in this email and has done nothing about it. {s.dateTime ? "Add to calendar" : "Find a time"} opens a new meeting with these details filled in, for you to check before anything is sent.</p>
-            </div>
           </div>
         </div>
         <div className={paneBar}>
           <button className="btn btn-pri" onClick={() => openSchedulerFromSuggestion(s)}>
-            {s.dateTime ? "Add to calendar" : "Find a time"} <Kbd>↵</Kbd>
+            {s.dateTime ? "Add to calendar" : "Find a time"}
           </button>
           <span className="flex-1" />
           <button className="btn btn-plain" onClick={() => (setCursorKey(after(cursor.key)), setDismissed((prev) => new Set(prev).add(s.email_id)))}>
@@ -1086,9 +1069,14 @@ export default function MeetingsView() {
         title="Meetings"
         search="Search meetings"
         right={
-          <button className="btn" onClick={newMeeting}>
-            New meeting <Kbd>N</Kbd>
-          </button>
+          <>
+            <a className="iconbtn" href="https://calendar.google.com" target="_blank" rel="noopener noreferrer" title="Open Google Calendar" aria-label="Open Google Calendar">
+              <Icon name="open" size={16} />
+            </a>
+            <button className="btn" onClick={newMeeting}>
+              New meeting
+            </button>
+          </>
         }
       >
         <Seg
@@ -1121,21 +1109,13 @@ export default function MeetingsView() {
             </div>
           ) : loadError && !meetings.length ? null : !rows.length ? (
             q ? (
-              <Empty icon="search" title="No meetings match that search">
-                Try the title, a person or the place.
-              </Empty>
+              <Empty icon="search" title="Nothing matches that search" />
             ) : filter === "confirm" ? (
-              <Empty icon="event" title="Nothing to confirm">
-                When an email proposes a meeting, Tabellar puts it here with the time and the people, for you to confirm or change.
-              </Empty>
+              <Empty icon="event" title="Nothing to confirm" />
             ) : filter === "upcoming" ? (
-              <Empty icon="event" title="No upcoming meetings">
-                Meetings you confirm or schedule appear here. New meeting finds a free time in your Google Calendar.
-              </Empty>
+              <Empty icon="event" title="No upcoming meetings" />
             ) : (
-              <Empty icon="event" title="No past meetings">
-                Meetings move here once their time has passed.
-              </Empty>
+              <Empty icon="event" title="No past meetings" />
             )
           ) : (
             items.map((item) => {
@@ -1143,9 +1123,7 @@ export default function MeetingsView() {
                 return (
                   <div key={item.key} className="day">
                     <b>{item.name}</b>
-                    <span className="truncate">{item.note}</span>
                     <span className="flex-1" />
-                    <span>{item.count}</span>
                   </div>
                 );
               const isCursor = !showScheduler && cursor === item;
@@ -1190,22 +1168,6 @@ export default function MeetingsView() {
         </div>
         <div className={`min-w-0 flex-1 md:flex ${paneShown ? "flex" : "hidden"}`}>{paneContent}</div>
       </div>
-      <KeyHints
-        left={
-          <>
-            {loading ? "" : `${upcomingCount} upcoming, ${proposed.length} to confirm`}
-            <a className="link ml-3" href="https://calendar.google.com" target="_blank" rel="noopener noreferrer">
-              Open Google Calendar
-            </a>
-          </>
-        }
-        keys={[
-          ["J K", "Move"],
-          ["↵", "Confirm"],
-          ["E", "Change time"],
-          ["N", "New meeting"],
-        ]}
-      />
     </>
   );
 }

@@ -3,7 +3,7 @@ import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { engineFetch } from "./ActivityView";
-import { Empty, KeyHints, Kbd, Seg, SkeletonRows, Tick, ViewBar } from "../ui";
+import { Empty, Seg, SkeletonRows, Tick, ViewBar } from "../ui";
 import { NotThis } from "../Profile";
 
 // Newsletter cleanup: senders of bulk mail, the ones filling the inbox first.
@@ -201,12 +201,6 @@ export default function NewslettersView() {
       archivedToast(`Unsubscribed from ${unsubscribed} sender${unsubscribed === 1 ? "" : "s"} and archived ${emails(archived)}.`, ids);
     });
 
-  const counts = useMemo(() => {
-    const c = { clean: 0, kept: 0, unsubscribed: 0 } as Record<Tab, number>;
-    for (const s of senders) c[s.status ?? "clean"]++;
-    return c;
-  }, [senders]);
-
   // The heaviest senders first: most mail in the inbox, then most mail in all.
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -317,11 +311,11 @@ export default function NewslettersView() {
             </button>
           )}
           <button className="btn" disabled={!selected.some((s) => s.inbox > 0)} onClick={() => archive(selected)}>
-            Archive <Kbd>E</Kbd>
+            Archive
           </button>
           {tab === "clean" ? (
             <button className="btn" onClick={() => keep(selected, true)}>
-              Keep <Kbd>Y</Kbd>
+              Keep
             </button>
           ) : (
             <button className="btn" onClick={() => keep(selected, false)}>
@@ -329,7 +323,7 @@ export default function NewslettersView() {
             </button>
           )}
           <button className="btn btn-plain" onClick={() => setPicked(new Set())}>
-            Clear <Kbd>esc</Kbd>
+            Clear
           </button>
         </header>
       ) : (
@@ -338,9 +332,9 @@ export default function NewslettersView() {
             value={tab}
             onChange={change}
             options={[
-              { id: "clean", label: "In your inbox", count: counts.clean },
-              { id: "unsubscribed", label: "Unsubscribed", count: counts.unsubscribed },
-              { id: "kept", label: "Kept", count: counts.kept },
+              { id: "clean", label: "In your inbox" },
+              { id: "unsubscribed", label: "Unsubscribed" },
+              { id: "kept", label: "Kept" },
             ]}
           />
         </ViewBar>
@@ -348,8 +342,7 @@ export default function NewslettersView() {
       {pages.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 border-b border-line py-2 pl-5 pr-3.5 text-xs text-ink2">
           <b className="font-semibold text-ink">Finish on their page</b>
-          <span>These senders only unsubscribe through their own website:</span>
-          {pages.map((p) => (
+                    {pages.map((p) => (
             <a key={p.addr} href={p.url} target="_blank" rel="noopener noreferrer" className="link">
               {p.sender}
             </a>
@@ -361,7 +354,6 @@ export default function NewslettersView() {
         </div>
       )}
       <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto" role="listbox" aria-label="Newsletter senders">
-        <p className="px-5 pb-0.5 pt-3 text-xs leading-normal text-ink2">Unsubscribing uses the sender's own unsubscribe link, and only when you choose it here. Tabellar never unsubscribes on its own.</p>
         {loading ? (
           <div className="pt-9">
             <SkeletonRows count={18} />
@@ -375,16 +367,11 @@ export default function NewslettersView() {
           </p>
         ) : !rows.length ? (
           search ? (
-            <Empty icon="search" title="No senders match that search">
-              Try part of the sender's name or address.
-            </Empty>
+            <Empty icon="search" title="Nothing matches that search" />
           ) : tab === "clean" ? (
-            <Empty icon="newspaper" title="No bulk mail to clean up">
-              Senders of newsletters and promotions appear here as their mail arrives, the heaviest first, to unsubscribe from, archive or keep.
-            </Empty>
+            <Empty icon="newspaper" title="No newsletters" />
           ) : (
             <Empty icon="newspaper" title={tab === "kept" ? "No senders kept yet" : "No unsubscribes yet"}>
-              {tab === "kept" ? "Senders you choose to keep are listed here and left alone." : "Senders you unsubscribe from are listed here, with how it was done."}{" "}
               <button className="link" onClick={() => change("clean")}>
                 Show senders in your inbox
               </button>
@@ -439,24 +426,13 @@ export default function NewslettersView() {
           {actions(cursor)}
         </div>
       )}
-      <KeyHints
-        left={loading || error ? "" : `${counts.clean.toLocaleString()} sender${counts.clean === 1 ? "" : "s"} still in your inbox`}
-        keys={[
-          ["J K", "Move"],
-          ["X", "Select"],
-          ["U", "Unsubscribe"],
-          ["E", "Archive all"],
-          ["Y", "Keep"],
-          ["Z", "Undo archive"],
-        ]}
-      />
       {ask && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onClick={() => ask.answer(false)}>
           <div className="w-full max-w-[440px] rounded-[12px] bg-raised p-5 shadow-pop" role="alertdialog" aria-modal="true" aria-labelledby="unsubscribe-title" onClick={(e) => e.stopPropagation()}>
             <h2 id="unsubscribe-title" className="text-[15px] font-[650] tracking-[-0.01em]">
               {ask.name} unsubscribes by email
             </h2>
-            <p className="mt-1.5 leading-normal text-ink2">To unsubscribe, Tabellar has to send this one email from your account. The address was supplied by the sender, so check it before anything goes.</p>
+            <p className="mt-1.5 leading-normal text-ink2">This sends one email from your account. The sender chose the address, so check it.</p>
             <dl className="inset mt-3.5 grid grid-cols-[58px_1fr] gap-y-1 text-[12.5px]">
               <dt className="text-ink3">To</dt>
               <dd className="min-w-0 break-all font-medium text-ink">{ask.to}</dd>

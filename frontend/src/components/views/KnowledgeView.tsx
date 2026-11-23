@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
-import { Empty, KeyHints, Menu, Seg, SkeletonRows, ViewBar, shortWhen } from "../ui";
+import { Empty, Menu, Seg, SkeletonRows, ViewBar, shortWhen } from "../ui";
 
 // Knowledge, facts: what Tabellar has noted about people, companies and
 // projects while reading mail, and what the user has told it. Drafts and
@@ -155,7 +155,7 @@ export default function KnowledgeView({ onPeople }: { onPeople?: () => void }) {
           onChange={(v) => v === "people" && (onPeople ? onPeople() : setView("relationships"))}
           options={[
             { id: "people", label: "People" },
-            { id: "facts", label: "Facts", count: knowledge.length },
+            { id: "facts", label: "Facts" },
           ]}
         />
       </ViewBar>
@@ -191,7 +191,7 @@ export default function KnowledgeView({ onPeople }: { onPeople?: () => void }) {
                     ))}
                   </select>
                   <input autoFocus className="input h-6 w-[140px] bg-canvas" value={newEntity} onChange={(e) => setNewEntity(e.target.value)} placeholder="Who or what" aria-label="Who or what the fact is about" />
-                  <input className="input h-6 min-w-[140px] flex-1 bg-canvas" value={newInfo} onChange={(e) => setNewInfo(e.target.value)} placeholder="What Tabellar should know" aria-label="The fact" />
+                  <input className="input h-6 min-w-[140px] flex-1 bg-canvas" value={newInfo} onChange={(e) => setNewInfo(e.target.value)} placeholder="What to remember" aria-label="The fact" />
                   <button type="submit" className="btn btn-sm" disabled={!newEntity.trim() || !newInfo.trim()}>
                     Add
                   </button>
@@ -201,11 +201,7 @@ export default function KnowledgeView({ onPeople }: { onPeople?: () => void }) {
                 </form>
               )}
               {!shown.length ? (
-                <Empty icon="lightbulb" title={knowledge.length ? "No fact matches" : "Nothing learned yet"}>
-                  {knowledge.length
-                    ? "Try another word, or set Kind back to All."
-                    : "As Tabellar reads your mail it notes facts about the people, companies and projects in it, and uses them when it drafts replies. You can also add a fact yourself."}
-                </Empty>
+                <Empty icon="lightbulb" title={knowledge.length ? "Nothing matches" : "Nothing noted yet"} />
               ) : (
                 shown.map((k) => (
                   <div key={k.id} role="option" aria-selected={k.id === selectedId} className={`row ${COLS} !pl-3`} onClick={() => setSelectedId(k.id)}>
@@ -284,7 +280,6 @@ export default function KnowledgeView({ onPeople }: { onPeople?: () => void }) {
           </div>
         )}
       </div>
-      <KeyHints left={loading ? "" : shown.length === knowledge.length ? `${knowledge.length} ${knowledge.length === 1 ? "fact" : "facts"}` : `${shown.length} of ${knowledge.length} facts`} keys={[]} />
     </>
   );
 }

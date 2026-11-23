@@ -5,7 +5,7 @@ import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import DateTimePicker from "../DateTimePicker";
-import { Countdown, Empty, Glyph, KeyHints, Kbd, Seg, SkeletonRows, ViewBar, clock } from "../ui";
+import { Countdown, Empty, Glyph, Seg, SkeletonRows, ViewBar, clock } from "../ui";
 
 // Scheduled: mail the user queued to send later. Each one can be read, sent
 // now, moved to another time, edited in the compose window or cancelled.
@@ -24,7 +24,7 @@ type Scheduled = {
   error_message: string | null;
   [key: string]: any;
 };
-type Head = { head: true; key: string; name: string; note: string; count: number };
+type Head = { head: true; key: string; name: string };
 type Filter = "queued" | "history";
 
 const HOUR = 3_600_000;
@@ -38,15 +38,15 @@ function recipient(s: Scheduled): string {
   return to.length === 1 ? to[0] : `${to[0]} and ${to.length - 1} more`;
 }
 // The day an email goes out: Today, Tomorrow, else the weekday and date.
-function sendDay(iso: string): { key: string; name: string; date: string; near: boolean } {
+function sendDay(iso: string): { key: string; name: string; date: string; near: boolean; head: string } {
   const d = new Date(iso);
   const now = new Date();
   const days = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() - new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()) / 86_400_000);
   const date = d.toLocaleDateString([], { day: "numeric", month: "long" });
   const weekday = d.toLocaleDateString([], { weekday: "long" });
   const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-  if (days >= -1 && days <= 1) return { key, name: ["Yesterday", "Today", "Tomorrow"][days + 1], date: `${weekday} ${date}`, near: true };
-  return { key, name: weekday, date, near: false };
+  if (days >= -1 && days <= 1) return { key, name: ["Yesterday", "Today", "Tomorrow"][days + 1], date: `${weekday} ${date}`, near: true, head: ["Yesterday", "Today", "Tomorrow"][days + 1] };
+  return { key, name: weekday, date, near: false, head: `${weekday} ${date}` };
 }
 // "tomorrow at 9:00", "Thursday 27 November at 9:00"
 function sendsAt(iso: string): string {
@@ -99,31 +99,30 @@ export default function ScheduledView() {
     loadScheduled();
   }, [loadScheduled, liveChanges.scheduled_emails]);
 
-  const counts = useMemo(() => ({ queued: scheduled.filter((s) => s.status === "pending" || s.status === "sending").length, failed: scheduled.filter((s) => s.status === "failed").length }), [scheduled]);
 
   const items = useMemo(() => {
     const q = search.trim().toLowerCase();
     const shown = q ? scheduled.filter((s) => `${(s.to_addresses || []).join(" ")} ${s.subject} ${plain(s.body_html)}`.toLowerCase().includes(q)) : scheduled;
     const out: (Head | Scheduled)[] = [];
-    const add = (key: string, name: string, note: string, list: Scheduled[]) => list.length && out.push({ head: true, key, name, note, count: list.length }, ...list);
+    const add = (key: string, name: string, list: Scheduled[]) => list.length && out.push({ head: true, key, name }, ...list);
     if (filter === "history") {
-      add("sent", "Sent", "Went out at the time shown", shown.filter((s) => s.status === "sent"));
-      add("cancelled", "Cancelled", "Never sent", shown.filter((s) => s.status === "cancelled"));
+      add("sent", "Sent", shown.filter((s) => s.status === "sent"));
+      add("cancelled", "Cancelled", shown.filter((s) => s.status === "cancelled"));
       return out;
     }
-    add("failed", "Could not send", "Gmail refused these; try again or edit them", shown.filter((s) => s.status === "failed"));
+    add("failed", "Could not send", shown.filter((s) => s.status === "failed"));
     let run: Scheduled[] = [];
-    let day = { key: "", name: "", date: "" };
+    let day = { key: "", head: "" };
     for (const s of shown.filter((x) => x.status === "pending" || x.status === "sending")) {
       const d = sendDay(s.send_at);
       if (d.key !== day.key) {
-        add(`d:${day.key}`, day.name, day.date, run);
+        add(`d:${day.key}`, day.head, run);
         run = [];
         day = d;
       }
       run.push(s);
     }
-    add(`d:${day.key}`, day.name, day.date, run);
+    add(`d:${day.key}`, day.head, run);
     return out;
   }, [scheduled, filter, search]);
 
@@ -230,7 +229,7 @@ export default function ScheduledView() {
           value={filter}
           onChange={(f) => (setFilter(f), setOpen(false))}
           options={[
-            { id: "queued", label: "Queued", count: counts.queued + counts.failed },
+            { id: "queued", label: "Queued" },
             { id: "history", label: "History" },
           ]}
         />
@@ -251,26 +250,18 @@ export default function ScheduledView() {
             </p>
           ) : !rows.length ? (
             search ? (
-              <Empty icon="search" title="No scheduled mail matches that search">
-                Try the recipient's address or a word from the subject.
-              </Empty>
+              <Empty icon="search" title="Nothing matches that search" />
             ) : filter === "queued" ? (
-              <Empty icon="schedule" title="Nothing is scheduled">
-                Mail you choose to send later waits here until its time. Schedule one with Send later in Replies, or with the clock in the compose window.
-              </Empty>
+              <Empty icon="schedule" title="Nothing scheduled" />
             ) : (
-              <Empty icon="schedule" title="No scheduled mail has gone out yet">
-                Once a queued email is sent or cancelled it is kept here, newest first.
-              </Empty>
+              <Empty icon="schedule" title="Nothing sent or cancelled yet" />
             )
           ) : (
             items.map((item) =>
               "head" in item ? (
                 <div key={item.key} className="day">
                   <b>{item.name}</b>
-                  <span className="truncate">{item.note}</span>
                   <span className="flex-1" />
-                  <span>{item.count}</span>
                 </div>
               ) : (
                 <div
@@ -331,37 +322,14 @@ export default function ScheduledView() {
                 ) : (
                   <p className="mt-4 whitespace-pre-wrap text-sm leading-[1.6] tracking-[-0.006em]">{cursor.body_text || "This email is empty."}</p>
                 )}
-                <div className="mt-[22px] grid grid-cols-[22px_1fr] border-t border-line-soft pt-3.5 text-[12.5px] leading-normal text-ink2">
-                  <Glyph state="info" />
-                  {waiting ? (
-                    <p>
-                      <b className="font-semibold text-ink">You queued this.</b> It goes out on its own at the time above, even with this window closed, unless you cancel it or move it.
-                    </p>
-                  ) : cursor.status === "sending" ? (
-                    <p>
-                      <b className="font-semibold text-ink">On its way.</b> Tabellar is handing this to Gmail now.
-                    </p>
-                  ) : failed ? (
-                    <p>
-                      <b className="font-semibold text-ink">Nothing was sent.</b> It stays here until you try again or dismiss it.
-                    </p>
-                  ) : cursor.status === "sent" ? (
-                    <p>
-                      <b className="font-semibold text-ink">Sent.</b> The delivered copy is in Sent.
-                    </p>
-                  ) : (
-                    <p>
-                      <b className="font-semibold text-ink">Cancelled.</b> This was never sent{cursor.error_message && cursor.error_message !== "Cancelled" ? `: ${cursor.error_message}` : ""}.
-                    </p>
-                  )}
-                </div>
+                {failed && <p className="mt-[22px] border-t border-line-soft pt-3.5 text-[12.5px] font-medium text-danger">Not sent{cursor.error_message ? `: ${cursor.error_message}` : ""}</p>}
               </div>
             </div>
             <div className="flex flex-none flex-wrap items-center gap-2 border-t border-line py-[11px] pl-6 pr-4 md:pl-10">
               {(waiting || failed) && (
                 <>
                   <button className="btn" onClick={() => edit(cursor)}>
-                    Edit <Kbd>E</Kbd>
+                    Edit
                   </button>
                   <div className="relative">
                     <button className="btn" aria-haspopup="dialog" aria-expanded={timeOpen} onClick={() => (setNewTime(toLocalInput(cursor.send_at)), setTimeOpen(!timeOpen))}>
@@ -408,14 +376,6 @@ export default function ScheduledView() {
           <div className="hidden flex-1 md:block" />
         )}
       </div>
-      <KeyHints
-        left={loading || error ? "" : `${counts.queued} queued${counts.failed ? `, ${counts.failed} could not be sent` : ""}`}
-        keys={[
-          ["J K", "Move"],
-          ["E", "Edit"],
-          ["⌫", "Cancel"],
-        ]}
-      />
     </>
   );
 }

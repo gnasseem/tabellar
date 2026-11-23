@@ -185,13 +185,6 @@
   .kbd {
     @apply inline-block min-w-[17px] rounded border border-line bg-canvas px-1 py-0.5 text-center text-[10.5px] font-medium leading-none text-ink3;
   }
-  .btn .kbd {
-    @apply min-w-0 border-0 bg-transparent p-0 text-[11px] text-ink3;
-  }
-  .btn-pri .kbd {
-    color: inherit;
-    opacity: 0.78;
-  }
 
   /* The bar at the top of every view: title, filters, search. */
   .bar {
@@ -225,7 +218,7 @@
     @apply font-semibold text-wax-ink;
   }
   .searchbox {
-    @apply flex h-7 w-[248px] min-w-[36px] shrink items-center gap-[7px] rounded-[7px] bg-field pl-2 pr-1.5 text-ink3;
+    @apply flex h-7 w-[380px] min-w-[36px] shrink items-center gap-[7px] rounded-[7px] bg-field pl-2 pr-1.5 text-ink3;
   }
   .searchbox input {
     @apply min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none;
@@ -287,14 +280,6 @@
   }
   .tick[aria-checked="true"] {
     @apply border-ink bg-ink text-canvas;
-  }
-
-  /* The slim footer with key hints. */
-  .foot {
-    @apply flex h-[30px] flex-none items-center gap-4 border-t border-line pl-5 pr-3.5 text-xs text-ink3;
-  }
-  .foot .k {
-    @apply hidden items-center gap-[5px] md:flex;
   }
 
   /* Form fields. */

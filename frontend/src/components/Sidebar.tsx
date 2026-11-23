@@ -6,11 +6,12 @@ import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
 
 // Levels, in the order of how much Tabellar does on its own.
-export const LEVELS: { id: "observe" | "suggest" | "assist" | "autopilot"; label: string; text: string }[] = [
-  { id: "observe", label: "Observe", text: "Sorts and notifies. Changes nothing." },
-  { id: "suggest", label: "Suggest", text: "Labels mail. Proposes drafts, todos and meetings for you to approve." },
-  { id: "assist", label: "Assist", text: "Does those on its own. Never sends, archives or deletes." },
-  { id: "autopilot", label: "Autopilot", text: "Also replies on its own to the person who wrote, inside the thread, after a wait you can cancel in." },
+export type Level = "observe" | "suggest" | "assist" | "autopilot";
+export const LEVELS: { id: Level; label: string; text: string }[] = [
+  { id: "observe", label: "Observe", text: "Sorts only" },
+  { id: "suggest", label: "Suggest", text: "Asks first" },
+  { id: "assist", label: "Assist", text: "Drafts, todos, meetings on its own" },
+  { id: "autopilot", label: "Autopilot", text: "Also sends replies" },
 ];
 
 // Turning Autopilot on is the one change that lets Tabellar send mail, so it
@@ -18,14 +19,37 @@ export const LEVELS: { id: "observe" | "suggest" | "assist" | "autopilot"; label
 export function confirmLevel(level: string): boolean {
   if (level !== "autopilot") return true;
   return window.confirm(
-    "Turn on Autopilot?\n\nTabellar will reply on its own to emails that need an answer it can give, only to the person who wrote and only inside the thread. " +
-      "Each reply waits before sending so you can cancel it, and there is a daily limit. Pause stops everything at once.",
+    "Turn on Autopilot?\n\nReplies go only to the person who wrote, inside the thread. " +
+      "Each one waits first so you can cancel it, and there is a daily limit. Pause stops everything.",
   );
 }
 
-function NavItem({ id, icon, label, count, need }: { id: string; icon: string; label: string; count?: number; need?: boolean }) {
+// The four levels as one compact control: a line each, the current one ticked.
+// Used in the sidebar's menu and in Settings.
+export function LevelControl({ value, onChange }: { value: string; onChange: (level: Level) => void }) {
+  return (
+    <div role="radiogroup" aria-label="Level">
+      {LEVELS.map((l) => (
+        <button
+          key={l.id}
+          type="button"
+          role="radio"
+          aria-checked={l.id === value}
+          className="grid h-7 w-full grid-cols-[13px_68px_minmax(0,1fr)] items-center gap-x-2 rounded-md px-2 text-left hover:bg-sel"
+          onClick={() => l.id !== value && confirmLevel(l.id) && onChange(l.id)}
+        >
+          <Icon name="check" size={13} className={l.id === value ? "text-ink" : "invisible"} />
+          <b className={l.id === value ? "font-medium text-ink" : "font-normal text-ink"}>{l.label}</b>
+          <span className="truncate text-ink3">{l.text}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function NavItem({ id, icon, label, count, need, on: forced }: { id: string; icon: string; label: string; count?: number; need?: boolean; on?: boolean }) {
   const { view, setView, setSidebarOpen, assistantOpen, setAssistantOpen } = useApp();
-  const on = id === "ask" ? assistantOpen : view === id;
+  const on = forced ?? (id === "ask" ? assistantOpen : view === id);
   return (
     <button
       aria-current={on ? "page" : undefined}
@@ -43,17 +67,17 @@ function NavItem({ id, icon, label, count, need }: { id: string; icon: string; l
   );
 }
 
-// Level and pause: the engine's state, always in view and out of the way. A
-// line under it only when paused or failing.
+// The level, with pause beside it. A line under it only when Gmail cannot be
+// reached or the last check failed.
 function Engine() {
-  const { user, profile, updateProfile, setView, mail, addToast } = useApp();
+  const { user, profile, updateProfile, mail, addToast } = useApp();
   const supabase = createClient();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const level = mail.engine?.level ?? (profile.autonomy_level as string) ?? "observe";
   const paused = mail.engine?.paused ?? !!profile.engine_paused;
   const failing = !!(mail.engine?.gmailError || mail.engine?.lastError);
-  const note = paused ? "Nothing happens until you resume" : mail.engine?.gmailError ? "Can't reach Gmail" : mail.engine?.lastError ? "Last check failed. See Activity" : "";
+  const note = paused ? "" : mail.engine?.gmailError ? "Can't reach Gmail" : mail.engine?.lastError ? "Last check failed" : "";
 
   useEffect(() => {
     if (!open) return;
@@ -75,40 +99,27 @@ function Engine() {
   };
 
   return (
-    <div ref={ref} className="relative mx-2 grid grid-cols-[1fr_auto_auto] items-center gap-x-0.5 border-t border-line pb-2.5 pl-2 pr-1 pt-2">
-      <button className="flex h-6 items-center gap-[7px] justify-self-start rounded-md pr-1 font-semibold" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <i className="h-[7px] w-[7px] rounded-full" style={{ background: paused ? "var(--warn)" : failing ? "var(--danger)" : "var(--run)" }} />
+    <div ref={ref} className="relative grid grid-cols-[1fr_auto] items-center pl-2 pr-1">
+      <button className="flex h-7 items-center gap-2 justify-self-start rounded-md pr-1 font-medium" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <span className="grid w-4 place-items-center">
+          <i className="h-[7px] w-[7px] rounded-full" style={{ background: paused ? "var(--warn)" : failing ? "var(--danger)" : "var(--run)" }} />
+        </span>
         {paused ? "Paused" : LEVELS.find((l) => l.id === level)?.label}
         <Icon name="expand_more" size={12} className="text-ink3" />
       </button>
-      <button className="iconbtn" title={paused ? "Resume" : "Pause everything"} aria-label={paused ? "Resume" : "Pause everything"} onClick={() => save({ engine_paused: !paused })}>
+      <button className="iconbtn" title={paused ? "Resume" : "Pause"} aria-label={paused ? "Resume" : "Pause"} onClick={() => save({ engine_paused: !paused })}>
         <Icon name={paused ? "play_arrow" : "pause"} size={16} />
       </button>
-      <button className="iconbtn" title="Settings" aria-label="Settings" onClick={() => setView("settings")}>
-        <Icon name="settings" size={16} />
-      </button>
-      {note && <small className={`col-span-3 truncate text-xs ${paused ? "text-ink3" : "text-danger"}`}>{note}</small>}
+      {note && <small className="col-span-2 truncate pb-1 pl-6 text-xs text-danger">{note}</small>}
       {open && (
-        <div className="pop absolute bottom-full left-0 mb-1 w-[272px]" role="menu">
-          <p className="label px-2 pb-1 pt-1.5">Level</p>
-          {LEVELS.map((l) => (
-            <button
-              key={l.id}
-              role="menuitemradio"
-              aria-checked={l.id === level}
-              className="flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left hover:bg-sel"
-              onClick={() => {
-                setOpen(false);
-                if (l.id !== level && confirmLevel(l.id)) save({ autonomy_level: l.id });
-              }}
-            >
-              <Icon name="check" size={13} className={`mt-0.5 ${l.id === level ? "text-ink" : "invisible"}`} />
-              <span>
-                <b className="block font-medium">{l.label}</b>
-                <span className="block text-xs leading-snug text-ink2">{l.text}</span>
-              </span>
-            </button>
-          ))}
+        <div className="pop absolute bottom-full left-0 mb-1 w-[336px]" role="menu">
+          <LevelControl
+            value={level}
+            onChange={(l) => {
+              setOpen(false);
+              save({ autonomy_level: l });
+            }}
+          />
         </div>
       )}
     </div>
@@ -146,16 +157,7 @@ function GoingOut() {
 }
 
 export default function Sidebar() {
-  const { view, sidebarOpen, setSidebarOpen, openCompose, briefingVersion, mail } = useApp();
-  const seen = useRef(briefingVersion);
-  const [newBriefing, setNewBriefing] = useState(false);
-  useEffect(() => {
-    if (briefingVersion > seen.current) {
-      seen.current = briefingVersion;
-      if (view !== "briefing") setNewBriefing(true);
-    }
-    if (view === "briefing") setNewBriefing(false);
-  }, [briefingVersion, view]);
+  const { view, sidebarOpen, setSidebarOpen, openCompose, mail } = useApp();
   const c = mail.counts;
 
   return (
@@ -170,25 +172,30 @@ export default function Sidebar() {
             <Icon name="compose" size={16} />
           </button>
         </div>
-        <nav className="flex-1 overflow-y-auto px-2 pb-2 pt-0.5">
-          <NavItem id="inbox" icon="inbox" label="Inbox" count={c.need} need />
-          <p className="label px-2 pb-[5px] pt-4">From your mail</p>
-          <NavItem id="replies" icon="reply" label="Replies" count={c.replies} />
-          <NavItem id="todos" icon="checklist" label="Todos" count={c.todos} />
-          <NavItem id="meetings" icon="event" label="Meetings" count={c.meetings} />
-          <NavItem id="followups" icon="schedule_send" label="Follow-ups" count={c.followups} />
-          <NavItem id="newsletters" icon="newspaper" label="Newsletters" />
-          <p className="label px-2 pb-[5px] pt-4">Tabellar</p>
-          <NavItem id="briefing" icon="description" label="Briefing" count={newBriefing ? 1 : 0} />
-          <NavItem id="activity" icon="activity" label="Activity" count={c.proposals} need />
-          <NavItem id="ask" icon="chat_bubble" label="Ask" />
-          <p className="label px-2 pb-[5px] pt-4">Mail</p>
-          <NavItem id="sent" icon="send" label="Sent" />
-          <NavItem id="scheduled" icon="schedule" label="Scheduled" count={c.scheduled} />
-          <NavItem id="categories" icon="label" label="Labels" />
+        <nav className="flex flex-1 flex-col gap-3 overflow-y-auto px-2 pb-2 pt-0.5">
+          <div>
+            <NavItem id="inbox" icon="inbox" label="Inbox" count={c.need} need />
+            <NavItem id="replies" icon="reply" label="Replies" count={c.replies} />
+            <NavItem id="todos" icon="checklist" label="Todos" count={c.todos} />
+            <NavItem id="meetings" icon="event" label="Meetings" count={c.meetings} />
+            <NavItem id="followups" icon="schedule_send" label="Follow-ups" count={c.followups} />
+          </div>
+          <div>
+            <NavItem id="briefing" icon="description" label="Brief" />
+            <NavItem id="ask" icon="chat_bubble" label="Ask" />
+          </div>
+          <div>
+            <NavItem id="sent" icon="send" label="Sent" />
+            <NavItem id="scheduled" icon="schedule" label="Scheduled" />
+            <NavItem id="categories" icon="label" label="Labels" />
+            <NavItem id="newsletters" icon="newspaper" label="Newsletters" />
+          </div>
         </nav>
         <GoingOut />
-        <Engine />
+        <div className="mx-2 border-t border-line pb-2 pt-1.5">
+          <Engine />
+          <NavItem id="settings" icon="settings" label="Settings" on={view === "settings" || view === "activity" || view === "relationships"} />
+        </div>
       </aside>
     </>
   );

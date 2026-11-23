@@ -4,7 +4,7 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import { Countdown, Empty, Glyph, KeyHints, Kbd, Menu, SearchBox, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
+import { Countdown, Empty, Glyph, Menu, SearchBox, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
 
 // Replies: every answer Tabellar has written, ready to read and send, and the
 // ones Autopilot is about to send on its own. Reading and sending happen here,
@@ -25,7 +25,7 @@ type Reply = {
   source: Source | null;
   raw: any;
 };
-type Head = { head: true; key: string; name: string; note: string; count: string };
+type Head = { head: true; key: string; name: string };
 
 function plain(html: string): string {
   return (html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>\s*<p[^>]*>/gi, "\n\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"').trim();
@@ -52,7 +52,7 @@ function later(choice: "hour" | "evening" | "morning"): string {
 }
 
 export default function RepliesView() {
-  const { user, search, liveChanges, mail, addToast, openCompose, getViewCache, setViewCache, notifyDraftChange, draftVersion, profile } = useApp();
+  const { user, search, liveChanges, mail, addToast, openCompose, getViewCache, setViewCache, notifyDraftChange, draftVersion } = useApp();
   const supabase = createClient();
   const [replies, setReplies] = useState<Reply[] | null>(null);
   const [cursorId, setCursorId] = useState<string | null>(null);
@@ -121,15 +121,15 @@ export default function RepliesView() {
     const out: (Head | Reply)[] = [];
     const going = shown.filter((r) => r.going);
     const ready = shown.filter((r) => !r.going).sort((a, b) => b.at.localeCompare(a.at));
-    if (going.length) out.push({ head: true, key: "going", name: "Going out", note: profile.autopilot_known_only === false ? "Autopilot" : "Autopilot, to people you have written to", count: String(going.length) }, ...going);
+    if (going.length) out.push({ head: true, key: "going", name: "Going out" }, ...going);
     if (group === "person") {
       const by = new Map<string, Reply[]>();
       for (const r of ready) by.set(recipient(r), [...(by.get(recipient(r)) || []), r]);
-      for (const [name, list] of by) out.push({ head: true, key: `p:${name}`, name, note: list[0].to[0] || "", count: String(list.length) }, ...list);
+      for (const [name, list] of by) out.push({ head: true, key: `p:${name}`, name }, ...list);
     } else {
       let run: Reply[] = [];
-      let day = { name: "", date: "", key: "" };
-      const flush = () => run.length && out.push({ head: true, key: `d:${day.key}`, name: "Ready to send", note: day.name === "Today" || day.name === "Yesterday" ? day.name : `${day.name} ${day.date}`, count: `${run.length} of ${ready.length}` }, ...run);
+      let day = { head: "", key: "" };
+      const flush = () => run.length && out.push({ head: true, key: `d:${day.key}`, name: day.head }, ...run);
       for (const r of ready) {
         const d = dayLabel(r.at);
         if (d.key !== day.key) {
@@ -142,7 +142,7 @@ export default function RepliesView() {
       flush();
     }
     return out;
-  }, [shown, group, profile.autopilot_known_only]);
+  }, [shown, group]);
 
   const rows = useMemo(() => items.filter((i): i is Reply => !("head" in i)), [items]);
   const cursor = rows.find((r) => r.id === cursorId) || rows[0] || null;
@@ -276,7 +276,6 @@ export default function RepliesView() {
     return () => document.removeEventListener("keydown", onKey);
   });
 
-  const level = mail.engine?.level ?? "observe";
   const position = cursor && !cursor.going ? `${ready.indexOf(cursor) + 1} of ${ready.length}` : "";
 
   return (
@@ -285,7 +284,7 @@ export default function RepliesView() {
         <header className="bar">
           <b className="bar-title mr-1.5">{selected.length} selected</b>
           <button className="btn btn-pri" disabled={sending} onClick={() => send(selected)}>
-            Send {selected.length} <Kbd>⌘↵</Kbd>
+            Send {selected.length}
           </button>
           <button className="btn" onClick={() => send(selected, later("morning"))}>
             Send tomorrow 9:00
@@ -294,7 +293,7 @@ export default function RepliesView() {
             Discard
           </button>
           <button className="btn btn-plain" onClick={() => setPicked(new Set())}>
-            Clear <Kbd>esc</Kbd>
+            Clear
           </button>
           <span className="flex-1" />
           <SearchBox placeholder="Search replies" />
@@ -332,21 +331,13 @@ export default function RepliesView() {
               <SkeletonRows count={9} tall />
             </div>
           ) : !rows.length ? (
-            <Empty icon="reply" title={search ? "No replies match that search" : "No replies are waiting"}>
-              {search
-                ? "Try the name of the person or a word from the subject."
-                : level === "observe"
-                  ? "At Observe, Tabellar does not write replies. Raise the level at the bottom of the sidebar and answers to new mail are drafted here."
-                  : "When an email needs an answer, Tabellar writes one and it waits here for you to read and send."}
-            </Empty>
+            <Empty icon="reply" title={search ? "Nothing matches that search" : "No replies waiting"} />
           ) : (
             items.map((item) =>
               "head" in item ? (
                 <div key={item.key} className="day">
                   <b>{item.name}</b>
-                  <span className="truncate">{item.note}</span>
                   <span className="flex-1" />
-                  <span>{item.count}</span>
                 </div>
               ) : (
                 <div key={item.id} role="option" aria-selected={cursor === item} className={`row2 grid grid-cols-[26px_minmax(0,1fr)_auto] gap-y-[3px] ${picked.has(item.id) && cursor !== item ? "bg-hover" : ""}`} onClick={(e) => (e.shiftKey ? pick(item, true) : setCursorId(item.id))} onDoubleClick={() => edit(item)}>
@@ -417,26 +408,6 @@ export default function RepliesView() {
                   className="mt-4 text-sm leading-[1.6] tracking-[-0.006em] [&_a]:underline [&_p]:mb-3"
                   dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(cursor.html || "<p>This draft is empty.</p>", { FORBID_TAGS: ["style", "img"], FORBID_ATTR: ["style"] }) }}
                 />
-                <div className="mt-[22px] grid grid-cols-[22px_1fr] border-t border-line-soft pt-3.5 text-[12.5px] leading-normal text-ink2">
-                  <Glyph state="info" />
-                  {cursor.going ? (
-                    <p>
-                      <b className="font-semibold text-ink">Autopilot sends this on its own.</b> It goes only to the person who wrote, inside the same thread, with nobody copied in. Cancel keeps it as a draft instead.
-                    </p>
-                  ) : (
-                    <p>
-                      <b className="font-semibold text-ink">Why this is waiting for you.</b>{" "}
-                      {level === "autopilot"
-                        ? isNew(cursor)
-                          ? "Autopilot is on, but you have not written to this person before, so it only drafts."
-                          : "Autopilot is on, but this one needs you: the answer is yours to decide, or the day's limit was reached."
-                        : level === "observe" || level === "suggest"
-                          ? "Tabellar is not set to send anything on its own."
-                          : "At Assist, Tabellar writes replies and never sends them."}{" "}
-                      Nothing goes out until you press Send.
-                    </p>
-                  )}
-                </div>
               </div>
             </div>
             <div className="flex flex-none items-center gap-2 border-t border-line py-[11px] pl-6 pr-4 md:pl-10">
@@ -454,7 +425,7 @@ export default function RepliesView() {
               ) : (
                 <>
                   <button className="btn btn-pri" disabled={sending} onClick={() => send([cursor])}>
-                    Send <Kbd>⌘↵</Kbd>
+                    Send
                   </button>
                   <div className="relative">
                     <button className="btn" aria-haspopup="menu" aria-expanded={laterOpen} onClick={() => setLaterOpen(!laterOpen)}>
@@ -477,7 +448,7 @@ export default function RepliesView() {
                     )}
                   </div>
                   <button className="btn" onClick={() => edit(cursor)}>
-                    Edit <Kbd>E</Kbd>
+                    Edit
                   </button>
                   <small className="ml-1.5 hidden whitespace-nowrap text-xs text-ink3 xl:block">{cursor.source ? `To ${recipient(cursor).split(" ")[0]} only, same thread` : ""}</small>
                 </>
@@ -503,16 +474,6 @@ export default function RepliesView() {
           <div className="hidden flex-1 md:block" />
         )}
       </div>
-      <KeyHints
-        left={replies ? `${ready.length} ready${rows.length - ready.length ? `, ${rows.length - ready.length} going out` : ""}` : ""}
-        keys={[
-          ["J K", "Move"],
-          ["X", "Select"],
-          ["⌘↵", "Send"],
-          ["E", "Edit"],
-          ["⌫", "Discard"],
-        ]}
-      />
     </>
   );
 }

@@ -3,7 +3,7 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import { Empty, Glyph, KeyHints, Kbd, Seg, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
+import { Empty, Glyph, Seg, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
 import { NotThis } from "../Profile";
 import { api } from "@/lib/outcomes";
 
@@ -49,7 +49,7 @@ type Item = {
   since: string; // when the wait began
   wrote: string; // what the user sent, as far as the list knows it
 };
-type Head = { head: true; key: string; name: string; note: string; count: number; need: boolean };
+type Head = { head: true; key: string; name: string };
 type Filter = "waiting" | "due" | "snoozed" | "done";
 
 const DAY = 86_400_000;
@@ -98,7 +98,7 @@ function statusOf(i: Item): string {
   return "Not tracked";
 }
 
-function SnoozeMenu({ onSnooze, up = false, hint }: { onSnooze: (days: number) => void; up?: boolean; hint?: string }) {
+function SnoozeMenu({ onSnooze, up = false }: { onSnooze: (days: number) => void; up?: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -115,7 +115,7 @@ function SnoozeMenu({ onSnooze, up = false, hint }: { onSnooze: (days: number) =
   return (
     <div ref={ref} className="relative">
       <button className="btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-        Snooze {hint && <Kbd>{hint}</Kbd>}
+        Snooze
         <Icon name="expand_more" size={13} className="text-ink3" />
       </button>
       {open && (
@@ -213,21 +213,21 @@ export default function FollowupsView() {
     const q = search.trim().toLowerCase();
     const shown = q ? all.filter((i) => `${i.name} ${i.email} ${i.subject}`.toLowerCase().includes(q)) : all;
     const out: (Head | Item)[] = [];
-    const add = (state: State, name: string, note: string, sort: (a: Item, b: Item) => number) => {
+    const add = (state: State, name: string, sort: (a: Item, b: Item) => number) => {
       const list = shown.filter((i) => i.state === state).sort(sort);
-      if (list.length) out.push({ head: true, key: `head:${state}`, name, note, count: list.length, need: state === "due" }, ...list);
+      if (list.length) out.push({ head: true, key: `head:${state}`, name }, ...list);
     };
     const byReminder = (a: Item, b: Item) => a.f!.remind_at.localeCompare(b.f!.remind_at);
     const newest = (a: Item, b: Item) => b.since.localeCompare(a.since);
-    if (filter === "waiting" || filter === "due") add("due", "Due now", "The reminder date has come", byReminder);
+    if (filter === "waiting" || filter === "due") add("due", "Due now", byReminder);
     if (filter === "waiting") {
-      add("waiting", "Waiting", "No answer yet, reminder still ahead", byReminder);
-      add("untracked", "Not tracked", "Sent two or more days ago, no answer", (a, b) => a.since.localeCompare(b.since));
+      add("waiting", "Waiting", byReminder);
+      add("untracked", "Not tracked", (a, b) => a.since.localeCompare(b.since));
     }
-    if (filter === "snoozed") add("snoozed", "Snoozed", "Back in Waiting on the date shown", (a, b) => (a.f!.snooze_until || "").localeCompare(b.f!.snooze_until || ""));
+    if (filter === "snoozed") add("snoozed", "Snoozed", (a, b) => (a.f!.snooze_until || "").localeCompare(b.f!.snooze_until || ""));
     if (filter === "done") {
-      add("answered", "Answered", "", newest);
-      add("dismissed", "Dismissed", "", newest);
+      add("answered", "Answered", newest);
+      add("dismissed", "Dismissed", newest);
     }
     return out;
   }, [all, filter, search]);
@@ -399,14 +399,14 @@ export default function FollowupsView() {
         <header className="bar">
           <b className="bar-title mr-1.5">{selected.length} selected</b>
           <button className="btn" onClick={() => answered(selected)}>
-            Mark answered <Kbd>A</Kbd>
+            Mark answered
           </button>
           <SnoozeMenu onSnooze={(days) => snooze(selected, days)} />
           <button className="btn" onClick={() => dismiss(selected)}>
             Dismiss
           </button>
           <button className="btn btn-plain" onClick={() => setPicked(new Set())}>
-            Clear <Kbd>esc</Kbd>
+            Clear
           </button>
         </header>
       ) : (
@@ -415,9 +415,9 @@ export default function FollowupsView() {
             value={filter}
             onChange={change}
             options={[
-              { id: "waiting", label: "Waiting", count: counts.active },
+              { id: "waiting", label: "Waiting" },
               { id: "due", label: "Due now", count: counts.due, need: true },
-              { id: "snoozed", label: "Snoozed", count: counts.snoozed },
+              { id: "snoozed", label: "Snoozed" },
               { id: "done", label: "Done" },
             ]}
           />
@@ -439,16 +439,11 @@ export default function FollowupsView() {
             </p>
           ) : !rows.length ? (
             search ? (
-              <Empty icon="search" title="No follow-ups match that search">
-                Try the name of the person or a word from the subject.
-              </Empty>
+              <Empty icon="search" title="Nothing matches that search" />
             ) : filter === "waiting" ? (
-              <Empty icon="schedule_send" title="Nobody owes you an answer">
-                Mail you sent that asks or promises something and goes two days without a reply is listed here. Track one and Tabellar reminds you when it is time to nudge.
-              </Empty>
+              <Empty icon="schedule_send" title="Nobody owes you an answer" />
             ) : (
               <Empty icon="schedule_send" title={filter === "due" ? "No reminders are due" : filter === "snoozed" ? "Nothing is snoozed" : "Nothing here yet"}>
-                {filter === "due" ? "A follow-up shows here in red once its reminder date has come." : filter === "snoozed" ? "A snoozed follow-up waits here until the date you chose." : "Follow-ups you mark answered or dismiss are kept here."}{" "}
                 <button className="link" onClick={() => change("waiting")}>
                   Show what is waiting
                 </button>
@@ -460,9 +455,7 @@ export default function FollowupsView() {
                 return (
                   <div key={item.key} className="day">
                     <b>{item.name}</b>
-                    <span className="truncate">{item.note}</span>
                     <span className="flex-1" />
-                    <span className={item.need ? "count-need" : ""}>{item.count}</span>
                   </div>
                 );
               const isCursor = cursor === item;
@@ -568,29 +561,26 @@ export default function FollowupsView() {
                     <p className="leading-normal text-ink2">{cursor.wrote}</p>
                   </div>
                 )}
-                {(active || cursor.state === "untracked") && (
-                  <p className="mt-[22px] border-t border-line-soft pt-3.5 text-[12.5px] leading-normal text-ink3">Nudge opens a reply in the same conversation for you to write. Nothing is sent until you send it yourself.</p>
-                )}
               </div>
             </div>
             <div className="flex flex-none flex-wrap items-center gap-2 border-t border-line py-[11px] pl-6 pr-4 md:pl-10">
               {active ? (
                 <>
                   <button className="btn btn-pri" onClick={() => nudge(cursor)}>
-                    Nudge <Kbd>↵</Kbd>
+                    Nudge
                   </button>
-                  <SnoozeMenu up hint="S" onSnooze={(days) => snooze([cursor], days)} />
+                  <SnoozeMenu up onSnooze={(days) => snooze([cursor], days)} />
                   <button className="btn" onClick={() => answered([cursor])}>
-                    Mark answered <Kbd>A</Kbd>
+                    Mark answered
                   </button>
                 </>
               ) : cursor.state === "untracked" ? (
                 <>
                   <button className="btn btn-pri" disabled={adding === cursor.threadId} onClick={() => track(cursor)}>
-                    Track <Kbd>T</Kbd>
+                    Track
                   </button>
                   <button className="btn" onClick={() => nudge(cursor)}>
-                    Nudge <Kbd>↵</Kbd>
+                    Nudge
                   </button>
                 </>
               ) : (
@@ -627,17 +617,6 @@ export default function FollowupsView() {
           <div className="hidden flex-1 md:block" />
         )}
       </div>
-      <KeyHints
-        left={loading ? "" : `${counts.active} waiting${counts.due ? `, ${counts.due} due now` : ""}${counts.snoozed ? `, ${counts.snoozed} snoozed` : ""}`}
-        keys={[
-          ["J K", "Move"],
-          ["X", "Select"],
-          ["↵", "Nudge"],
-          ["S", "Snooze 3 days"],
-          ["A", "Answered"],
-          ["Z", "Undo"],
-        ]}
-      />
     </>
   );
 }

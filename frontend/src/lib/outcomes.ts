@@ -41,7 +41,7 @@ export type Overview = {
   byEmail: Map<string, Outcome[]>;
   written: Set<string>; // addresses the user has written to
   outgoing: Outgoing[];
-  counts: { need: number; replies: number; todos: number; meetings: number; followups: number; proposals: number; scheduled: number };
+  counts: { need: number; replies: number; todos: number; meetings: number; followups: number; proposals: number };
   engine: EngineStatus | null;
   loaded: boolean;
   reload: () => void;
@@ -103,13 +103,13 @@ function draftWhy(draft: any, w: Why): string {
   const line = said ? `"${said.length > 110 ? `${said.slice(0, 110).replace(/\s+\S*$/, "")}..."` : `${said}"`} ` : "";
   const to = String((draft.to_addresses || [])[0] || "").toLowerCase();
   const who = w.names.get(to) || to || "them";
-  let held: string;
-  if (draft.source && draft.source !== "tabellar") held = "Written when you asked for it. Nothing is sent until you send it.";
-  else if (w.level !== "autopilot") held = `At ${w.level.charAt(0).toUpperCase()}${w.level.slice(1)}, Tabellar writes replies and never sends them.`;
-  else if (w.knownOnly && w.written.size && !w.written.has(to)) held = `You have not written to ${who} before, so Autopilot only drafted it.`;
-  else if (w.sentToday >= w.cap) held = `Autopilot had sent today's limit of ${w.cap} replies.`;
-  else held = "Autopilot judged that the answer needs your decision, so it only drafted it.";
-  return line + held;
+  let held = "";
+  const auto = (!draft.source || draft.source === "tabellar") && w.level === "autopilot";
+  if (!auto) held = "";
+  else if (w.knownOnly && w.written.size && !w.written.has(to)) held = `You have not written to ${who} before.`;
+  else if (w.sentToday >= w.cap) held = `Daily limit of ${w.cap} reached.`;
+  else held = "Needs your decision.";
+  return (line + held).trim();
 }
 
 // The calendar event an email is about, as the server linked it: on the
@@ -124,7 +124,7 @@ function calendarOutcome(emailId: string, c: any, at: string): Outcome {
     state: "done",
     short,
     title: cancelled ? `Cancelled: ${c.title || "an event"}` : c.on_calendar ? `On your calendar: ${c.title || "an event"}` : `Invitation: ${c.title || "an event"}`,
-    why: c.on_calendar ? "Already on your Google Calendar, so Tabellar proposed nothing." : "Not on your Google Calendar. Answer the invitation in Google Calendar to add it.",
+    why: c.on_calendar ? undefined : "Not on your calendar yet",
     act: { kind: "view", view: "meetings" },
   };
 }
@@ -150,24 +150,24 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
     const d = r.detail || {};
     const base = { key: r.id, at: r.created_at };
     if (r.status === "proposed") {
-      push(r.email_id, { ...base, state: "need", short: PROPOSED[r.kind] || "To approve", title: r.summary, why: "Waiting for your approval. It is carried out exactly as shown.", act: { kind: "approve", id: r.id, hash: r.hash || "" } });
+      push(r.email_id, { ...base, state: "need", short: PROPOSED[r.kind] || "To approve", title: r.summary, act: { kind: "approve", id: r.id, hash: r.hash || "" } });
     } else if (r.status === "done" && r.kind === "send") {
       const pending = pendingByAction.get(r.id);
-      if (pending) push(r.email_id, { ...base, state: "going", short: "Replying", title: "Replying on its own", why: "Only to the person who wrote, inside this thread. You can cancel until it goes.", sendAt: pending.send_at, act: { kind: "cancel", id: r.id } });
-      else if (d.sentAt) push(r.email_id, { ...base, state: "done", short: `Replied ${when(d.sentAt)}`, title: `Replied on its own, ${when(d.sentAt)}`, why: "Autopilot: to the person who wrote, inside this thread." });
+      if (pending) push(r.email_id, { ...base, state: "going", short: "Replying", title: "Replying on its own", sendAt: pending.send_at, act: { kind: "cancel", id: r.id } });
+      else if (d.sentAt) push(r.email_id, { ...base, state: "done", short: `Replied ${when(d.sentAt)}`, title: `Replied on its own, ${when(d.sentAt)}` });
     } else if (r.status === "done" && r.kind === "draft") {
       const draft = draftById.get(d.draftId);
       if (draft) {
         seenDraft.add(draft.id);
         push(r.email_id, { ...base, state: "need", short: "Reply ready", title: "Drafted a reply, not sent", why: draftWhy(draft, w), act: { kind: "review", draftId: draft.id } });
-      } else push(r.email_id, { ...base, state: "info", short: "", title: "Drafted a reply", why: "The draft has since been sent or discarded." });
+      } else push(r.email_id, { ...base, state: "info", short: "", title: "Drafted a reply", why: "Sent or discarded since" });
     } else if (r.status === "done" && r.kind === "todo") {
       seenTodoText.add(`${r.email_id}:${d.text}`);
       push(r.email_id, { ...base, state: "done", short: "Todo added", title: "Added a todo", why: String(d.text || ""), act: { kind: "undo", id: r.id } });
     } else if (r.status === "done" && r.kind === "meeting") {
       const m = meetingById.get(d.meetingId);
       if (m) seenMeeting.add(m.id);
-      if (m && m.status === "proposed") push(r.email_id, { ...base, state: "need", short: "Meeting to confirm", title: `Proposed a meeting: ${m.title}`, why: `${meetingWhen(m)}. It goes on your calendar when you confirm it.`, act: { kind: "view", view: "meetings" } });
+      if (m && m.status === "proposed") push(r.email_id, { ...base, state: "need", short: "Meeting to confirm", title: `Proposed a meeting: ${m.title}`, why: meetingWhen(m), act: { kind: "view", view: "meetings" } });
       else if (m && m.status === "confirmed") push(r.email_id, { ...base, state: "done", short: `On calendar, ${when(m.start_time)}`, title: `On your calendar: ${m.title}`, why: when(m.start_time), act: { kind: "view", view: "meetings" } });
     } else if (r.status === "done" && r.kind === "archive") {
       push(r.email_id, { ...base, state: "done", short: "Archived", title: "Archived", act: { kind: "undo", id: r.id } });
@@ -272,7 +272,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
   }, [raw, reload]);
 
   const derived = useMemo(() => {
-    if (!raw) return { byEmail: new Map<string, Outcome[]>(), written: new Set<string>(), outgoing: [] as Outgoing[], counts: { need: 0, replies: 0, todos: 0, meetings: 0, followups: 0, proposals: 0, scheduled: 0 } };
+    if (!raw) return { byEmail: new Map<string, Outcome[]>(), written: new Set<string>(), outgoing: [] as Outgoing[], counts: { need: 0, replies: 0, todos: 0, meetings: 0, followups: 0, proposals: 0 } };
     const auto = raw.sched.filter((s) => s.source === "autopilot");
     const today = new Date().toDateString();
     const sentToday = raw.log.filter((r) => r.kind === "send" && r.status === "done" && new Date(r.created_at).toDateString() === today).length;
@@ -290,7 +290,6 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
         meetings: raw.meetings.filter((m) => m.status === "proposed").length,
         followups: raw.followups,
         proposals: raw.log.filter((r) => r.status === "proposed" && r.kind !== "label").length,
-        scheduled: raw.sched.length - auto.length,
       },
     };
   }, [raw, engine?.level]);

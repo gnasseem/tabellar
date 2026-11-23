@@ -1,16 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import { Countdown, Empty, Glyph, KeyHints, Kbd, Menu, Seg, SkeletonRows, Tick, ViewBar, VirtualList, clock, dayLabel, shortWhen, type MailState } from "../ui";
+import { Countdown, Empty, Glyph, Menu, Seg, SkeletonRows, Tick, ViewBar, VirtualList, clock, dayLabel, shortWhen, type MailState } from "../ui";
 
 // Everything Tabellar did or proposes, and what the agent and the assistant
 // did for you. Proposals are approved exactly as shown (the server checks a
 // hash of the content); finished actions can be undone. Every line says what
 // happened, why, and how to take it back.
-
-// The sidebar owns the level and pause controls; Settings imports these from here.
-export { LEVELS, confirmLevel } from "../Sidebar";
 
 type LogRow = {
   id: string;
@@ -26,7 +24,7 @@ type LogRow = {
   emails: { id: string; subject: string | null; sender: string | null } | null;
 };
 
-type Head = { head: true; key: string; name: string; note: string; count: number; waiting?: boolean };
+type Head = { head: true; key: string; name: string; waiting?: boolean };
 type Item = Head | LogRow;
 type Filter = "waiting" | "done" | "notdone" | "all";
 type Group = "day" | "kind";
@@ -222,16 +220,16 @@ export default function ActivityView() {
     const rest = shown.filter((r) =>
       filter === "waiting" ? false : filter === "done" ? r.status === "done" || r.status === "running" : filter === "notdone" ? r.status === "blocked" || r.status === "failed" : r.status !== "proposed",
     );
-    if (proposals.length) out.push({ head: true, key: "head:waiting", name: "Waiting for you", note: "Carried out exactly as shown once you approve", count: proposals.length, waiting: true }, ...proposals);
+    if (proposals.length) out.push({ head: true, key: "head:waiting", name: "Waiting for you", waiting: true }, ...proposals);
     if (group === "kind") {
       for (const kind of Object.keys(KIND_NAME)) {
         const list = rest.filter((r) => r.kind === kind);
-        if (list.length) out.push({ head: true, key: `head:${kind}`, name: KIND_NAME[kind], note: "", count: list.length }, ...list);
+        if (list.length) out.push({ head: true, key: `head:${kind}`, name: KIND_NAME[kind] }, ...list);
       }
     } else {
       let run: LogRow[] = [];
-      let day = { name: "", date: "", key: "" };
-      const flush = () => run.length && out.push({ head: true, key: `head:${day.key}`, name: day.name, note: day.date, count: run.length }, ...run);
+      let day = { head: "", key: "" };
+      const flush = () => run.length && out.push({ head: true, key: `head:${day.key}`, name: day.head }, ...run);
       for (const r of rest) {
         const d = dayLabel(r.created_at);
         if (d.key !== day.key) {
@@ -369,14 +367,12 @@ export default function ActivityView() {
   const head = (h: Head) => (
     <div key={h.key} className="day !static">
       <b className={h.waiting ? "!text-wax-ink" : ""}>{h.name}</b>
-      <span className="truncate">{h.note}</span>
       <span className="flex-1" />
       {h.waiting && labelProposals.length > 1 && !picked.size && (
         <button className="link whitespace-nowrap" onClick={() => approve(labelProposals)}>
           Approve all {labelProposals.length} labels
         </button>
       )}
-      <span className="whitespace-nowrap">{h.count.toLocaleString()}</span>
     </div>
   );
 
@@ -501,7 +497,6 @@ export default function ActivityView() {
     return null;
   };
 
-  const level = engine?.level ?? "observe";
 
   return (
     <>
@@ -509,19 +504,26 @@ export default function ActivityView() {
         <header className="bar">
           <b className="bar-title mr-1.5">{selected.length} selected</b>
           <button className="btn btn-pri" onClick={() => approve(selected)}>
-            Approve {selected.length} <Kbd>A</Kbd>
+            Approve {selected.length}
           </button>
           <button className="btn" onClick={() => dismiss(selected)}>
             Dismiss {selected.length}
           </button>
           <button className="btn btn-plain" onClick={() => setPicked(new Set())}>
-            Clear <Kbd>esc</Kbd>
+            Clear
           </button>
         </header>
       ) : (
         <ViewBar
-          title="Activity"
-          search="Search activity"
+          title={
+            <span className="flex flex-none items-center gap-1">
+              <button className="iconbtn -ml-1.5" aria-label="Back to Settings" title="Settings" onClick={() => setView("settings")}>
+                <Icon name="chevron_left" size={16} />
+              </button>
+              <h1 className="bar-title">History</h1>
+            </span>
+          }
+          search="Search history"
           right={
             <Menu
               label="Group"
@@ -546,57 +548,35 @@ export default function ActivityView() {
           />
         </ViewBar>
       )}
-      {(engine?.paused || engine?.gmailError || engine?.lastError) && (
-        <div className="flex h-9 flex-none items-center gap-2 border-b border-line-soft pl-5 pr-3.5 text-xs text-ink3">
-          {engine.paused ? (
-            <span className="flex-none">Paused. Nothing happens until you resume, at the bottom of the sidebar.</span>
-          ) : (
-            <span className="min-w-0 truncate text-danger" role="alert" title={engine.gmailError || engine.lastError || ""}>
-              {engine.gmailError ? `Can't reach Gmail: ${engine.gmailError}` : `The last check failed: ${engine.lastError}`}
-            </span>
-          )}
+      {!engine?.paused && (engine?.gmailError || engine?.lastError) && (
+        <div className="flex h-9 flex-none items-center border-b border-line-soft pl-5 pr-3.5 text-xs">
+          <span className="min-w-0 truncate text-danger" role="alert" title={engine.gmailError || engine.lastError || ""}>
+            {engine.gmailError ? `Can't reach Gmail: ${engine.gmailError}` : `Last check failed: ${engine.lastError}`}
+          </span>
         </div>
       )}
-      <div className="flex min-h-0 flex-1 flex-col" role="listbox" aria-label="Activity">
+      <div className="flex min-h-0 flex-1 flex-col" role="listbox" aria-label="History">
         {rows === null ? (
           <div className="pt-9">
             <SkeletonRows count={20} />
           </div>
         ) : !list.length ? (
           search ? (
-            <Empty icon="search" title="Nothing in Activity matches that search">
-              Search looks at what was done and at the subject and sender of the email it belongs to.
-            </Empty>
+            <Empty icon="search" title="Nothing matches that search" />
           ) : filter === "waiting" ? (
             <Empty icon="activity" title="Nothing is waiting for you">
-              {level === "suggest"
-                ? "At Suggest, Tabellar asks before it drafts, adds a todo or proposes a meeting. Each request appears here to approve."
-                : "Proposals appear here at the Suggest level. Change the level at the bottom of the sidebar."}{" "}
               <button className="link" onClick={() => setFilter("all")}>
-                Show all activity
+                Show all
               </button>
             </Empty>
           ) : filter !== "all" ? (
-            <Empty icon="activity" title={filter === "done" ? "Nothing has been done yet" : "Nothing was refused or failed"}>
-              {filter === "done" ? "Labels, drafts, todos, meetings and replies appear here once Tabellar makes them." : "Actions that were not allowed, and ones that went wrong, appear here with the reason."}{" "}
+            <Empty icon="activity" title={filter === "done" ? "Nothing done yet" : "Nothing refused or failed"}>
               <button className="link" onClick={() => setFilter("all")}>
-                Show all activity
+                Show all
               </button>
             </Empty>
           ) : (
-            <Empty icon="activity" title="No activity yet">
-              {level === "observe" ? (
-                <>
-                  At Observe, Tabellar sorts and notifies and changes nothing, so there is little to log. Raise the level at the bottom of the sidebar, or see{" "}
-                  <button className="link" onClick={() => setView("settings")}>
-                    Settings
-                  </button>
-                  .
-                </>
-              ) : (
-                "Everything Tabellar does or proposes is listed here, with the reason and a way to undo it. New mail is checked every two minutes."
-              )}
-            </Empty>
+            <Empty icon="activity" title="Nothing yet" />
           )
         ) : (
           <VirtualList
@@ -612,16 +592,6 @@ export default function ActivityView() {
           />
         )}
       </div>
-      <KeyHints
-        left={rows ? `${list.length.toLocaleString()} ${list.length === 1 ? "action" : "actions"}${hasMore ? ", more load as you scroll" : ""}` : ""}
-        keys={[
-          ["J K", "Move"],
-          ["X", "Select"],
-          ["A", "Approve"],
-          ["↵", "Details"],
-          ["Z", "Undo approval"],
-        ]}
-      />
     </>
   );
 }

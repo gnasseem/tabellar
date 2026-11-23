@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
-import { Empty, KeyHints, SkeletonRows, ViewBar } from "../ui";
+import { Empty, SkeletonRows, ViewBar } from "../ui";
 import { BUILT_IN_COLORS, LABEL_COLORS, addDismissedSlug, analyzeEmailPatterns, getDismissedSlugs, labelColor, removeDismissedSlug, type TagSuggestion } from "@/lib/tagSuggestions";
 
 // Labels: the four every email is sorted into, the user's own, and the rules
@@ -142,7 +142,7 @@ export default function CategoriesView() {
     if (data?.[0]) {
       setTags((prev) => [...prev, data[0]]);
       setSelected(data[0].slug);
-      addToast("info", "Label created. Tabellar applies it to new mail, not mail already sorted.");
+      addToast("info", "Label created");
       setNewTagName("");
       setNewTagDescription("");
       setNewTagColor(LABEL_COLORS[3].hex);
@@ -182,7 +182,7 @@ export default function CategoriesView() {
     if (data?.[0]) {
       setTags((prev) => [...prev, data[0]]);
       setSuggestions((prev) => prev.filter((x) => x.id !== s.id));
-      addToast("success", `Label "${s.name}" added. Tabellar applies it to new mail.`);
+      addToast("success", `Label "${s.name}" added`);
     } else addToast("error", `Could not add "${s.name}". Try again.`);
   };
 
@@ -248,8 +248,7 @@ export default function CategoriesView() {
           ) : (
             <>
               <div className="day">
-                <b>Sorted by Tabellar</b>
-                <span className="truncate">Every email gets exactly one</span>
+                <b>Built in</b>
                 <span className="flex-1" />
                 <span>Emails</span>
               </div>
@@ -257,7 +256,6 @@ export default function CategoriesView() {
 
               <div className="day">
                 <b>Your labels</b>
-                <span className="truncate">An email can carry several</span>
                 <span className="flex-1" />
                 <span>{own.length ? "Emails" : ""}</span>
               </div>
@@ -285,7 +283,7 @@ export default function CategoriesView() {
                     value={newTagDescription}
                     onChange={(e) => setNewTagDescription(e.target.value)}
                     placeholder="Which mail gets it, in your words"
-                    aria-label="When Tabellar should use this label"
+                    aria-label="Which mail gets this label"
                   />
                   <button type="submit" className="btn btn-sm" disabled={!newTagName.trim()}>
                     Add
@@ -296,11 +294,10 @@ export default function CategoriesView() {
                 </form>
               )}
               {own.filter((l) => matches(l.name, l.description)).map(row)}
-              {!own.length && !creating && <p className="px-5 py-1.5 text-ink3">None yet. Add one with New label, or take one of the suggestions below.</p>}
+              {!own.length && !creating && <p className="px-5 py-1.5 text-ink3">None yet</p>}
 
               <div className="day">
-                <b>Suggested by Tabellar</b>
-                <span className="truncate">From your last 300 emails</span>
+                <b>Suggested</b>
                 <span className="flex-1" />
                 {suggestionsStatus === "done" && (
                   <button className="link" onClick={() => analyzeSuggestions()}>
@@ -360,7 +357,7 @@ export default function CategoriesView() {
                       rows={2}
                       value={edit.description}
                       onChange={(e) => setEdit({ ...edit, description: e.target.value })}
-                      placeholder="Which mail gets this label, in your words. Tabellar reads this when it sorts."
+                      placeholder="Which mail gets this label"
                     />
                     <span className="text-ink3">Colour</span>
                     <div className="flex gap-1" role="radiogroup" aria-label="Colour">
@@ -381,11 +378,10 @@ export default function CategoriesView() {
                     </div>
                   </div>
                 ) : (
-                  <p className="mt-2 leading-normal text-ink2">{current.description} Tabellar decides this for every email as it arrives; rules below steer it.</p>
+                  <p className="mt-2 leading-normal text-ink2">{current.description}</p>
                 )}
 
                 <h3 className="label mt-7">Rules</h3>
-                <p className="mt-0.5 text-xs text-ink2">Say in plain words which mail belongs under {current.name}. Rules apply to new mail, not mail already sorted.</p>
                 <div className="mt-2 border-t border-line-soft">
                   {currentRules.map((rule) => (
                     <div key={rule.id} className="flex min-h-9 items-center gap-3 border-b border-line-soft py-1.5">
@@ -397,7 +393,7 @@ export default function CategoriesView() {
                       </button>
                     </div>
                   ))}
-                  {!currentRules.length && <p className="border-b border-line-soft py-2 text-ink3">No rules. Tabellar goes by the label's name{current.tag ? " and what it is used for" : ""}.</p>}
+                  {!currentRules.length && <p className="border-b border-line-soft py-2 text-ink3">No rules</p>}
                 </div>
                 <form
                   className="mt-2.5 flex gap-2"
@@ -428,14 +424,11 @@ export default function CategoriesView() {
         ) : (
           <div className="hidden min-w-0 flex-1 md:block">
             {!loading && (
-              <Empty icon="label" title="Select a label to see its rules">
-                Rules tell Tabellar, in plain words, which mail belongs under a label. Your own labels can also be renamed, recoloured or deleted here.
-              </Empty>
+              <Empty icon="label" title="Select a label to see its rules" />
             )}
           </div>
         )}
       </div>
-      <KeyHints left={loading ? "" : `${builtIn.length + own.length} labels, ${rules.length} ${rules.length === 1 ? "rule" : "rules"}`} keys={[]} />
     </>
   );
 }

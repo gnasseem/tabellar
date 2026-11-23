@@ -61,7 +61,7 @@ export function Questions() {
     <div className="border-b border-line-soft pb-1 pt-1">
       <button className="row w-full gap-2 text-left" aria-expanded={open} onClick={toggle}>
         <Glyph state="info" />
-        <span className="font-medium text-ink">{questions.length === 1 ? "Tabellar has a question" : `Tabellar has ${questions.length} questions`}</span>
+        <span className="font-medium text-ink">{questions.length === 1 ? "A question" : `${questions.length} questions`}</span>
         <span className="flex-1" />
         <Icon name={open ? "expand_less" : "expand_more"} size={15} className="text-ink3" />
       </button>
@@ -300,7 +300,7 @@ export function AboutYou() {
   const free = (kind: string) => kind === "fact" || kind === "rule";
   return (
     <div className="space-y-6">
-      {prefs && !prefs.length && <p className="text-ink2">Nothing yet. Tabellar adds to this list as you answer its questions and turn down what it makes.</p>}
+      {prefs && !prefs.length && <p className="text-ink2">Nothing yet</p>}
       {GROUPS.map((g) => {
         const rows = (prefs ?? []).filter((p) => p.kind === g.kind);
         return (
