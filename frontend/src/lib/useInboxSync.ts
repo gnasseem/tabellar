@@ -136,11 +136,11 @@ export function useInboxSync(reload: () => Promise<void> | void) {
       }
       const fetchData = await fetchRes.json();
       const newEmailCount: number = fetchData.fetched ?? 0;
-      const backgroundPipeline: boolean =
-        fetchData.background_pipeline === true;
 
-      // Fast path: no new emails and not first fetch.
-      if (newEmailCount === 0 && !isFirstFetch) {
+      // First fetch: the newest mail is in. The server reads the rest in the
+      // background (sorting, the briefing, 90 days of senders) and the inbox
+      // fills in as it lands.
+      if (isFirstFetch || newEmailCount === 0) {
         invalidateViewCache("inbox", "inbox:smart");
         try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
         await reload();
@@ -148,92 +148,29 @@ export function useInboxSync(reload: () => Promise<void> | void) {
         return;
       }
 
-      const shouldAnalyze = newEmailCount > 0 || isFirstFetch;
+      const analyzePromise = fetch(`${apiUrl}/analyze-inbox`, { method: "POST", headers })
+        .then((r) => r.ok)
+        .catch(() => false);
 
-      // For initial fetch, learn writing style in parallel (fire and forget)
-      if (isFirstFetch) {
-        fetch(`${apiUrl}/learn-style`, { method: "POST", headers }).catch(
-          () => {},
-        );
-      }
-
-      // On the initial fetch the backend has already kicked off
-      // analysis + briefing in the background via EdgeRuntime.waitUntil, so
-      // we don't hit /analyze-inbox at all; we just wait for email_processed
-      // rows to show up via Realtime (see the overlay's poll/subscribe below).
-      const cloudBackgroundHandled = backgroundPipeline;
-      const analyzePromise: Promise<unknown> = shouldAnalyze
-        ? cloudBackgroundHandled
-          ? Promise.resolve()
-          : fetch(`${apiUrl}/analyze-inbox`, { method: "POST", headers })
-              .then((r) => r.ok)
-              .catch(() => false)
-        : Promise.resolve();
-
-      // Briefing is fire-and-forget from the frontend's perspective; it never
-      // blocks the overlay. On the initial fetch the backend also writes
-      // last_briefing itself, so we skip the HTTP call and rely on a profiles
-      // realtime/polling pickup. For non-initial fetches we still fetch
-      // so the BriefingView gets a fresh snapshot.
+      // The briefing never blocks the window.
       void (async () => {
-        try {
-          await analyzePromise;
-        } catch {
-          /* ignore */
-        }
+        await analyzePromise;
         if (!mountedRef.current) return;
-
-        if (cloudBackgroundHandled) {
-          // Backend owns briefing generation. Poll profiles.last_briefing_at
-          // briefly (backend usually lands it within ~10s) then notify.
-          for (let i = 0; i < 60; i++) {
-            const { data: p } = await supabase
-              .from("profiles")
-              .select("last_briefing, last_briefing_at")
-              .eq("id", user.id)
-              .single();
-            if (p?.last_briefing && p.last_briefing_at) {
-              try {
-                const ts = new Date(p.last_briefing_at as string).getTime();
-                localStorage.setItem(
-                  `tabellar_briefing_cache_${user.id}`,
-                  JSON.stringify({ data: p.last_briefing, ts }),
-                );
-              } catch {
-                /* ignore */
-              }
-              notifyBriefingUpdated();
-              return;
-            }
-            await new Promise((r) => setTimeout(r, 1000));
-          }
-          return;
-        }
-
         try {
-          const briefingRes = await fetch(
-            `${apiUrl}/briefing?scope=all_recent`,
-            { headers },
-          );
+          const briefingRes = await fetch(`${apiUrl}/briefing?scope=all_recent`, { headers });
           if (!briefingRes.ok) return;
           const briefingJson = await briefingRes.json();
           const briefingData = briefingJson.briefing ?? briefingJson;
           if (briefingData?.executiveSummary !== undefined) {
             const ts = Date.now();
             try {
-              localStorage.setItem(
-                `tabellar_briefing_cache_${user.id}`,
-                JSON.stringify({ data: briefingData, ts }),
-              );
+              localStorage.setItem(`tabellar_briefing_cache_${user.id}`, JSON.stringify({ data: briefingData, ts }));
             } catch {
               /* ignore */
             }
             await supabase
               .from("profiles")
-              .update({
-                last_briefing: briefingData,
-                last_briefing_at: new Date(ts).toISOString(),
-              })
+              .update({ last_briefing: briefingData, last_briefing_at: new Date(ts).toISOString() })
               .eq("id", user.id);
             notifyBriefingUpdated();
           }
@@ -242,96 +179,10 @@ export function useInboxSync(reload: () => Promise<void> | void) {
         }
       })();
 
-      if (isFirstFetch) {
-        // Keep the overlay visible until every fetched inbox email has an
-        // email_processed row. This ensures the user never lands on a
-        // half-processed inbox. Safety timeout at 5 minutes as an absolute cap.
-        setInitialPhase(2);
-        const safetyTimer = setTimeout(() => {
-          if (!mountedRef.current) return;
-          setInitialPhase(-1);
-          invalidateViewCache("inbox", "inbox:smart");
-        try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
-          reload();
-        }, 300_000);
-
-        // Realtime shortcut: the backend micro-batches email_processed
-        // upserts, so we subscribe and short-circuit the poll as soon as
-        // processed count >= total (no need to wait the 500ms tick).
-        let remoteDoneResolve: (() => void) | null = null;
-        const remoteDonePromise = new Promise<void>((r) => {
-          remoteDoneResolve = r;
-        });
-        const checkDone = async (): Promise<number> => {
-          const [totalRes, processedRes] = await Promise.all([
-            supabase
-              .from("emails")
-              .select("id", { count: "exact", head: true })
-              .eq("user_id", user.id)
-              .eq("is_archived", false)
-              .not("label_ids", "cs", '{"SENT"}'),
-            supabase
-              .from("email_processed")
-              .select("email_id", { count: "exact", head: true })
-              .eq("user_id", user.id),
-          ]);
-          const total = totalRes.count ?? 0;
-          const processedCount = processedRes.count ?? 0;
-          return Math.max(0, total - processedCount);
-        };
-
-        const processedChannel = supabase
-          .channel(`initial-processed-${user.id}`)
-          .on(
-            "postgres_changes",
-            {
-              event: "INSERT",
-              schema: "public",
-              table: "email_processed",
-              filter: `user_id=eq.${user.id}`,
-            },
-            () => {
-              checkDone().then((n) => {
-                if (n === 0) remoteDoneResolve?.();
-              });
-            },
-          )
-          .subscribe();
-
-        await Promise.allSettled([analyzePromise]);
-
-        // Fast poll (500ms) after backend work completes, racing the realtime
-        // notifier so whichever fires first dismisses the overlay.
-        const pollLoop = (async () => {
-          for (let tick = 0; tick < 360; tick++) {
-            if (!mountedRef.current) break;
-            const remaining = await checkDone();
-            if (remaining === 0) return;
-            await new Promise((r) => setTimeout(r, 500));
-          }
-        })();
-
-        await Promise.race([pollLoop, remoteDonePromise]);
-        try {
-          await supabase.removeChannel(processedChannel);
-        } catch {
-          /* noop */
-        }
-
-        clearTimeout(safetyTimer);
-        if (!mountedRef.current) return;
-        setInitialPhase(3);
-        invalidateViewCache("inbox", "inbox:smart");
-        try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
-        await reload();
-        setInitialPhase(-1);
-      } else {
-        // Non-initial sync: run in background, no blocking overlay
-        await Promise.allSettled([analyzePromise]);
-        invalidateViewCache("inbox", "inbox:smart");
-        try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
-        await reload();
-      }
+      await analyzePromise;
+      invalidateViewCache("inbox", "inbox:smart");
+      try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
+      await reload();
     } catch {
       setSyncError("Network error - check your connection.");
       setInitialPhase(-1);

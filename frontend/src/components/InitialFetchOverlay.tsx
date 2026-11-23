@@ -3,7 +3,7 @@ import { Glyph } from "./ui";
 // Shown over the Inbox while mail is fetched and read: the steps in order,
 // the finished ones ticked and the current one marked as working.
 
-const INITIAL_PHASES = ["Connect to Gmail", "Fetch your recent mail", "Read each email: sort it, draft replies, find todos and meetings, write the briefing"];
+const INITIAL_PHASES = ["Connect to Gmail", "Fetch your newest mail"];
 const REFRESH_PHASES = ["Connect to Gmail", "Fetch new mail", "Read the new mail"];
 
 type Props = {
@@ -20,7 +20,7 @@ export default function InitialFetchOverlay({ phaseIndex, mode = "initial" }: Pr
         <p className="mt-1 text-xs leading-normal text-ink2">
           {mode === "refresh"
             ? "Tabellar is fetching what arrived since the last check and reading it."
-            : "Tabellar fetches your recent mail once, then reads each email. With a model running on this Mac this can take a few minutes."}
+            : "The newest mail first. The rest is read in the background."}
         </p>
         <ol className="mt-3 border-t border-line-soft pt-2">
           {phases.map((label, i) => {

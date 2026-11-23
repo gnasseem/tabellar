@@ -121,16 +121,19 @@ export async function wroteTo(userId: string, address: string, tokenRef: string 
 }
 
 // Of these addresses, the ones the user corresponds with: in their Google
-// contacts, or written to from this mailbox. Local data only.
+// contacts, written to or answered (senders.ts), or written to in the sent
+// mail stored here. Local data only.
 export async function correspondents(userId: string, addresses: string[]): Promise<Set<string>> {
   const wanted = new Set(addresses.map(lc).filter(Boolean));
   const found = new Set<string>();
   if (!wanted.size) return found;
-  const [{ data: contacts }, { data: sent }] = await Promise.all([
+  const [{ data: contacts }, { data: senders }, { data: sent }] = await Promise.all([
     db.from("contacts").select("email").eq("user_id", userId).eq("source", "contact").in("email", [...wanted]),
+    db.from("senders").select("address").eq("user_id", userId).in("address", [...wanted]).or("sent_to.gt.0,replied.gt.0"),
     db.from("emails").select("recipients, cc_recipients").eq("user_id", userId).contains("label_ids", ["SENT"]).order("received_at", { ascending: false }).limit(2000),
   ]);
   for (const c of contacts ?? []) found.add(lc(c.email));
+  for (const s of senders ?? []) found.add(lc(s.address));
   for (const e of sent ?? []) {
     for (const m of `${e.recipients ?? ""} ${e.cc_recipients ?? ""}`.matchAll(/[^\s<>,;"]+@[^\s<>,;"]+/g)) {
       if (wanted.has(lc(m[0]))) found.add(lc(m[0]));
@@ -145,6 +148,14 @@ export async function knowsSender(userId: string, address: string, opts: { excep
   const a = lc(address);
   if (!a) return false;
   if ((await correspondents(userId, [a])).size) return true;
+  // Opened their mail before, by the first read's count (this email aside).
+  const { data: seen } = await db.from("senders").select("opened").eq("user_id", userId).eq("address", a).maybeSingle();
+  let before = Number(seen?.opened ?? 0);
+  if (before && opts.exceptEmailId) {
+    const { data: e } = await db.from("emails").select("is_read").eq("id", opts.exceptEmailId).maybeSingle();
+    if (e?.is_read) before--;
+  }
+  if (before > 0) return true;
   const { count: opened } = await db
     .from("emails")
     .select("id", { count: "exact", head: true })

@@ -29,6 +29,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       notification_level: 'text ! ="important"', notification_preview: "bool ! =true",
       autonomy_level: 'text ! ="suggest"', engine_paused: "bool ! =false",
       autopilot_delay_min: "int ! =5", autopilot_daily_cap: "int ! =5", autopilot_known_only: "bool ! =true",
+      first_read: "json",
       created_at: "time ! =now", updated_at: "time ! =now",
     },
   },
@@ -49,7 +50,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       is_snoozed: "bool ! =false", snooze_until: "time", label_ids: "json",
       has_attachments: "bool ! =false", attachments: "json ! =[]",
       has_list_unsubscribe: "bool ! =false", is_reply: "bool ! =false",
-      reply_to_email: "text", cc_recipients: "text", precedence_header: "text",
+      reply_to_email: "text", cc_recipients: "text", precedence_header: "text", list_id: "text",
       resolved_at: "time", created_at: "time ! =now",
     },
     unique: [["user_id", "gmail_id"]],
@@ -155,6 +156,27 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       id: "uuid pk =uuid", user_id: "uuid !", to_addresses: "json ! =[]", subject: "text",
       body_html: "text", email_id: "uuid >emails:null", source: "text", created_at: "time ! =now",
     },
+  },
+  // The headers of every message the first read and later syncs saw, inbox
+  // and sent, and what they add up to per address. See senders.ts.
+  mail_index: {
+    cols: {
+      id: "uuid pk =uuid", user_id: "uuid !", gmail_account_id: "uuid >gmail_accounts:cascade",
+      gmail_id: "text !", thread_id: "text", at: "time !", from_addr: "text", from_name: "text",
+      to_addrs: "json ! =[]", sent: "bool ! =false", inbox: "bool ! =false", unread: "bool ! =false",
+      category: "text", list_unsubscribe: "bool ! =false", list_id: "text", precedence: "text",
+    },
+    unique: [["user_id", "gmail_id"]],
+  },
+  senders: {
+    cols: {
+      id: "uuid pk =uuid", user_id: "uuid !", address: "text !", name: "text", domain: "text",
+      received: "int ! =0", opened: "int ! =0", replied: "int ! =0", wrote_first: "int ! =0",
+      sent_to: "int ! =0", archived_unread: "int ! =0", list_unsubscribe: "bool ! =false",
+      list_id: "text", precedence: "text", category: "text", first_at: "time", last_at: "time",
+      updated_at: "time ! =now",
+    },
+    unique: [["user_id", "address"]],
   },
   // What Tabellar knows about the user, and the questions it asks instead of
   // guessing. See profile.ts.
@@ -722,7 +744,11 @@ export type Change = { table: string; eventType: "INSERT" | "UPDATE" | "DELETE";
 export const changes = new EventEmitter();
 changes.setMaxListeners(100);
 
+// Thousands of rows the window never shows: not worth an event each.
+const UNPUBLISHED = new Set(["mail_index"]);
+
 function publish(table: string, eventType: Change["eventType"], row: Record<string, unknown>, old: Record<string, unknown> = {}) {
+  if (UNPUBLISHED.has(table)) return;
   changes.emit("change", { table, eventType, new: eventType === "DELETE" ? {} : row, old } satisfies Change);
 }
 

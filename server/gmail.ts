@@ -37,6 +37,7 @@ export interface EmailData {
   reply_to_email?: string;
   cc_recipients?: string;
   precedence_header?: string;
+  list_id?: string;
 }
 
 
@@ -51,25 +52,52 @@ export async function loadTokensSafe(ref: string): Promise<TokenData | null> {
 
 export { loadTokens, saveTokens };
 
+// Gmail allows each user about 250 quota units a second (a message read
+// costs 5), so calls start at most 40 a second across the whole server.
+const SPACING_MS = 25;
+let nextStart = 0;
+async function pace(): Promise<void> {
+  const now = Date.now();
+  const at = Math.max(now, nextStart);
+  nextStart = at + SPACING_MS;
+  if (at > now) await new Promise((r) => setTimeout(r, at - now));
+}
+
+// Over quota, Gmail answers 429, or 403 with a rate limit reason.
+async function overQuota(res: Response): Promise<boolean> {
+  if (res.status === 429 || res.status >= 500) return true;
+  if (res.status !== 403) return false;
+  return /rateLimitExceeded|quota exceeded/i.test(await res.clone().text().catch(() => ""));
+}
+
+// One Gmail API call, paced, and asked again after a growing pause (up to
+// about a minute in all) while Gmail says it is over quota or busy.
 async function gmailRequest(
   accessToken: string,
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
-  try {
-    return await fetch(`${GMAIL_BASE}${path}`, {
-      ...init,
-      signal: controller.signal,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        ...(init.headers ?? {}),
-      },
-    });
-  } finally {
-    clearTimeout(timeout);
+  for (let attempt = 0; ; attempt++) {
+    await pace();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    let res: Response;
+    try {
+      res = await fetch(`${GMAIL_BASE}${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          ...(init.headers ?? {}),
+        },
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
+    if (attempt >= 6 || !(await overQuota(res))) return res;
+    await res.body?.cancel().catch(() => {});
+    await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt + Math.random() * 500));
   }
 }
 
@@ -336,10 +364,104 @@ async function fetchMessageById(
           : undefined,
       cc_recipients: headers["cc"] ?? undefined,
       precedence_header: headers["precedence"] ?? undefined,
+      list_id: headers["list-id"] ?? undefined,
     };
   } catch {
     return null;
   }
+}
+
+// Full messages by id, a few at a time, skipping any Gmail no longer has.
+export async function fetchMessages(tokenRef: string, ids: string[]): Promise<EmailData[]> {
+  const out: EmailData[] = [];
+  for (let i = 0; i < ids.length; i += 20) {
+    const { tokenData } = await resolveTokens(tokenRef);
+    const got = await Promise.all(ids.slice(i, i + 20).map((id) => fetchMessageById(tokenData.token, id)));
+    for (const e of got) if (e) out.push(e);
+  }
+  return out;
+}
+
+// Ids of the messages matching a Gmail search, newest first, at most `cap`.
+export async function listMessageIds(tokenRef: string, q: string, cap: number): Promise<string[]> {
+  const ids: string[] = [];
+  let pageToken = "";
+  while (ids.length < cap) {
+    const { tokenData } = await resolveTokens(tokenRef);
+    const page = pageToken ? `&pageToken=${pageToken}` : "";
+    const res = await gmailRequest(tokenData.token, `/messages?q=${encodeURIComponent(q)}&maxResults=${Math.min(500, cap - ids.length)}&fields=messages/id,nextPageToken${page}`);
+    if (!res.ok) throw new Error(`Gmail search failed (${res.status})`);
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : {};
+    for (const m of (data.messages ?? []) as { id: string }[]) ids.push(m.id);
+    pageToken = data.nextPageToken ?? "";
+    if (!pageToken) break;
+  }
+  return ids.slice(0, cap);
+}
+
+// What the first read keeps of a message: who, when, where it sits, and the
+// headers that tell a person from a mailing list.
+export type HeaderRow = {
+  gmail_id: string;
+  thread_id: string;
+  at: string;
+  labels: string[];
+  from: string;
+  to: string;
+  cc: string;
+  list_unsubscribe: boolean;
+  list_id: string;
+  precedence: string;
+};
+
+const INDEX_HEADERS = ["From", "To", "Cc", "List-Unsubscribe", "List-Id", "Precedence"];
+
+// Headers only, for many messages: one small request each, ten at a time.
+export async function fetchHeaderRows(tokenRef: string, ids: string[]): Promise<HeaderRow[]> {
+  const q = INDEX_HEADERS.map((n) => `metadataHeaders=${n}`).join("&");
+  const out: HeaderRow[] = [];
+  for (let i = 0; i < ids.length; i += 10) {
+    const { tokenData } = await resolveTokens(tokenRef);
+    const got = await Promise.all(
+      ids.slice(i, i + 10).map(async (id) => {
+        const res = await gmailRequest(tokenData.token, `/messages/${id}?format=metadata&${q}&fields=id,threadId,labelIds,internalDate,payload/headers`);
+        if (!res.ok) return null;
+        const msg = await res.json();
+        const h: Record<string, string> = {};
+        for (const x of (msg.payload?.headers ?? []) as { name: string; value: string }[]) h[x.name.toLowerCase()] = x.value;
+        return {
+          gmail_id: msg.id as string,
+          thread_id: (msg.threadId as string) ?? "",
+          at: new Date(parseInt(msg.internalDate as string, 10) || Date.now()).toISOString(),
+          labels: (msg.labelIds as string[]) ?? [],
+          from: h["from"] ?? "",
+          to: h["to"] ?? "",
+          cc: h["cc"] ?? "",
+          list_unsubscribe: !!h["list-unsubscribe"],
+          list_id: h["list-id"] ?? "",
+          precedence: h["precedence"] ?? "",
+        } satisfies HeaderRow;
+      }),
+    );
+    for (const r of got) if (r) out.push(r);
+  }
+  return out;
+}
+
+export function headerRowOf(e: EmailData): HeaderRow {
+  return {
+    gmail_id: e.gmail_id,
+    thread_id: e.thread_id ?? "",
+    at: e.received_at,
+    labels: e.label_ids,
+    from: e.sender,
+    to: e.recipients,
+    cc: e.cc_recipients ?? "",
+    list_unsubscribe: e.has_list_unsubscribe,
+    list_id: e.list_id ?? "",
+    precedence: e.precedence_header ?? "",
+  };
 }
 
 export async function fetchEmails(
@@ -673,6 +795,7 @@ export async function fetchSentEmails(
     thread_id: string;
     subject: string;
     to: string;
+    cc: string;
     date: string;
     body_html: string;
     body: string;
@@ -696,6 +819,7 @@ export async function fetchSentEmails(
     thread_id: string;
     subject: string;
     to: string;
+    cc: string;
     date: string;
     body_html: string;
     body: string;
@@ -704,7 +828,7 @@ export async function fetchSentEmails(
     attachments: AttachmentInfo[];
   }[] = [];
 
-  const CONCURRENCY = 5;
+  const CONCURRENCY = 10;
   for (let i = 0; i < messages.length; i += CONCURRENCY) {
     const chunk = messages.slice(i, i + CONCURRENCY);
     const results = await Promise.all(
@@ -733,6 +857,7 @@ export async function fetchSentEmails(
             thread_id: msg.threadId as string,
             subject: headers["subject"] ?? "",
             to: headers["to"] ?? "",
+            cc: headers["cc"] ?? "",
             date: headers["date"] ?? "",
             body_html: state.bodyHtml,
             body: state.bodyText || htmlToText(state.bodyHtml),

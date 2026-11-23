@@ -9,14 +9,19 @@ import { db } from "./db.ts";
 import {
   fetchEmailsByHistoryId,
   fetchEmails,
+  fetchMessages,
   fetchSentEmails,
+  listMessageIds,
   threadIdOf,
   fetchGoogleContacts,
   currentHistoryId,
+  headerRowOf,
   htmlToText,
   type EmailData,
+  type HeaderRow,
 } from "./gmail.ts";
 import { analyzeEmailsForUser } from "./analyzeEmails.ts";
+import { addressesIn, indexMail, ownAddresses, rebuildSenders } from "./senders.ts";
 
 // Run fn after every earlier call on the same queue has finished.
 export function serial<A extends unknown[], R>(fn: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
@@ -28,12 +33,160 @@ export function serial<A extends unknown[], R>(fn: (...args: A) => Promise<R>): 
   };
 }
 
+export type Account = { id: string; token_ref: string; gmail_address: string | null; history_id: string | null };
+type Sent = Awaited<ReturnType<typeof fetchSentEmails>>[number];
+
+const RECENT_DAYS = 30;
+const RECENT_CAP = 300;
+
+// Inbox mail from the last 30 days that is not stored yet, newest first, at
+// most 300. What a sync falls back on when Gmail's change history has expired.
+async function fetchRecent(userId: string, account: Account): Promise<EmailData[]> {
+  const ids = await listMessageIds(account.token_ref, `in:inbox newer_than:${RECENT_DAYS}d`, RECENT_CAP);
+  return fetchMessages(account.token_ref, await notStored(userId, ids));
+}
+
+// Of these Gmail ids, the ones not in emails yet.
+export async function notStored(userId: string, gmailIds: string[]): Promise<string[]> {
+  const have = new Set<string>();
+  for (let i = 0; i < gmailIds.length; i += 500) {
+    const { data } = await db.from("emails").select("gmail_id").eq("user_id", userId).in("gmail_id", gmailIds.slice(i, i + 500));
+    for (const e of data ?? []) have.add(e.gmail_id as string);
+  }
+  return gmailIds.filter((id) => !have.has(id));
+}
+
+// Store fetched inbox mail (sent mail and mail already stored are skipped)
+// and count it in email_memory. Returns the ids of the emails inserted.
+export async function storeInbox(userId: string, account: Account, rawEmails: EmailData[]): Promise<string[]> {
+  const own = (account.gmail_address ?? "").toLowerCase();
+  const fresh = new Set(await notStored(userId, rawEmails.map((e) => e.gmail_id)));
+  const emails = rawEmails.filter(
+    (e) => fresh.has(e.gmail_id) && !e.label_ids.includes("SENT") && e.label_ids.includes("INBOX") && !(own && e.sender_email?.toLowerCase() === own),
+  );
+  if (!emails.length) return [];
+
+  const inserted: string[] = [];
+  for (let i = 0; i < emails.length; i += 100) {
+    const rows = emails.slice(i, i + 100).map((e) => ({
+      user_id: userId,
+      gmail_id: e.gmail_id,
+      thread_id: e.thread_id,
+      gmail_account_id: account.id,
+      subject: e.subject,
+      sender: e.sender,
+      sender_email: e.sender_email,
+      recipients: e.recipients,
+      snippet: e.snippet,
+      body_text: e.body_text,
+      body_html: e.body_html,
+      received_at: e.received_at,
+      is_read: e.is_read,
+      label_ids: e.label_ids,
+      has_attachments: e.has_attachments,
+      attachments: e.attachments ?? [],
+      has_list_unsubscribe: e.has_list_unsubscribe,
+      is_reply: e.is_reply,
+      reply_to_email: e.reply_to_email,
+      cc_recipients: e.cc_recipients,
+      precedence_header: e.precedence_header,
+      list_id: e.list_id ?? null,
+    }));
+    const { data } = await db.from("emails").insert(rows).select("id");
+    inserted.push(...((data ?? []) as { id: string }[]).map((e) => e.id));
+  }
+
+  // How often each sender wrote, for the briefing and the assistant.
+  const senderMap = new Map<string, { sender: string; subject: string; count: number }>();
+  for (const e of emails) {
+    if (!e.sender_email) continue;
+    const prev = senderMap.get(e.sender_email);
+    if (prev) {
+      prev.count++;
+      prev.subject = e.subject;
+    } else {
+      senderMap.set(e.sender_email, { sender: e.sender, subject: e.subject, count: 1 });
+    }
+  }
+  try {
+    const { data: existingMemory } = await db
+      .from("email_memory")
+      .select("sender_email, interaction_count")
+      .eq("user_id", userId)
+      .in("sender_email", [...senderMap.keys()]);
+    const memMap = new Map((existingMemory || []).map((m) => [m.sender_email as string, m.interaction_count as number]));
+    const now = new Date().toISOString();
+    await db.from("email_memory").upsert(
+      [...senderMap.entries()].map(([email, info]) => ({
+        user_id: userId,
+        sender_email: email,
+        sender_name: info.sender,
+        last_subject: info.subject,
+        last_interaction_at: now,
+        interaction_count: Number(memMap.get(email) ?? 0) + info.count,
+      })),
+      { onConflict: "user_id,sender_email" },
+    );
+  } catch (err) {
+    console.error("[sync] email_memory upsert:", err);
+  }
+  return inserted;
+}
+
+// Keep sent mail (Follow-ups and the Sent view read it). Returns how many
+// were new.
+export async function storeSent(userId: string, account: Account, sent: Sent[]): Promise<number> {
+  const fresh = new Set(await notStored(userId, sent.map((e) => e.id)));
+  const rows = sent
+    .filter((e) => fresh.has(e.id))
+    .map((e) => {
+      const date = new Date(e.date);
+      return {
+        user_id: userId,
+        gmail_id: e.id,
+        thread_id: e.thread_id,
+        gmail_account_id: account.id,
+        subject: e.subject,
+        recipients: e.to,
+        cc_recipients: e.cc || null,
+        body_html: e.body_html,
+        body_text: e.body,
+        snippet: e.snippet,
+        received_at: isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString(),
+        is_read: true,
+        label_ids: ["SENT"],
+        has_attachments: e.has_attachments ?? false,
+        attachments: e.attachments ?? [],
+      };
+    });
+  for (let i = 0; i < rows.length; i += 100) {
+    await db.from("emails").upsert(rows.slice(i, i + 100), { onConflict: "user_id,gmail_id", ignoreDuplicates: true });
+  }
+  return rows.length;
+}
+
+export function sentHeaderRow(e: Sent, account: Account): HeaderRow {
+  const date = new Date(e.date);
+  return {
+    gmail_id: e.id,
+    thread_id: e.thread_id,
+    at: isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString(),
+    labels: ["SENT"],
+    from: account.gmail_address ?? "",
+    to: e.to,
+    cc: e.cc,
+    list_unsubscribe: false,
+    list_id: "",
+    precedence: "",
+  };
+}
+
 // Fetch new inbox mail (and recent sent mail) for every active account.
 // Initial: the latest 50 inbox messages. Otherwise: whatever Gmail's change
-// history says arrived since the last sync, falling back to the latest 15
-// when that history has expired. Returns the ids of the emails inserted.
+// history says arrived since the last sync, falling back to the last 30 days
+// when that history has expired. New mail is also added to the sender
+// statistics (senders.ts). Returns the ids of the emails inserted.
 export const syncMail = serial(async (userId: string, isInitialFetch = false): Promise<string[]> => {
-  const initialLimit = 50;
   const { data: accounts } = await db
     .from("gmail_accounts")
     .select("*")
@@ -42,302 +195,82 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
   if (!accounts?.length) return [];
 
   const allNew: string[] = [];
+  const own = await ownAddresses(userId);
 
-  for (const account of accounts) {
+  for (const account of accounts as unknown as Account[]) {
     try {
       // Incremental sync needs a starting point in Gmail's change history.
       // Take it before a full fetch so mail arriving in between is not missed.
-      if (isInitialFetch || !account.history_id) {
+      const startOver = async () => {
         try {
-          const historyId = await currentHistoryId(account.token_ref as string);
+          const historyId = await currentHistoryId(account.token_ref);
           await db.from("gmail_accounts").update({ history_id: historyId }).eq("id", account.id);
         } catch (err) {
           console.warn("[sync] could not read the mailbox history id:", err);
         }
-      }
+      };
 
-      // Initial fetch: grab the 15 most recent inbox emails.
-      // Non-initial refresh: use Gmail history API to fetch only NEW emails
-      // since the last sync (stored history_id). Falls back to latest 15 if
-      // no history_id is stored yet or the history has expired.
       let rawEmails: EmailData[] = [];
-      let updatedTokenRef: string | undefined;
-
       if (isInitialFetch) {
-        const result = await fetchEmails(
-          account.token_ref as string,
-          initialLimit,
-          db,
-          account.id as string,
-          false,
-        );
+        await startOver();
+        const result = await fetchEmails(account.token_ref, 50, db, account.id, false);
         rawEmails = result.emails;
-        updatedTokenRef = result.updatedTokenRef;
+        if (result.updatedTokenRef) account.token_ref = result.updatedTokenRef;
+      } else if (account.history_id) {
+        const { emails, newHistoryId, tooOld } = await fetchEmailsByHistoryId(account.token_ref, account.history_id, db, account.id);
+        if (tooOld) {
+          await startOver();
+          rawEmails = await fetchRecent(userId, account);
+        } else {
+          rawEmails = emails;
+          if (newHistoryId) await db.from("gmail_accounts").update({ history_id: newHistoryId }).eq("id", account.id);
+        }
       } else {
-        const storedHistoryId = account.history_id as string | null;
-        if (storedHistoryId) {
-          const {
-            emails: histEmails,
-            newHistoryId,
-            tooOld,
-          } = await fetchEmailsByHistoryId(
-            account.token_ref as string,
-            storedHistoryId,
-            db,
-            account.id as string,
-          );
-          if (tooOld) {
-            // History expired; fall back to recent 15 and start over from now
-            try {
-              const historyId = await currentHistoryId(account.token_ref as string);
-              await db.from("gmail_accounts").update({ history_id: historyId }).eq("id", account.id);
-            } catch (err) {
-              console.warn("[sync] could not read the mailbox history id:", err);
-            }
-            const result = await fetchEmails(
-              account.token_ref as string,
-              15,
-              db,
-              account.id as string,
-              false,
-            );
-            rawEmails = result.emails;
-            updatedTokenRef = result.updatedTokenRef;
-          } else {
-            rawEmails = histEmails;
-            if (newHistoryId) {
-              await db
-                .from("gmail_accounts")
-                .update({ history_id: newHistoryId })
-                .eq("id", account.id);
-            }
-          }
-        } else {
-          // No history_id yet; fetch latest 15
-          const result = await fetchEmails(
-            account.token_ref as string,
-            15,
-            db,
-            account.id as string,
-            false,
-          );
-          rawEmails = result.emails;
-          updatedTokenRef = result.updatedTokenRef;
-        }
+        await startOver();
+        rawEmails = await fetchRecent(userId, account);
       }
 
-      if (updatedTokenRef) {
-        await db
-          .from("gmail_accounts")
-          .update({ token_ref: updatedTokenRef })
-          .eq("id", account.id);
-      }
-
-      // Batch-check which gmail_ids already exist (1 query instead of N)
-      const incomingGmailIds = rawEmails.map((e) => e.gmail_id);
-      const { data: existingEmails } = await db
-        .from("emails")
-        .select("gmail_id")
-        .eq("user_id", userId)
-        .in("gmail_id", incomingGmailIds);
-      const existingGmailIds = new Set(
-        (existingEmails || []).map((e) => e.gmail_id as string),
-      );
-
-      // Track senders for batch memory update (count per sender)
-      const senderMap = new Map<
-        string,
-        { sender: string; subject: string; count: number }
-      >();
-
-      // Collect new email rows to bulk-insert in a single query
-      const newEmailRows: Record<string, unknown>[] = [];
-      const newEmailSenders: {
-        email: string;
-        sender: string;
-        subject: string;
-      }[] = [];
-
-      for (const emailData of rawEmails) {
-        if (existingGmailIds.has(emailData.gmail_id)) continue;
-        // Skip sent mail: check both the SENT label and the sender address matching the account
-        if (
-          emailData.label_ids.includes("SENT") ||
-          !emailData.label_ids.includes("INBOX") ||
-          (account.gmail_address &&
-            emailData.sender_email?.toLowerCase() ===
-              (account.gmail_address as string).toLowerCase())
-        )
-          continue;
-
-        newEmailRows.push({
-          user_id: userId,
-          gmail_id: emailData.gmail_id,
-          thread_id: emailData.thread_id,
-          gmail_account_id: account.id,
-          subject: emailData.subject,
-          sender: emailData.sender,
-          sender_email: emailData.sender_email,
-          recipients: emailData.recipients,
-          snippet: emailData.snippet,
-          body_text: emailData.body_text,
-          body_html: emailData.body_html,
-          received_at: emailData.received_at,
-          is_read: emailData.is_read,
-          label_ids: emailData.label_ids,
-          has_attachments: emailData.has_attachments,
-          attachments: emailData.attachments ?? [],
-          has_list_unsubscribe: emailData.has_list_unsubscribe,
-          is_reply: emailData.is_reply,
-          reply_to_email: emailData.reply_to_email,
-          cc_recipients: emailData.cc_recipients,
-          precedence_header: emailData.precedence_header,
-        });
-
-        if (emailData.sender_email) {
-          newEmailSenders.push({
-            email: emailData.sender_email,
-            sender: emailData.sender,
-            subject: emailData.subject,
-          });
-        }
-      }
-
-      if (newEmailRows.length > 0) {
-        const { data: insertedEmails } = await db
-          .from("emails")
-          .insert(newEmailRows)
-          .select("id");
-
-        if (insertedEmails?.length) {
-          allNew.push(
-            ...(insertedEmails as { id: string }[]).map((e) => e.id),
-          );
-        }
-      }
-
-      for (const { email, sender, subject } of newEmailSenders) {
-        const prev = senderMap.get(email);
-        if (prev) {
-          prev.count++;
-          prev.subject = subject;
-        } else {
-          senderMap.set(email, { sender, subject, count: 1 });
-        }
-      }
-
-      // Batch-update sender memory (2 queries instead of 2N)
-      if (senderMap.size > 0) {
-        try {
-          const senderEmails = [...senderMap.keys()];
-          const { data: existingMemory } = await db
-            .from("email_memory")
-            .select("sender_email, interaction_count")
-            .eq("user_id", userId)
-            .in("sender_email", senderEmails);
-          const memMap = new Map(
-            (existingMemory || []).map((m) => [
-              m.sender_email as string,
-              m.interaction_count as number,
-            ]),
-          );
-          const now = new Date().toISOString();
-          const upsertRows = [...senderMap.entries()].map(
-            ([email, info]) => ({
-              user_id: userId,
-              sender_email: email,
-              sender_name: info.sender,
-              last_subject: info.subject,
-              last_interaction_at: now,
-              interaction_count: Number(memMap.get(email) ?? 0) + info.count,
-            }),
-          );
-          await db
-            .from("email_memory")
-            .upsert(upsertRows, { onConflict: "user_id,sender_email" });
-        } catch (err) {
-          console.error("[sync] email_memory upsert:", err);
-        }
-      }
+      allNew.push(...(await storeInbox(userId, account, rawEmails)));
 
       // Import Google Contacts into email_memory (runs every sync, upserts safely)
       try {
-        const gContacts = await fetchGoogleContacts(
-          account.token_ref as string,
-        );
+        const gContacts = await fetchGoogleContacts(account.token_ref);
         if (gContacts.length > 0) {
-          const contactRows = gContacts.map((c) => ({
-            user_id: userId,
-            sender_email: c.email,
-            sender_name: c.name,
-            interaction_count: 0,
-            last_interaction_at: new Date().toISOString(),
-          }));
-          await db.from("email_memory").upsert(contactRows, {
-            onConflict: "user_id,sender_email",
-            ignoreDuplicates: true,
-          });
-          console.log(
-            `[sync] upserted ${contactRows.length} Google contacts`,
+          await db.from("email_memory").upsert(
+            gContacts.map((c) => ({
+              user_id: userId,
+              sender_email: c.email,
+              sender_name: c.name,
+              interaction_count: 0,
+              last_interaction_at: new Date().toISOString(),
+            })),
+            { onConflict: "user_id,sender_email", ignoreDuplicates: true },
           );
         }
       } catch (contactErr) {
-        console.warn(
-          "[sync] Google contacts import failed:",
-          contactErr,
-        );
+        console.warn("[sync] Google contacts import failed:", contactErr);
       }
 
-      // Import recent sent emails on every fetch (20 on initial, 5 on subsequent)
-      // so SentView stays up to date for both Tabellar and Gmail-client sends.
-      {
-        const sentLimit = isInitialFetch ? 20 : 5;
+      // Recent sent mail on every fetch (20 on initial, 5 on subsequent), so
+      // the Sent view and Follow-ups see mail sent from Gmail too.
+      let sent: Sent[] = [];
+      try {
+        sent = await fetchSentEmails(account.token_ref, isInitialFetch ? 20 : 5);
+        await storeSent(userId, account, sent);
+      } catch (e) {
+        console.warn("[sync] sent email import failed:", e);
+      }
+
+      // What arrived and what was sent counts toward the sender statistics.
+      const seen = [...rawEmails.map(headerRowOf), ...sent.map((e) => sentHeaderRow(e, account))];
+      if (seen.length) {
         try {
-          const sentEmails = await fetchSentEmails(
-            account.token_ref as string,
-            sentLimit,
-          );
-          const sentGmailIds = sentEmails.map((e) => e.id);
-          if (sentGmailIds.length > 0) {
-            const { data: existingSent } = await db
-              .from("emails")
-              .select("gmail_id")
-              .eq("user_id", userId)
-              .in("gmail_id", sentGmailIds);
-            const existingSentIds = new Set(
-              (existingSent || []).map((e) => e.gmail_id as string),
-            );
-            const sentRows = sentEmails
-              .filter((sent) => !existingSentIds.has(sent.id))
-              .map((sent) => {
-                const sentDate = new Date(sent.date);
-                return {
-                  user_id: userId,
-                  gmail_id: sent.id,
-                  thread_id: sent.thread_id,
-                  gmail_account_id: account.id,
-                  subject: sent.subject,
-                  recipients: sent.to,
-                  body_html: sent.body_html,
-                  body_text: sent.body,
-                  snippet: sent.snippet,
-                  received_at: isNaN(sentDate.getTime())
-                    ? new Date().toISOString()
-                    : sentDate.toISOString(),
-                  is_read: true,
-                  label_ids: ["SENT"],
-                  has_attachments: sent.has_attachments ?? false,
-                  attachments: sent.attachments ?? [],
-                };
-              });
-            if (sentRows.length > 0) {
-              await db
-                .from("emails")
-                .upsert(sentRows, { onConflict: "user_id,gmail_id", ignoreDuplicates: true });
-            }
-          }
+          await indexMail(userId, account.id, seen, own);
+          const touched = new Set<string>();
+          for (const r of seen) for (const a of addressesIn(`${r.from}, ${r.to}, ${r.cc}`)) touched.add(a);
+          await rebuildSenders(userId, touched);
         } catch (e) {
-          console.warn("[sync] sent email import failed:", e);
+          console.warn("[sync] sender statistics:", e);
         }
       }
 
@@ -353,7 +286,7 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
           .is("thread_id", null)
           .limit(50);
         for (const row of missing ?? []) {
-          const threadId = await threadIdOf(account.token_ref as string, row.gmail_id as string);
+          const threadId = await threadIdOf(account.token_ref, row.gmail_id as string);
           await db.from("emails").update({ thread_id: threadId }).eq("id", row.id);
         }
       } catch (e) {

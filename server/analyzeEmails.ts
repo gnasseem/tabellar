@@ -8,6 +8,8 @@
  * - All emails in a batch are analyzed in parallel (no chunk barrier), so one
  *   slow email never stalls the other 49. The only cap is AI_PROCESS_CONCURRENCY
  *   which is a safety ceiling against provider-side throttling.
+ * - Bulk mail (senders.isBulk: promotions, or a mailing list's headers) is
+ *   sorted from its headers alone; the model never reads it.
  * - Each email is read with the user's profile (profile.ts). Only mail from
  *   people the user corresponds with also goes through extractEntities, in
  *   parallel, and only the people and companies it names are kept.
@@ -23,6 +25,7 @@ import { getEnv } from "./config.ts";
 import { extractEntities, processFullEmail } from "./ai.ts";
 import { isLocalModel } from "./llm.ts";
 import { correspondents, profileContext } from "./profile.ts";
+import { isBulk, writtenTo } from "./senders.ts";
 
 
 /**
@@ -41,7 +44,7 @@ export async function analyzeEmailsForUser(
 
   let unprocessedQuery = db
     .from("emails")
-    .select("id, subject, sender, sender_email, recipients, body_text, snippet, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, precedence_header")
+    .select("id, subject, sender, sender_email, recipients, body_text, snippet, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, precedence_header, list_id")
     .eq("user_id", userId)
     .not("label_ids", "cs", '{"SENT"}')
     .order("received_at", { ascending: false })
@@ -97,7 +100,7 @@ export async function analyzeEmailsForUser(
       .maybeSingle(),
   ]);
 
-  const known = await correspondents(userId, senderEmails as string[]);
+  const [known, written] = await Promise.all([correspondents(userId, senderEmails as string[]), writtenTo(userId)]);
 
   // Meeting extraction has to resolve relative dates ("Friday", "tomorrow")
   // against the user's day, not the edge runtime's UTC day.
@@ -166,6 +169,19 @@ export async function analyzeEmailsForUser(
   const analyzeOne = async (email: Record<string, unknown>) => {
     try {
       const gmailLabels = (email.label_ids as string[]) ?? [];
+      if (isBulk(email as Parameters<typeof isBulk>[0], written)) {
+        rowBuffer.push({
+          user_id: userId,
+          email_id: email.id as string,
+          category: gmailLabels.includes("CATEGORY_PROMOTIONS") ? "promotions" : "updates",
+          urgency: "low",
+          summary: null,
+          quick_actions: [],
+        });
+        processed += 1;
+        if (rowBuffer.length >= FLUSH_SIZE) await flushRows();
+        return;
+      }
       const ccStr = (email.cc_recipients as string) ?? "";
       const signals = {
         gmailLabels,

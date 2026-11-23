@@ -526,4 +526,49 @@ ok("the profile block names the user, this sender, facts and what they never wan
 });
 console.log(block.replace(/^/gm, "      | "));
 
+// ── Senders ─────────────────────────────────────────────────────────────────
+console.log("\nSenders");
+const senders = await import("./senders.ts");
+const day = (n: number) => new Date(Date.UTC(2026, 9, n)).toISOString();
+const hdr = (gmail_id: string, thread_id: string, n: number, from: string, to: string, labels: string[], extra: Partial<gmail.HeaderRow> = {}): gmail.HeaderRow =>
+  ({ gmail_id, thread_id, at: day(n), labels, from, to, cc: "", list_unsubscribe: false, list_id: "", precedence: "", ...extra });
+await senders.indexMail(userId, account!.id as string, [
+  // Prof writes, the user answers; the prof writes again, still unread.
+  hdr("s1", "t-prof", 1, "Prof Lee <lee@uni.example>", "me@example.com", ["INBOX"]),
+  hdr("s2", "t-prof", 2, "me@example.com", "lee@uni.example", ["SENT"]),
+  hdr("s3", "t-prof2", 3, "Prof Lee <lee@uni.example>", "me@example.com", ["INBOX", "UNREAD"]),
+  // The user writes first to a recruiter, who answers.
+  hdr("s4", "t-job", 4, "me@example.com", "Jobs <jobs@acme.example>", ["SENT"]),
+  hdr("s5", "t-job", 5, "Acme Careers <noreply@acme.example>", "me@example.com", ["INBOX", "CATEGORY_PROMOTIONS"], { list_unsubscribe: true }),
+  // A newsletter, archived unread twice.
+  hdr("s6", "t-nl1", 6, "Weekly <news@letter.example>", "me@example.com", ["UNREAD", "CATEGORY_PROMOTIONS"], { list_unsubscribe: true, list_id: "<weekly.letter.example>" }),
+  hdr("s7", "t-nl2", 7, "Weekly <news@letter.example>", "me@example.com", ["UNREAD", "CATEGORY_PROMOTIONS"], { list_unsubscribe: true, list_id: "<weekly.letter.example>" }),
+], new Set(["me@example.com"]));
+await senders.rebuildSenders(userId);
+const stat = async (address: string) => (await db.from("senders").select("*").eq("user_id", userId).eq("address", address).maybeSingle()).data!;
+const lee = await stat("lee@uni.example");
+const jobs = await stat("jobs@acme.example");
+const weekly = await stat("news@letter.example");
+ok("senders add up received, opened, replied, wrote first and archived unread from headers", () => {
+  assert.deepEqual([lee.received, lee.opened, lee.replied, lee.sent_to, lee.wrote_first], [2, 1, 1, 1, 0]);
+  assert.deepEqual([jobs.sent_to, jobs.wrote_first, jobs.received], [1, 1, 0]);
+  assert.deepEqual([weekly.received, weekly.opened, weekly.archived_unread, weekly.category, weekly.list_id], [2, 0, 2, "promotions", "<weekly.letter.example>"]);
+  assert.equal(weekly.list_unsubscribe, true);
+});
+const written = await senders.writtenTo(userId);
+ok("bulk is told from headers: promotions, or List-Unsubscribe with List-Id or Precedence bulk", () => {
+  const m = (sender_email: string, x: Record<string, unknown> = {}) => ({ sender_email, label_ids: ["INBOX"], has_list_unsubscribe: false, list_id: null, precedence_header: null, ...x });
+  assert.ok(senders.isBulk(m("news@letter.example", { label_ids: ["CATEGORY_PROMOTIONS"] }), written));
+  assert.ok(senders.isBulk(m("a@lists.example", { has_list_unsubscribe: true, list_id: "<x.lists.example>" }), written));
+  assert.ok(senders.isBulk(m("a@shop.example", { has_list_unsubscribe: true, precedence_header: "bulk" }), written));
+  assert.ok(!senders.isBulk(m("a@shop.example", { has_list_unsubscribe: true }), written), "List-Unsubscribe alone");
+  assert.ok(!senders.isBulk(m("person@club.example", { precedence_header: "list" }), written), "a person posting to a list");
+  assert.ok(!senders.isBulk(m("noreply@acme.example", { label_ids: ["CATEGORY_PROMOTIONS"], has_list_unsubscribe: true }), written), "a company the user wrote to");
+  assert.ok(!senders.isBulk(m("lee@uni.example", { label_ids: ["CATEGORY_PROMOTIONS"] }), written), "someone the user wrote to");
+});
+const corr = await profile.correspondents(userId, ["lee@uni.example", "jobs@acme.example", "news@letter.example"]);
+ok("someone the user answered or wrote to is a correspondent; a newsletter is not", () => {
+  assert.ok(corr.has("lee@uni.example") && corr.has("jobs@acme.example") && !corr.has("news@letter.example"));
+});
+
 console.log(`\n${passed} checks passed.`);

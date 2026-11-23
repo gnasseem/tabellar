@@ -25,6 +25,7 @@ import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions
 import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
 import { notify } from "./notify.ts";
+import { firstReadState, startFirstRead } from "./firstRead.ts";
 import { ask, covers, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
 
 const INTERVAL_MS = 2 * 60_000;
@@ -364,6 +365,8 @@ export async function runCycle(): Promise<void> {
       await retireTrivia(userId);
       startedUp = true;
     }
+    // Until the first read of the mailbox is done, carry it on in the background.
+    if ((await firstReadState(userId)).step !== "done") void startFirstRead(userId, () => planNew(userId));
     await applyWaitingLabels(userId);
     await syncMail(userId);
     if (modelConfigured()) {

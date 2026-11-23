@@ -897,6 +897,22 @@ export async function analyzeWritingStyle(sentEmails: string): Promise<{
   };
 }
 
+// The first facts about the user, from what they wrote. Careful model, once.
+export async function factsFromSent(sample: string): Promise<string[]> {
+  const raw = await llm(
+    'These are emails the user wrote, newest first, and the people they write to most. Write what they show about the user as short facts that help someone handle their email: their role and organisation, what they are working on now, the languages they write in, how they sign off, who they write to most and about what. Only what the emails show; no guesses, no praise, no advice. Write about the user in the third person ("Studies computer science at NYU"), without their name. Return only JSON: {"facts": ["..."]}, 5 to 10 facts, each under 20 words.',
+    sample,
+    0.2,
+    1024,
+  );
+  const parsed = parseJson(raw) as { facts?: unknown } | null;
+  const facts = Array.isArray(parsed?.facts) ? parsed.facts : [];
+  return facts
+    .map((f) => String(f ?? "").replace(/\s+/g, " ").trim())
+    .filter((f) => f.length > 3 && f.length < 200)
+    .slice(0, 10);
+}
+
 export async function detectMeeting(
   subject: string,
   sender: string,

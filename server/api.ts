@@ -33,14 +33,12 @@ import { db, type Db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { freshAccessToken, revokeGoogleTokens } from "./google.ts";
 import {
-  fetchSentEmails,
   searchGoogleContacts,
   listAllGoogleContacts,
   fetchAttachment,
   sendEmail,
 } from "./gmail.ts";
 import {
-  analyzeWritingStyle,
   chatWithAssistant,
   extractTodos,
   briefingSummaryNeedsRecovery,
@@ -53,8 +51,9 @@ import {
   processFullEmail,
   type ChatContext,
 } from "./ai.ts";
-import { syncMail, analyzeInbox } from "./sync.ts";
-import { kickEngine, draftReply, runCycle, engineStatus } from "./engine.ts";
+import { syncMail, analyzeInbox, type Account } from "./sync.ts";
+import { kickEngine, draftReply, runCycle, engineStatus, planNew } from "./engine.ts";
+import { learnFromSent, startFirstRead } from "./firstRead.ts";
 import { approve, dismiss, undo, record, engineSettings } from "./actions.ts";
 import { answer, applyPref, feedback, profileContext, setPref, type Feedback } from "./profile.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
@@ -178,51 +177,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
       const allNew = await syncMail(userId, isInitialFetch);
 
-      // On initial fetch, kick off analysis + briefing as a background task so
-      // the frontend can return from this call immediately and start polling
-      // email_processed via Realtime. This eliminates two serial HTTP round
-      // trips (/analyze-inbox + /briefing) and lets the briefing LLM run
-      // while the frontend is still re-fetching the inbox list for display.
-      let backgroundPipeline = false;
-      if (isInitialFetch && allNew.length > 0) {
-        backgroundPipeline = true;
-        const pipeline = (async () => {
-          try {
-            await analyzeInbox(userId);
-            kickEngine();
-          } catch (err) {
-            console.error("[fetch-emails] background analysis:", err);
-          }
-          try {
-            const normalized = await buildBriefingForUser(
-              userId,
-              db,
-              "all_recent",
-            );
-            await db
-              .from("profiles")
-              .update({
-                last_briefing: normalized,
-                last_briefing_at: new Date().toISOString(),
-              })
-              .eq("id", userId);
-          } catch (err) {
-            console.error("[fetch-emails] background briefing:", err);
-          }
-        })();
+      // The first fetch starts the first read (firstRead.ts), which sorts
+      // this mail, writes the briefing and reads further back in the
+      // background while the window shows what has arrived.
+      if (isInitialFetch) void startFirstRead(userId, () => planNew(userId));
 
-        void pipeline;
-      }
-
-      return json(
-        {
-          fetched: allNew.length,
-          email_ids: allNew,
-          background_pipeline: backgroundPipeline,
-        },
-        200,
-        corsHeaders,
-      );
+      return json({ fetched: allNew.length, email_ids: allNew }, 200, corsHeaders);
     }
 
     // ── POST /analyze-inbox ─────────────────────────────────────────────────
@@ -343,46 +303,10 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return json({ error: "No Gmail account connected" }, 400, corsHeaders);
       }
 
-      const sent = await fetchSentEmails(
-        accounts[0].token_ref as string,
-        15,
-      );
-
-      if (sent.length < 3) {
-        return json(
-          { error: "Need at least 3 sent emails to analyze" },
-          400,
-          corsHeaders,
-        );
-      }
-
-      const emailsText = sent
-        .map(
-          (e) =>
-            `Subject: ${e.subject}\nTo: ${e.to}\n\n${(e.body || e.snippet || "").slice(0, 600)}`,
-        )
-        .join("\n---\n");
-
-      const style = await analyzeWritingStyle(emailsText);
-
-      await db.from("style_profiles").upsert(
-        {
-          user_id: userId,
-          greeting_style: style.greeting_style,
-          closing_style: style.closing_style,
-          tone: style.tone,
-          avg_length: style.avg_length,
-          sample_count: sent.length,
-          last_learned_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id" },
-      );
-
-      return json(
-        { learned: true, sample_count: sent.length, style },
-        200,
-        corsHeaders,
-      );
+      const { sent } = await learnFromSent(userId, accounts[0] as unknown as Account, { facts: false });
+      if (sent < 3) return json({ error: "Need at least 3 sent emails to analyze" }, 400, corsHeaders);
+      const { data: style } = await db.from("style_profiles").select("greeting_style, closing_style, tone, avg_length").eq("user_id", userId).maybeSingle();
+      return json({ learned: true, sample_count: sent, style }, 200, corsHeaders);
     }
 
     // ── POST /send-email ───────────────────────────────────────────────────
