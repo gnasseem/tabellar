@@ -58,15 +58,15 @@ export function modelTimeoutMs(slot: Slot = "careful"): number {
 
 // Fail at once, with a message the interface can show, instead of retrying.
 export function requireModel(slot: Slot = "careful"): void {
-  if (!modelConfigured(slot)) throw new Error("No AI model is set up. Choose one in Settings, under AI.");
+  if (!modelConfigured(slot)) throw new Error("No AI model is set up. Choose one in Settings, under Models.");
 }
 
 export async function chatCompletion(req: ChatRequest, signal?: AbortSignal): Promise<Response> {
   const m = slotModel(req.slot ?? "careful");
-  if (!m) throw new Error("No AI model is set up. Choose one in Settings, under AI.");
+  if (!m) throw new Error("No AI model is set up. Choose one in Settings, under Models.");
   if (m.format === "ollama") return ollama(m.baseUrl, m.model, req, signal);
   const key = modelKey(m);
-  if (!key) throw new Error("No API key is saved for the model. Add one in Settings, under AI.");
+  if (!key) throw new Error("No API key is saved for the model. Add one in Settings, under Models.");
   return m.format === "anthropic" ? anthropic(m.baseUrl, m.model, key, req, signal) : openai(m.baseUrl, m.model, key, req, signal);
 }
 

@@ -10,6 +10,7 @@ import {
   fetchEmailsByHistoryId,
   fetchEmails,
   fetchSentEmails,
+  threadIdOf,
   fetchGoogleContacts,
   currentHistoryId,
   type EmailData,
@@ -312,6 +313,7 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
                 return {
                   user_id: userId,
                   gmail_id: sent.id,
+                  thread_id: sent.thread_id,
                   gmail_account_id: account.id,
                   subject: sent.subject,
                   recipients: sent.to,
@@ -336,6 +338,25 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
         } catch (e) {
           console.warn("[sync] sent email import failed:", e);
         }
+      }
+
+      // Sent mail saved before thread ids were kept gets its thread from
+      // Gmail, so Follow-ups can tell which sent mail got an answer.
+      try {
+        const { data: missing } = await db
+          .from("emails")
+          .select("id, gmail_id")
+          .eq("user_id", userId)
+          .eq("gmail_account_id", account.id)
+          .contains("label_ids", ["SENT"])
+          .is("thread_id", null)
+          .limit(50);
+        for (const row of missing ?? []) {
+          const threadId = await threadIdOf(account.token_ref as string, row.gmail_id as string);
+          await db.from("emails").update({ thread_id: threadId }).eq("id", row.id);
+        }
+      } catch (e) {
+        console.warn("[sync] sent thread backfill failed:", e);
       }
     } catch (e) {
       console.error(`Fetch failed for account ${account.id}:`, e);

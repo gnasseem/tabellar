@@ -928,14 +928,14 @@ export default function BriefingView() {
           <div className="max-w-[780px] pb-10">
             {noModel ? (
               <p className="px-5 pt-4 leading-normal text-danger" role="alert">
-                No model is set up, so Tabellar cannot write a briefing. Choose one in Settings, under AI.{" "}
+                No model is set up, so Tabellar cannot write a briefing. Choose one in Settings, under Models.{" "}
                 <button className="link" onClick={() => setView("settings")}>
                   Open Settings
                 </button>
               </p>
             ) : failed && !briefingRegenerating ? (
               <p className="px-5 pt-4 leading-normal text-danger" role="alert">
-                The briefing could not be written. Check that the model in Settings, under AI, is running, then try again.{" "}
+                The briefing could not be written. Check that the model in Settings, under Models, is running, then try again.{" "}
                 <button className="link" onClick={() => void requestBriefingRegeneration()}>
                   Try again
                 </button>{" "}

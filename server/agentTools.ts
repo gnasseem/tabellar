@@ -19,6 +19,7 @@
  */
 
 import type { Db } from "./db.ts";
+import { who } from "./ai.ts";
 
 /** Tool definitions in the OpenAI function-calling format (llm.ts translates them for Anthropic). */
 export const AGENT_TOOLS = [
@@ -452,7 +453,7 @@ export async function runReadTool(
       const { data: email } = await db
         .from("emails")
         .select(
-          "id, subject, sender, sender_email, received_at, body_text, snippet, thread_id, email_processed(summary)",
+          "id, subject, sender, sender_email, recipients, label_ids, received_at, body_text, snippet, thread_id, email_processed(summary)",
         )
         .eq("id", emailId)
         .eq("user_id", userId)
@@ -464,7 +465,7 @@ export async function runReadTool(
         const { data: thread } = await db
           .from("emails")
           .select(
-            "id, subject, sender, sender_email, received_at, body_text, snippet",
+            "id, subject, sender, sender_email, recipients, label_ids, received_at, body_text, snippet",
           )
           .eq("user_id", userId)
           .eq("thread_id", email.thread_id)
@@ -476,12 +477,12 @@ export async function runReadTool(
             thread
               .map(
                 (m: any) =>
-                  `[${m.id}] ${m.received_at?.split("T")[0]} From: ${m.sender ?? m.sender_email}\n${(m.body_text ?? m.snippet ?? "").slice(0, 1200)}`,
+                  `[${m.id}] ${m.received_at?.split("T")[0]} ${who(m)}\n${(m.body_text ?? m.snippet ?? "").slice(0, 1200)}`,
               )
               .join("\n---\n");
         }
       }
-      return `[${email.id}] ${email.received_at?.split("T")[0]} From: ${email.sender ?? email.sender_email}\nSubject: ${email.subject}\n\n${body}${threadPart}`;
+      return `[${email.id}] ${email.received_at?.split("T")[0]} ${who(email)}\nSubject: ${email.subject}\n\n${body}${threadPart}`;
     }
 
     case "search_emails": {
@@ -490,7 +491,7 @@ export async function runReadTool(
       const { data: results } = await db
         .from("emails")
         .select(
-          "id, subject, sender, sender_email, received_at, snippet, email_processed(summary)",
+          "id, subject, sender, sender_email, recipients, label_ids, received_at, snippet, email_processed(summary)",
         )
         .eq("user_id", userId)
         .or(
@@ -506,7 +507,7 @@ export async function runReadTool(
             const p = Array.isArray(e.email_processed)
               ? e.email_processed[0]
               : e.email_processed;
-            return `[${e.id}] ${e.received_at?.split("T")[0]} From: ${e.sender ?? e.sender_email} | ${e.subject} | ${p?.summary ?? e.snippet ?? ""}`;
+            return `[${e.id}] ${e.received_at?.split("T")[0]} ${who(e)} | ${e.subject} | ${p?.summary ?? e.snippet ?? ""}`;
           })
           .join("\n")
       );

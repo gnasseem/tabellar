@@ -531,7 +531,7 @@ export default function InboxView() {
             </div>
           ) : noAccountsConnected && !emails.length ? (
             <Empty icon="link_off" title="No Gmail account is connected">
-              Connect one in Settings, under Accounts, and your mail appears here.{" "}
+              Connect one in Settings, under General, and your mail appears here.{" "}
               <button className="link" onClick={() => setView("settings")}>
                 Open Settings
               </button>

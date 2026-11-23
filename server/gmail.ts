@@ -130,6 +130,18 @@ function extractEmail(from: string): string {
   return match ? match[1] : from;
 }
 
+// Gmail returns snippets HTML-escaped ("I&#39;m", "&lt;a@b.c&gt;").
+function decodeSnippet(s: string | undefined): string {
+  return (s ?? "")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&");
+}
+
 function b64urlDecode(s: string): string {
   try {
     const binary = atob(s.replace(/-/g, "+").replace(/_/g, "/"));
@@ -266,7 +278,7 @@ async function fetchMessageById(
       sender: from,
       sender_email: extractEmail(from),
       recipients: headers["to"] ?? "",
-      snippet: (msg.snippet as string) ?? "",
+      snippet: decodeSnippet(msg.snippet as string),
       body_text: state.bodyText,
       body_html: state.bodyHtml,
       received_at: msg.internalDate
@@ -502,6 +514,15 @@ export async function messageHeaders(tokenRef: string, gmailId: string, names: s
   return headers;
 }
 
+// The thread a message belongs to, or "" when Gmail no longer has it.
+export async function threadIdOf(tokenRef: string, gmailId: string): Promise<string> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const res = await gmailRequest(tokenData.token, `/messages/${encodeURIComponent(gmailId)}?format=minimal&fields=threadId`);
+  if (res.status === 404) return "";
+  if (!res.ok) throw new Error(`Gmail message lookup failed (${res.status})`);
+  return ((await res.json()).threadId as string) ?? "";
+}
+
 // Has this mailbox ever sent mail to the address? Asks Gmail, since sync
 // does not keep a copy of sent mail.
 export async function hasSentTo(tokenRef: string, address: string): Promise<boolean> {
@@ -611,6 +632,7 @@ export async function fetchSentEmails(
 ): Promise<
   {
     id: string;
+    thread_id: string;
     subject: string;
     to: string;
     date: string;
@@ -633,6 +655,7 @@ export async function fetchSentEmails(
   const messages: { id: string }[] = data.messages ?? [];
   const sent: {
     id: string;
+    thread_id: string;
     subject: string;
     to: string;
     date: string;
@@ -669,12 +692,13 @@ export async function fetchSentEmails(
           extractBody(msg.payload ?? {}, state);
           return {
             id: msg.id as string,
+            thread_id: msg.threadId as string,
             subject: headers["subject"] ?? "",
             to: headers["to"] ?? "",
             date: headers["date"] ?? "",
             body_html: state.bodyHtml,
             body: state.bodyText,
-            snippet: (msg.snippet as string) ?? "",
+            snippet: decodeSnippet(msg.snippet as string),
             has_attachments: state.hasAttachments,
             attachments: state.attachments,
           };
@@ -741,7 +765,7 @@ export async function fetchDrafts(
           return {
             id: d.id,
             subject: headers["subject"] ?? "",
-            snippet: (msg.snippet as string) ?? "",
+            snippet: decodeSnippet(msg.snippet as string),
           };
         } catch {
           return null;

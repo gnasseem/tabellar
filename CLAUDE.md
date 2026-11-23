@@ -68,7 +68,7 @@ The npm package (`files` in package.json) holds `bin/`, `frontend/dist/` and `di
 
 ### Interface (`frontend/`)
 
-- `src/main.tsx` loads `/session`, then renders `AppShell` + `EmailDashboard` when a Google account is connected, otherwise `Welcome` (onboarding: model, then Gmail; the Google client step appears only for bringing your own, or first when no client is built in). `ModelSetup.tsx` is the model picker shared by onboarding and Settings > AI.
+- `src/main.tsx` loads `/session`, then renders `AppShell` + `EmailDashboard` when a Google account is connected, otherwise `Welcome` (onboarding: model, then Gmail; the Google client step appears only for bringing your own, or first when no client is built in). `ModelSetup.tsx` is the model picker shared by onboarding and Settings > Models.
 - `src/lib/db.ts`: `createClient()` returns an object shaped like the supabase-js client the views were written against: `from()` posts the query to `/db`, `auth.getSession()` returns the local user and access token, `channel().on("postgres_changes", ...)` listens on `/events`. Views keep calling `supabase.from(...)`.
 - Global state lives in `AppShell.tsx` via React context (`useApp()`): `user`, `profile`, `view`, `addToast`, compose, agent state, and `mail` (below). The shell is a sidebar plus the current view; there is no global top bar, each view renders its own `ViewBar`.
 - `src/lib/outcomes.ts`: `useOverview()` loads the action log, drafts, todos, meetings and pending sends once and derives what Tabellar made of each email (`mail.byEmail`), the sidebar counts, the outgoing replies and the engine state, plus `approve`, `dismiss`, `undo`. Inbox rows, the details panel and the sidebar all read from it.

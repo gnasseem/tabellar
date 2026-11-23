@@ -127,7 +127,10 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
     const d = r.detail || {};
     const base = { key: r.id, at: r.created_at };
     if (r.status === "proposed") {
-      push(r.email_id, { ...base, state: "need", short: PROPOSED[r.kind] || "To approve", title: r.summary, why: "Waiting for your approval. It is carried out exactly as shown.", act: { kind: "approve", id: r.id, hash: r.hash || "" } });
+      // A label waiting for approval is listed but does not make the email
+      // need you: at Suggest every email has one, and the inbox would be all red.
+      const label = r.kind === "label";
+      push(r.email_id, { ...base, state: label ? "info" : "need", short: label ? "" : PROPOSED[r.kind] || "To approve", title: r.summary, why: "Waiting for your approval. It is carried out exactly as shown.", act: { kind: "approve", id: r.id, hash: r.hash || "" } });
     } else if (r.status === "done" && r.kind === "send") {
       const pending = pendingByAction.get(r.id);
       if (pending) push(r.email_id, { ...base, state: "going", short: "Replying", title: "Replying on its own", why: "Only to the person who wrote, inside this thread. You can cancel until it goes.", sendAt: pending.send_at, act: { kind: "cancel", id: r.id } });

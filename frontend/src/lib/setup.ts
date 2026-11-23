@@ -1,5 +1,5 @@
 // Calls to the server's /api/setup routes, used by the first-run onboarding
-// and by Settings > AI.
+// and by Settings > Models.
 
 export type LocalModel = { name: string; size: number };
 

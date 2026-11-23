@@ -186,7 +186,7 @@ function SlotGrid({ slots, failed, selected, onPick, onRetry }: { slots: FreeSlo
   if (failed)
     return (
       <p className="py-3 leading-normal text-danger" role="alert">
-        Your Google Calendar could not be read. Reconnect the account in Settings, under Accounts, or set the time yourself.{" "}
+        Your Google Calendar could not be read. Reconnect the account in Settings, under General, or set the time yourself.{" "}
         <button type="button" className="link" onClick={onRetry}>
           Try again
         </button>
@@ -960,7 +960,7 @@ export default function MeetingsView() {
                   <div className="skel mt-1.5 h-3 w-56" aria-busy="true" aria-label="Checking your calendar" />
                 ) : slotsFailed.has(upcomingKey) ? (
                   <p className="text-[12.5px] leading-normal text-danger" role="alert">
-                    Your Google Calendar could not be read. Reconnect the account in Settings, under Accounts.{" "}
+                    Your Google Calendar could not be read. Reconnect the account in Settings, under General.{" "}
                     <button className="link" onClick={() => fetchSlots(new Date(m.start_time), minutesOf(m), true)}>
                       Try again
                     </button>

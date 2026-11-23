@@ -63,6 +63,7 @@ type EmailRow = {
   thread_id?: string | null;
   gmail_id?: string | null;
   gmail_account_id?: string | null;
+  attachments?: { mime_type?: string }[] | null;
 };
 
 // Added to the drafting instructions when the reply will go out without the
@@ -159,7 +160,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
 
   const { data: rows } = await db
     .from("email_processed")
-    .select("id, category, urgency, summary, quick_actions, emails!inner(id, subject, sender, sender_email, reply_to_email, body_text, body_html, snippet, received_at, thread_id, gmail_id, gmail_account_id)")
+    .select("id, category, urgency, summary, quick_actions, emails!inner(id, subject, sender, sender_email, reply_to_email, body_text, body_html, snippet, received_at, thread_id, gmail_id, gmail_account_id, attachments)")
     .eq("user_id", userId)
     .is("engine_at", null)
     .limit(100);
@@ -266,7 +267,10 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     if (todo) await run({ kind: "todo", emailId: email.id, summary: `Todo: ${todo.label}`, detail: { text: todo.label } });
 
     // Meeting proposal, when the email names a time that has not passed.
-    const meeting = actions.find((a) => a.action === "schedule_meeting" && a.meetingDetails?.dateTime);
+    // Calendar invitations and their replies carry an .ics: Google Calendar
+    // already has that event.
+    const fromCalendar = (email.attachments ?? []).some((a) => a.mime_type === "text/calendar");
+    const meeting = fromCalendar ? undefined : actions.find((a) => a.action === "schedule_meeting" && a.meetingDetails?.dateTime);
     const wall = meeting ? parseWallClock(meeting.meetingDetails!.dateTime!) : null;
     if (meeting && wall !== null) {
       const start = wallClockToUtc(wall, timezone);

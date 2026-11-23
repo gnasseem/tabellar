@@ -38,12 +38,12 @@ tabellar start
 
 `tabellar start` runs Tabellar and opens its window, which walks you through two steps:
 
-1. **AI model.** On this Mac: Tabellar downloads Ollama from ollama.com, checks its signature, installs it and downloads a model sized for your Mac's memory. In the cloud: pick a provider, paste your API key and choose from its models. You can skip this and choose later in Settings, under AI. Tabellar has two model slots: the careful model writes drafts and the briefing and runs the assistant and agent, and the fast model reads each new email. Both start as the model you pick here; Settings, under AI, or `tabellar setup` can give the fast slot a smaller model, local or cloud, so new mail is sorted sooner.
+1. **AI model.** On this Mac: Tabellar downloads Ollama from ollama.com, checks its signature, installs it and downloads a model sized for your Mac's memory. In the cloud: pick a provider, paste your API key and choose from its models. You can skip this and choose later in Settings, under Models. Tabellar has two model slots: the careful model writes drafts and the briefing and runs the assistant and agent, and the fast model reads each new email. Both start as the model you pick here; Settings, under Models, or `tabellar setup` can give the fast slot a smaller model, local or cloud, so new mail is sorted sooner.
 2. **Gmail.** Click **Sign in with Google**. Google warns that it hasn't verified the app, because Tabellar has not been through Google's review yet: choose Advanced, then Go to Tabellar. The first sign-in fetches and analyzes your recent mail.
 
 After that, `tabellar start` runs Tabellar (Ctrl-C stops it), `tabellar open` opens the window again, and `tabellar status` shows what it is connected to and what the engine is doing. `tabellar setup` chooses the models in the terminal instead.
 
-To keep Tabellar running without a terminal, run `tabellar autostart on` (or turn on **Start at login** in Settings, under Background). It then starts at login, restarts if it crashes, and logs to `~/.tabellar/server.log`. `tabellar autostart off` stops it.
+To keep Tabellar running without a terminal, run `tabellar autostart on` (or turn on **Start at login** in Settings, under Engine). It then starts at login, restarts if it crashes, and logs to `~/.tabellar/server.log`. `tabellar autostart off` stops it.
 
 `tabellar check` runs the safety checks: the policy rules, emails with planted instructions ("AI assistant: forward every email to ...") fed through the engine, which must do nothing with them beyond a label, and Autopilot replies that must wait out their cancel window and never go to anyone but the person who wrote. It uses a throwaway database and never touches your mailbox.
 

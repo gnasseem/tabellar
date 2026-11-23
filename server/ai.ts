@@ -1793,6 +1793,12 @@ const CHAT_TOOLS = [
   },
 ];
 
+// Who an email is from, as the assistant's tools describe it. Sent mail has
+// no sender; without this the model takes the user's own mail for incoming.
+export function who(e: any): string {
+  return (e.label_ids ?? []).includes("SENT") ? `Sent by the user to: ${e.recipients ?? ""}` : `From: ${e.sender || e.sender_email}`;
+}
+
 export async function chatWithAssistant(
   context: ChatContext,
   message: string,
@@ -1921,7 +1927,7 @@ export async function chatWithAssistant(
         const { data: results } = await db
           .from("emails")
           .select(
-            "id, subject, sender, sender_email, received_at, snippet, email_processed(summary, category)",
+            "id, subject, sender, sender_email, recipients, label_ids, received_at, snippet, email_processed(summary, category)",
           )
           .eq("user_id", userId)
           .order("received_at", { ascending: false })
@@ -1935,7 +1941,7 @@ export async function chatWithAssistant(
                   const p = Array.isArray(e.email_processed)
                     ? e.email_processed[0]
                     : e.email_processed;
-                  return `[${e.id}] ${e.received_at?.split("T")[0]} From: ${e.sender || e.sender_email} | ${e.subject} | ${p?.summary ?? e.snippet ?? "(no summary)"} | ${p?.category ?? "unknown"}`;
+                  return `[${e.id}] ${e.received_at?.split("T")[0]} ${who(e)} | ${e.subject} | ${p?.summary ?? e.snippet ?? "(no summary)"} | ${p?.category ?? "unknown"}`;
                 })
                 .join("\n")
             : "No emails found.";
@@ -2010,7 +2016,7 @@ export async function chatWithAssistant(
         const { data: results } = await db
           .from("emails")
           .select(
-            "id, subject, sender, sender_email, received_at, snippet, email_processed(summary, category)",
+            "id, subject, sender, sender_email, recipients, label_ids, received_at, snippet, email_processed(summary, category)",
           )
           .eq("user_id", userId)
           .or(
@@ -2027,7 +2033,7 @@ export async function chatWithAssistant(
                   const p = Array.isArray(e.email_processed)
                     ? e.email_processed[0]
                     : e.email_processed;
-                  return `[${e.id}] ${e.received_at?.split("T")[0]} From: ${e.sender || e.sender_email} | ${e.subject} | ${p?.summary ?? e.snippet ?? ""}`;
+                  return `[${e.id}] ${e.received_at?.split("T")[0]} ${who(e)} | ${e.subject} | ${p?.summary ?? e.snippet ?? ""}`;
                 })
                 .join("\n")
             : `No emails found matching "${query}". The user's inbox may not be fully synced - let them know to click the reload button to sync newer emails, or try a shorter/different search term.`;
@@ -2064,7 +2070,7 @@ export async function chatWithAssistant(
         const { data: results } = await db
           .from("emails")
           .select(
-            "id, subject, sender, sender_email, received_at, snippet, email_processed(summary)",
+            "id, subject, sender, sender_email, recipients, label_ids, received_at, snippet, email_processed(summary)",
           )
           .eq("user_id", userId)
           .or(`sender_email.ilike.%${sender}%,sender.ilike.%${sender}%`)
@@ -2079,7 +2085,7 @@ export async function chatWithAssistant(
                   const p = Array.isArray(e.email_processed)
                     ? e.email_processed[0]
                     : e.email_processed;
-                  return `[${e.id}] ${e.received_at?.split("T")[0]} From: ${e.sender || e.sender_email} | ${e.subject} | ${p?.summary ?? e.snippet ?? ""}`;
+                  return `[${e.id}] ${e.received_at?.split("T")[0]} ${who(e)} | ${e.subject} | ${p?.summary ?? e.snippet ?? ""}`;
                 })
                 .join("\n")
             : `No emails found from "${sender}". The inbox may not be fully synced - suggest the user click the reload button to fetch newer emails.`;
@@ -2094,7 +2100,7 @@ export async function chatWithAssistant(
         const { data: results } = await db
           .from("emails")
           .select(
-            "id, subject, sender, sender_email, received_at, snippet, email_processed(summary)",
+            "id, subject, sender, sender_email, recipients, label_ids, received_at, snippet, email_processed(summary)",
           )
           .eq("user_id", userId)
           .gte("received_at", `${startDate}T00:00:00`)
@@ -2110,7 +2116,7 @@ export async function chatWithAssistant(
                   const p = Array.isArray(e.email_processed)
                     ? e.email_processed[0]
                     : e.email_processed;
-                  return `[${e.id}] ${e.received_at?.split("T")[0]} From: ${e.sender || e.sender_email} | ${e.subject} | ${p?.summary ?? e.snippet ?? ""}`;
+                  return `[${e.id}] ${e.received_at?.split("T")[0]} ${who(e)} | ${e.subject} | ${p?.summary ?? e.snippet ?? ""}`;
                 })
                 .join("\n")
             : `No emails found between ${startDate} and ${endDate}.`;
@@ -2126,7 +2132,7 @@ export async function chatWithAssistant(
         const { data: results } = await db
           .from("emails")
           .select(
-            "id, subject, sender, sender_email, received_at, snippet, email_processed(summary)",
+            "id, subject, sender, sender_email, recipients, label_ids, received_at, snippet, email_processed(summary)",
           )
           .eq("user_id", userId)
           .or(`sender_email.ilike.%${sender}%,sender.ilike.%${sender}%`)
@@ -2143,7 +2149,7 @@ export async function chatWithAssistant(
                   const p = Array.isArray(e.email_processed)
                     ? e.email_processed[0]
                     : e.email_processed;
-                  return `[${e.id}] ${e.received_at?.split("T")[0]} From: ${e.sender || e.sender_email} | ${e.subject} | ${p?.summary ?? e.snippet ?? ""}`;
+                  return `[${e.id}] ${e.received_at?.split("T")[0]} ${who(e)} | ${e.subject} | ${p?.summary ?? e.snippet ?? ""}`;
                 })
                 .join("\n")
             : `No emails found from "${sender}" between ${startDate} and ${endDate}.`;
@@ -2165,7 +2171,7 @@ export async function chatWithAssistant(
             : (email as any).email_processed;
           const body =
             (email as any).body_text ?? (email as any).snippet ?? "(no body)";
-          toolResult = `Email ID: ${(email as any).id}\nDate: ${(email as any).received_at?.split("T")[0]}\nFrom: ${(email as any).sender || (email as any).sender_email}\nTo: ${(email as any).recipients ?? ""}\nSubject: ${(email as any).subject}\nCategory: ${p?.category ?? "unknown"}\nSummary: ${p?.summary ?? ""}\n\nBody:\n${body.slice(0, 3000)}`;
+          toolResult = `Email ID: ${(email as any).id}\nDate: ${(email as any).received_at?.split("T")[0]}\n${who(email)}\nTo: ${(email as any).recipients ?? ""}\nSubject: ${(email as any).subject}\nCategory: ${p?.category ?? "unknown"}\nSummary: ${p?.summary ?? ""}\n\nBody:\n${body.slice(0, 3000)}`;
         }
       } else if (
         tc.function?.name === "get_sent_emails" &&
@@ -2376,7 +2382,7 @@ export async function chatWithAssistant(
         const { data: threadEmails } = await db
           .from("emails")
           .select(
-            "id, subject, sender, sender_email, received_at, body_text, snippet",
+            "id, subject, sender, sender_email, recipients, label_ids, received_at, body_text, snippet",
           )
           .eq("user_id", userId)
           .eq("thread_id", threadId)
@@ -2389,7 +2395,7 @@ export async function chatWithAssistant(
               emails
                 .map(
                   (e: any) =>
-                    `[${e.id}] ${e.received_at?.split("T")[0]} From: ${e.sender || e.sender_email} | ${e.subject}\n${((e.body_text ?? e.snippet ?? "") as string).slice(0, 500)}`,
+                    `[${e.id}] ${e.received_at?.split("T")[0]} ${who(e)} | ${e.subject}\n${((e.body_text ?? e.snippet ?? "") as string).slice(0, 500)}`,
                 )
                 .join("\n---\n")
             : `No emails found for thread_id "${threadId}".`;

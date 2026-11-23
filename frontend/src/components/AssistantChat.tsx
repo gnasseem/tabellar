@@ -44,6 +44,30 @@ function noDash(s: string): string {
   return s.replace(/\s*\u2014\s*/g, ", ");
 }
 
+// Models answer in Markdown even when asked not to. Bullets become a dot,
+// headings and **bold** become bold, and `code` and *italics* lose their marks.
+function Answer({ text }: { text: string }) {
+  const lines = noDash(text).split("\n");
+  return (
+    <>
+      {lines.map((raw, i) => {
+        const bullet = raw.match(/^(\s*)[*-]\s+(.*)$/);
+        const heading = raw.match(/^#{1,6}\s+(.*)$/);
+        const body = bullet ? bullet[2] : heading ? `**${heading[1]}**` : raw;
+        const parts = body.split(/\*\*(.+?)\*\*/g).map((p, j) => (j % 2 ? <b key={j} className="font-medium">{p}</b> : p.replace(/\*([^*\s][^*]*)\*/g, "$1").replace(/`([^`]+)`/g, "$1")));
+        const indent = bullet ? Math.min(Math.floor(bullet[1].length / 2), 3) : 0;
+        return (
+          <span key={i} className="block" style={bullet ? { paddingLeft: `${1 + indent}em`, textIndent: "-0.9em" } : undefined}>
+            {bullet && "\u2022 "}
+            {parts}
+            {!raw.trim() && "\u00a0"}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 export default function AssistantChat({ className, visible }: { className?: string; visible?: boolean }) {
   const { setView, notifySent, addToast } = useApp();
   const supabase = createClient();
@@ -184,7 +208,7 @@ export default function AssistantChat({ className, visible }: { className?: stri
             stoppedRef.current = false;
             return;
           }
-          throw new Error("No answer after three minutes. The model may be busy or stopped; check Settings, under AI, and ask again.");
+          throw new Error("No answer after three minutes. The model may be busy or stopped; check Settings, under Models, and ask again.");
         }
         throw fetchErr;
       }
@@ -192,11 +216,11 @@ export default function AssistantChat({ className, visible }: { className?: stri
 
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.error || `The request failed (${res.status}). Check that the model in Settings, under AI, is running.`);
+        throw new Error(errBody.error || `The request failed (${res.status}). Check that the model in Settings, under Models, is running.`);
       }
 
       const data = await res.json();
-      if (!data.reply?.trim()) throw new Error("The model returned an empty answer. Ask again, or try another model in Settings, under AI.");
+      if (!data.reply?.trim()) throw new Error("The model returned an empty answer. Ask again, or try another model in Settings, under Models.");
       displayResult({ reply: data.reply, actions: data.actions });
     } catch (err) {
       if (stoppedRef.current) {
@@ -247,7 +271,7 @@ export default function AssistantChat({ className, visible }: { className?: stri
                       )}
                     </p>
                   ) : (
-                    <p className="whitespace-pre-wrap text-sm leading-[1.6] tracking-[-0.006em] text-ink">{noDash(msg.content)}</p>
+                    <div className="whitespace-pre-wrap text-sm leading-[1.6] tracking-[-0.006em] text-ink"><Answer text={msg.content} /></div>
                   )}
                   {msg.actions?.map((action, j) => <ActionLine key={j} action={action} setView={setView} onSelectOption={(text) => sendMessage(text)} />)}
                 </div>
