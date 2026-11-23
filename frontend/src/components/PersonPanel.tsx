@@ -1,5 +1,6 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
 
@@ -38,11 +39,11 @@ type RecentMeeting = {
 
 function healthLabel(health: ContactInsights["relationship_health"]): { label: string; color: string; icon: string } {
   switch (health) {
-    case "active":  return { label: "Active",   color: "text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30",   icon: "favorite" };
-    case "recent":  return { label: "Recent",   color: "text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-900/30",     icon: "bolt" };
-    case "fading":  return { label: "Fading",   color: "text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30", icon: "trending_down" };
-    case "dormant": return { label: "Dormant",  color: "text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800",    icon: "bedtime" };
-    default:        return { label: "New",      color: "text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30", icon: "star" };
+    case "active":  return { label: "Active",   color: "text-ok bg-ok-soft",   icon: "favorite" };
+    case "recent":  return { label: "Recent",   color: "text-ink2 bg-field",     icon: "bolt" };
+    case "fading":  return { label: "Fading",   color: "text-warn bg-warn-soft", icon: "trending_down" };
+    case "dormant": return { label: "Dormant",  color: "text-ink2 bg-field",    icon: "bedtime" };
+    default:        return { label: "New",      color: "text-ink2 bg-field", icon: "star" };
   }
 }
 
@@ -64,8 +65,8 @@ function Initials({ name, email }: { name: string; email: string }) {
     : str.slice(0, 2).toUpperCase();
   // Deterministic color based on email
   const colors = [
-    "bg-blue-500", "bg-violet-500", "bg-emerald-500", "bg-rose-500",
-    "bg-amber-500", "bg-cyan-500", "bg-indigo-500", "bg-teal-500",
+    "bg-wax", "bg-wax", "bg-ok", "bg-danger",
+    "bg-warn", "bg-wax", "bg-wax", "bg-ok",
   ];
   const idx = email.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0) % colors.length;
   return (
@@ -213,7 +214,7 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
   if (loading) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-3 p-6">
-        <span className="material-symbols-outlined animate-spin text-[var(--muted)]" style={{ fontSize: "22px" }}>progress_activity</span>
+        <Icon name="progress_activity" size={22} className="animate-spin text-ink3" />
       </div>
     );
   }
@@ -221,8 +222,8 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
   if (!insights) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-2 p-6 text-center">
-        <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "28px", fontVariationSettings: "'FILL' 1" }}>person_off</span>
-        <p className="text-xs text-[var(--muted)]">No contact data available</p>
+        <Icon name="person_off" size={28} fill className="text-ink3" />
+        <p className="text-xs text-ink3">No contact data available</p>
       </div>
     );
   }
@@ -233,14 +234,14 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
     <div className="h-full overflow-y-auto flex flex-col gap-0">
 
       {/* ── Contact header ── */}
-      <div className="px-4 pt-5 pb-4 border-b border-[var(--border)]">
+      <div className="px-4 pt-5 pb-4 border-b border-line">
         <div className="flex items-start gap-3">
           <Initials name={insights.name} email={insights.email} />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-[var(--foreground)] truncate leading-tight">{insights.name}</p>
-            <p className="text-[11px] text-[var(--muted)] truncate mt-0.5">{insights.email}</p>
+            <p className="text-sm font-bold text-ink truncate leading-tight">{insights.name}</p>
+            <p className="text-[11px] text-ink3 truncate mt-0.5">{insights.email}</p>
             {insights.domain && (
-              <p className="text-[10px] text-[var(--muted)] opacity-60 truncate">{insights.domain}</p>
+              <p className="text-[10px] text-ink3 opacity-60 truncate">{insights.domain}</p>
             )}
           </div>
         </div>
@@ -248,34 +249,34 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
         {/* Relationship health badge */}
         <div className="mt-3 flex items-center gap-2">
           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${health.color}`}>
-            <span className="material-symbols-outlined" style={{ fontSize: "10px", fontVariationSettings: "'FILL' 1" }}>{health.icon}</span>
+            <Icon name={health.icon} size={10} fill />
             {health.label}
           </span>
           {insights.last_interaction_at && (
-            <span className="text-[10px] text-[var(--muted)]">{timeAgo(insights.last_interaction_at)}</span>
+            <span className="text-[10px] text-ink3">{timeAgo(insights.last_interaction_at)}</span>
           )}
         </div>
       </div>
 
       {/* ── Stats ── */}
       {insights.interaction_count > 0 && (
-        <div className="px-4 py-3 border-b border-[var(--border)]">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-[var(--muted)] mb-2">Relationship</p>
+        <div className="px-4 py-3 border-b border-line">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-ink3 mb-2">Relationship</p>
           <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-xl bg-[var(--surface-2)] px-3 py-2">
-              <p className="text-lg font-bold text-[var(--foreground)] leading-tight">{insights.interaction_count}</p>
-              <p className="text-[10px] text-[var(--muted)]">emails</p>
+            <div className="rounded-xl bg-field px-3 py-2">
+              <p className="text-lg font-bold text-ink leading-tight">{insights.interaction_count}</p>
+              <p className="text-[10px] text-ink3">emails</p>
             </div>
             {insights.avg_response_time_hours !== null && (
-              <div className="rounded-xl bg-[var(--surface-2)] px-3 py-2">
-                <p className="text-lg font-bold text-[var(--foreground)] leading-tight">
+              <div className="rounded-xl bg-field px-3 py-2">
+                <p className="text-lg font-bold text-ink leading-tight">
                   {insights.avg_response_time_hours < 1
                     ? `${Math.round(insights.avg_response_time_hours * 60)}m`
                     : insights.avg_response_time_hours < 24
                     ? `${Math.round(insights.avg_response_time_hours)}h`
                     : `${Math.round(insights.avg_response_time_hours / 24)}d`}
                 </p>
-                <p className="text-[10px] text-[var(--muted)]">avg reply</p>
+                <p className="text-[10px] text-ink3">avg reply</p>
               </div>
             )}
           </div>
@@ -284,15 +285,15 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
 
       {/* ── Recent emails ── */}
       {recentEmails.length > 0 && (
-        <div className="px-4 py-3 border-b border-[var(--border)]">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-[var(--muted)] mb-2">Recent emails</p>
+        <div className="px-4 py-3 border-b border-line">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-ink3 mb-2">Recent emails</p>
           <div className="flex flex-col gap-1.5">
             {recentEmails.map((e) => (
-              <div key={e.id} className="rounded-lg bg-[var(--surface-2)] px-2.5 py-1.5">
-                <p className="text-[11px] font-medium text-[var(--foreground)] truncate leading-tight">
+              <div key={e.id} className="rounded-lg bg-field px-2.5 py-1.5">
+                <p className="text-[11px] font-medium text-ink truncate leading-tight">
                   {e.subject || "(no subject)"}
                 </p>
-                <p className="text-[10px] text-[var(--muted)] mt-0.5">
+                <p className="text-[10px] text-ink3 mt-0.5">
                   {new Date(e.received_at).toLocaleDateString([], { month: "short", day: "numeric" })}
                   {e.snippet ? ` - ${e.snippet.slice(0, 50)}${e.snippet.length > 50 ? "…" : ""}` : ""}
                 </p>
@@ -304,18 +305,13 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
 
       {/* ── Todos from this contact ── */}
       {recentTodos.length > 0 && (
-        <div className="px-4 py-3 border-b border-[var(--border)]">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-[var(--muted)] mb-2">Related todos</p>
+        <div className="px-4 py-3 border-b border-line">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-ink3 mb-2">Related todos</p>
           <div className="flex flex-col gap-1">
             {recentTodos.map((t) => (
               <div key={t.id} className="flex items-start gap-1.5">
-                <span
-                  className="material-symbols-outlined shrink-0 mt-0.5"
-                  style={{ fontSize: "12px", color: t.is_completed ? "var(--accent)" : "var(--muted)", fontVariationSettings: t.is_completed ? "'FILL' 1" : "'FILL' 0" }}
-                >
-                  {t.is_completed ? "check_circle" : "radio_button_unchecked"}
-                </span>
-                <p className={`text-[11px] leading-tight ${t.is_completed ? "line-through text-[var(--muted)]" : "text-[var(--foreground)]"}`}>
+                <Icon name={t.is_completed ? "check_circle" : "radio_button_unchecked"} size={12} fill={t.is_completed} className="shrink-0 mt-0.5" style={{ color: t.is_completed ? "var(--wax)" : "var(--ink3)" }} />
+                <p className={`text-[11px] leading-tight ${t.is_completed ? "line-through text-ink3" : "text-ink"}`}>
                   {t.text}
                 </p>
               </div>
@@ -326,24 +322,19 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
 
       {/* ── Meetings with this contact ── */}
       {recentMeetings.length > 0 && (
-        <div className="px-4 py-3 border-b border-[var(--border)]">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-[var(--muted)] mb-2">Meetings</p>
+        <div className="px-4 py-3 border-b border-line">
+          <p className="text-[9px] font-bold uppercase tracking-widest text-ink3 mb-2">Meetings</p>
           <div className="flex flex-col gap-1.5">
             {recentMeetings.map((m) => {
               const isPast = new Date(m.start_time) < new Date();
               return (
                 <div key={m.id} className="flex items-start gap-1.5">
-                  <span
-                    className="material-symbols-outlined shrink-0 mt-0.5 text-[var(--accent)]"
-                    style={{ fontSize: "12px", fontVariationSettings: "'FILL' 1", opacity: isPast ? 0.5 : 1 }}
-                  >
-                    event
-                  </span>
+                  <Icon name="event" size={12} fill className="shrink-0 mt-0.5 text-wax" style={{ opacity: isPast ? 0.5 : 1 }} />
                   <div className="min-w-0">
-                    <p className={`text-[11px] font-medium leading-tight truncate ${isPast ? "text-[var(--muted)]" : "text-[var(--foreground)]"}`}>
+                    <p className={`text-[11px] font-medium leading-tight truncate ${isPast ? "text-ink3" : "text-ink"}`}>
                       {m.title}
                     </p>
-                    <p className="text-[10px] text-[var(--muted)]">
+                    <p className="text-[10px] text-ink3">
                       {new Date(m.start_time).toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                     </p>
                   </div>
@@ -355,15 +346,15 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
       )}
 
       {/* ── Notes ── */}
-      <div className="px-4 py-3 border-b border-[var(--border)]">
+      <div className="px-4 py-3 border-b border-line">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-[9px] font-bold uppercase tracking-widest text-[var(--muted)]">Notes</p>
+          <p className="text-[9px] font-bold uppercase tracking-widest text-ink3">Notes</p>
           {notesDirty && (
-            <span className="text-[9px] text-[var(--muted)] italic">saving...</span>
+            <span className="text-[9px] text-ink3 italic">saving...</span>
           )}
           {notesSaved && !notesDirty && (
-            <span className="text-[9px] text-green-600 dark:text-green-400 flex items-center gap-0.5">
-              <span className="material-symbols-outlined" style={{ fontSize: "10px" }}>check</span>
+            <span className="text-[9px] text-ok flex items-center gap-0.5">
+              <Icon name="check" size={10} />
               saved
             </span>
           )}
@@ -373,7 +364,7 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
           onChange={(e) => handleNotesChange(e.target.value)}
           placeholder="Add private notes about this contact..."
           rows={3}
-          className="w-full text-xs text-[var(--foreground)] bg-[var(--surface-2)] rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-[var(--accent)] placeholder:text-[var(--muted)] leading-relaxed transition-shadow"
+          className="w-full text-xs text-ink bg-field rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-wax placeholder:text-ink3 leading-relaxed transition-shadow"
         />
       </div>
 
@@ -381,16 +372,16 @@ export default function PersonPanel({ senderEmail, senderName, onCompose, onFind
       <div className="px-4 py-3 flex flex-col gap-2 mt-auto">
         <button
           onClick={onCompose}
-          className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-[var(--accent)] text-white text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
+          className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-wax text-on-wax text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
         >
-          <span className="material-symbols-outlined" style={{ fontSize: "15px" }}>edit</span>
+          <Icon name="edit" size={15} />
           Compose to {insights.name.split(" ")[0]}
         </button>
         <button
           onClick={onFindAllEmails}
-          className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-[var(--border)] text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+          className="w-full flex items-center justify-center gap-2 py-2 rounded-xl border border-line text-xs font-medium text-ink hover:bg-field transition-colors cursor-pointer"
         >
-          <span className="material-symbols-outlined" style={{ fontSize: "15px" }}>search</span>
+          <Icon name="search" size={15} />
           Find all emails
         </button>
       </div>

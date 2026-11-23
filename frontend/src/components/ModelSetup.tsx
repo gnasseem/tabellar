@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Icon from "@/components/Icon";
 import { formatBytes, getSetupState, setupPost, setupStream, type ModelInfo, type Progress, type SetupState, type Slot } from "@/lib/setup";
 
 // Choosing an AI model: on this Mac through Ollama (installing Ollama and
@@ -32,21 +33,15 @@ export function modelLabel(m: ModelInfo | null, providers: SetupState["providers
 }
 
 const btnPrimary =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-white transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:brightness-100";
+  "inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-wax px-4 text-sm font-semibold text-on-wax transition-[filter,opacity] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:brightness-100";
 const btnSecondary =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 text-sm font-medium text-[var(--foreground)] transition-colors hover:bg-[var(--surface-2)] disabled:cursor-not-allowed disabled:opacity-40";
+  "inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-line bg-raised px-4 text-sm font-medium text-ink transition-colors hover:bg-field disabled:cursor-not-allowed disabled:opacity-40";
 const input =
-  "h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] transition-shadow focus:border-[var(--accent)] focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--accent)_22%,transparent)]";
+  "h-10 w-full rounded-lg border border-line bg-raised px-3 text-sm text-ink placeholder:text-ink3 transition-shadow focus:border-wax focus:outline-none focus:ring-2 focus:ring-[color-mix(in_srgb,var(--wax)_22%,transparent)]";
 
 export const ui = { btnPrimary, btnSecondary, input };
 
-export function Icon({ name, className = "", size = 18 }: { name: string; className?: string; size?: number }) {
-  return (
-    <span aria-hidden className={`material-symbols-outlined shrink-0 ${className}`} style={{ fontSize: size, lineHeight: 1 }}>
-      {name}
-    </span>
-  );
-}
+export { Icon };
 
 export function Spinner({ size = 16 }: { size?: number }) {
   return <Icon name="progress_activity" size={size} className="animate-spin" />;
@@ -55,7 +50,7 @@ export function Spinner({ size = 16 }: { size?: number }) {
 export function ErrorLine({ text }: { text: string }) {
   if (!text) return null;
   return (
-    <p role="alert" className="flex items-start gap-2 text-sm text-[var(--danger)]">
+    <p role="alert" className="flex items-start gap-2 text-sm text-danger">
       <Icon name="error" size={18} className="mt-px" />
       <span>{text}</span>
     </p>
@@ -67,18 +62,18 @@ function RadioDot({ on }: { on: boolean }) {
     <span
       aria-hidden
       className={`grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full border-2 transition-colors ${
-        on ? "border-[var(--accent)]" : "border-[var(--border)]"
+        on ? "border-wax" : "border-line"
       }`}
     >
-      <span className={`h-2 w-2 rounded-full bg-[var(--accent)] transition-transform duration-200 ${on ? "scale-100" : "scale-0"}`} />
+      <span className={`h-2 w-2 rounded-full bg-wax transition-transform duration-200 ${on ? "scale-100" : "scale-0"}`} />
     </span>
   );
 }
 
 function InUse({ name }: { name: string }) {
   return (
-    <p className="flex items-center gap-2 text-sm text-[var(--foreground)]">
-      <Icon name="check_circle" size={18} className="text-[var(--accent)]" />
+    <p className="flex items-center gap-2 text-sm text-ink">
+      <Icon name="check_circle" size={18} className="text-wax" />
       <span>
         <span className="font-mono text-[13px] font-medium">{name}</span> is in use
       </span>
@@ -91,18 +86,18 @@ export function ProgressBar({ label, p }: { label: string; p?: Progress }) {
   return (
     <div className="space-y-2" role="status" aria-live="polite">
       <div className="flex items-baseline justify-between gap-4 text-sm">
-        <span className="font-medium text-[var(--foreground)]">{label}</span>
+        <span className="font-medium text-ink">{label}</span>
         {pct !== null && (
-          <span className="tabular-nums text-xs text-[var(--muted)]">
+          <span className="tabular-nums text-xs text-ink3">
             {formatBytes(p!.completed!)} of {formatBytes(p!.total!)}
           </span>
         )}
       </div>
-      <div className="relative h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]">
+      <div className="relative h-1.5 overflow-hidden rounded-full bg-field">
         {pct !== null ? (
-          <div className="h-full rounded-full bg-[var(--accent)] transition-[width] duration-300 ease-out" style={{ width: `${Math.max(2, pct)}%` }} />
+          <div className="h-full rounded-full bg-wax transition-[width] duration-300 ease-out" style={{ width: `${Math.max(2, pct)}%` }} />
         ) : (
-          <div className="ob-indeterminate absolute inset-y-0 w-2/5 rounded-full bg-[var(--accent)]" />
+          <div className="ob-indeterminate absolute inset-y-0 w-2/5 rounded-full bg-wax" />
         )}
       </div>
     </div>
@@ -141,17 +136,17 @@ export default function ModelSetup({ state, refresh, onSaved, slot = "careful" }
               onClick={() => setWhere(o.id)}
               className={`group flex items-start gap-3 rounded-xl border p-4 text-left transition-[border-color,background-color,box-shadow] ${
                 on
-                  ? "border-[var(--accent)] bg-[var(--accent-light)] shadow-[0_1px_2px_rgba(16,40,28,0.06),0_6px_16px_-8px_rgba(16,64,40,0.25)]"
-                  : "border-[var(--border)] bg-[var(--surface)] hover:border-[color-mix(in_srgb,var(--muted)_55%,transparent)]"
+                  ? "border-wax bg-wax-soft shadow-[0_1px_2px_rgba(16,40,28,0.06),0_6px_16px_-8px_rgba(16,64,40,0.25)]"
+                  : "border-line bg-raised hover:border-[color-mix(in_srgb,var(--ink3)_55%,transparent)]"
               }`}
             >
-              <Icon name={o.icon} size={22} className={on ? "text-[var(--accent)]" : "text-[var(--muted)]"} />
+              <Icon name={o.icon} size={22} className={on ? "text-wax" : "text-ink3"} />
               <span className="min-w-0 flex-1">
                 <span className="flex items-center justify-between gap-2">
-                  <span className="text-[15px] font-semibold text-[var(--foreground)]">{o.title}</span>
+                  <span className="text-[15px] font-semibold text-ink">{o.title}</span>
                   <RadioDot on={on} />
                 </span>
-                <span className="mt-1 block text-[13px] leading-snug text-[var(--muted)]">{o.text}</span>
+                <span className="mt-1 block text-[13px] leading-snug text-ink3">{o.text}</span>
               </span>
             </button>
           );
@@ -230,14 +225,14 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
   if (!ollama.installed || !ollama.running) {
     const missing = !ollama.installed;
     return (
-      <div className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
+      <div className="space-y-4 rounded-xl border border-line bg-raised p-5">
         <div className="flex items-start gap-3">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[var(--surface-2)] text-[var(--foreground)]">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-field text-ink">
             <Icon name={missing ? "download" : "power_settings_new"} size={20} />
           </span>
           <div className="space-y-1">
-            <p className="text-[15px] font-semibold text-[var(--foreground)]">{busy ? "Setting up Ollama" : missing ? "Ollama isn't installed yet" : "Ollama isn't running"}</p>
-            <p className="text-[13px] leading-relaxed text-[var(--muted)]">
+            <p className="text-[15px] font-semibold text-ink">{busy ? "Setting up Ollama" : missing ? "Ollama isn't installed yet" : "Ollama isn't running"}</p>
+            <p className="text-[13px] leading-relaxed text-ink3">
               {missing
                 ? "Ollama is the free app that runs AI models on your Mac. Tabellar downloads it from ollama.com, checks its signature and puts it in Applications."
                 : "Ollama is installed. Start it and Tabellar will list your models."}
@@ -260,7 +255,7 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
   const inUse = current === choice && !!model?.ready;
   return (
     <div className="space-y-4">
-      <div role="radiogroup" aria-label="Local model" className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+      <div role="radiogroup" aria-label="Local model" className="overflow-hidden rounded-xl border border-line bg-raised">
         {rows.map((m, i) => {
           const on = selected === m.name;
           const recommended = m.name === recommendedName;
@@ -279,29 +274,29 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
               aria-checked={on}
               disabled={!!busy}
               onClick={() => setSelected(m.name)}
-              className={`flex w-full items-center gap-3 px-4 py-3 text-left transition-colors ${i ? "border-t border-[var(--border)]" : ""} ${
-                on ? "bg-[var(--accent-light)]" : "hover:bg-[var(--surface-2)]"
+              className={`flex w-full items-center gap-3 px-4 py-3 text-left transition-colors ${i ? "border-t border-line" : ""} ${
+                on ? "bg-wax-soft" : "hover:bg-field"
               }`}
             >
               <RadioDot on={on} />
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-[13px] font-medium text-[var(--foreground)]">{m.name}</span>
+                  <span className="font-mono text-[13px] font-medium text-ink">{m.name}</span>
                   {recommended && (
-                    <span className="rounded-full bg-[var(--accent-light)] px-2 py-0.5 text-[11px] font-semibold text-[var(--accent)]">Recommended</span>
+                    <span className="rounded-full bg-wax-soft px-2 py-0.5 text-[11px] font-semibold text-wax">Recommended</span>
                   )}
                 </span>
-                <span className="mt-0.5 block text-xs text-[var(--muted)]">{hint}</span>
+                <span className="mt-0.5 block text-xs text-ink3">{hint}</span>
               </span>
-              <span className="shrink-0 text-xs tabular-nums text-[var(--muted)]">
+              <span className="shrink-0 text-xs tabular-nums text-ink3">
                 {current === m.name && model?.ready ? "In use" : has ? "On this Mac" : formatBytes(m.size)}
               </span>
             </button>
           );
         })}
         <div
-          className={`flex w-full items-center gap-3 border-t border-[var(--border)] px-4 py-3 transition-colors ${
-            selected === "__other" ? "bg-[var(--accent-light)]" : "hover:bg-[var(--surface-2)]"
+          className={`flex w-full items-center gap-3 border-t border-line px-4 py-3 transition-colors ${
+            selected === "__other" ? "bg-wax-soft" : "hover:bg-field"
           }`}
           onClick={() => !busy && setSelected("__other")}
         >
@@ -314,7 +309,7 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
             onFocus={() => setSelected("__other")}
             onChange={(e) => setOther(e.target.value)}
             placeholder="Another model from ollama.com/library, e.g. qwen3.5:9b"
-            className="h-8 min-w-0 flex-1 bg-transparent font-mono text-[13px] text-[var(--foreground)] placeholder:font-sans placeholder:text-[var(--muted)] focus:outline-none"
+            className="h-8 min-w-0 flex-1 bg-transparent font-mono text-[13px] text-ink placeholder:font-sans placeholder:text-ink3 focus:outline-none"
             aria-label="Another Ollama model"
           />
         </div>
@@ -338,11 +333,11 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
             </button>
           )}
           {!inUse && pairFast && (
-            <span className="text-xs text-[var(--muted)]">
+            <span className="text-xs text-ink3">
               {installed.has(pairFast) ? "Also uses" : "Also downloads"} <span className="font-mono">{pairFast}</span> to read new mail quickly{installed.has(pairFast) && installed.has(choice) ? "." : "; downloads once, then runs offline."}
             </span>
           )}
-          {!installed.has(choice) && choice && !inUse && !pairFast && <span className="text-xs text-[var(--muted)]">Downloads once, then runs offline.</span>}
+          {!installed.has(choice) && choice && !inUse && !pairFast && <span className="text-xs text-ink3">Downloads once, then runs offline.</span>}
         </div>
       )}
       <ErrorLine text={error} />
@@ -420,7 +415,7 @@ function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
   return (
     <div className="space-y-5">
       <fieldset className="space-y-2">
-        <legend className="mb-2 text-sm font-medium text-[var(--foreground)]">Provider</legend>
+        <legend className="mb-2 text-sm font-medium text-ink">Provider</legend>
         <div className="flex flex-wrap gap-2">
           {state.providers.map((p) => {
             const on = p.id === providerId;
@@ -432,8 +427,8 @@ function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
                 onClick={() => setProviderId(p.id)}
                 className={`h-9 rounded-full border px-3.5 text-[13px] font-medium transition-colors ${
                   on
-                    ? "border-[var(--accent)] bg-[var(--accent-light)] text-[var(--accent)]"
-                    : "border-[var(--border)] bg-[var(--surface)] text-[var(--foreground)] hover:bg-[var(--surface-2)]"
+                    ? "border-wax bg-wax-soft text-wax"
+                    : "border-line bg-raised text-ink hover:bg-field"
                 }`}
               >
                 {p.name}
@@ -445,7 +440,7 @@ function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
 
       {providerId === "custom" && (
         <label className="block space-y-1.5">
-          <span className="text-sm font-medium text-[var(--foreground)]">Base URL</span>
+          <span className="text-sm font-medium text-ink">Base URL</span>
           <input className={input} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://example.com/v1" spellCheck={false} />
         </label>
       )}
@@ -458,11 +453,11 @@ function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
         }}
       >
         <div className="flex items-baseline justify-between gap-3">
-          <label htmlFor="api-key" className="text-sm font-medium text-[var(--foreground)]">
+          <label htmlFor="api-key" className="text-sm font-medium text-ink">
             API key
           </label>
           {provider.keyUrl && (
-            <a href={provider.keyUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[13px] font-medium text-[var(--accent)] hover:underline underline-offset-2">
+            <a href={provider.keyUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[13px] font-medium text-wax hover:underline underline-offset-2">
               Get a key from {provider.name} <Icon name="open_in_new" size={14} />
             </a>
           )}
@@ -483,25 +478,25 @@ function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
             {models && !key ? "Refresh" : "Check key"}
           </button>
         </div>
-        <p className="text-xs text-[var(--muted)]">Stored in the macOS Keychain, never in a file. Usage is billed by {providerId === "custom" ? "your provider" : provider.name}.</p>
+        <p className="text-xs text-ink3">Stored in the macOS Keychain, never in a file. Usage is billed by {providerId === "custom" ? "your provider" : provider.name}.</p>
       </form>
 
       {models && (
         <div className="space-y-2">
           <div className="flex items-baseline justify-between">
-            <span className="text-sm font-medium text-[var(--foreground)]">Model</span>
-            {models.length > 0 && <span className="text-xs tabular-nums text-[var(--muted)]">{models.length} available</span>}
+            <span className="text-sm font-medium text-ink">Model</span>
+            {models.length > 0 && <span className="text-xs tabular-nums text-ink3">{models.length} available</span>}
           </div>
           {models.length ? (
-            <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
-              <div className="flex items-center gap-2 border-b border-[var(--border)] px-3">
-                <Icon name="search" size={18} className="text-[var(--muted)]" />
+            <div className="overflow-hidden rounded-xl border border-line bg-raised">
+              <div className="flex items-center gap-2 border-b border-line px-3">
+                <Icon name="search" size={18} className="text-ink3" />
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search models"
                   aria-label="Search models"
-                  className="h-10 min-w-0 flex-1 bg-transparent text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none"
+                  className="h-10 min-w-0 flex-1 bg-transparent text-sm text-ink placeholder:text-ink3 focus:outline-none"
                 />
               </div>
               <div role="radiogroup" aria-label="Model" className="max-h-64 overflow-y-auto overscroll-contain py-1">
@@ -513,14 +508,14 @@ function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
                     aria-checked={selected === m}
                     onClick={() => setSelected(m)}
                     className={`flex w-full items-center gap-3 px-3 py-2 text-left font-mono text-[13px] transition-colors ${
-                      selected === m ? "bg-[var(--accent-light)] text-[var(--foreground)]" : "text-[var(--foreground)] hover:bg-[var(--surface-2)]"
+                      selected === m ? "bg-wax-soft text-ink" : "text-ink hover:bg-field"
                     }`}
                   >
                     <RadioDot on={selected === m} />
                     <span className="truncate">{m}</span>
                   </button>
                 ))}
-                {!shown.length && <p className="px-3 py-3 text-sm text-[var(--muted)]">No model matches "{query}".</p>}
+                {!shown.length && <p className="px-3 py-3 text-sm text-ink3">No model matches "{query}".</p>}
               </div>
             </div>
           ) : (
@@ -548,7 +543,7 @@ export function ModelSettings() {
   const { state, error, refresh } = useSetupState();
   const [slot, setSlot] = useState<Slot>("careful");
   const [saved, setSaved] = useState<Slot | null>(null);
-  if (!state) return error ? <ErrorLine text={error} /> : <p className="flex items-center gap-2 text-sm text-[var(--muted)]"><Spinner /> Loading</p>;
+  if (!state) return error ? <ErrorLine text={error} /> : <p className="flex items-center gap-2 text-sm text-ink3"><Spinner /> Loading</p>;
   const slots = [
     { id: "careful" as const, title: "Careful model", text: "Writes drafts and the briefing, answers in the assistant, runs the agent." },
     { id: "fast" as const, title: "Fast model", text: "Reads each new email to sort it, summarise it and find todos and meetings." },
@@ -579,12 +574,12 @@ export function ModelSettings() {
                 setSaved(null);
               }}
               className={`rounded-xl border p-3.5 text-left transition-[border-color,background-color] ${
-                on ? "border-[var(--accent)] bg-[var(--accent-light)]" : "border-[var(--border)] bg-[var(--surface)] hover:bg-[var(--surface-2)]"
+                on ? "border-wax bg-wax-soft" : "border-line bg-raised hover:bg-field"
               }`}
             >
-              <span className="block text-sm font-semibold text-[var(--foreground)]">{s.title}</span>
-              <span className="mt-0.5 block text-xs leading-snug text-[var(--muted)]">{s.text}</span>
-              <span className="mt-2 block truncate font-mono text-[12px] text-[var(--foreground)]">
+              <span className="block text-sm font-semibold text-ink">{s.title}</span>
+              <span className="mt-0.5 block text-xs leading-snug text-ink3">{s.text}</span>
+              <span className="mt-2 block truncate font-mono text-[12px] text-ink">
                 {m?.ready ? (s.id === "fast" && sameAsCareful ? `Same as careful, ${m.model}` : modelLabel(m, state.providers)) : "Not chosen yet"}
               </span>
             </button>
@@ -592,16 +587,16 @@ export function ModelSettings() {
         })}
       </div>
 
-      <p className="text-sm text-[var(--muted)]">
+      <p className="text-sm text-ink3">
         {shown?.ready ? (
           <>
             {slot === "fast" && sameAsCareful ? "Reading mail with the careful model, " : "Using "}
-            <span className="font-medium text-[var(--foreground)]">{modelLabel(shown, state.providers)}</span>.
+            <span className="font-medium text-ink">{modelLabel(shown, state.providers)}</span>.
           </>
         ) : (
           "No model yet. Mail still syncs, but sorting, the briefing and drafts wait until you choose one."
         )}
-        {saved === slot && <span className="ml-2 font-medium text-[var(--success)]">Saved.</span>}
+        {saved === slot && <span className="ml-2 font-medium text-ok">Saved.</span>}
       </p>
 
       {slot === "fast" && state.model?.ready && !sameAsCareful && (

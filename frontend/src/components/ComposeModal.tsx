@@ -1,5 +1,6 @@
 
 import { useState, useEffect, useRef } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
 import { EmailField, useContacts } from "./EmailAutocomplete";
@@ -1092,7 +1093,7 @@ export default function ComposeModal({
     <>
       <div
         data-compose-modal
-        className="fixed bottom-0 z-50 shadow-2xl rounded-t-2xl border border-b-0 border-[var(--border)] bg-[var(--background)] flex flex-col overflow-hidden"
+        className="fixed bottom-0 z-50 shadow-2xl rounded-t-2xl border border-b-0 border-line bg-canvas flex flex-col overflow-hidden"
         style={{
           right: assistantOpen ? "388px" : "16px",
           width: "780px",
@@ -1102,7 +1103,7 @@ export default function ComposeModal({
         }}
       >
         {/* Title bar */}
-        <div className="flex items-center justify-between px-4 py-3 bg-[var(--accent)] rounded-t-2xl cursor-default select-none shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 bg-wax rounded-t-2xl cursor-default select-none shrink-0">
           <span className="text-sm font-semibold text-white tracking-wide">
             {replyTo ? "Reply" : "New Message"}
           </span>
@@ -1112,14 +1113,14 @@ export default function ComposeModal({
               className="p-1.5 rounded-lg hover:bg-white/15 text-white/80 hover:text-white transition-colors cursor-pointer"
               title="Minimize"
             >
-              <span className="material-symbols-outlined" style={{ fontSize: "17px" }}>minimize</span>
+              <Icon name="minimize" size={17} />
             </button>
             <button
               onClick={onClose}
               className="p-1.5 rounded-lg hover:bg-white/15 text-white/80 hover:text-white transition-colors cursor-pointer"
               title="Close"
             >
-              <span className="material-symbols-outlined" style={{ fontSize: "17px" }}>close</span>
+              <Icon name="close" size={17} />
             </button>
           </div>
         </div>
@@ -1131,8 +1132,8 @@ export default function ComposeModal({
             {/* Header fields */}
             <div className="px-5 pt-1">
               {gmailAccounts.length > 1 && (
-                <div className="flex items-center gap-3 py-2.5 border-b border-[var(--border)]">
-                  <span className="text-xs font-medium text-[var(--muted)] w-12 shrink-0">From</span>
+                <div className="flex items-center gap-3 py-2.5 border-b border-line">
+                  <span className="text-xs font-medium text-ink3 w-12 shrink-0">From</span>
                   <select
                     value={selectedAccountId}
                     onChange={(e) => setSelectedAccountId(e.target.value)}
@@ -1155,17 +1156,17 @@ export default function ComposeModal({
                   !showCcBcc ? (
                     <button
                       onClick={() => setShowCcBcc(true)}
-                      className="text-xs text-[var(--muted)] hover:text-[var(--accent)] shrink-0 transition-colors cursor-pointer"
+                      className="text-xs text-ink3 hover:text-wax shrink-0 transition-colors cursor-pointer"
                     >
                       Cc/Bcc
                     </button>
                   ) : (
                     <button
                       onClick={() => { setShowCcBcc(false); setCc(""); setBcc(""); }}
-                      className="text-xs text-[var(--muted)] hover:text-[var(--accent)] shrink-0 transition-colors cursor-pointer"
+                      className="text-xs text-ink3 hover:text-wax shrink-0 transition-colors cursor-pointer"
                       title="Hide Cc/Bcc"
                     >
-                      <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>close</span>
+                      <Icon name="close" size={14} />
                     </button>
                   )
                 }
@@ -1178,8 +1179,8 @@ export default function ComposeModal({
                 </>
               )}
 
-              <div className="flex items-center gap-2 py-2.5 border-b border-[var(--border)]">
-                <span className="text-xs font-medium text-[var(--muted)] w-8 shrink-0">Sub</span>
+              <div className="flex items-center gap-2 py-2.5 border-b border-line">
+                <span className="text-xs font-medium text-ink3 w-8 shrink-0">Sub</span>
                 <input
                   type="text"
                   value={subject}
@@ -1192,15 +1193,15 @@ export default function ComposeModal({
 
             {/* Inline meeting card */}
             {showMeetingPanel && (
-              <div className="mx-5 mt-3 rounded-xl border border-[var(--accent)]/25 bg-[var(--accent-light)] overflow-hidden">
-                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-[var(--accent)]/15">
-                  <span className="material-symbols-outlined text-[var(--accent)]" style={{ fontSize: "15px" }}>event</span>
-                  <span className="text-xs font-semibold text-[var(--accent)]">Schedule Meeting</span>
+              <div className="mx-5 mt-3 rounded-xl border border-wax/25 bg-wax-soft overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2.5 border-b border-wax/15">
+                  <Icon name="event" size={15} className="text-wax" />
+                  <span className="text-xs font-semibold text-wax">Schedule Meeting</span>
                   <button
                     onClick={() => setShowMeetingPanel(false)}
-                    className="ml-auto p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
+                    className="ml-auto p-1 rounded-lg hover:bg-black/5 text-ink3 hover:text-ink transition-colors cursor-pointer"
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>close</span>
+                    <Icon name="close" size={14} />
                   </button>
                 </div>
                 <div className="p-4 space-y-3">
@@ -1224,8 +1225,8 @@ export default function ComposeModal({
                         onClick={() => setMeetingDuration(value)}
                         className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors cursor-pointer ${
                           meetingDuration === value
-                            ? "bg-[var(--accent)] text-white border-[var(--accent)]"
-                            : "border-[var(--border)] text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--accent)] bg-[var(--background)]"
+                            ? "bg-wax text-on-wax border-wax"
+                            : "border-line text-ink3 hover:border-wax hover:text-wax bg-canvas"
                         }`}
                       >
                         {label}
@@ -1238,7 +1239,7 @@ export default function ComposeModal({
                       value={meetingLocation}
                       onChange={(e) => setMeetingLocation(e.target.value)}
                       placeholder="Location (optional)"
-                      className="flex-1 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs focus:outline-none focus:border-[var(--accent)] transition-colors"
+                      className="flex-1 px-3 py-1.5 rounded-lg border border-line bg-canvas text-xs focus:outline-none focus:border-wax transition-colors"
                     />
                   </div>
                 </div>
@@ -1260,26 +1261,26 @@ export default function ComposeModal({
 
               {/* AI refine bar */}
               {aiGenerated && (
-                <div className="mb-2 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/60 overflow-hidden">
+                <div className="mb-2 rounded-xl border border-line bg-hover overflow-hidden">
                   {!showRefinePanel ? (
                     <button
                       onClick={() => setShowRefinePanel(true)}
-                      className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--muted)] hover:text-[var(--accent)] hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors cursor-pointer"
+                      className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-ink3 hover:text-wax hover:bg-field transition-colors cursor-pointer"
                     >
-                      <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>edit_note</span>
+                      <Icon name="edit_note" size={14} />
                       Not right? Tell the AI what to change
-                      <span className="material-symbols-outlined ml-auto" style={{ fontSize: "14px" }}>chevron_right</span>
+                      <Icon name="chevron_right" size={14} className="ml-auto" />
                     </button>
                   ) : (
                     <div className="p-3 space-y-2.5">
                       <div className="flex items-center gap-1.5">
-                        <span className="material-symbols-outlined text-[var(--accent)]" style={{ fontSize: "14px" }}>edit_note</span>
-                        <span className="text-xs font-semibold text-[var(--foreground)]">What should change?</span>
+                        <Icon name="edit_note" size={14} className="text-wax" />
+                        <span className="text-xs font-semibold text-ink">What should change?</span>
                         <button
                           onClick={() => { setShowRefinePanel(false); setRefineFeedback(""); }}
-                          className="ml-auto text-[var(--muted)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
+                          className="ml-auto text-ink3 hover:text-ink transition-colors cursor-pointer"
                         >
-                          <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>close</span>
+                          <Icon name="close" size={14} />
                         </button>
                       </div>
                       <textarea
@@ -1288,19 +1289,17 @@ export default function ComposeModal({
                         onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) refineWithFeedback(); }}
                         placeholder="e.g. Make it shorter, use a more casual tone, add a question at the end..."
                         rows={2}
-                        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs focus:outline-none focus:border-[var(--accent)] resize-none transition-colors"
+                        className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-xs focus:outline-none focus:border-wax resize-none transition-colors"
                         autoFocus
                       />
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-[var(--muted)]">Cmd+Enter to apply. Feedback is saved to your knowledge base.</span>
+                        <span className="text-[10px] text-ink3">Cmd+Enter to apply. Feedback is saved to your knowledge base.</span>
                         <button
                           onClick={refineWithFeedback}
                           disabled={refining || !refineFeedback.trim()}
-                          className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                          className="ml-auto flex items-center gap-1.5 px-3 py-1 rounded-full bg-wax text-on-wax text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
                         >
-                          <span className={`material-symbols-outlined ${refining ? "animate-spin" : ""}`} style={{ fontSize: "12px" }}>
-                            {refining ? "progress_activity" : "auto_awesome"}
-                          </span>
+                          <Icon name={refining ? "progress_activity" : "auto_awesome"} size={12} className={`${refining ? "animate-spin" : ""}`} />
                           {refining ? "Updating..." : "Apply"}
                         </button>
                       </div>
@@ -1315,16 +1314,16 @@ export default function ComposeModal({
                   {attachments.map((file, idx) => (
                     <div
                       key={idx}
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-xs text-[var(--foreground)]"
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-field text-xs text-ink"
                     >
-                      <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>attach_file</span>
+                      <Icon name="attach_file" size={13} />
                       <span className="max-w-[140px] truncate">{file.name}</span>
-                      <span className="text-[var(--muted)]">({formatFileSize(file.size)})</span>
+                      <span className="text-ink3">({formatFileSize(file.size)})</span>
                       <button
                         onClick={() => removeAttachment(idx)}
-                        className="text-[var(--muted)] hover:text-red-500 transition-colors cursor-pointer"
+                        className="text-ink3 hover:text-danger transition-colors cursor-pointer"
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>close</span>
+                        <Icon name="close" size={13} />
                       </button>
                     </div>
                   ))}
@@ -1336,30 +1335,28 @@ export default function ComposeModal({
           </div>
 
           {/* Toolbar */}
-          <div className="flex items-center gap-2 px-4 py-2.5 border-t border-[var(--border)] shrink-0 bg-[var(--background)]">
+          <div className="flex items-center gap-2 px-4 py-2.5 border-t border-line shrink-0 bg-canvas">
             {/* Primary actions */}
             <button
               onClick={() => generateDraft()}
               disabled={generatingDraft || !to || !subject}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity shrink-0 cursor-pointer"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity shrink-0 cursor-pointer"
             >
-              <span className={`material-symbols-outlined ${generatingDraft ? "animate-spin" : ""}`} style={{ fontSize: "16px" }}>
-                {generatingDraft ? "progress_activity" : "auto_awesome"}
-              </span>
+              <Icon name={generatingDraft ? "progress_activity" : "auto_awesome"} size={16} className={`${generatingDraft ? "animate-spin" : ""}`} />
               {generatingDraft ? "Generating..." : "Generate"}
             </button>
 
             <button
               onClick={() => handleSend()}
               disabled={sending || !to || !subject}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-[var(--border)] text-sm text-[var(--foreground)] hover:border-[var(--accent)] hover:text-[var(--accent)] disabled:opacity-50 transition-colors shrink-0 cursor-pointer"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-full border border-line text-sm text-ink hover:border-wax hover:text-wax disabled:opacity-50 transition-colors shrink-0 cursor-pointer"
             >
-              <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>send</span>
+              <Icon name="send" size={16} />
               {sending ? "Sending..." : scheduleAt ? "Schedule" : "Send"}
             </button>
 
             {/* Divider */}
-            <div className="w-px h-5 bg-[var(--border)] mx-0.5 shrink-0" />
+            <div className="w-px h-5 bg-line mx-0.5 shrink-0" />
 
             {/* Secondary actions */}
             <div className="flex items-center gap-0.5 flex-1">
@@ -1368,35 +1365,25 @@ export default function ComposeModal({
                 <button
                   onClick={() => setShowToneMenu((v) => !v)}
                   disabled={!body.trim() || rephrasingTone !== null}
-                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed ${showToneMenu ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-field disabled:opacity-40 disabled:cursor-not-allowed ${showToneMenu ? "text-wax" : "text-ink3"}`}
                   title={
                     body.trim()
                       ? "Rewrite this message in a different tone"
                       : "Write or generate a message first"
                   }
                 >
-                  <span
-                    className={`material-symbols-outlined ${rephrasingTone ? "animate-spin" : ""}`}
-                    style={{ fontSize: "16px" }}
-                  >
-                    {rephrasingTone ? "progress_activity" : "tune"}
-                  </span>
+                  <Icon name={rephrasingTone ? "progress_activity" : "tune"} size={16} className={`${rephrasingTone ? "animate-spin" : ""}`} />
                   {rephrasingTone ? "Rewriting..." : "Tone"}
                 </button>
                 {showToneMenu && (
-                  <div className="absolute bottom-full left-0 mb-2 z-30 w-52 rounded-xl border border-[var(--border)] bg-[var(--background)] shadow-xl overflow-hidden py-1">
+                  <div className="absolute bottom-full left-0 mb-2 z-30 w-52 rounded-xl border border-line bg-canvas shadow-xl overflow-hidden py-1">
                     {TONES.map((tone) => (
                       <button
                         key={tone.id}
                         onClick={() => rephraseInTone(tone)}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs text-[var(--foreground)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                        className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs text-ink hover:bg-field transition-colors cursor-pointer"
                       >
-                        <span
-                          className="material-symbols-outlined text-[var(--muted)]"
-                          style={{ fontSize: "15px" }}
-                        >
-                          {tone.icon}
-                        </span>
+                        <Icon name={tone.icon} size={15} className="text-ink3" />
                         {tone.label}
                       </button>
                     ))}
@@ -1406,10 +1393,10 @@ export default function ComposeModal({
 
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 ${attachments.length > 0 ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-field ${attachments.length > 0 ? "text-wax" : "text-ink3"}`}
                 title="Attach files"
               >
-                <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>attach_file</span>
+                <Icon name="attach_file" size={16} />
                 {attachments.length > 0 ? `${attachments.length} file${attachments.length > 1 ? "s" : ""}` : "Attach"}
               </button>
 
@@ -1421,54 +1408,54 @@ export default function ComposeModal({
                     setShowTemplatesPopover(opening);
                     if (opening) setSaveTemplateName(subject || "");
                   }}
-                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 ${showTemplatesPopover ? "text-[var(--accent)] bg-[var(--accent-light)]" : "text-[var(--muted)]"}`}
+                  className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer hover:bg-field ${showTemplatesPopover ? "text-wax bg-wax-soft" : "text-ink3"}`}
                   title="Templates"
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>description</span>
+                  <Icon name="description" size={16} />
                   Templates
                 </button>
                 {showTemplatesPopover && (
                   <div
-                    className="absolute bottom-full mb-2 left-0 z-50 bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-2xl flex flex-col overflow-hidden"
+                    className="absolute bottom-full mb-2 left-0 z-50 bg-canvas border border-line rounded-xl shadow-2xl flex flex-col overflow-hidden"
                     style={{ width: "288px", maxHeight: "340px" }}
                   >
-                    <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-[var(--border)] shrink-0">
-                      <span className="text-xs font-semibold text-[var(--foreground)]">Templates</span>
+                    <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-line shrink-0">
+                      <span className="text-xs font-semibold text-ink">Templates</span>
                       <button
                         onClick={() => setShowTemplatesPopover(false)}
-                        className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
+                        className="text-ink3 hover:text-ink transition-colors cursor-pointer"
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: "15px" }}>close</span>
+                        <Icon name="close" size={15} />
                       </button>
                     </div>
                     <div className="flex-1 overflow-auto">
                       {templates.length === 0 ? (
                         <div className="flex flex-col items-center gap-2 px-4 py-6 text-center">
-                          <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "28px" }}>description</span>
-                          <p className="text-xs text-[var(--muted)]">No templates yet. Save your current message as one below.</p>
+                          <Icon name="description" size={28} className="text-ink3" />
+                          <p className="text-xs text-ink3">No templates yet. Save your current message as one below.</p>
                         </div>
                       ) : (
                         templates.map((t) => (
                           <div
                             key={t.id}
-                            className="flex items-center gap-2 px-3.5 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 border-b border-[var(--border)] last:border-0 group transition-colors cursor-pointer"
+                            className="flex items-center gap-2 px-3.5 py-2.5 hover:bg-hover border-b border-line last:border-0 group transition-colors cursor-pointer"
                           >
                             <button onClick={() => applyTemplate(t)} className="flex-1 text-left min-w-0">
-                              <div className="text-xs font-medium text-[var(--foreground)] truncate">{t.name}</div>
-                              {t.subject && <div className="text-[11px] text-[var(--muted)] truncate mt-0.5">{t.subject}</div>}
+                              <div className="text-xs font-medium text-ink truncate">{t.name}</div>
+                              {t.subject && <div className="text-[11px] text-ink3 truncate mt-0.5">{t.subject}</div>}
                             </button>
                             <button
                               onClick={() => deleteTemplate(t.id)}
-                              className="opacity-0 group-hover:opacity-100 p-1 rounded text-[var(--muted)] hover:text-red-500 transition-all shrink-0 cursor-pointer"
+                              className="opacity-0 group-hover:opacity-100 p-1 rounded text-ink3 hover:text-danger transition-all shrink-0 cursor-pointer"
                             >
-                              <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>delete</span>
+                              <Icon name="delete" size={14} />
                             </button>
                           </div>
                         ))
                       )}
                     </div>
-                    <div className="border-t border-[var(--border)] p-2.5 shrink-0">
-                      <p className="text-[10px] text-[var(--muted)] mb-1.5">Save current draft as template</p>
+                    <div className="border-t border-line p-2.5 shrink-0">
+                      <p className="text-[10px] text-ink3 mb-1.5">Save current draft as template</p>
                       <div className="flex items-center gap-2">
                         <input
                           type="text"
@@ -1476,12 +1463,12 @@ export default function ComposeModal({
                           onChange={(e) => setSaveTemplateName(e.target.value)}
                           placeholder="Template name"
                           onKeyDown={(e) => { if (e.key === "Enter") saveAsTemplate(); }}
-                          className="flex-1 px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-xs focus:outline-none focus:border-[var(--accent)] transition-colors"
+                          className="flex-1 px-2.5 py-1.5 rounded-lg border border-line bg-canvas text-xs focus:outline-none focus:border-wax transition-colors"
                         />
                         <button
                           onClick={saveAsTemplate}
                           disabled={!saveTemplateName.trim() || !body}
-                          className="px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer shrink-0"
+                          className="px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer shrink-0"
                         >
                           Save
                         </button>
@@ -1495,10 +1482,10 @@ export default function ComposeModal({
               <button
                 onClick={() => setShowMeetingPanel((p) => !p)}
                 disabled={!to || !subject}
-                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer ${showMeetingPanel ? "text-[var(--accent)] bg-[var(--accent-light)]" : "text-[var(--muted)]"}`}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-field cursor-pointer ${showMeetingPanel ? "text-wax bg-wax-soft" : "text-ink3"}`}
                 title={!to || !subject ? "Enter recipient and subject first" : "Schedule meeting"}
               >
-                <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>event</span>
+                <Icon name="event" size={16} />
                 Meeting
               </button>
 
@@ -1513,23 +1500,23 @@ export default function ComposeModal({
                     }
                     setShowSchedulePopup((p) => !p);
                   }}
-                  className={`p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer ${scheduleAt || showSchedulePopup ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
+                  className={`p-2 rounded-lg hover:bg-field transition-colors cursor-pointer ${scheduleAt || showSchedulePopup ? "text-wax" : "text-ink3"}`}
                   title="Schedule send"
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: "17px" }}>schedule_send</span>
+                  <Icon name="schedule_send" size={17} />
                 </button>
                 {showSchedulePopup && (
                   <div
-                    className="absolute bottom-full mb-2 right-0 z-50 bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-2xl p-3.5 w-80"
+                    className="absolute bottom-full mb-2 right-0 z-50 bg-canvas border border-line rounded-xl shadow-2xl p-3.5 w-80"
                     style={{ maxHeight: "80vh", overflowY: "auto" }}
                   >
                     <div className="flex items-center justify-between mb-3">
-                      <span className="text-xs font-semibold text-[var(--foreground)]">Schedule send</span>
+                      <span className="text-xs font-semibold text-ink">Schedule send</span>
                       <button
                         onClick={() => setShowSchedulePopup(false)}
-                        className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
+                        className="text-ink3 hover:text-ink transition-colors cursor-pointer"
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: "15px" }}>close</span>
+                        <Icon name="close" size={15} />
                       </button>
                     </div>
                     <DateTimePicker
@@ -1539,8 +1526,8 @@ export default function ComposeModal({
                       showWarning={!!(scheduleAt && isOutsideWorkingHours(scheduleAt, profile?.working_hours as WorkingHours))}
                     />
                     {scheduleAt && isOutsideWorkingHours(scheduleAt, profile?.working_hours as WorkingHours) && (
-                      <p className="flex items-center gap-1 text-[11px] text-amber-500 mt-2">
-                        <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>warning</span>
+                      <p className="flex items-center gap-1 text-[11px] text-warn mt-2">
+                        <Icon name="warning" size={12} />
                         Outside your working hours
                       </p>
                     )}
@@ -1548,15 +1535,15 @@ export default function ComposeModal({
                       {scheduleAt && (
                         <button
                           onClick={() => setScheduleAt("")}
-                          className="text-xs text-[var(--muted)] hover:text-red-500 flex items-center gap-1 transition-colors cursor-pointer"
+                          className="text-xs text-ink3 hover:text-danger flex items-center gap-1 transition-colors cursor-pointer"
                         >
-                          <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>close</span>
+                          <Icon name="close" size={13} />
                           Clear
                         </button>
                       )}
                       <button
                         onClick={() => setShowSchedulePopup(false)}
-                        className="ml-auto px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
+                        className="ml-auto px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
                       >
                         {scheduleAt ? "Confirm" : "Close"}
                       </button>
@@ -1568,20 +1555,20 @@ export default function ComposeModal({
               {/* Save draft */}
               <button
                 onClick={saveDraft}
-                className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)] transition-colors cursor-pointer"
+                className="p-2 rounded-lg hover:bg-field text-ink3 transition-colors cursor-pointer"
                 title="Save draft"
               >
-                <span className="material-symbols-outlined" style={{ fontSize: "17px" }}>save</span>
+                <Icon name="save" size={17} />
               </button>
             </div>
 
             {/* Discard */}
             <button
               onClick={onClose}
-              className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)] hover:text-red-500 transition-colors cursor-pointer shrink-0"
+              className="p-2 rounded-lg hover:bg-field text-ink3 hover:text-danger transition-colors cursor-pointer shrink-0"
               title="Discard"
             >
-              <span className="material-symbols-outlined" style={{ fontSize: "19px" }}>delete</span>
+              <Icon name="delete" size={19} />
             </button>
           </div>
         </div>

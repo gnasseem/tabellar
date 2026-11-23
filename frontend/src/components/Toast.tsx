@@ -1,5 +1,6 @@
 
 import { useEffect, useState } from "react";
+import Icon from "@/components/Icon";
 
 export type ToastItem = {
   id: string;
@@ -12,24 +13,24 @@ export type ToastItem = {
 const TYPE_CONFIG = {
   success: {
     icon: "check_circle",
-    barClass: "bg-green-500",
-    iconClass: "text-green-500 dark:text-green-400",
+    barClass: "bg-ok",
+    iconClass: "text-ok",
     actionClass:
-      "text-green-700 dark:text-green-400 bg-green-500/10 hover:bg-green-500/20",
+      "text-ok bg-ok/10 hover:bg-ok/20",
   },
   error: {
     icon: "error",
-    barClass: "bg-red-500",
-    iconClass: "text-red-500 dark:text-red-400",
+    barClass: "bg-danger",
+    iconClass: "text-danger",
     actionClass:
-      "text-red-700 dark:text-red-400 bg-red-500/10 hover:bg-red-500/20",
+      "text-danger bg-danger/10 hover:bg-danger/20",
   },
   info: {
     icon: "info",
-    barClass: "bg-[var(--accent)]",
-    iconClass: "text-[var(--accent)]",
+    barClass: "bg-wax",
+    iconClass: "text-wax",
     actionClass:
-      "text-[var(--accent)] bg-[var(--accent)]/10 hover:bg-[var(--accent)]/20",
+      "text-wax bg-wax/10 hover:bg-wax/20",
   },
 };
 
@@ -59,36 +60,29 @@ function SingleToast({
   const progress = timeLeft / duration;
 
   return (
-    <div className="pointer-events-auto relative overflow-hidden rounded-lg bg-[var(--sidebar-bg)] border border-[var(--border)] shadow-md">
+    <div className="pointer-events-auto relative overflow-hidden rounded-lg bg-side border border-line shadow-md">
       {/* Left accent strip */}
       <div className={`absolute left-0 top-0 bottom-0 w-[3px] ${cfg.barClass}`} />
 
       <div className="pl-4 pr-3 pt-2.5 pb-2.5">
         {/* Icon + message + close */}
         <div className="flex items-start gap-2">
-          <span
-            className={`material-symbols-outlined shrink-0 mt-px ${cfg.iconClass}`}
-            style={{ fontSize: "15px" }}
-          >
-            {cfg.icon}
-          </span>
-          <span className="flex-1 text-[12px] font-medium text-[var(--foreground)] leading-snug">
+          <Icon name={cfg.icon} size={15} className={`shrink-0 mt-px ${cfg.iconClass}`} />
+          <span className="flex-1 text-[12px] font-medium text-ink leading-snug">
             {toast.message}
           </span>
           <button
             onClick={onRemove}
             className="shrink-0 opacity-40 hover:opacity-80 transition-opacity -mt-0.5 -mr-0.5"
           >
-            <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>
-              close
-            </span>
+            <Icon name="close" size={14} />
           </button>
         </div>
 
         {/* Action row */}
         {toast.action && (
           <div className="mt-2 flex items-center justify-between">
-            <span className="text-[11px] opacity-40 text-[var(--foreground)] tabular-nums">
+            <span className="text-[11px] opacity-40 text-ink tabular-nums">
               {Math.ceil(timeLeft / 1000)}s
             </span>
             <button

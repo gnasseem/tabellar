@@ -1,5 +1,6 @@
 
 import { useState, useEffect } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import { EmailField, useContacts } from "../EmailAutocomplete";
@@ -159,52 +160,47 @@ export default function KnowledgeView() {
 
   return (
     <div className={`p-6 max-w-3xl mx-auto ${tab === "assistant" ? "h-full flex flex-col" : ""}`}>
-      <h1 className="text-xl font-bold text-slate-900 dark:text-white mb-1">
+      <h1 className="text-xl font-bold text-ink mb-1">
         Knowledge & Memory
       </h1>
-      <p className="text-sm text-[var(--muted)] mb-5">
+      <p className="text-sm text-ink3 mb-5">
         AI-extracted entities, delegation rules, cross-email relationships, and
         sender history.
       </p>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-5 border-b border-[var(--border)] overflow-x-auto">
+      <div className="flex gap-1 mb-5 border-b border-line overflow-x-auto">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
             className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
               tab === t.id
-                ? "border-[var(--accent)] text-[var(--accent)]"
-                : "border-transparent text-[var(--muted)] hover:text-slate-900 dark:hover:text-white"
+                ? "border-wax text-wax"
+                : "border-transparent text-ink3 hover:text-ink"
             }`}
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: "18px" }}
-            >
-              {t.icon}
-            </span>
+            <Icon name={t.icon} size={18} />
             {t.label}
           </button>
         ))}
       </div>
 
       {tab === "assistant" ? (
-        <AssistantChat className="flex-1 min-h-0 -mx-6 border border-[var(--border)] rounded-xl overflow-hidden" />
+        <AssistantChat className="flex-1 min-h-0 -mx-6 border border-line rounded-xl overflow-hidden" />
       ) : loading ? (
-        <p className="text-sm text-[var(--muted)]">Loading…</p>
+        <p className="text-sm text-ink3">Loading…</p>
       ) : tab === "knowledge" ? (
         <div className="space-y-4">
-          <div className="p-4 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/50 space-y-3">
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+          <div className="p-4 rounded-xl border border-line bg-hover space-y-3">
+            <span className="text-sm font-medium text-ink">
               Add Knowledge Entry
             </span>
             <div className="flex flex-wrap gap-2">
               <select
                 value={newEntityType}
                 onChange={(e) => setNewEntityType(e.target.value)}
-                className="px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                className="px-3 py-1.5 rounded-lg border border-line bg-raised text-sm"
               >
                 <option value="person">Person</option>
                 <option value="company">Company</option>
@@ -218,7 +214,7 @@ export default function KnowledgeView() {
                 value={newEntity}
                 onChange={(e) => setNewEntity(e.target.value)}
                 placeholder="Entity name"
-                className="flex-1 min-w-[100px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none"
+                className="flex-1 min-w-[100px] px-3 py-1.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none"
               />
             </div>
             <div className="flex gap-2">
@@ -227,12 +223,12 @@ export default function KnowledgeView() {
                 value={newInfo}
                 onChange={(e) => setNewInfo(e.target.value)}
                 placeholder="Key facts or notes…"
-                className="flex-1 px-3 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none"
+                className="flex-1 px-3 py-1.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none"
               />
               <button
                 onClick={addKnowledge}
                 disabled={!newEntity.trim() || !newInfo.trim()}
-                className="px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                className="px-4 py-1.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-50"
               >
                 Add
               </button>
@@ -240,13 +236,8 @@ export default function KnowledgeView() {
           </div>
 
           {knowledge.length === 0 ? (
-            <div className="text-center py-12 text-[var(--muted)]">
-              <span
-                className="material-symbols-outlined mb-2"
-                style={{ fontSize: "48px" }}
-              >
-                psychology
-              </span>
+            <div className="text-center py-12 text-ink3">
+              <Icon name="psychology" size={48} className="mb-2" />
               <p className="text-sm">
                 Knowledge base is empty. Entries are auto-extracted from emails
                 or added manually.
@@ -257,34 +248,29 @@ export default function KnowledgeView() {
               {knowledge.map((k) => (
                 <div
                   key={k.id}
-                  className="flex items-start gap-3 p-3 rounded-xl border border-[var(--border)] group"
+                  className="flex items-start gap-3 p-3 rounded-xl border border-line group"
                 >
-                  <span
-                    className="material-symbols-outlined text-[var(--accent)] mt-0.5"
-                    style={{ fontSize: "20px" }}
-                  >
-                    {entityTypeIcons[k.entity_type] || "info"}
-                  </span>
+                  <Icon name={entityTypeIcons[k.entity_type] || "info"} size={20} className="text-wax mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-slate-900 dark:text-white">
+                      <span className="text-sm font-medium text-ink">
                         {k.entity}
                       </span>
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[var(--muted)]">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-field text-ink3">
                         {k.entity_type}
                       </span>
                       {k.source && (
-                        <span className="text-[10px] text-[var(--muted)]">
+                        <span className="text-[10px] text-ink3">
                           via {k.source}
                         </span>
                       )}
                       {k.use_count > 0 && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400">
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-field text-ink2">
                           used {k.use_count}x
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-0.5">
+                    <p className="text-sm text-ink2 mt-0.5">
                       {k.info}
                     </p>
                   </div>
@@ -295,10 +281,10 @@ export default function KnowledgeView() {
                       await supabase.from("knowledge_base").update({ importance: newImportance }).eq("id", k.id);
                       setKnowledge((prev) => prev.map((entry) => entry.id === k.id ? { ...entry, importance: newImportance } : entry));
                     }}
-                    className={`shrink-0 text-[10px] font-medium px-1.5 py-1 rounded border border-[var(--border)] bg-[var(--surface)] cursor-pointer focus:outline-none ${
-                      k.importance === "critical" ? "text-red-600 dark:text-red-400" :
-                      k.importance === "high" ? "text-orange-600 dark:text-orange-400" :
-                      k.importance === "low" ? "text-slate-400" : "text-[var(--muted)]"
+                    className={`shrink-0 text-[10px] font-medium px-1.5 py-1 rounded border border-line bg-raised cursor-pointer focus:outline-none ${
+                      k.importance === "critical" ? "text-danger" :
+                      k.importance === "high" ? "text-warn" :
+                      k.importance === "low" ? "text-ink3" : "text-ink3"
                     }`}
                   >
                     <option value="critical">Critical</option>
@@ -308,14 +294,9 @@ export default function KnowledgeView() {
                   </select>
                   <button
                     onClick={() => deleteKnowledge(k.id)}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 transition-opacity shrink-0"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-danger-soft text-danger transition-opacity shrink-0"
                   >
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "18px" }}
-                    >
-                      delete
-                    </span>
+                    <Icon name="delete" size={18} />
                   </button>
                 </div>
               ))}
@@ -324,11 +305,11 @@ export default function KnowledgeView() {
         </div>
       ) : tab === "delegation" ? (
         <div className="space-y-4">
-          <div className="p-4 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/50 space-y-3">
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+          <div className="p-4 rounded-xl border border-line bg-hover space-y-3">
+            <span className="text-sm font-medium text-ink">
               Add Delegation Rule
             </span>
-            <p className="text-xs text-[var(--muted)]">
+            <p className="text-xs text-ink3">
               When an email matches the pattern, it will be flagged for
               forwarding to the target address.
             </p>
@@ -338,7 +319,7 @@ export default function KnowledgeView() {
                 value={newPattern}
                 onChange={(e) => setNewPattern(e.target.value)}
                 placeholder="Pattern (e.g. 'invoice', 'support request')"
-                className="flex-1 min-w-[150px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none"
+                className="flex-1 min-w-[150px] px-3 py-1.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none"
               />
               <EmailField
                 value={newTargetEmail}
@@ -351,7 +332,7 @@ export default function KnowledgeView() {
               <button
                 onClick={addDelegation}
                 disabled={!newPattern.trim() || !newTargetEmail.trim()}
-                className="px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                className="px-4 py-1.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-50"
               >
                 Add
               </button>
@@ -359,13 +340,8 @@ export default function KnowledgeView() {
           </div>
 
           {delegations.length === 0 ? (
-            <div className="text-center py-12 text-[var(--muted)]">
-              <span
-                className="material-symbols-outlined mb-2"
-                style={{ fontSize: "48px" }}
-              >
-                forward_to_inbox
-              </span>
+            <div className="text-center py-12 text-ink3">
+              <Icon name="forward_to_inbox" size={48} className="mb-2" />
               <p className="text-sm">
                 No delegation rules. Create rules to auto-forward matching
                 emails.
@@ -376,47 +352,27 @@ export default function KnowledgeView() {
               {delegations.map((d) => (
                 <div
                   key={d.id}
-                  className="flex items-center gap-3 p-3 rounded-xl border border-[var(--border)] group"
+                  className="flex items-center gap-3 p-3 rounded-xl border border-line group"
                 >
                   <button onClick={() => toggleDelegation(d.id, d.is_enabled)}>
-                    <span
-                      className={`material-symbols-outlined ${d.is_enabled ? "text-[var(--success)]" : "text-[var(--muted)]"}`}
-                      style={{
-                        fontSize: "22px",
-                        fontVariationSettings: d.is_enabled
-                          ? "'FILL' 1"
-                          : "'FILL' 0",
-                      }}
-                    >
-                      toggle_on
-                    </span>
+                    <Icon name="toggle_on" size={22} fill={d.is_enabled} className={`${d.is_enabled ? "text-ok" : "text-ink3"}`} />
                   </button>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm text-slate-900 dark:text-white">
+                      <span className="text-sm text-ink">
                         &ldquo;{d.pattern}&rdquo;
                       </span>
-                      <span
-                        className="material-symbols-outlined text-[var(--muted)]"
-                        style={{ fontSize: "16px" }}
-                      >
-                        arrow_forward
-                      </span>
-                      <span className="text-sm text-[var(--accent)]">
+                      <Icon name="arrow_forward" size={16} className="text-ink3" />
+                      <span className="text-sm text-wax">
                         {d.target_email}
                       </span>
                     </div>
                   </div>
                   <button
                     onClick={() => deleteDelegation(d.id)}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 transition-opacity"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-danger-soft text-danger transition-opacity"
                   >
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "18px" }}
-                    >
-                      delete
-                    </span>
+                    <Icon name="delete" size={18} />
                   </button>
                 </div>
               ))}

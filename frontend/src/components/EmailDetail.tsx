@@ -1,5 +1,6 @@
 
 import { useState, useRef, useEffect, useMemo, Fragment } from "react";
+import Icon from "@/components/Icon";
 import DOMPurify from "dompurify";
 
 // Module-level attachment blob cache -- survives across email navigations.
@@ -79,13 +80,13 @@ const CATEGORIES = [
 ];
 
 const categoryColorMap: Record<string, string> = {
-  important: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+  important: "bg-danger-soft text-danger",
   "action-required":
-    "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
+    "bg-warn-soft text-warn",
   promotions:
-    "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400",
+    "bg-field text-ink2",
   updates:
-    "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
+    "bg-field text-ink2",
 };
 
 const SNOOZE_OPTIONS = [
@@ -215,7 +216,7 @@ function linkify(text: string) {
         href={part}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-blue-400 dark:text-blue-400 underline break-all hover:text-blue-300"
+        className="text-ink2 underline break-all hover:text-ink3"
       >
         {part}
       </a>
@@ -439,27 +440,22 @@ function SuspicionBanner({ verdict }: { verdict: SuspicionVerdict }) {
     <div
       className={`mb-4 rounded-xl border px-4 py-3 ${
         danger
-          ? "border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/40"
-          : "border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40"
+          ? "border-danger-line bg-danger-soft"
+          : "border-warn-line bg-warn-soft"
       }`}
     >
       <div className="flex items-start gap-2">
-        <span
-          className={`material-symbols-outlined shrink-0 ${
+        <Icon name={danger ? "gpp_maybe" : "warning"} size={18} className={`shrink-0 ${
             danger
-              ? "text-red-600 dark:text-red-400"
-              : "text-amber-600 dark:text-amber-400"
-          }`}
-          style={{ fontSize: "18px" }}
-        >
-          {danger ? "gpp_maybe" : "warning"}
-        </span>
+              ? "text-danger"
+              : "text-warn"
+          }`} />
         <div className="min-w-0">
           <div
             className={`text-xs font-semibold ${
               danger
-                ? "text-red-700 dark:text-red-300"
-                : "text-amber-800 dark:text-amber-300"
+                ? "text-danger"
+                : "text-warn"
             }`}
           >
             {danger
@@ -470,13 +466,13 @@ function SuspicionBanner({ verdict }: { verdict: SuspicionVerdict }) {
             {verdict.signals.map((s) => (
               <li
                 key={s.id}
-                className="text-[11px] leading-relaxed text-[var(--foreground)]/80"
+                className="text-[11px] leading-relaxed text-ink/80"
               >
                 <span className="font-medium">{s.label}.</span> {s.detail}
               </li>
             ))}
           </ul>
-          <div className="mt-1.5 text-[11px] text-[var(--muted)]">
+          <div className="mt-1.5 text-[11px] text-ink3">
             Do not enter passwords or payment details from a link in this
             email. If it claims to be from a service you use, open that service
             directly instead.
@@ -1067,33 +1063,28 @@ export default function EmailDetail({
   const isMultiMessageThread = threadEmails.length > 1;
 
   return (
-    <div className="h-full flex overflow-hidden bg-[var(--background)]">
+    <div className="h-full flex overflow-hidden bg-canvas">
       {/* Main email content column */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* ── Compact header ── */}
-        <div className="px-3 py-1.5 flex-shrink-0 bg-[var(--surface)]">
+        <div className="px-3 py-1.5 flex-shrink-0 bg-raised">
           <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={onBack}
-              className={`${showBack ? "flex" : "md:hidden"} p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 shrink-0 items-center gap-1 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors`}
+              className={`${showBack ? "flex" : "md:hidden"} p-0.5 rounded hover:bg-field shrink-0 items-center gap-1 text-ink3 hover:text-ink transition-colors`}
             >
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "16px" }}
-              >
-                arrow_back
-              </span>
+              <Icon name="arrow_back" size={16} />
               {showBack && <span className="text-xs font-medium">Back</span>}
             </button>
             <div className="min-w-0 flex-1">
               {/* Sender + subject + time + badges  -  first line */}
               <div className="flex items-center gap-2 min-w-0">
-                <p className="text-[12px] font-semibold text-[var(--foreground)] shrink-0 max-w-[35%] truncate">
+                <p className="text-[12px] font-semibold text-ink shrink-0 max-w-[35%] truncate">
                   {(email.sender ?? "").replace(/<.*>/, "").trim() ||
                     email.sender_email ||
                     "Unknown"}
                 </p>
-                <p className="text-[11px] text-[var(--muted)] truncate flex-1 min-w-0">
+                <p className="text-[11px] text-ink3 truncate flex-1 min-w-0">
                   {email.subject || "(no subject)"}
                 </p>
                 <div className="flex items-center gap-0.5 shrink-0">
@@ -1104,21 +1095,21 @@ export default function EmailDetail({
                         setShowCategoryMenu(!showCategoryMenu);
                         setShowTagMenu(false);
                       }}
-                      className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium cursor-pointer ${categoryColorMap[currentCategory] || "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400"}`}
+                      className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[9px] font-medium cursor-pointer ${categoryColorMap[currentCategory] || "bg-field text-ink2"}`}
                       title="Change category"
                     >
                       {currentCategory || "uncategorized"}
                     </button>
                     {showCategoryMenu && (
-                      <div className="absolute right-0 top-full mt-1 bg-[var(--background)] border border-[var(--border)] rounded-lg shadow-lg p-1 z-20 min-w-[160px]">
+                      <div className="absolute right-0 top-full mt-1 bg-canvas border border-line rounded-lg shadow-lg p-1 z-20 min-w-[160px]">
                         {CATEGORIES.map((cat) => (
                           <button
                             key={cat}
                             onClick={() => overrideCategory(cat)}
-                            className={`w-full text-left px-2.5 py-1.5 text-xs rounded flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800`}
+                            className={`w-full text-left px-2.5 py-1.5 text-xs rounded flex items-center gap-2 hover:bg-field`}
                           >
                             <span
-                              className={`inline-block w-2 h-2 rounded-full shrink-0 ${categoryColorMap[cat]?.includes("red") ? "bg-red-500" : categoryColorMap[cat]?.includes("orange") ? "bg-orange-500" : categoryColorMap[cat]?.includes("purple") ? "bg-purple-500" : "bg-blue-500"}`}
+                              className={`inline-block w-2 h-2 rounded-full shrink-0 ${categoryColorMap[cat]?.includes("red") ? "bg-danger" : categoryColorMap[cat]?.includes("orange") ? "bg-warn" : categoryColorMap[cat]?.includes("purple") ? "bg-wax" : "bg-wax"}`}
                             />
                             <span
                               className={`flex-1 ${categoryColorMap[cat] || ""} px-1 py-0.5 rounded text-[10px] font-medium ${currentCategory === cat ? "font-bold" : ""}`}
@@ -1126,12 +1117,7 @@ export default function EmailDetail({
                               {cat}
                             </span>
                             {currentCategory === cat && (
-                              <span
-                                className="material-symbols-outlined text-[var(--accent)]"
-                                style={{ fontSize: "12px" }}
-                              >
-                                check
-                              </span>
+                              <Icon name="check" size={12} className="text-wax" />
                             )}
                           </button>
                         ))}
@@ -1145,23 +1131,18 @@ export default function EmailDetail({
                         setShowTagMenu(!showTagMenu);
                         setShowCategoryMenu(false);
                       }}
-                      className="flex items-center p-0.5 rounded text-[var(--muted)] hover:bg-slate-100 dark:hover:bg-slate-700"
+                      className="flex items-center p-0.5 rounded text-ink3 hover:bg-field"
                       title="Add tag"
                     >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{ fontSize: "12px" }}
-                      >
-                        add
-                      </span>
+                      <Icon name="add" size={12} />
                     </button>
                     {showTagMenu && (
-                      <div className="absolute right-0 top-full mt-1 bg-[var(--background)] border border-[var(--border)] rounded-lg shadow-lg p-2 z-20 min-w-[160px]">
-                        <p className="text-[10px] text-[var(--muted)] font-semibold uppercase tracking-wide mb-1.5 px-1">
+                      <div className="absolute right-0 top-full mt-1 bg-canvas border border-line rounded-lg shadow-lg p-2 z-20 min-w-[160px]">
+                        <p className="text-[10px] text-ink3 font-semibold uppercase tracking-wide mb-1.5 px-1">
                           Tags
                         </p>
                         {userTags.length === 0 ? (
-                          <p className="text-xs text-[var(--muted)] px-1 py-1">
+                          <p className="text-xs text-ink3 px-1 py-1">
                             No tags yet. Create tags in Categories.
                           </p>
                         ) : (
@@ -1171,22 +1152,17 @@ export default function EmailDetail({
                               <button
                                 key={tag.slug}
                                 onClick={() => toggleTag(tag.slug)}
-                                className="w-full text-left px-2 py-1.5 text-xs rounded flex items-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                className="w-full text-left px-2 py-1.5 text-xs rounded flex items-center gap-2 hover:bg-field"
                               >
                                 <span
                                   className="w-2.5 h-2.5 rounded-full shrink-0"
                                   style={{ backgroundColor: tag.color }}
                                 />
-                                <span className="flex-1 text-slate-900 dark:text-white">
+                                <span className="flex-1 text-ink">
                                   {tag.display_name}
                                 </span>
                                 {active && (
-                                  <span
-                                    className="material-symbols-outlined text-[var(--accent)]"
-                                    style={{ fontSize: "12px" }}
-                                  >
-                                    check
-                                  </span>
+                                  <Icon name="check" size={12} className="text-wax" />
                                 )}
                               </button>
                             );
@@ -1216,15 +1192,9 @@ export default function EmailDetail({
                     );
                   })}
                 {email.has_attachments && (
-                  <span
-                    className="material-symbols-outlined text-[var(--muted)] shrink-0"
-                    style={{ fontSize: "12px" }}
-                    title="Has attachments"
-                  >
-                    attachment
-                  </span>
+                  <Icon name="attachment" size={12} className="text-ink3 shrink-0" title="Has attachments" />
                 )}
-                <span className="text-[10px] text-[var(--muted)] shrink-0 tabular-nums">
+                <span className="text-[10px] text-ink3 shrink-0 tabular-nums">
                   {new Date(email.received_at).toLocaleString([], {
                     month: "short",
                     day: "numeric",
@@ -1245,29 +1215,23 @@ export default function EmailDetail({
                 key={n}
                 className={`flex flex-col gap-1 ${n % 2 === 0 ? "items-end" : "items-start"}`}
               >
-                <div className="h-3 w-24 rounded bg-[var(--border)] animate-pulse" />
+                <div className="h-3 w-24 rounded bg-line animate-pulse" />
                 <div
-                  className={`h-12 rounded-2xl animate-pulse bg-[var(--border)] ${n % 2 === 0 ? "w-48 rounded-tr-sm" : "w-64 rounded-tl-sm"}`}
+                  className={`h-12 rounded-2xl animate-pulse bg-line ${n % 2 === 0 ? "w-48 rounded-tr-sm" : "w-64 rounded-tl-sm"}`}
                 />
               </div>
             ))}
           </div>
         ) : threadEmails.length > 1 ? (
-          <div className="flex-1 min-h-0 overflow-auto email-reader-pane bg-[var(--background)]">
+          <div className="flex-1 min-h-0 overflow-auto email-reader-pane bg-canvas">
             <div className="w-full max-w-3xl mx-auto px-3 sm:px-4 py-4 min-w-0">
-              <div className="mb-4 flex items-center gap-2 rounded-xl border border-[var(--border)] dark:border-white/[0.10] bg-[var(--surface-2)]/60 dark:bg-white/[0.04] px-3 py-2.5">
-                <span
-                  className="material-symbols-outlined text-[var(--accent)] shrink-0"
-                  style={{ fontSize: "20px" }}
-                  aria-hidden
-                >
-                  forum
-                </span>
+              <div className="mb-4 flex items-center gap-2 rounded-xl border border-line bg-field/60 px-3 py-2.5">
+                <Icon name="forum" size={20} className="text-wax shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--muted)]">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-ink3">
                     Thread
                   </p>
-                  <p className="text-[13px] font-medium text-[var(--foreground)] truncate">
+                  <p className="text-[13px] font-medium text-ink truncate">
                     {threadEmails.length} messages in this conversation
                   </p>
                 </div>
@@ -1307,8 +1271,8 @@ export default function EmailDetail({
                         <div
                           className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold transition-colors duration-200 ${
                             isMe
-                              ? "bg-[var(--accent)]/20 text-[var(--accent)] ring-2 ring-[var(--accent)]/35"
-                              : "bg-[var(--surface-2)] text-[var(--foreground)] ring-1 ring-[var(--border)]"
+                              ? "bg-wax/20 text-wax ring-2 ring-wax/35"
+                              : "bg-field text-ink ring-1 ring-line"
                           }`}
                           title={`Message ${msgIndex + 1} of ${threadEmails.length}`}
                         >
@@ -1316,28 +1280,28 @@ export default function EmailDetail({
                         </div>
                         {!isLast && (
                           <div
-                            className="mt-1 w-px flex-1 min-h-[20px] bg-gradient-to-b from-[var(--border)] to-transparent"
+                            className="mt-1 w-px flex-1 min-h-[20px] bg-gradient-to-b from-line to-transparent"
                             aria-hidden
                           />
                         )}
                       </div>
                       <article
-                        className={`min-w-0 flex-1 overflow-hidden rounded-2xl border bg-[var(--surface)] transition-shadow duration-200 motion-reduce:transition-none ${
+                        className={`min-w-0 flex-1 overflow-hidden rounded-2xl border bg-raised transition-shadow duration-200 motion-reduce:transition-none ${
                           isMe
-                            ? "border-[var(--accent)]/40 shadow-sm dark:shadow-[0_4px_20px_rgba(0,0,0,0.45)]"
-                            : "border-[var(--border)] shadow-sm dark:border-white/[0.10] dark:shadow-[0_4px_20px_rgba(0,0,0,0.35)] dark:ring-1 dark:ring-white/[0.06]"
+                            ? "border-wax/40 shadow-sm dark:shadow-[0_4px_20px_rgba(0,0,0,0.45)]"
+                            : "border-line shadow-sm dark:shadow-[0_4px_20px_rgba(0,0,0,0.35)] dark:ring-1"
                         }`}
                       >
-                        <header className="flex flex-wrap items-start justify-between gap-2 border-b border-[var(--border)]/70 dark:border-white/[0.08] bg-[var(--surface-2)]/30 dark:bg-white/[0.03] px-3 py-2.5 sm:px-4">
+                        <header className="flex flex-wrap items-start justify-between gap-2 border-b border-line/70 bg-field/30 px-3 py-2.5 sm:px-4">
                           <div className="min-w-0">
-                            <p className="text-[13px] font-semibold leading-snug text-[var(--foreground)]">
+                            <p className="text-[13px] font-semibold leading-snug text-ink">
                               {isMe ? "You" : msgSenderName}
                             </p>
-                            <p className="mt-0.5 text-[11px] text-[var(--muted)] tabular-nums">
+                            <p className="mt-0.5 text-[11px] text-ink3 tabular-nums">
                               {timeStr}
                             </p>
                           </div>
-                          <span className="shrink-0 rounded-md bg-[var(--surface-2)] dark:bg-white/[0.07] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted)]">
+                          <span className="shrink-0 rounded-md bg-field px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink3">
                             {msgIndex + 1} / {threadEmails.length}
                           </span>
                         </header>
@@ -1352,26 +1316,26 @@ export default function EmailDetail({
                             />
                           )}
                           {bodyDisplay.kind === "text" && (
-                            <pre className="whitespace-pre-wrap font-sans text-[13px] leading-[1.65] text-[var(--foreground)]">
+                            <pre className="whitespace-pre-wrap font-sans text-[13px] leading-[1.65] text-ink">
                               {linkify(bodyDisplay.text)}
                             </pre>
                           )}
                           {bodyDisplay.kind === "snippet" && (
-                            <p className="text-[13px] leading-relaxed text-[var(--muted)]">
+                            <p className="text-[13px] leading-relaxed text-ink3">
                               {bodyDisplay.text}
                             </p>
                           )}
                           {bodyDisplay.kind === "empty" && (
-                            <p className="text-xs text-[var(--muted)]">
+                            <p className="text-xs text-ink3">
                               (no content)
                             </p>
                           )}
                           {msg.has_attachments && atts.length > 0 && (
-                            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-[var(--border)]/50 dark:border-white/[0.06] pt-2.5">
+                            <div className="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-line/50 pt-2.5">
                               {atts.map((att) => (
                                 <div
                                   key={att.attachment_id}
-                                  className="flex items-center overflow-hidden rounded-lg border border-[var(--border)] dark:border-white/[0.08] bg-[var(--surface-2)]/60 transition-colors duration-150 group"
+                                  className="flex items-center overflow-hidden rounded-lg border border-line bg-field/60 transition-colors duration-150 group"
                                 >
                                   <button
                                     type="button"
@@ -1405,23 +1369,18 @@ export default function EmailDetail({
                                         );
                                       }
                                     }}
-                                    className="flex cursor-pointer items-center gap-1 px-2 py-1 hover:bg-slate-100/80 dark:hover:bg-white/[0.06]"
+                                    className="flex cursor-pointer items-center gap-1 px-2 py-1 hover:bg-field"
                                   >
-                                    <span
-                                      className="material-symbols-outlined text-[var(--muted)] group-hover:text-[var(--accent)]"
-                                      style={{ fontSize: "13px" }}
-                                    >
-                                      {att.mime_type?.startsWith("image/")
+                                    <Icon name={att.mime_type?.startsWith("image/")
                                         ? "image"
                                         : att.mime_type?.includes("pdf")
                                           ? "picture_as_pdf"
-                                          : "description"}
-                                    </span>
-                                    <span className="max-w-[120px] truncate text-left text-[10px] font-medium text-[var(--foreground)]">
+                                          : "description"} size={13} className="text-ink3 group-hover:text-wax" />
+                                    <span className="max-w-[120px] truncate text-left text-[10px] font-medium text-ink">
                                       {att.filename}
                                     </span>
                                     {att.size > 0 && (
-                                      <span className="shrink-0 text-[9px] text-[var(--muted)] tabular-nums">
+                                      <span className="shrink-0 text-[9px] text-ink3 tabular-nums">
                                         {att.size > 1024 * 1024
                                           ? `${(att.size / 1024 / 1024).toFixed(1)}M`
                                           : `${Math.ceil(att.size / 1024)}K`}
@@ -1433,16 +1392,11 @@ export default function EmailDetail({
                                     onClick={() =>
                                       downloadAttachment(att, msg.gmail_id)
                                     }
-                                    className="cursor-pointer border-l border-[var(--border)] dark:border-white/[0.08] px-1.5 py-1 hover:bg-slate-100/80 dark:hover:bg-white/[0.06]"
+                                    className="cursor-pointer border-l border-line px-1.5 py-1 hover:bg-field"
                                     title="Download"
                                     aria-label={`Download ${att.filename}`}
                                   >
-                                    <span
-                                      className="material-symbols-outlined text-[var(--muted)] hover:text-[var(--accent)]"
-                                      style={{ fontSize: "11px" }}
-                                    >
-                                      download
-                                    </span>
+                                    <Icon name="download" size={11} className="text-ink3 hover:text-wax" />
                                   </button>
                                 </div>
                               ))}
@@ -1457,7 +1411,7 @@ export default function EmailDetail({
             </div>
           </div>
         ) : (
-          <div className="flex-1 min-h-0 overflow-auto email-reader-pane bg-[var(--background)] px-3 py-4 sm:px-5">
+          <div className="flex-1 min-h-0 overflow-auto email-reader-pane bg-canvas px-3 py-4 sm:px-5">
             <div className="mx-auto w-full max-w-3xl min-w-0">
               <SuspicionBanner verdict={suspicion} />
               {singleMessageBody.kind === "html" && (
@@ -1467,17 +1421,17 @@ export default function EmailDetail({
                 />
               )}
               {singleMessageBody.kind === "text" && (
-                <pre className="max-w-prose whitespace-pre-wrap font-sans text-[15px] leading-[1.65] text-[var(--foreground)]">
+                <pre className="max-w-prose whitespace-pre-wrap font-sans text-[15px] leading-[1.65] text-ink">
                   {linkify(singleMessageBody.text)}
                 </pre>
               )}
               {singleMessageBody.kind === "snippet" && (
-                <p className="max-w-prose text-[15px] leading-relaxed text-[var(--muted)]">
+                <p className="max-w-prose text-[15px] leading-relaxed text-ink3">
                   {singleMessageBody.text}
                 </p>
               )}
               {singleMessageBody.kind === "empty" && (
-                <span className="text-sm text-[var(--muted)]">
+                <span className="text-sm text-ink3">
                   (no content)
                 </span>
               )}
@@ -1490,18 +1444,13 @@ export default function EmailDetail({
           email.attachments.length > 0 &&
           !isMultiMessageThread) ||
           showSuggestionsPanel) && (
-          <div className="px-3 pt-2 pb-2 flex-shrink-0 bg-[var(--accent)]/5 flex flex-col gap-1.5">
+          <div className="px-3 pt-2 pb-2 flex-shrink-0 bg-wax/5 flex flex-col gap-1.5">
             {/* Attachments row  -  only for single-message view (thread messages show their own) */}
             {!isMultiMessageThread &&
               Array.isArray(email.attachments) &&
               email.attachments.length > 0 && (
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span
-                    className="material-symbols-outlined text-[var(--muted)]"
-                    style={{ fontSize: "13px" }}
-                  >
-                    attach_file
-                  </span>
+                  <Icon name="attach_file" size={13} className="text-ink3" />
                   {(
                     email.attachments as {
                       filename: string;
@@ -1512,7 +1461,7 @@ export default function EmailDetail({
                   ).map((att, i) => (
                     <div
                       key={i}
-                      className="flex items-center rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden group"
+                      className="flex items-center rounded-xl border border-line bg-raised overflow-hidden group"
                     >
                       <button
                         onClick={async () => {
@@ -1536,47 +1485,32 @@ export default function EmailDetail({
                             );
                           }
                         }}
-                        className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                        className="flex items-center gap-1 px-2.5 py-1.5 hover:bg-field transition-colors"
                       >
-                        <span
-                          className="material-symbols-outlined text-[var(--muted)] group-hover:text-[var(--accent)]"
-                          style={{ fontSize: "13px" }}
-                        >
-                          {att.mime_type?.startsWith("image/")
+                        <Icon name={att.mime_type?.startsWith("image/")
                             ? "image"
                             : att.mime_type?.includes("pdf")
                               ? "picture_as_pdf"
-                              : "description"}
-                        </span>
-                        <span className="text-[11px] font-medium text-[var(--foreground)] truncate max-w-[140px]">
+                              : "description"} size={13} className="text-ink3 group-hover:text-wax" />
+                        <span className="text-[11px] font-medium text-ink truncate max-w-[140px]">
                           {att.filename}
                         </span>
-                        <span className="text-[9px] text-[var(--muted)] shrink-0">
+                        <span className="text-[9px] text-ink3 shrink-0">
                           {att.size > 1024 * 1024
                             ? `${(att.size / 1024 / 1024).toFixed(1)} MB`
                             : `${Math.ceil(att.size / 1024)} KB`}
                         </span>
-                        <span
-                          className="material-symbols-outlined text-[var(--muted)] group-hover:text-[var(--accent)] shrink-0"
-                          style={{ fontSize: "12px" }}
-                        >
-                          visibility
-                        </span>
+                        <Icon name="visibility" size={12} className="text-ink3 group-hover:text-wax shrink-0" />
                       </button>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           downloadAttachment(att);
                         }}
-                        className="px-1.5 py-1.5 border-l border-[var(--border)] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
+                        className="px-1.5 py-1.5 border-l border-line hover:bg-field transition-colors shrink-0"
                         title="Download"
                       >
-                        <span
-                          className="material-symbols-outlined text-[var(--muted)] hover:text-[var(--accent)]"
-                          style={{ fontSize: "12px" }}
-                        >
-                          download
-                        </span>
+                        <Icon name="download" size={12} className="text-ink3 hover:text-wax" />
                       </button>
                     </div>
                   ))}
@@ -1586,20 +1520,15 @@ export default function EmailDetail({
             {showSuggestionsPanel && (
               <div className="flex flex-col gap-2">
               <div className={`flex items-center gap-1.5 flex-wrap transition-opacity ${activeInputAction ? "opacity-50" : "opacity-100"}`}>
-                <span
-                  className="material-symbols-outlined text-[var(--muted)] shrink-0"
-                  style={{ fontSize: "13px" }}
-                >
-                  auto_awesome
-                </span>
+                <Icon name="auto_awesome" size={13} className="text-ink3 shrink-0" />
                 {replyActions.map((qa: any, i: number) => {
                   const label = (qa.label || "").replace(/^Reply:\s*/i, "");
                   const prefill = qa.text || label;
                   const hasQuestions = qa.questions?.length > 0;
                   const isActive = activeInputAction?.qa === qa;
                   const baseChipClass = isActive
-                    ? "border-blue-400 dark:border-blue-600 bg-blue-100 dark:bg-blue-900/60 text-blue-800 dark:text-blue-200"
-                    : "border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50";
+                    ? "border-line bg-field text-ink2"
+                    : "border-line bg-field text-ink2 hover:bg-field";
                   return (
                     <div key={`reply-${i}`} className="flex items-stretch">
                       <button
@@ -1617,20 +1546,10 @@ export default function EmailDetail({
                         className={`flex items-center gap-1 px-3 py-1.5 border text-[11px] font-medium transition-colors ${hasReplyAll ? "rounded-l-xl border-r-0" : "rounded-xl"} ${baseChipClass}`}
                         title={label}
                       >
-                        <span
-                          className="material-symbols-outlined text-blue-400"
-                          style={{ fontSize: "12px" }}
-                        >
-                          chat_bubble
-                        </span>
+                        <Icon name="chat_bubble" size={12} className="text-ink2" />
                         <span>{label}</span>
                         {hasQuestions && (
-                          <span
-                            className="material-symbols-outlined text-blue-400 opacity-70"
-                            style={{ fontSize: "11px" }}
-                          >
-                            edit
-                          </span>
+                          <Icon name="edit" size={11} className="text-ink2 opacity-70" />
                         )}
                       </button>
                       {hasReplyAll && (
@@ -1650,12 +1569,7 @@ export default function EmailDetail({
                           className={`flex items-center px-1.5 py-1.5 rounded-r-xl border text-[11px] transition-colors ${baseChipClass}`}
                           title={`${label} (Reply All)`}
                         >
-                          <span
-                            className="material-symbols-outlined text-blue-400"
-                            style={{ fontSize: "12px" }}
-                          >
-                            reply_all
-                          </span>
+                          <Icon name="reply_all" size={12} className="text-ink2" />
                         </button>
                       )}
                     </div>
@@ -1678,15 +1592,10 @@ export default function EmailDetail({
                         });
                         setView("meetings");
                       }}
-                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 text-[11px] font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
+                      className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-ok-line bg-ok-soft text-[11px] font-medium text-ok hover:bg-ok-soft transition-colors"
                       title={label}
                     >
-                      <span
-                        className="material-symbols-outlined text-emerald-500"
-                        style={{ fontSize: "12px" }}
-                      >
-                        event_upcoming
-                      </span>
+                      <Icon name="event_upcoming" size={12} className="text-ok" />
                       <span>{label}</span>
                     </button>
                   );
@@ -1701,22 +1610,12 @@ export default function EmailDetail({
                       disabled={added}
                       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-medium transition-all ${
                         added
-                          ? "border-green-300 bg-green-50 text-green-700 dark:border-green-700 dark:bg-green-950/40 dark:text-green-400 cursor-default"
-                          : "border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50"
+                          ? "border-ok-line bg-ok-soft text-ok cursor-default"
+                          : "border-warn-line bg-warn-soft text-warn hover:bg-warn-soft"
                       }`}
                       title={task}
                     >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{
-                          fontSize: "13px",
-                          fontVariationSettings: added
-                            ? "'FILL' 1"
-                            : "'FILL' 0",
-                        }}
-                      >
-                        {added ? "check_circle" : "add_task"}
-                      </span>
+                      <Icon name={added ? "check_circle" : "add_task"} size={13} fill={added} />
                       <span>{task}</span>
                     </button>
                   );
@@ -1725,26 +1624,21 @@ export default function EmailDetail({
 
               {/* Inline input card  -  shown when a reply action with questions is clicked */}
               {activeInputAction && (
-                <div className="rounded-xl border border-blue-200 dark:border-blue-700 bg-blue-50/70 dark:bg-blue-950/30 p-3 flex flex-col gap-2.5 shadow-sm">
+                <div className="rounded-xl border border-line bg-field p-3 flex flex-col gap-2.5 shadow-sm">
                   {/* Header */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <span
-                        className="material-symbols-outlined text-blue-400 shrink-0"
-                        style={{ fontSize: "12px" }}
-                      >
-                        auto_awesome
-                      </span>
-                      <span className="text-[11px] font-medium text-blue-700 dark:text-blue-300 truncate">
+                      <Icon name="auto_awesome" size={12} className="text-ink2 shrink-0" />
+                      <span className="text-[11px] font-medium text-ink2 truncate">
                         {(activeInputAction.qa.label || "").replace(/^Reply:\s*/i, "")}
                       </span>
                     </div>
                     <button
                       onClick={() => setActiveInputAction(null)}
-                      className="shrink-0 p-0.5 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 transition-colors"
+                      className="shrink-0 p-0.5 rounded hover:bg-field text-ink2 hover:text-ink2 transition-colors"
                       title="Dismiss"
                     >
-                      <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>close</span>
+                      <Icon name="close" size={13} />
                     </button>
                   </div>
 
@@ -1753,7 +1647,7 @@ export default function EmailDetail({
                     const isLast = qi === (activeInputAction.qa.questions || []).length - 1;
                     return (
                       <div key={q.key} className="flex flex-col gap-1">
-                        <label className="text-[10px] font-medium text-[var(--muted)]">{q.label}</label>
+                        <label className="text-[10px] font-medium text-ink3">{q.label}</label>
                         <input
                           type="text"
                           autoFocus={qi === 0}
@@ -1767,7 +1661,7 @@ export default function EmailDetail({
                           onKeyDown={(e) => {
                             if (e.key === "Enter" && isLast) submitInputAction();
                           }}
-                          className="text-[11px] rounded-lg border border-blue-200 dark:border-blue-700 bg-white dark:bg-blue-950/40 text-[var(--foreground)] px-2 py-1.5 w-full outline-none focus:ring-1 focus:ring-blue-400 dark:focus:ring-blue-500 placeholder:text-[var(--muted)] transition-shadow"
+                          className="text-[11px] rounded-lg border border-line bg-white text-ink px-2 py-1.5 w-full outline-none focus:ring-1 focus:ring-line placeholder:text-ink3 transition-shadow"
                         />
                       </div>
                     );
@@ -1783,9 +1677,9 @@ export default function EmailDetail({
                             (q: any) => !(activeInputAction.answers[q.key] || "").trim()
                           )
                         }
-                        className="flex items-center gap-1 px-3 py-1 text-[11px] font-medium rounded-lg border border-blue-400 text-blue-600 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        className="flex items-center gap-1 px-3 py-1 text-[11px] font-medium rounded-lg border border-line text-ink2 hover:bg-field transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>reply_all</span>
+                        <Icon name="reply_all" size={12} />
                         <span>Reply All</span>
                       </button>
                     )}
@@ -1796,10 +1690,10 @@ export default function EmailDetail({
                           (q: any) => !(activeInputAction.answers[q.key] || "").trim()
                         )
                       }
-                      className="flex items-center gap-1 px-3 py-1 text-[11px] font-medium rounded-lg bg-blue-500 hover:bg-blue-600 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      className="flex items-center gap-1 px-3 py-1 text-[11px] font-medium rounded-lg bg-wax hover:bg-wax text-on-wax transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <span>Write Reply</span>
-                      <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>arrow_forward</span>
+                      <Icon name="arrow_forward" size={12} />
                     </button>
                   </div>
                 </div>
@@ -1810,18 +1704,13 @@ export default function EmailDetail({
         )}
 
         {/* ── Action bar ── */}
-        <div className="px-3 py-1.5 border-t border-[var(--border)] flex-shrink-0 flex items-center gap-1.5 flex-wrap">
+        <div className="px-3 py-1.5 border-t border-line flex-shrink-0 flex items-center gap-1.5 flex-wrap">
           {/* Reply button  -  always visible */}
           <button
             onClick={() => onReply()}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--border)] text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg border border-line text-[11px] font-medium text-ink2 hover:bg-field transition-colors"
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: "12px" }}
-            >
-              reply
-            </span>
+            <Icon name="reply" size={12} />
             Reply
           </button>
 
@@ -1829,14 +1718,9 @@ export default function EmailDetail({
           {hasReplyAll && (
             <button
               onClick={() => openCompose({ ...email, _replyAll: true })}
-              className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--border)] text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+              className="flex items-center gap-1 px-2 py-1 rounded-lg border border-line text-[11px] font-medium text-ink2 hover:bg-field transition-colors"
             >
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "12px" }}
-              >
-                reply_all
-              </span>
+              <Icon name="reply_all" size={12} />
               Reply All
             </button>
           )}
@@ -1852,48 +1736,33 @@ export default function EmailDetail({
                 subject: `Fwd: ${email.subject}`,
               })
             }
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-ink2 hover:bg-field transition-colors"
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: "13px" }}
-            >
-              forward_to_inbox
-            </span>
+            <Icon name="forward_to_inbox" size={13} />
             Delegate
           </button>
           <button
             onClick={handleMarkUnread}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-ink2 hover:bg-field transition-colors"
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: "13px" }}
-            >
-              mark_email_unread
-            </span>
+            <Icon name="mark_email_unread" size={13} />
             Unread
           </button>
           <div ref={snoozeRef} className="relative">
             <button
               onClick={() => setShowSnoozeMenu(!showSnoozeMenu)}
-              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-ink2 hover:bg-field transition-colors"
             >
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "13px" }}
-              >
-                snooze
-              </span>
+              <Icon name="snooze" size={13} />
               Snooze
             </button>
             {showSnoozeMenu && (
-              <div className="absolute bottom-full mb-1 right-0 bg-[var(--background)] border border-[var(--border)] rounded-lg shadow-lg p-1 z-20 min-w-[160px]">
+              <div className="absolute bottom-full mb-1 right-0 bg-canvas border border-line rounded-lg shadow-lg p-1 z-20 min-w-[160px]">
                 {SNOOZE_OPTIONS.map((opt) => (
                   <button
                     key={opt.hours}
                     onClick={() => handleSnooze(opt.hours, opt.label)}
-                    className="w-full text-left px-3 py-1.5 text-xs rounded text-[var(--foreground)] hover:bg-slate-100 dark:hover:bg-slate-800"
+                    className="w-full text-left px-3 py-1.5 text-xs rounded text-ink hover:bg-field"
                   >
                     {opt.label}
                   </button>
@@ -1914,20 +1783,12 @@ export default function EmailDetail({
                 }}
                 className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-[11px] font-medium transition-colors ${
                   isTracked
-                    ? "border-[var(--accent)] text-[var(--accent)] bg-[var(--accent-light)]"
-                    : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--foreground)]"
+                    ? "border-wax text-wax bg-wax-soft"
+                    : "border-line text-ink3 hover:bg-field hover:text-ink"
                 }`}
                 title={isTracked ? "View in Follow-ups" : "Track follow-up"}
               >
-                <span
-                  className="material-symbols-outlined"
-                  style={{
-                    fontSize: "13px",
-                    fontVariationSettings: isTracked ? "'FILL' 1" : "'FILL' 0",
-                  }}
-                >
-                  schedule_send
-                </span>
+                <Icon name="schedule_send" size={13} fill={isTracked} />
                 {isTracked ? "Tracked" : "Track"}
               </button>
               {showTrackPopup && !isTracked && (
@@ -1936,8 +1797,8 @@ export default function EmailDetail({
                     className="fixed inset-0 z-10"
                     onClick={() => setShowTrackPopup(false)}
                   />
-                  <div className="absolute bottom-full mb-2 right-0 z-20 bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-xl p-3 w-64">
-                    <p className="text-[11px] font-semibold text-[var(--foreground)] mb-2">
+                  <div className="absolute bottom-full mb-2 right-0 z-20 bg-canvas border border-line rounded-xl shadow-xl p-3 w-64">
+                    <p className="text-[11px] font-semibold text-ink mb-2">
                       Remind me if no reply by
                     </p>
                     <div className="mb-2">
@@ -1950,22 +1811,12 @@ export default function EmailDetail({
                     <button
                       onClick={trackFollowUp}
                       disabled={trackingSaving}
-                      className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-semibold hover:opacity-90 disabled:opacity-60 transition-opacity"
+                      className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-semibold hover:opacity-90 disabled:opacity-60 transition-opacity"
                     >
                       {trackingSaving ? (
-                        <span
-                          className="material-symbols-outlined animate-spin"
-                          style={{ fontSize: "13px" }}
-                        >
-                          progress_activity
-                        </span>
+                        <Icon name="progress_activity" size={13} className="animate-spin" />
                       ) : (
-                        <span
-                          className="material-symbols-outlined"
-                          style={{ fontSize: "13px" }}
-                        >
-                          add_alert
-                        </span>
+                        <Icon name="add_alert" size={13} />
                       )}
                       Set Reminder
                     </button>
@@ -1984,28 +1835,18 @@ export default function EmailDetail({
             }
             className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium transition-colors disabled:opacity-60 ${
               resolvedAt
-                ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20"
-                : "text-[var(--muted)] hover:bg-[var(--border)]"
+                ? "text-ok bg-ok/10 hover:bg-ok/20"
+                : "text-ink3 hover:bg-line"
             }`}
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: "13px" }}
-            >
-              {resolvedAt ? "task_alt" : "check_circle"}
-            </span>
+            <Icon name={resolvedAt ? "task_alt" : "check_circle"} size={13} />
             {resolvedAt ? "Resolved" : "Resolve"}
           </button>
           <button
             onClick={onArchive}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-danger hover:bg-danger-soft transition-colors"
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: "13px" }}
-            >
-              archive
-            </span>
+            <Icon name="archive" size={13} />
             Archive
           </button>
         </div>
@@ -2019,27 +1860,22 @@ export default function EmailDetail({
           onClick={() => setPreviewAtt(null)}
         >
           <div
-            className="relative flex flex-col bg-[var(--background)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden"
+            className="relative flex flex-col bg-canvas border border-line rounded-2xl shadow-2xl overflow-hidden"
             style={{ width: "min(92vw, 900px)", height: "min(90vh, 700px)" }}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[var(--border)] bg-[var(--surface)] shrink-0">
-              <span
-                className="material-symbols-outlined text-[var(--accent)]"
-                style={{ fontSize: "18px" }}
-              >
-                {previewAtt.att.mime_type?.startsWith("image/")
+            <div className="flex items-center gap-2.5 px-4 py-3 border-b border-line bg-raised shrink-0">
+              <Icon name={previewAtt.att.mime_type?.startsWith("image/")
                   ? "image"
                   : previewAtt.att.mime_type?.includes("pdf")
                     ? "picture_as_pdf"
-                    : "description"}
-              </span>
+                    : "description"} size={18} className="text-wax" />
               <div className="flex-1 min-w-0">
-                <p className="text-[13px] font-semibold text-[var(--foreground)] truncate">
+                <p className="text-[13px] font-semibold text-ink truncate">
                   {previewAtt.att.filename}
                 </p>
-                <p className="text-[10px] text-[var(--muted)]">
+                <p className="text-[10px] text-ink3">
                   {previewAtt.att.size > 1024 * 1024
                     ? `${(previewAtt.att.size / 1024 / 1024).toFixed(1)} MB`
                     : `${Math.ceil(previewAtt.att.size / 1024)} KB`}
@@ -2049,65 +1885,40 @@ export default function EmailDetail({
               </div>
               <button
                 onClick={() => downloadAttachment(previewAtt.att)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-[11px] font-semibold hover:opacity-90 transition-opacity shrink-0"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-[11px] font-semibold hover:opacity-90 transition-opacity shrink-0"
               >
-                <span
-                  className="material-symbols-outlined"
-                  style={{ fontSize: "13px" }}
-                >
-                  download
-                </span>
+                <Icon name="download" size={13} />
                 Download
               </button>
               <button
                 onClick={() => setPreviewAtt(null)}
-                className="p-1.5 rounded-lg hover:bg-[var(--surface-2)] transition-colors shrink-0"
+                className="p-1.5 rounded-lg hover:bg-field transition-colors shrink-0"
                 title="Close"
               >
-                <span
-                  className="material-symbols-outlined text-[var(--muted)]"
-                  style={{ fontSize: "16px" }}
-                >
-                  close
-                </span>
+                <Icon name="close" size={16} className="text-ink3" />
               </button>
             </div>
 
             {/* Content area */}
-            <div className="flex-1 overflow-auto flex items-center justify-center bg-[var(--surface-2)]">
+            <div className="flex-1 overflow-auto flex items-center justify-center bg-field">
               {/* Loading */}
               {!previewAtt.blobUrl && !previewAtt.error && (
-                <div className="flex flex-col items-center gap-3 text-[var(--muted)]">
-                  <span
-                    className="material-symbols-outlined animate-spin text-[var(--accent)]"
-                    style={{ fontSize: "28px" }}
-                  >
-                    progress_activity
-                  </span>
+                <div className="flex flex-col items-center gap-3 text-ink3">
+                  <Icon name="progress_activity" size={28} className="animate-spin text-wax" />
                   <span className="text-[12px]">Loading preview...</span>
                 </div>
               )}
 
               {/* Error */}
               {previewAtt.error && (
-                <div className="flex flex-col items-center gap-3 text-[var(--muted)]">
-                  <span
-                    className="material-symbols-outlined text-red-400"
-                    style={{ fontSize: "28px" }}
-                  >
-                    error_outline
-                  </span>
+                <div className="flex flex-col items-center gap-3 text-ink3">
+                  <Icon name="error_outline" size={28} className="text-danger" />
                   <span className="text-[12px]">{previewAtt.error}</span>
                   <button
                     onClick={() => downloadAttachment(previewAtt.att)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border)] text-[11px] font-medium hover:bg-[var(--surface)] transition-colors"
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-line text-[11px] font-medium hover:bg-raised transition-colors"
                   >
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "13px" }}
-                    >
-                      download
-                    </span>
+                    <Icon name="download" size={13} />
                     Download instead
                   </button>
                 </div>
@@ -2136,7 +1947,7 @@ export default function EmailDetail({
 
               {/* Text / CSV / JSON preview */}
               {previewAtt.blobUrl && previewAtt.text !== null && (
-                <pre className="w-full h-full overflow-auto p-4 text-[11px] font-mono text-[var(--foreground)] leading-relaxed whitespace-pre-wrap break-all">
+                <pre className="w-full h-full overflow-auto p-4 text-[11px] font-mono text-ink leading-relaxed whitespace-pre-wrap break-all">
                   {previewAtt.text}
                 </pre>
               )}
@@ -2146,14 +1957,9 @@ export default function EmailDetail({
                 !previewAtt.att.mime_type?.startsWith("image/") &&
                 !previewAtt.att.mime_type?.includes("pdf") &&
                 previewAtt.text === null && (
-                  <div className="flex flex-col items-center gap-3 text-[var(--muted)] text-center px-8">
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "36px" }}
-                    >
-                      draft
-                    </span>
-                    <p className="text-[13px] font-medium text-[var(--foreground)]">
+                  <div className="flex flex-col items-center gap-3 text-ink3 text-center px-8">
+                    <Icon name="draft" size={36} />
+                    <p className="text-[13px] font-medium text-ink">
                       Preview not available
                     </p>
                     <p className="text-[11px]">
@@ -2161,14 +1967,9 @@ export default function EmailDetail({
                     </p>
                     <button
                       onClick={() => downloadAttachment(previewAtt.att)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-[11px] font-semibold hover:opacity-90 transition-opacity"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-[11px] font-semibold hover:opacity-90 transition-opacity"
                     >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{ fontSize: "13px" }}
-                      >
-                        download
-                      </span>
+                      <Icon name="download" size={13} />
                       Download to open
                     </button>
                   </div>

@@ -1,5 +1,6 @@
 
 import { useState, useEffect } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import {
@@ -60,17 +61,17 @@ function SuggestionCard({
   onDismiss: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-2.5 p-3 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/50 hover:border-[var(--accent)]/40 transition-colors">
+    <div className="flex flex-col gap-2.5 p-3 rounded-xl border border-line bg-hover hover:border-wax/40 transition-colors">
       <div className="flex items-center gap-2">
         <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: suggestion.color }} />
-        <span className="text-sm font-semibold text-slate-900 dark:text-white flex-1 truncate">
+        <span className="text-sm font-semibold text-ink flex-1 truncate">
           {suggestion.name}
         </span>
-        <span className="text-xs px-1.5 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-medium shrink-0">
+        <span className="text-xs px-1.5 py-0.5 rounded-full bg-sel text-ink2 font-medium shrink-0">
           {suggestion.matchCount} emails
         </span>
       </div>
-      <p className="text-xs text-[var(--muted)] leading-relaxed line-clamp-2">
+      <p className="text-xs text-ink3 leading-relaxed line-clamp-2">
         {suggestion.description}
       </p>
       {suggestion.examples.length > 0 && (
@@ -78,7 +79,7 @@ function SuggestionCard({
           {suggestion.examples.slice(0, 2).map((ex, i) => (
             <span
               key={i}
-              className="text-xs text-[var(--muted)] font-mono truncate bg-slate-100 dark:bg-slate-900/40 px-2 py-0.5 rounded"
+              className="text-xs text-ink3 font-mono truncate bg-field px-2 py-0.5 rounded"
             >
               {ex}
             </span>
@@ -88,13 +89,13 @@ function SuggestionCard({
       <div className="flex items-center gap-2 mt-0.5">
         <button
           onClick={onAdd}
-          className="flex-1 px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 transition-opacity text-center"
+          className="flex-1 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-medium hover:opacity-90 transition-opacity text-center"
         >
           Add Tag
         </button>
         <button
           onClick={onDismiss}
-          className="px-3 py-1.5 rounded-lg border border-[var(--border)] text-[var(--muted)] text-xs font-medium hover:text-slate-900 dark:hover:text-white hover:border-slate-400 dark:hover:border-slate-500 transition-colors"
+          className="px-3 py-1.5 rounded-lg border border-line text-ink3 text-xs font-medium hover:text-ink hover:border-ink4 transition-colors"
         >
           Dismiss
         </button>
@@ -254,23 +255,23 @@ export default function CategoriesView() {
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
-      <h1 className="text-xl font-bold text-slate-900 dark:text-white mb-1">
+      <h1 className="text-xl font-bold text-ink mb-1">
         Categories & Tags
       </h1>
-      <p className="text-sm text-[var(--muted)] mb-5">
+      <p className="text-sm text-ink3 mb-5">
         Every email gets one main category. Tags are optional labels you define; an email can have multiple tags.
       </p>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-5 border-b border-[var(--border)]">
+      <div className="flex gap-1 mb-5 border-b border-line">
         {(["rules", "tags"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               tab === t
-                ? "border-[var(--accent)] text-[var(--accent)]"
-                : "border-transparent text-[var(--muted)] hover:text-slate-900 dark:hover:text-white"
+                ? "border-wax text-wax"
+                : "border-transparent text-ink3 hover:text-ink"
             }`}
           >
             {t === "rules" ? "Categorization Rules" : "Tags"}
@@ -279,16 +280,16 @@ export default function CategoriesView() {
       </div>
 
       {loading ? (
-        <p className="text-sm text-[var(--muted)]">Loading…</p>
+        <p className="text-sm text-ink3">Loading…</p>
       ) : tab === "rules" ? (
         <div className="space-y-4">
           {/* Add rule form */}
-          <div className="p-4 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/50 space-y-3">
+          <div className="p-4 rounded-xl border border-line bg-hover space-y-3">
             <div>
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+              <span className="text-sm font-medium text-ink">
                 Add Rule
               </span>
-              <p className="text-xs text-[var(--muted)] mt-0.5">
+              <p className="text-xs text-ink3 mt-0.5">
                 Describe in plain language what emails belong in this category. The AI reads your description and applies it automatically.
               </p>
             </div>
@@ -299,12 +300,12 @@ export default function CategoriesView() {
                 onChange={(e) => setNewMatchValue(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && addRule()}
                 placeholder="e.g. emails from my bank, anything about invoices and payments"
-                className="flex-1 min-w-[160px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none"
+                className="flex-1 min-w-[160px] px-3 py-1.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none"
               />
               <select
                 value={newRuleTarget}
                 onChange={(e) => setNewRuleTarget(e.target.value)}
-                className="px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm"
+                className="px-3 py-1.5 rounded-lg border border-line bg-raised text-sm"
               >
                 <optgroup label="Main Categories">
                   {MAIN_CATEGORIES.map((c) => (
@@ -326,7 +327,7 @@ export default function CategoriesView() {
               <button
                 onClick={addRule}
                 disabled={!newMatchValue.trim()}
-                className="px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                className="px-4 py-1.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-50"
               >
                 Add
               </button>
@@ -335,12 +336,12 @@ export default function CategoriesView() {
 
           {/* Main categories reference */}
           <div>
-            <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wide mb-2">Main Categories</p>
+            <p className="text-xs font-semibold text-ink3 uppercase tracking-wide mb-2">Main Categories</p>
             <div className="grid grid-cols-2 gap-2 mb-4">
               {MAIN_CATEGORIES.map((c) => (
-                <div key={c.slug} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--border)]">
+                <div key={c.slug} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-line">
                   <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
-                  <span className="text-sm font-medium text-slate-900 dark:text-white">{c.display_name}</span>
+                  <span className="text-sm font-medium text-ink">{c.display_name}</span>
                 </div>
               ))}
             </div>
@@ -348,13 +349,8 @@ export default function CategoriesView() {
 
           {/* Rules list */}
           {rules.length === 0 ? (
-            <div className="text-center py-12 text-[var(--muted)]">
-              <span
-                className="material-symbols-outlined mb-2"
-                style={{ fontSize: "48px" }}
-              >
-                rule
-              </span>
+            <div className="text-center py-12 text-ink3">
+              <Icon name="rule" size={48} className="mb-2" />
               <p className="text-sm">
                 No categorization rules yet. Add an AI rule above by describing what emails belong in a category.
               </p>
@@ -364,17 +360,17 @@ export default function CategoriesView() {
               {rules.map((rule) => (
                 <div
                   key={rule.id}
-                  className="flex items-center gap-3 p-3 rounded-xl border border-[var(--border)] group"
+                  className="flex items-center gap-3 p-3 rounded-xl border border-line group"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${rule.match_type === "description" ? "bg-[var(--accent)]/10 text-[var(--accent)]" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"}`}>
+                      <span className={`text-xs px-2 py-0.5 rounded font-medium ${rule.match_type === "description" ? "bg-wax/10 text-wax" : "bg-field text-ink2"}`}>
                         {matchTypeLabels[rule.match_type] || rule.match_type}
                       </span>
-                      <span className="text-sm text-slate-900 dark:text-white truncate max-w-[260px]">
+                      <span className="text-sm text-ink truncate max-w-[260px]">
                         {rule.match_type === "description" ? rule.match_value : <>&ldquo;{rule.match_value}&rdquo;</>}
                       </span>
-                      <span className="text-xs text-[var(--muted)]">→</span>
+                      <span className="text-xs text-ink3">→</span>
                       <span
                         className="text-xs px-2 py-0.5 rounded font-medium text-white shrink-0"
                         style={{
@@ -387,14 +383,9 @@ export default function CategoriesView() {
                   </div>
                   <button
                     onClick={() => deleteRule(rule.id)}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 transition-opacity"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-danger-soft text-danger transition-opacity"
                   >
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "18px" }}
-                    >
-                      delete
-                    </span>
+                    <Icon name="delete" size={18} />
                   </button>
                 </div>
               ))}
@@ -407,30 +398,28 @@ export default function CategoriesView() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <div>
-                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
+                <h3 className="text-sm font-semibold text-ink">
                   Smart Suggestions
                 </h3>
-                <p className="text-xs text-[var(--muted)]">
+                <p className="text-xs text-ink3">
                   Analyzes your recent emails to suggest tags personalized to your inbox.
                 </p>
               </div>
               {suggestionsStatus !== "loading" && (
                 <button
                   onClick={analyzeSuggestions}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90 transition-opacity shrink-0 ml-4"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-medium hover:opacity-90 transition-opacity shrink-0 ml-4"
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: "15px" }}>
-                    {suggestionsStatus === "done" ? "refresh" : "auto_awesome"}
-                  </span>
+                  <Icon name={suggestionsStatus === "done" ? "refresh" : "auto_awesome"} size={15} />
                   {suggestionsStatus === "done" ? "Refresh" : "Analyze Emails"}
                 </button>
               )}
             </div>
 
             {suggestionsStatus === "loading" && (
-              <div className="flex flex-col items-center justify-center py-10 gap-3 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/40">
-                <div className="w-8 h-8 rounded-full border-2 border-[var(--border)] border-t-[var(--accent)] animate-spin" />
-                <p className="text-xs text-[var(--muted)] animate-pulse">Analyzing your email patterns...</p>
+              <div className="flex flex-col items-center justify-center py-10 gap-3 rounded-xl border border-line bg-hover">
+                <div className="w-8 h-8 rounded-full border-2 border-line border-t-wax animate-spin" />
+                <p className="text-xs text-ink3 animate-pulse">Analyzing your email patterns...</p>
               </div>
             )}
 
@@ -448,42 +437,40 @@ export default function CategoriesView() {
             )}
 
             {suggestionsStatus === "done" && suggestions.length === 0 && (
-              <div className="flex flex-col items-center justify-center py-8 gap-2 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/40">
-                <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "36px" }}>
-                  check_circle
-                </span>
-                <p className="text-sm font-medium text-slate-700 dark:text-slate-300">You&apos;re all set</p>
-                <p className="text-xs text-[var(--muted)]">No new suggestions right now.</p>
+              <div className="flex flex-col items-center justify-center py-8 gap-2 rounded-xl border border-line bg-hover">
+                <Icon name="check_circle" size={36} className="text-ink3" />
+                <p className="text-sm font-medium text-ink">You&apos;re all set</p>
+                <p className="text-xs text-ink3">No new suggestions right now.</p>
               </div>
             )}
           </div>
 
           {/* Create Tag form */}
           <div>
-            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            <h3 className="text-sm font-semibold text-ink mb-1">
               Create Tag
             </h3>
-            <p className="text-xs text-[var(--muted)] mb-3">
+            <p className="text-xs text-ink3 mb-3">
               Tags are optional; an email can have multiple tags. Add a description so the AI knows when to apply this tag.
             </p>
-            <div className="p-4 rounded-xl border border-[var(--border)] bg-slate-50 dark:bg-slate-800/50 space-y-3">
+            <div className="p-4 rounded-xl border border-line bg-hover space-y-3">
               <input
                 type="text"
                 value={newTagName}
                 onChange={(e) => setNewTagName(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && addTag()}
                 placeholder="Tag name"
-                className="w-full px-3 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none"
+                className="w-full px-3 py-1.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none"
               />
               <textarea
                 value={newTagDescription}
                 onChange={(e) => setNewTagDescription(e.target.value)}
                 placeholder="Describe when this tag should be applied… (e.g. emails from my bank or about invoices and payments)"
                 rows={2}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none resize-none"
+                className="w-full px-3 py-2 rounded-lg border border-line bg-transparent text-sm focus:outline-none resize-none"
               />
               <div>
-                <label className="text-xs text-[var(--muted)] block mb-1.5">Color</label>
+                <label className="text-xs text-ink3 block mb-1.5">Color</label>
                 <div className="flex flex-wrap gap-2">
                   {PRESET_COLORS.map((c) => (
                     <button
@@ -491,7 +478,7 @@ export default function CategoriesView() {
                       type="button"
                       onClick={() => setNewTagColor(c.hex)}
                       title={c.name}
-                      className={`w-6 h-6 rounded-full transition-all ${newTagColor === c.hex ? "ring-2 ring-offset-2 ring-[var(--accent)] scale-110" : "hover:scale-110"}`}
+                      className={`w-6 h-6 rounded-full transition-all ${newTagColor === c.hex ? "ring-2 ring-offset-2 ring-wax scale-110" : "hover:scale-110"}`}
                       style={{ backgroundColor: c.hex }}
                     />
                   ))}
@@ -506,13 +493,13 @@ export default function CategoriesView() {
                     >
                       {newTagName}
                     </span>
-                    <span className="text-xs text-[var(--muted)]">preview</span>
+                    <span className="text-xs text-ink3">preview</span>
                   </div>
                 )}
                 <button
                   onClick={addTag}
                   disabled={!newTagName.trim()}
-                  className="ml-auto px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                  className="ml-auto px-4 py-1.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-50"
                 >
                   Create Tag
                 </button>
@@ -523,14 +510,14 @@ export default function CategoriesView() {
           {/* Tags list */}
           {tags.length > 0 && (
             <div>
-              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2">
+              <h3 className="text-sm font-semibold text-ink mb-2">
                 Your Tags
               </h3>
               <div className="space-y-2">
                 {tags.map((tag) => (
                   <div
                     key={tag.id}
-                    className="flex items-start gap-3 p-3 rounded-xl border border-[var(--border)] group"
+                    className="flex items-start gap-3 p-3 rounded-xl border border-line group"
                   >
                     <div
                       className="w-3 h-3 rounded-full shrink-0 mt-1"
@@ -538,29 +525,24 @@ export default function CategoriesView() {
                     />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-slate-900 dark:text-white">
+                        <span className="text-sm font-medium text-ink">
                           {tag.display_name}
                         </span>
-                        <span className="text-xs text-[var(--muted)] font-mono">
+                        <span className="text-xs text-ink3 font-mono">
                           {tag.slug}
                         </span>
                       </div>
                       {tag.description && (
-                        <p className="text-xs text-[var(--muted)] mt-0.5 truncate">
+                        <p className="text-xs text-ink3 mt-0.5 truncate">
                           {tag.description}
                         </p>
                       )}
                     </div>
                     <button
                       onClick={() => deleteTag(tag.id)}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 transition-opacity shrink-0"
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-danger-soft text-danger transition-opacity shrink-0"
                     >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{ fontSize: "18px" }}
-                      >
-                        delete
-                      </span>
+                      <Icon name="delete" size={18} />
                     </button>
                   </div>
                 ))}
@@ -569,13 +551,8 @@ export default function CategoriesView() {
           )}
 
           {tags.length === 0 && (
-            <div className="text-center py-8 text-[var(--muted)]">
-              <span
-                className="material-symbols-outlined mb-2"
-                style={{ fontSize: "40px" }}
-              >
-                label
-              </span>
+            <div className="text-center py-8 text-ink3">
+              <Icon name="label" size={40} className="mb-2" />
               <p className="text-sm">No tags yet. Create one above.</p>
             </div>
           )}

@@ -1,5 +1,6 @@
 // v3
 import { useState, useEffect, useCallback, useRef } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 
@@ -50,33 +51,28 @@ export default function ScheduledView() {
   };
 
   const statusColors: Record<string, string> = {
-    pending: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-    sent: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
-    failed: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-    cancelled: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
+    pending: "bg-field text-ink2",
+    sent: "bg-ok-soft text-ok",
+    failed: "bg-danger-soft text-danger",
+    cancelled: "bg-field text-ink2",
   };
 
   return (
     <div className="p-6">
-      <h1 className="text-xl font-bold text-slate-900 dark:text-white mb-4">
+      <h1 className="text-xl font-bold text-ink mb-4">
         Scheduled Emails
       </h1>
       {error && (
-        <div className="mb-4 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm flex items-center gap-2">
-          <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>error</span>
+        <div className="mb-4 px-3 py-2 rounded-lg bg-danger-soft border border-danger-line text-danger text-sm flex items-center gap-2">
+          <Icon name="error" size={16} />
           {error}
         </div>
       )}
       {loading ? (
-        <p className="text-sm text-[var(--muted)]">Loading…</p>
+        <p className="text-sm text-ink3">Loading…</p>
       ) : scheduled.length === 0 ? (
-        <div className="text-center py-12 text-[var(--muted)]">
-          <span
-            className="material-symbols-outlined mb-2"
-            style={{ fontSize: "48px" }}
-          >
-            schedule_send
-          </span>
+        <div className="text-center py-12 text-ink3">
+          <Icon name="schedule_send" size={48} className="mb-2" />
           <p className="text-sm">No scheduled emails.</p>
         </div>
       ) : (
@@ -89,13 +85,13 @@ export default function ScheduledView() {
                   openCompose(undefined, { _scheduledId: s.id, ...s });
                 }
               }}
-              className={`p-4 rounded-xl border border-[var(--border)] flex items-center gap-3 ${s.status === "pending" ? "cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" : ""}`}
+              className={`p-4 rounded-xl border border-line flex items-center gap-3 ${s.status === "pending" ? "cursor-pointer hover:bg-hover" : ""}`}
             >
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                <p className="text-sm font-medium text-ink truncate">
                   {s.subject}
                 </p>
-                <p className="text-xs text-[var(--muted)]">
+                <p className="text-xs text-ink3">
                   To: {s.to_addresses?.join(", ")} · Sends:{" "}
                   {new Date(s.send_at).toLocaleString()}
                 </p>
@@ -109,17 +105,17 @@ export default function ScheduledView() {
                 <>
                   <button
                     onClick={(e) => { e.stopPropagation(); openCompose(undefined, { _scheduledId: s.id, ...s }); }}
-                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-xs font-medium"
+                    className="flex items-center gap-1 px-2 py-1 rounded-lg bg-field text-ink2 hover:bg-field text-xs font-medium"
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>edit</span>
+                    <Icon name="edit" size={14} />
                     Edit
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); cancelScheduled(s.id); }}
-                    className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500"
+                    className="p-1.5 rounded-lg hover:bg-danger-soft text-danger"
                     title="Cancel"
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: "18px" }}>close</span>
+                    <Icon name="close" size={18} />
                   </button>
                 </>
               )}

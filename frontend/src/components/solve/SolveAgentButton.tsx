@@ -1,5 +1,6 @@
 
 import { useApp } from "../AppShell";
+import Icon from "@/components/Icon";
 
 interface SolveAgentButtonProps {
   disabled?: boolean;
@@ -51,14 +52,9 @@ export default function SolveAgentButton({
       onClick={handleClick}
       disabled={disabled}
       title={label}
-      className={`group relative inline-flex items-center gap-2 rounded-full font-semibold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-40 disabled:hover:bg-emerald-600 transition-colors cursor-pointer shadow-[0_2px_8px_-2px_rgba(5,150,105,0.45)] ${sizeClasses}`}
+      className={`group relative inline-flex items-center gap-2 rounded-full font-semibold text-white bg-ok hover:bg-ok disabled:opacity-40 disabled:hover:bg-ok transition-colors cursor-pointer shadow-[0_2px_8px_-2px_rgba(5,150,105,0.45)] ${sizeClasses}`}
     >
-      <span
-        className="material-symbols-outlined"
-        style={{ fontSize: size === "sm" ? "14px" : "16px" }}
-      >
-        {icon}
-      </span>
+      <Icon name={icon} size={size === "sm" ? "14px" : "16px"} />
       <span className="tracking-tight">{label}</span>
       {busy && (
         <span className="solve-dot-wave text-white/90 inline-flex">

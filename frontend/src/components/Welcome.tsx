@@ -79,7 +79,7 @@ export default function Welcome({ error }: { session?: Session; error?: string }
 
   return (
     <div className={dark ? "dark" : ""}>
-      <div className="ob flex min-h-screen flex-col bg-[var(--background)] text-[var(--foreground)] md:flex-row">
+      <div className="ob flex min-h-screen flex-col bg-canvas text-ink md:flex-row">
         {/* Rail */}
         <aside className="ob-rail relative flex shrink-0 flex-col gap-8 px-5 pb-5 pt-5 md:sticky md:top-0 md:h-screen md:w-[360px] md:gap-12 md:px-10 md:pb-10 md:pt-10 lg:w-[400px]">
           <div className="flex items-center gap-3">
@@ -151,7 +151,7 @@ export default function Welcome({ error }: { session?: Session; error?: string }
             {failure ? (
               <ErrorScreen message={failure} />
             ) : !state || step === null ? (
-              <p className="flex items-center gap-2 text-sm text-[var(--muted)]">
+              <p className="flex items-center gap-2 text-sm text-ink3">
                 <Spinner /> Loading
               </p>
             ) : step === 0 ? (
@@ -171,17 +171,17 @@ export default function Welcome({ error }: { session?: Session; error?: string }
 function Heading({ title, children }: { title: string; children: ReactNode }) {
   return (
     <header className="mb-8 space-y-3">
-      <h1 className="text-balance text-[28px] font-semibold leading-[1.15] tracking-[-0.02em] text-[var(--foreground)] sm:text-[32px]">{title}</h1>
-      <p className="max-w-[60ch] text-[15px] leading-relaxed text-[var(--muted)]">{children}</p>
+      <h1 className="text-balance text-[28px] font-semibold leading-[1.15] tracking-[-0.02em] text-ink sm:text-[32px]">{title}</h1>
+      <p className="max-w-[60ch] text-[15px] leading-relaxed text-ink3">{children}</p>
     </header>
   );
 }
 
 function Footer({ onBack, children }: { onBack?: () => void; children?: ReactNode }) {
   return (
-    <div className="mt-10 flex items-center justify-between gap-3 border-t border-[var(--border)] pt-6">
+    <div className="mt-10 flex items-center justify-between gap-3 border-t border-line pt-6">
       {onBack ? (
-        <button type="button" onClick={onBack} className="inline-flex h-10 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-[var(--muted)] transition-colors hover:text-[var(--foreground)]">
+        <button type="button" onClick={onBack} className="inline-flex h-10 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-ink3 transition-colors hover:text-ink">
           <Icon name="arrow_back" size={18} /> Back
         </button>
       ) : (
@@ -250,19 +250,19 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
   };
 
   const checklist = (
-    <ol className="space-y-0 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+    <ol className="space-y-0 overflow-hidden rounded-xl border border-line bg-raised">
       {GOOGLE_STEPS.map((s, i) => (
-        <li key={s.title} className={`flex items-start gap-4 px-5 py-4 ${i ? "border-t border-[var(--border)]" : ""}`}>
-          <span className="mt-px grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--surface-2)] text-[12px] font-semibold tabular-nums text-[var(--foreground)]">{i + 1}</span>
+        <li key={s.title} className={`flex items-start gap-4 px-5 py-4 ${i ? "border-t border-line" : ""}`}>
+          <span className="mt-px grid h-6 w-6 shrink-0 place-items-center rounded-full bg-field text-[12px] font-semibold tabular-nums text-ink">{i + 1}</span>
           <div className="min-w-0 flex-1">
-            <p className="text-[14.5px] font-medium leading-snug text-[var(--foreground)]">{s.title}</p>
-            <p className="mt-0.5 text-[13px] leading-relaxed text-[var(--muted)]">{s.detail}</p>
+            <p className="text-[14.5px] font-medium leading-snug text-ink">{s.title}</p>
+            <p className="mt-0.5 text-[13px] leading-relaxed text-ink3">{s.detail}</p>
           </div>
           <a
             href={s.href}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-[var(--border)] px-2.5 text-[13px] font-medium text-[var(--foreground)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)]"
+            className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-line px-2.5 text-[13px] font-medium text-ink transition-colors hover:border-wax hover:text-wax"
           >
             {s.action}
             <Icon name="arrow_outward" size={15} />
@@ -279,19 +279,19 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
       </Heading>
 
       {!showSetup ? (
-        <div className="flex items-start gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-5">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--accent-light)] text-[var(--accent)]">
+        <div className="flex items-start gap-4 rounded-xl border border-line bg-raised p-5">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-wax-soft text-wax">
             <Icon name="check" size={20} />
           </span>
           <div className="min-w-0 flex-1 space-y-1">
-            <p className="text-[15px] font-semibold text-[var(--foreground)]">Google client saved</p>
-            <p className="truncate font-mono text-[12.5px] text-[var(--muted)]" title={state.google.clientId!}>
+            <p className="text-[15px] font-semibold text-ink">Google client saved</p>
+            <p className="truncate font-mono text-[12.5px] text-ink3" title={state.google.clientId!}>
               {state.google.clientId}
             </p>
-            <p className="text-[13px] text-[var(--muted)]">The secret is in your Keychain.</p>
-            {warning && <p className="pt-1 text-[13px] text-[var(--warning)]">{warning}</p>}
+            <p className="text-[13px] text-ink3">The secret is in your Keychain.</p>
+            {warning && <p className="pt-1 text-[13px] text-warn">{warning}</p>}
           </div>
-          <button type="button" onClick={() => setReplacing(true)} className="shrink-0 text-[13px] font-medium text-[var(--accent)] underline-offset-2 hover:underline">
+          <button type="button" onClick={() => setReplacing(true)} className="shrink-0 text-[13px] font-medium text-wax underline-offset-2 hover:underline">
             Replace
           </button>
         </div>
@@ -300,20 +300,20 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
           {!found && checklist}
 
           {found ? (
-            <div className="space-y-4 rounded-xl border border-[var(--accent)] bg-[var(--accent-light)] p-5">
+            <div className="space-y-4 rounded-xl border border-wax bg-wax-soft p-5">
               <div className="flex items-start gap-3">
-                <Icon name="description" size={22} className="mt-px text-[var(--accent)]" />
+                <Icon name="description" size={22} className="mt-px text-wax" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-[15px] font-semibold text-[var(--foreground)]">Found your client file</p>
-                  <p className="mt-0.5 truncate font-mono text-[12.5px] text-[var(--muted)]" title={found.path}>
+                  <p className="text-[15px] font-semibold text-ink">Found your client file</p>
+                  <p className="mt-0.5 truncate font-mono text-[12.5px] text-ink3" title={found.path}>
                     {found.folder}/{found.name}
                   </p>
-                  <p className="text-[13px] text-[var(--muted)]">Saved {ago(found.modified)}</p>
+                  <p className="text-[13px] text-ink3">Saved {ago(found.modified)}</p>
                 </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-[var(--foreground)]">
-                  <input type="checkbox" checked={trash} onChange={(e) => setTrash(e.target.checked)} className="h-4 w-4 accent-[var(--accent)]" />
+                <label className="inline-flex cursor-pointer items-center gap-2 text-[13px] text-ink">
+                  <input type="checkbox" checked={trash} onChange={(e) => setTrash(e.target.checked)} className="h-4 w-4 accent-wax" />
                   Move it to the Trash once saved
                 </label>
                 <button type="button" className={ui.btnPrimary} disabled={busy} onClick={() => save({ path: found.path, trash })}>
@@ -336,22 +336,22 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
               readFile(e.dataTransfer.files[0]);
             }}
             className={`flex flex-col items-center gap-3 rounded-xl border-2 border-dashed px-6 text-center transition-colors ${found ? "py-6" : "py-10"} ${
-              dragging ? "border-[var(--accent)] bg-[var(--accent-light)]" : "border-[var(--border)]"
+              dragging ? "border-wax bg-wax-soft" : "border-line"
             }`}
           >
             {!found && (
-              <span className="grid h-11 w-11 place-items-center rounded-full bg-[var(--surface-2)] text-[var(--muted)]">
+              <span className="grid h-11 w-11 place-items-center rounded-full bg-field text-ink3">
                 {busy ? <Spinner size={20} /> : <Icon name="upload_file" size={22} />}
               </span>
             )}
-            <p className="text-[14px] text-[var(--foreground)]">
+            <p className="text-[14px] text-ink">
               {found ? "A different file? " : "Drop the downloaded client_secret file here, or "}
-              <button type="button" onClick={() => fileInput.current?.click()} className="font-medium text-[var(--accent)] underline-offset-2 hover:underline">
+              <button type="button" onClick={() => fileInput.current?.click()} className="font-medium text-wax underline-offset-2 hover:underline">
                 choose it
               </button>
             </p>
             {!found && (
-              <p className="flex items-center gap-1.5 text-[13px] text-[var(--muted)]">
+              <p className="flex items-center gap-1.5 text-[13px] text-ink3">
                 <Spinner size={14} /> Watching Downloads, Desktop and Documents for it
               </p>
             )}
@@ -359,7 +359,7 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
           </div>
           {found && (
             <details className="group">
-              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] font-medium text-[var(--muted)] hover:text-[var(--foreground)]">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 text-[13px] font-medium text-ink3 hover:text-ink">
                 <Icon name="chevron_right" size={18} className="transition-transform duration-200 group-open:rotate-90" />
                 How to make a new client
               </summary>
@@ -367,7 +367,7 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
             </details>
           )}
           {configured && (
-            <button type="button" onClick={() => setReplacing(false)} className="text-[13px] font-medium text-[var(--muted)] hover:text-[var(--foreground)]">
+            <button type="button" onClick={() => setReplacing(false)} className="text-[13px] font-medium text-ink3 hover:text-ink">
               Keep the current client
             </button>
           )}
@@ -436,22 +436,22 @@ function GmailStep({ state, goTo }: { state: SetupState; goTo: (i: number) => vo
         Tabellar fetches your recent mail, sorts it and writes your first briefing. Expect a minute or two{state.model?.format === "ollama" ? ", longer with a model on this Mac" : ""}.
       </Heading>
 
-      <dl className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
+      <dl className="overflow-hidden rounded-xl border border-line bg-raised">
         {rows.map((r, i) => (
-          <div key={r.label} className={`flex items-center gap-4 px-5 py-3.5 ${i ? "border-t border-[var(--border)]" : ""}`}>
-            <Icon name={r.ok ? "check_circle" : "radio_button_unchecked"} size={20} className={r.ok ? "text-[var(--accent)]" : "text-[var(--muted)]"} />
-            <dt className="w-28 shrink-0 text-[13px] text-[var(--muted)]">{r.label}</dt>
-            <dd className="min-w-0 flex-1 truncate text-[14px] text-[var(--foreground)]">{r.value}</dd>
-            <button type="button" onClick={() => goTo(r.step)} className="shrink-0 text-[13px] font-medium text-[var(--accent)] underline-offset-2 hover:underline">
+          <div key={r.label} className={`flex items-center gap-4 px-5 py-3.5 ${i ? "border-t border-line" : ""}`}>
+            <Icon name={r.ok ? "check_circle" : "radio_button_unchecked"} size={20} className={r.ok ? "text-wax" : "text-ink3"} />
+            <dt className="w-28 shrink-0 text-[13px] text-ink3">{r.label}</dt>
+            <dd className="min-w-0 flex-1 truncate text-[14px] text-ink">{r.value}</dd>
+            <button type="button" onClick={() => goTo(r.step)} className="shrink-0 text-[13px] font-medium text-wax underline-offset-2 hover:underline">
               Change
             </button>
           </div>
         ))}
       </dl>
 
-      <div className="mt-6 flex items-start gap-3 rounded-xl bg-[var(--surface-2)] px-5 py-4">
-        <Icon name="info" size={20} className="mt-px text-[var(--muted)]" />
-        <p className="text-[13.5px] leading-relaxed text-[var(--foreground)]">
+      <div className="mt-6 flex items-start gap-3 rounded-xl bg-field px-5 py-4">
+        <Icon name="info" size={20} className="mt-px text-ink3" />
+        <p className="text-[13.5px] leading-relaxed text-ink">
           Google will say it hasn't verified the app. That is expected, since the client is your own. Choose <b className="font-semibold">Advanced</b>, then{" "}
           <b className="font-semibold">Go to Tabellar</b>, and allow access to Gmail and Calendar.
         </p>
@@ -460,7 +460,7 @@ function GmailStep({ state, goTo }: { state: SetupState; goTo: (i: number) => vo
       <a
         href="/oauth/start"
         onClick={() => setGoing(true)}
-        className="mt-8 flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] text-[15px] font-semibold text-[var(--foreground)] shadow-[0_1px_2px_rgba(16,24,40,0.06),0_8px_24px_-12px_rgba(16,24,40,0.25)] transition-[box-shadow,transform] hover:shadow-[0_2px_4px_rgba(16,24,40,0.08),0_12px_28px_-12px_rgba(16,24,40,0.35)] active:translate-y-px"
+        className="mt-8 flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-line bg-raised text-[15px] font-semibold text-ink shadow-[0_1px_2px_rgba(16,24,40,0.06),0_8px_24px_-12px_rgba(16,24,40,0.25)] transition-[box-shadow,transform] hover:shadow-[0_2px_4px_rgba(16,24,40,0.08),0_12px_28px_-12px_rgba(16,24,40,0.35)] active:translate-y-px"
       >
         {going ? <Spinner size={18} /> : <GoogleMark />}
         Continue with Google
@@ -475,7 +475,7 @@ function ErrorScreen({ message }: { message: string }) {
   return (
     <>
       <Heading title="Tabellar isn't answering">
-        The window couldn't reach the Tabellar server on this Mac. Make sure <code className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 font-mono text-[13px]">tabellar start</code> is still running in
+        The window couldn't reach the Tabellar server on this Mac. Make sure <code className="rounded bg-field px-1.5 py-0.5 font-mono text-[13px]">tabellar start</code> is still running in
         Terminal, then try again.
       </Heading>
       <ErrorLine text={message} />

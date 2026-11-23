@@ -7,8 +7,8 @@ import {
   useEffect,
   useRef,
 } from "react";
+import Icon from "@/components/Icon";
 import Sidebar from "./Sidebar";
-import TopBar from "./TopBar";
 import ComposeModal from "./ComposeModal";
 import AssistantPanel from "./AssistantPanel";
 import { ToastContainer, type ToastItem } from "./Toast";
@@ -18,6 +18,7 @@ import { GO_TO_VIEWS, isTypingTarget } from "@/lib/shortcuts";
 import type { User } from "@/lib/db";
 import { createClient } from "@/lib/db";
 import { useLiveUpdates, type LiveChangeCounters } from "@/lib/useLiveUpdates";
+import { useOverview, type Overview } from "@/lib/outcomes";
 import {
   startAgent as apiStartAgent,
   stepAgent as apiStepAgent,
@@ -126,6 +127,9 @@ export type AppContextType = {
   requestBriefingRegeneration: (scope?: string) => void;
   // Assistant panel open state (used by ComposeModal to shift position)
   assistantOpen: boolean;
+  setAssistantOpen: (v: boolean) => void;
+  // What Tabellar made of the mail: outcomes per email, counts, outgoing replies, engine state
+  mail: Overview;
   // Solve-Everything agent session (survives navigation)
   agentSession: AgentSessionState | null;
   agentTurns: AgentTurnRow[];
@@ -359,6 +363,12 @@ export default function AppShell({
     },
     [],
   );
+  const reportError = useCallback((m: string) => addToast("error", m), [addToast]);
+  const mail = useOverview(user.id, liveChanges, reportError);
+  // The theme class sits on the root element so menus and the page ground follow it too.
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }, [theme]);
   const notifyBriefingUpdated = useCallback(
     () => setBriefingVersion((v) => v + 1),
     [],
@@ -912,6 +922,8 @@ export default function AppShell({
         briefingRegenerating,
         requestBriefingRegeneration,
         assistantOpen,
+        setAssistantOpen,
+        mail,
         agentSession,
         agentTurns,
         agentWorkspaceOpen,
@@ -928,21 +940,14 @@ export default function AppShell({
         setPendingMeetingSchedule,
       }}
     >
-      <div className={`${theme} h-screen flex flex-col overflow-hidden`}>
-        <TopBar />
-        <div
-          className="flex flex-1 overflow-hidden"
-          style={{
-            marginRight: assistantOpen ? "380px" : "0",
-            transition: "margin-right 0.2s ease",
-          }}
-        >
-          <Sidebar />
-          <main className="flex-1 overflow-auto bg-[var(--background)]">
-            {children}
-          </main>
-        </div>
-
+      <div
+        className="flex h-screen overflow-hidden bg-canvas text-ink"
+        style={{ marginRight: assistantOpen ? "380px" : "0", transition: "margin-right 0.2s ease" }}
+      >
+        <Sidebar />
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
+      </div>
+      <div>
         {composeOpen && !composeMinimized && (
           <ComposeModal
             replyTo={composeReplyTo}
@@ -958,50 +963,18 @@ export default function AppShell({
         {composeOpen && composeMinimized && (
           <button
             onClick={() => setComposeMinimized(false)}
-            className="fixed bottom-0 z-50 flex items-center gap-2 px-4 py-2.5 rounded-t-xl bg-[var(--accent)] text-white text-sm font-medium shadow-lg hover:opacity-90 transition-opacity"
+            className="fixed bottom-0 z-50 flex h-9 items-center gap-2 rounded-t-[10px] bg-raised px-3.5 text-[13px] font-medium text-ink shadow-pop"
             style={{
               right: assistantOpen ? "388px" : "16px",
               transition: "right 0.2s ease",
             }}
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: "18px" }}
-            >
-              edit
-            </span>
-            {composeReplyTo ? "Reply" : "New Email"}
-            <span
-              onClick={(e) => {
+            <Icon name="edit" size={18} />
+            {composeReplyTo ? "Reply" : "New message"}
+            <Icon name="close" size={16} className="ml-2 cursor-pointer text-ink3 hover:text-ink" onClick={(e) => {
                 e.stopPropagation();
                 setComposeOpen(false);
-              }}
-              className="material-symbols-outlined ml-2 hover:text-white/70 cursor-pointer"
-              style={{ fontSize: "16px" }}
-            >
-              close
-            </span>
-          </button>
-        )}
-
-        {/* Floating assistant button */}
-        {!assistantOpen && (
-          <button
-            onClick={() => setAssistantOpen(true)}
-            className="fixed bottom-16 z-40 rounded-full bg-[var(--accent)] text-white shadow-lg hover:opacity-90 active:scale-95 transition-all flex items-center justify-center"
-            title="Open Assistant"
-            style={{
-              width: "52px",
-              height: "52px",
-              right: "32px",
-            }}
-          >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: "24px" }}
-            >
-              assistant
-            </span>
+              }} />
           </button>
         )}
 

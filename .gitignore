@@ -71,3 +71,6 @@ client_secret*.json
 frontend/.impeccable/mocks/
 frontend/.impeccable/review/
 frontend/.impeccable/questions/
+
+# Design working notes (local only)
+frontend/.impeccable/surfaces/

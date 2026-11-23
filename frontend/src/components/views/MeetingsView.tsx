@@ -1,5 +1,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import DateTimePicker from "../DateTimePicker";
@@ -33,9 +34,9 @@ type SchedulerStep = "form" | "slots";
 type SchedulingMode = "find" | "specific";
 
 const statusColors: Record<string, string> = {
-  proposed: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-  confirmed: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
-  cancelled: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
+  proposed: "bg-field text-ink2",
+  confirmed: "bg-ok-soft text-ok",
+  cancelled: "bg-field text-ink2",
 };
 
 const statusIcons: Record<string, string> = {
@@ -549,82 +550,82 @@ export default function MeetingsView() {
   return (
     <div className="h-full flex overflow-hidden">
       {/* ── Left pane: suggestions + meetings list ── */}
-      <div className={`flex flex-col border-r border-[var(--border)] flex-shrink-0 w-80 lg:w-96 ${(selectedMeeting || showScheduler) ? "hidden md:flex" : "flex"}`}>
+      <div className={`flex flex-col border-r border-line flex-shrink-0 w-80 lg:w-96 ${(selectedMeeting || showScheduler) ? "hidden md:flex" : "flex"}`}>
         {/* Header */}
-        <div className="px-3 py-2.5 border-b border-[var(--border)] flex items-center justify-between flex-shrink-0">
-          <h1 className="text-base font-bold text-slate-900 dark:text-white">Meetings</h1>
+        <div className="px-3 py-2.5 border-b border-line flex items-center justify-between flex-shrink-0">
+          <h1 className="text-base font-bold text-ink">Meetings</h1>
           <button
             onClick={() => { resetScheduler(); setShowScheduler(true); setSelectedMeeting(null); }}
-            className="flex items-center justify-center p-1.5 rounded-lg bg-[var(--accent)] text-white hover:opacity-90"
+            className="flex items-center justify-center p-1.5 rounded-lg bg-wax text-on-wax hover:opacity-90"
             title="New meeting"
           >
-            <span className="material-symbols-outlined" style={{ fontSize: "18px", lineHeight: 1 }}>add</span>
+            <Icon name="add" size={18} />
           </button>
         </div>
 
         <div className="flex-1 overflow-auto">
           {/* ── Suggested from emails ── */}
-          <div className="border-b border-[var(--border)]">
-            <div className="px-3 py-2 flex items-center gap-1.5 bg-[var(--surface-2)]">
-              <span className="material-symbols-outlined text-[var(--accent)]" style={{ fontSize: "14px" }}>auto_awesome</span>
-              <p className="text-xs font-semibold text-[var(--foreground)] uppercase tracking-wide">Suggested from emails</p>
+          <div className="border-b border-line">
+            <div className="px-3 py-2 flex items-center gap-1.5 bg-field">
+              <Icon name="auto_awesome" size={14} className="text-wax" />
+              <p className="text-xs font-semibold text-ink uppercase tracking-wide">Suggested from emails</p>
               {loadingSuggestions && (
-                <span className="ml-auto text-[10px] text-[var(--muted)] animate-pulse">Scanning…</span>
+                <span className="ml-auto text-[10px] text-ink3 animate-pulse">Scanning…</span>
               )}
             </div>
 
             {loadingSuggestions ? (
               <div className="space-y-0">
                 {[1, 2].map((i) => (
-                  <div key={i} className="px-3 py-3 border-b border-[var(--border)] animate-pulse">
-                    <div className="h-3 bg-slate-200 dark:bg-slate-700 rounded w-3/4 mb-2" />
-                    <div className="h-2.5 bg-slate-100 dark:bg-slate-800 rounded w-1/2" />
+                  <div key={i} className="px-3 py-3 border-b border-line animate-pulse">
+                    <div className="h-3 bg-sel rounded w-3/4 mb-2" />
+                    <div className="h-2.5 bg-field rounded w-1/2" />
                   </div>
                 ))}
               </div>
             ) : suggestedMeetings.length === 0 ? (
-              <div className="px-3 py-4 text-center text-xs text-[var(--muted)]">
+              <div className="px-3 py-4 text-center text-xs text-ink3">
                 No meeting requests detected in recent emails
               </div>
             ) : (
               suggestedMeetings.map((s, i) => (
-                <div key={i} className="px-3 py-2.5 border-b border-[var(--border)] last:border-0 hover:bg-[var(--surface-2)] transition-colors">
+                <div key={i} className="px-3 py-2.5 border-b border-line last:border-0 hover:bg-field transition-colors">
                   <div className="flex items-start justify-between gap-1">
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{s.title}</p>
-                      <p className="text-xs text-[var(--muted)] truncate mt-0.5">{s.email_sender}</p>
+                      <p className="text-sm font-medium text-ink truncate">{s.title}</p>
+                      <p className="text-xs text-ink3 truncate mt-0.5">{s.email_sender}</p>
                     </div>
                     <button
                       onClick={() => setSuggestedMeetings((prev) => prev.filter((_, idx) => idx !== i))}
-                      className="p-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-[var(--muted)] hover:text-slate-600 dark:hover:text-slate-300 flex-shrink-0 mt-0.5"
+                      className="p-0.5 rounded hover:bg-sel text-ink3 hover:text-ink2 flex-shrink-0 mt-0.5"
                       title="Dismiss"
                     >
-                      <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>close</span>
+                      <Icon name="close" size={14} />
                     </button>
                   </div>
                   {s.dateTime && (
-                    <p className="text-xs text-[var(--accent)] mt-0.5 flex items-center gap-1">
-                      <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>schedule</span>
+                    <p className="text-xs text-wax mt-0.5 flex items-center gap-1">
+                      <Icon name="schedule" size={12} />
                       {new Date(s.dateTime).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                     </p>
                   )}
                   {!s.dateTime && s.suggested_time && (
-                    <p className="text-xs text-[var(--accent)] mt-0.5 flex items-center gap-1">
-                      <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>schedule</span>
+                    <p className="text-xs text-wax mt-0.5 flex items-center gap-1">
+                      <Icon name="schedule" size={12} />
                       {s.suggested_time}
                     </p>
                   )}
                   {s.location && (
-                    <p className="text-xs text-[var(--muted)] mt-0.5 flex items-center gap-1 truncate">
-                      <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>location_on</span>
+                    <p className="text-xs text-ink3 mt-0.5 flex items-center gap-1 truncate">
+                      <Icon name="location_on" size={12} />
                       <span className="truncate">{s.location}</span>
                     </p>
                   )}
                   <button
                     onClick={() => openSchedulerFromSuggestion(s)}
-                    className="mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--accent)] text-white text-xs font-medium hover:opacity-90"
+                    className="mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-wax text-on-wax text-xs font-medium hover:opacity-90"
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>calendar_add_on</span>
+                    <Icon name="calendar_add_on" size={13} />
                     {s.dateTime ? "Add to Calendar" : "Schedule"}
                   </button>
                 </div>
@@ -633,12 +634,12 @@ export default function MeetingsView() {
           </div>
 
           {/* ── Filter tabs ── */}
-          <div className="flex border-b border-[var(--border)] flex-shrink-0">
+          <div className="flex border-b border-line flex-shrink-0">
             {(["upcoming", "all", "past"] as const).map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
-                className={`flex-1 py-2 text-xs font-medium border-b-2 transition-colors capitalize ${filter === f ? "border-[var(--accent)] text-[var(--accent)]" : "border-transparent text-[var(--muted)]"}`}
+                className={`flex-1 py-2 text-xs font-medium border-b-2 transition-colors capitalize ${filter === f ? "border-wax text-wax" : "border-transparent text-ink3"}`}
               >
                 {f}
               </button>
@@ -648,11 +649,11 @@ export default function MeetingsView() {
           {/* ── Meeting list ── */}
           {loading ? (
             <div className="flex items-center justify-center h-32">
-              <div className="animate-pulse text-[var(--muted)] text-sm">Loading…</div>
+              <div className="animate-pulse text-ink3 text-sm">Loading…</div>
             </div>
           ) : meetings.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-36 text-[var(--muted)] px-4">
-              <span className="material-symbols-outlined mb-2" style={{ fontSize: "32px" }}>event</span>
+            <div className="flex flex-col items-center justify-center h-36 text-ink3 px-4">
+              <Icon name="event" size={32} className="mb-2" />
               <p className="text-xs text-center">
                 {filter === "upcoming" ? "No upcoming meetings." : "No meetings found."}
               </p>
@@ -662,17 +663,15 @@ export default function MeetingsView() {
               <button
                 key={m.id}
                 onClick={() => { setSelectedMeeting(m); setShowScheduler(false); }}
-                className={`w-full text-left px-3 py-2.5 border-b border-[var(--border)] hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${selectedMeeting?.id === m.id ? "bg-[var(--accent-light)] border-l-2 border-l-[var(--accent)]" : ""}`}
+                className={`w-full text-left px-3 py-2.5 border-b border-line hover:bg-hover transition-colors ${selectedMeeting?.id === m.id ? "bg-wax-soft border-l-2 border-l-wax" : ""}`}
               >
                 <div className="flex items-start gap-2">
-                  <span className={`material-symbols-outlined mt-0.5 shrink-0 ${m.status === "confirmed" ? "text-emerald-500" : m.status === "cancelled" ? "text-red-400" : "text-blue-500"}`} style={{ fontSize: "18px" }}>
-                    {statusIcons[m.status] || "event"}
-                  </span>
+                  <Icon name={statusIcons[m.status] || "event"} size={18} className={`mt-0.5 shrink-0 ${m.status === "confirmed" ? "text-ok" : m.status === "cancelled" ? "text-danger" : "text-ink2"}`} />
                   <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium truncate ${m.status === "cancelled" ? "line-through text-[var(--muted)]" : "text-slate-900 dark:text-white"}`}>
+                    <p className={`text-sm font-medium truncate ${m.status === "cancelled" ? "line-through text-ink3" : "text-ink"}`}>
                       {m.title}
                     </p>
-                    <p className="text-[11px] text-[var(--muted)] mt-0.5">
+                    <p className="text-[11px] text-ink3 mt-0.5">
                       {new Date(m.start_time).toLocaleDateString([], { month: "short", day: "numeric" })} · {new Date(m.start_time).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })}
                     </p>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${statusColors[m.status]}`}>{m.status}</span>
@@ -684,14 +683,14 @@ export default function MeetingsView() {
         </div>
 
         {/* Google Calendar link */}
-        <div className="px-3 py-2 border-t border-[var(--border)] flex-shrink-0">
+        <div className="px-3 py-2 border-t border-line flex-shrink-0">
           <a
             href="https://calendar.google.com"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center justify-center gap-1.5 text-xs text-[var(--accent)] hover:underline py-1"
+            className="flex items-center justify-center gap-1.5 text-xs text-wax hover:underline py-1"
           >
-            <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>open_in_new</span>
+            <Icon name="open_in_new" size={14} />
             Open Google Calendar
           </a>
         </div>
@@ -702,7 +701,7 @@ export default function MeetingsView() {
         {showScheduler ? (
           <div className="flex-1 overflow-auto">
             {/* Scheduler header */}
-            <div className="px-5 py-3 border-b border-[var(--border)] flex items-center gap-2 flex-shrink-0">
+            <div className="px-5 py-3 border-b border-line flex items-center gap-2 flex-shrink-0">
               <button
                 onClick={() => {
                   if (schedulerStep === "slots") {
@@ -712,23 +711,23 @@ export default function MeetingsView() {
                     resetScheduler();
                   }
                 }}
-                className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white"
+                className="p-1.5 rounded-lg hover:bg-field text-ink"
               >
-                <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>arrow_back</span>
+                <Icon name="arrow_back" size={20} />
               </button>
               <div>
-                <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                <h2 className="text-base font-bold text-ink">
                   {schedulerStep === "form" ? "Schedule a Meeting" : "Pick a Time"}
                 </h2>
                 {schedulerStep === "slots" && (
-                  <p className="text-xs text-[var(--muted)]">
+                  <p className="text-xs text-ink3">
                     {newTitle} · {durationLabel(newDuration)}
                     {newAttendees && ` · ${newAttendees.split(",").length} attendee${newAttendees.split(",").length > 1 ? "s" : ""}`}
                   </p>
                 )}
               </div>
               {schedulerStep === "slots" && currentSlots !== null && !isCurrentLoading && (
-                <span className="ml-auto text-xs text-[var(--muted)]">{currentSlots.length} slots available</span>
+                <span className="ml-auto text-xs text-ink3">{currentSlots.length} slots available</span>
               )}
             </div>
 
@@ -737,20 +736,20 @@ export default function MeetingsView() {
               <div className="p-5 max-w-lg mx-auto space-y-4">
                 {/* Title */}
                 <div>
-                  <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">Meeting Title</label>
+                  <label className="block text-xs font-medium text-ink3 mb-1.5">Meeting Title</label>
                   <input
                     type="text"
                     value={newTitle}
                     onChange={(e) => setNewTitle(e.target.value)}
                     placeholder="e.g. Product sync with Alex"
                     autoFocus
-                    className="w-full px-3 py-2.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 text-slate-900 dark:text-white"
+                    className="w-full px-3 py-2.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-wax/30 text-ink"
                   />
                 </div>
 
                 {/* Duration */}
                 <div>
-                  <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">Duration</label>
+                  <label className="block text-xs font-medium text-ink3 mb-1.5">Duration</label>
                   <div className="flex gap-2 flex-wrap">
                     {[
                       { label: "15 min", value: "15" },
@@ -763,7 +762,7 @@ export default function MeetingsView() {
                       <button
                         key={value}
                         onClick={() => setNewDuration(value)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${newDuration === value ? "bg-[var(--accent)] text-white border-[var(--accent)]" : "border-[var(--border)] text-slate-700 dark:text-slate-300 hover:border-[var(--accent)] hover:text-[var(--accent)]"}`}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${newDuration === value ? "bg-wax text-on-wax border-wax" : "border-line text-ink hover:border-wax hover:text-wax"}`}
                       >
                         {label}
                       </button>
@@ -773,7 +772,7 @@ export default function MeetingsView() {
 
                 {/* Attendees */}
                 <div>
-                  <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">
+                  <label className="block text-xs font-medium text-ink3 mb-1.5">
                     Recipients
                   </label>
                   <EmailField
@@ -788,32 +787,32 @@ export default function MeetingsView() {
 
                 {/* Location */}
                 <div>
-                  <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">Location (optional)</label>
+                  <label className="block text-xs font-medium text-ink3 mb-1.5">Location (optional)</label>
                   <input
                     type="text"
                     value={newLocation}
                     onChange={(e) => setNewLocation(e.target.value)}
                     placeholder="Meeting link, room number, or address"
-                    className="w-full px-3 py-2 text-sm border border-[var(--border)] rounded-lg bg-[var(--background)] text-[var(--foreground)] placeholder-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50"
+                    className="w-full px-3 py-2 text-sm border border-line rounded-lg bg-canvas text-ink placeholder-ink3 focus:outline-none focus:ring-2 focus:ring-wax/50"
                   />
                 </div>
 
                 {/* Time selection mode */}
                 <div>
-                  <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">Time</label>
-                  <div className="flex rounded-lg border border-[var(--border)] overflow-hidden mb-3">
+                  <label className="block text-xs font-medium text-ink3 mb-1.5">Time</label>
+                  <div className="flex rounded-lg border border-line overflow-hidden mb-3">
                     <button
                       onClick={() => setSchedulingMode("find")}
-                      className={`flex-1 py-2 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 ${schedulingMode === "find" ? "bg-[var(--accent)] text-white" : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"}`}
+                      className={`flex-1 py-2 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 ${schedulingMode === "find" ? "bg-wax text-on-wax" : "text-ink hover:bg-hover"}`}
                     >
-                      <span className="material-symbols-outlined" style={{ fontSize: "15px" }}>search</span>
+                      <Icon name="search" size={15} />
                       Find available
                     </button>
                     <button
                       onClick={() => setSchedulingMode("specific")}
-                      className={`flex-1 py-2 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 border-l border-[var(--border)] ${schedulingMode === "specific" ? "bg-[var(--accent)] text-white" : "text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"}`}
+                      className={`flex-1 py-2 text-sm font-medium transition-colors flex items-center justify-center gap-1.5 border-l border-line ${schedulingMode === "specific" ? "bg-wax text-on-wax" : "text-ink hover:bg-hover"}`}
                     >
-                      <span className="material-symbols-outlined" style={{ fontSize: "15px" }}>edit_calendar</span>
+                      <Icon name="edit_calendar" size={15} />
                       Pick specific
                     </button>
                   </div>
@@ -823,12 +822,12 @@ export default function MeetingsView() {
                       <button
                         onClick={startFindAvailable}
                         disabled={!newTitle.trim()}
-                        className="w-full px-4 py-2.5 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
+                        className="w-full px-4 py-2.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
                       >
-                        <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>calendar_month</span>
+                        <Icon name="calendar_month" size={16} />
                         Find Available Times
                       </button>
-                      <p className="text-xs text-[var(--muted)] text-center mt-1.5">
+                      <p className="text-xs text-ink3 text-center mt-1.5">
                         Based on your working hours and existing calendar events
                       </p>
                     </>
@@ -841,8 +840,8 @@ export default function MeetingsView() {
                         showWarning={isOutsideWorkingHours(specificDateTime, profile?.working_hours as WorkingHours)}
                       />
                       {isOutsideWorkingHours(specificDateTime, profile?.working_hours as WorkingHours) && (
-                        <p className="flex items-center gap-1 text-[11px] text-amber-500 mt-1.5 mb-2">
-                          <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>warning</span>
+                        <p className="flex items-center gap-1 text-[11px] text-warn mt-1.5 mb-2">
+                          <Icon name="warning" size={12} />
                           Outside your working hours
                         </p>
                       )}
@@ -850,16 +849,16 @@ export default function MeetingsView() {
                       <button
                         onClick={createMeeting}
                         disabled={!newTitle.trim() || !specificDateTime || creating}
-                        className="w-full px-4 py-2.5 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
+                        className="w-full px-4 py-2.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
                       >
                         {creating ? (
                           <>
-                            <span className="material-symbols-outlined animate-spin" style={{ fontSize: "16px" }}>refresh</span>
+                            <Icon name="refresh" size={16} className="animate-spin" />
                             Creating…
                           </>
                         ) : (
                           <>
-                            <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>event_available</span>
+                            <Icon name="event_available" size={16} />
                             Schedule Meeting
                           </>
                         )}
@@ -876,41 +875,41 @@ export default function MeetingsView() {
                   <button
                     onClick={goPrevDay}
                     disabled={!hasPrev}
-                    className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 disabled:opacity-25"
+                    className="p-1.5 rounded-lg hover:bg-field text-ink2 disabled:opacity-25"
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>chevron_left</span>
+                    <Icon name="chevron_left" size={20} />
                   </button>
                   <div className="text-center">
-                    <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                    <p className="text-sm font-semibold text-ink">
                       {currentDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })}
                     </p>
                     {currentSlots !== null && !isCurrentLoading && (
-                      <p className="text-[10px] text-[var(--muted)] mt-0.5">
+                      <p className="text-[10px] text-ink3 mt-0.5">
                         {currentSlots.length === 0 ? "No availability" : `${currentSlots.length} slot${currentSlots.length !== 1 ? "s" : ""} available`}
                       </p>
                     )}
                   </div>
                   <button
                     onClick={goNextDay}
-                    className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300"
+                    className="p-1.5 rounded-lg hover:bg-field text-ink2"
                   >
-                    <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>chevron_right</span>
+                    <Icon name="chevron_right" size={20} />
                   </button>
                 </div>
 
                 {isCurrentLoading ? (
-                  <div className="flex flex-col items-center justify-center py-10 text-[var(--muted)]">
-                    <span className="material-symbols-outlined animate-spin mb-2" style={{ fontSize: "24px" }}>refresh</span>
+                  <div className="flex flex-col items-center justify-center py-10 text-ink3">
+                    <Icon name="refresh" size={24} className="animate-spin mb-2" />
                     <p className="text-sm">Checking calendar…</p>
                   </div>
                 ) : currentSlots === null ? (
-                  <div className="flex flex-col items-center justify-center py-10 text-[var(--muted)]">
-                    <span className="material-symbols-outlined animate-spin mb-2" style={{ fontSize: "24px" }}>refresh</span>
+                  <div className="flex flex-col items-center justify-center py-10 text-ink3">
+                    <Icon name="refresh" size={24} className="animate-spin mb-2" />
                     <p className="text-sm">Loading…</p>
                   </div>
                 ) : currentSlots.length === 0 ? (
-                  <div className="text-center py-10 text-[var(--muted)]">
-                    <span className="material-symbols-outlined mb-2" style={{ fontSize: "36px" }}>event_busy</span>
+                  <div className="text-center py-10 text-ink3">
+                    <Icon name="event_busy" size={36} className="mb-2" />
                     <p className="text-sm">No available times this day.</p>
                     <p className="text-xs mt-1">Try the next working day.</p>
                   </div>
@@ -918,7 +917,7 @@ export default function MeetingsView() {
                   <div className="space-y-1.5">
                     {Object.entries(currentHourGroups).map(([hourLabel, hourSlots]) => (
                       <div key={hourLabel} className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[10px] font-semibold text-[var(--muted)] w-12 shrink-0">{hourLabel}</span>
+                        <span className="text-[10px] font-semibold text-ink3 w-12 shrink-0">{hourLabel}</span>
                         {hourSlots.map((slot, i) => {
                           const isSelected = selectedSlot?.start === slot.start;
                           const mins = new Date(slot.start).getMinutes();
@@ -928,8 +927,8 @@ export default function MeetingsView() {
                               onClick={() => setSelectedSlot(slot)}
                               className={`px-2 py-1 rounded-md text-xs font-medium border transition-all ${
                                 isSelected
-                                  ? "bg-[var(--accent)] text-white border-[var(--accent)] shadow-sm scale-105"
-                                  : "border-[var(--border)] text-slate-700 dark:text-slate-300 hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                                  ? "bg-wax text-on-wax border-wax shadow-sm scale-105"
+                                  : "border-line text-ink hover:border-wax hover:text-wax"
                               }`}
                             >
                               {isSelected
@@ -944,12 +943,12 @@ export default function MeetingsView() {
                 )}
 
                 {selectedSlot && (
-                  <div className="mt-5 p-3 rounded-xl bg-[var(--accent-light)] border border-[var(--accent)]/20">
-                    <p className="text-xs font-medium text-[var(--accent)] mb-0.5">Selected time</p>
-                    <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                  <div className="mt-5 p-3 rounded-xl bg-wax-soft border border-wax/20">
+                    <p className="text-xs font-medium text-wax mb-0.5">Selected time</p>
+                    <p className="text-sm font-semibold text-ink">
                       {new Date(selectedSlot.start).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
                     </p>
-                    <p className="text-sm text-slate-700 dark:text-slate-300">
+                    <p className="text-sm text-ink">
                       {new Date(selectedSlot.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       {" "}-{" "}
                       {new Date(new Date(selectedSlot.start).getTime() + parseInt(newDuration) * 60000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
@@ -961,16 +960,16 @@ export default function MeetingsView() {
                 <button
                   onClick={createMeeting}
                   disabled={!selectedSlot || creating}
-                  className="mt-4 w-full px-4 py-2.5 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
+                  className="mt-4 w-full px-4 py-2.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
                 >
                   {creating ? (
                     <>
-                      <span className="material-symbols-outlined animate-spin" style={{ fontSize: "16px" }}>refresh</span>
+                      <Icon name="refresh" size={16} className="animate-spin" />
                       Creating…
                     </>
                   ) : (
                     <>
-                      <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>event_available</span>
+                      <Icon name="event_available" size={16} />
                       Schedule Meeting
                     </>
                   )}
@@ -985,24 +984,22 @@ export default function MeetingsView() {
             <div className="flex items-center gap-2 mb-4">
               <button
                 onClick={() => { setSelectedMeeting(null); setIsEditing(false); }}
-                className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                className="p-1.5 rounded-lg hover:bg-field text-ink"
               >
-                <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>arrow_back</span>
+                <Icon name="arrow_back" size={20} />
               </button>
-              <span className={`material-symbols-outlined ${selectedMeeting.status === "confirmed" ? "text-emerald-500" : selectedMeeting.status === "cancelled" ? "text-red-400" : "text-blue-500"}`} style={{ fontSize: "28px" }}>
-                {statusIcons[selectedMeeting.status]}
-              </span>
+              <Icon name={statusIcons[selectedMeeting.status]} size={28} className={`${selectedMeeting.status === "confirmed" ? "text-ok" : selectedMeeting.status === "cancelled" ? "text-danger" : "text-ink2"}`} />
               <div className="flex-1 min-w-0">
-                <h2 className="text-lg font-bold text-slate-900 dark:text-white truncate">{selectedMeeting.title}</h2>
+                <h2 className="text-lg font-bold text-ink truncate">{selectedMeeting.title}</h2>
                 <span className={`text-xs px-2 py-0.5 rounded font-medium ${statusColors[selectedMeeting.status]}`}>{selectedMeeting.status}</span>
               </div>
               {selectedMeeting.status !== "cancelled" && !isEditing && (
                 <button
                   onClick={() => openEdit(selectedMeeting)}
-                  className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400"
+                  className="p-1.5 rounded-lg hover:bg-field text-ink2"
                   title="Edit meeting"
                 >
-                  <span className="material-symbols-outlined" style={{ fontSize: "20px" }}>edit</span>
+                  <Icon name="edit" size={20} />
                 </button>
               )}
             </div>
@@ -1011,17 +1008,17 @@ export default function MeetingsView() {
               /* ── Edit form ── */
               <div className="space-y-4">
                 <div>
-                  <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">Title</label>
+                  <label className="block text-xs font-medium text-ink3 mb-1.5">Title</label>
                   <input
                     type="text"
                     value={editTitle}
                     onChange={(e) => setEditTitle(e.target.value)}
                     autoFocus
-                    className="w-full px-3 py-2.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 text-slate-900 dark:text-white"
+                    className="w-full px-3 py-2.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-wax/30 text-ink"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">Start time</label>
+                  <label className="block text-xs font-medium text-ink3 mb-1.5">Start time</label>
                   <DateTimePicker
                     value={editStartTime}
                     onChange={setEditStartTime}
@@ -1029,7 +1026,7 @@ export default function MeetingsView() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">Duration</label>
+                  <label className="block text-xs font-medium text-ink3 mb-1.5">Duration</label>
                   <div className="flex gap-2 flex-wrap">
                     {[
                       { label: "15 min", value: "15" },
@@ -1042,7 +1039,7 @@ export default function MeetingsView() {
                       <button
                         key={value}
                         onClick={() => setEditDuration(value)}
-                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${editDuration === value ? "bg-[var(--accent)] text-white border-[var(--accent)]" : "border-[var(--border)] text-slate-700 dark:text-slate-300 hover:border-[var(--accent)] hover:text-[var(--accent)]"}`}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors ${editDuration === value ? "bg-wax text-on-wax border-wax" : "border-line text-ink hover:border-wax hover:text-wax"}`}
                       >
                         {label}
                       </button>
@@ -1050,7 +1047,7 @@ export default function MeetingsView() {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">
+                  <label className="block text-xs font-medium text-ink3 mb-1.5">
                     Attendees
                   </label>
                   <EmailField
@@ -1063,8 +1060,8 @@ export default function MeetingsView() {
                   />
                 </div>
                 {selectedMeeting.calendar_event_id && (
-                  <p className="text-xs text-[var(--muted)] flex items-center gap-1">
-                    <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>info</span>
+                  <p className="text-xs text-ink3 flex items-center gap-1">
+                    <Icon name="info" size={13} />
                     Saving will update Google Calendar and notify all participants.
                   </p>
                 )}
@@ -1072,23 +1069,23 @@ export default function MeetingsView() {
                   <button
                     onClick={saveMeeting}
                     disabled={!editTitle.trim() || !editStartTime || saving}
-                    className="flex-1 px-4 py-2.5 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
+                    className="flex-1 px-4 py-2.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
                   >
                     {saving ? (
                       <>
-                        <span className="material-symbols-outlined animate-spin" style={{ fontSize: "16px" }}>refresh</span>
+                        <Icon name="refresh" size={16} className="animate-spin" />
                         Saving…
                       </>
                     ) : (
                       <>
-                        <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>save</span>
+                        <Icon name="save" size={16} />
                         Save changes
                       </>
                     )}
                   </button>
                   <button
                     onClick={() => setIsEditing(false)}
-                    className="px-4 py-2.5 rounded-lg border border-[var(--border)] text-sm text-[var(--foreground)] hover:bg-slate-50 dark:hover:bg-slate-800"
+                    className="px-4 py-2.5 rounded-lg border border-line text-sm text-ink hover:bg-hover"
                   >
                     Cancel
                   </button>
@@ -1097,25 +1094,25 @@ export default function MeetingsView() {
             ) : (
               <>
                 <div className="space-y-3 mb-5">
-                  <div className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-                    <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "18px" }}>schedule</span>
+                  <div className="flex items-center gap-2 text-sm text-ink">
+                    <Icon name="schedule" size={18} className="text-ink3" />
                     {formatMeetingTime(selectedMeeting.start_time, selectedMeeting.end_time)}
                   </div>
                   {selectedMeeting.location && (
-                    <div className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-                      <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "18px" }}>location_on</span>
+                    <div className="flex items-center gap-2 text-sm text-ink">
+                      <Icon name="location_on" size={18} className="text-ink3" />
                       {selectedMeeting.location}
                     </div>
                   )}
                   {selectedMeeting.attendees?.length > 0 && (
-                    <div className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-300">
-                      <span className="material-symbols-outlined text-[var(--muted)] mt-0.5" style={{ fontSize: "18px" }}>group</span>
+                    <div className="flex items-start gap-2 text-sm text-ink">
+                      <Icon name="group" size={18} className="text-ink3 mt-0.5" />
                       <span>{selectedMeeting.attendees.join(", ")}</span>
                     </div>
                   )}
                   {selectedMeeting.calendar_event_id && (
-                    <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-                      <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>calendar_month</span>
+                    <div className="flex items-center gap-2 text-xs text-ink3">
+                      <Icon name="calendar_month" size={14} />
                       Synced to Google Calendar
                     </div>
                   )}
@@ -1124,19 +1121,19 @@ export default function MeetingsView() {
                 {selectedMeeting.status !== "cancelled" && (
                   <div className="space-y-2">
                     {selectedMeeting.status === "proposed" && (
-                      <button onClick={() => confirmMeeting(selectedMeeting.id)} className="w-full px-3 py-2.5 rounded-lg bg-emerald-500 text-white text-sm font-medium hover:opacity-90 flex items-center justify-center gap-2">
-                        <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>event_available</span>
+                      <button onClick={() => confirmMeeting(selectedMeeting.id)} className="w-full px-3 py-2.5 rounded-lg bg-ok text-white text-sm font-medium hover:opacity-90 flex items-center justify-center gap-2">
+                        <Icon name="event_available" size={16} />
                         Confirm Meeting
                       </button>
                     )}
-                    <button onClick={() => cancelMeeting(selectedMeeting.id)} className="w-full px-3 py-2.5 rounded-lg border border-[var(--border)] text-sm text-[var(--foreground)] hover:bg-slate-50 dark:hover:bg-slate-800 flex items-center justify-center gap-2">
-                      <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>event_busy</span>
+                    <button onClick={() => cancelMeeting(selectedMeeting.id)} className="w-full px-3 py-2.5 rounded-lg border border-line text-sm text-ink hover:bg-hover flex items-center justify-center gap-2">
+                      <Icon name="event_busy" size={16} />
                       Cancel Meeting
                     </button>
                   </div>
                 )}
-                <button onClick={() => deleteMeeting(selectedMeeting.id)} className="mt-2 w-full px-3 py-2.5 rounded-lg text-red-500 text-sm hover:bg-red-50 dark:hover:bg-red-900/20 border border-red-200 dark:border-red-800 flex items-center justify-center gap-2">
-                  <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>delete</span>
+                <button onClick={() => deleteMeeting(selectedMeeting.id)} className="mt-2 w-full px-3 py-2.5 rounded-lg text-danger text-sm hover:bg-danger-soft border border-danger-line flex items-center justify-center gap-2">
+                  <Icon name="delete" size={16} />
                   Delete
                 </button>
               </>
@@ -1145,17 +1142,17 @@ export default function MeetingsView() {
           </div>
         ) : (
           /* ── Empty state ── */
-          <div className="flex-1 flex flex-col items-center justify-center text-[var(--muted)] gap-3">
-            <span className="material-symbols-outlined" style={{ fontSize: "56px" }}>event</span>
+          <div className="flex-1 flex flex-col items-center justify-center text-ink3 gap-3">
+            <Icon name="event" size={56} />
             <div className="text-center">
-              <p className="text-sm font-medium text-slate-600 dark:text-slate-400">Select a meeting or schedule a new one</p>
+              <p className="text-sm font-medium text-ink2">Select a meeting or schedule a new one</p>
               <p className="text-xs mt-1">Use the suggestions on the left to get started</p>
             </div>
             <button
               onClick={() => { resetScheduler(); setShowScheduler(true); }}
-              className="mt-1 px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 flex items-center gap-2"
+              className="mt-1 px-4 py-2 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 flex items-center gap-2"
             >
-              <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>add</span>
+              <Icon name="add" size={16} />
               New Meeting
             </button>
           </div>

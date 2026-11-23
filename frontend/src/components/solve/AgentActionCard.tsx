@@ -1,5 +1,6 @@
 
 import { useState } from "react";
+import Icon from "@/components/Icon";
 import type { AgentAction } from "@/lib/agentTypes";
 
 interface AgentActionCardProps {
@@ -18,26 +19,26 @@ const TYPE_META: Record<
   reply: {
     icon: "send",
     label: "Reply",
-    accent: "text-emerald-700 dark:text-emerald-300",
-    accentBg: "bg-emerald-500/10",
+    accent: "text-ok",
+    accentBg: "bg-ok/10",
   },
   todo: {
     icon: "task_alt",
     label: "Todo",
-    accent: "text-teal-700 dark:text-teal-300",
-    accentBg: "bg-teal-500/10",
+    accent: "text-ok",
+    accentBg: "bg-ok/10",
   },
   meeting: {
     icon: "event",
     label: "Meeting",
-    accent: "text-sky-700 dark:text-sky-300",
-    accentBg: "bg-sky-500/10",
+    accent: "text-ink2",
+    accentBg: "bg-wax/10",
   },
   archive: {
     icon: "archive",
     label: "Archive",
-    accent: "text-slate-600 dark:text-slate-300",
-    accentBg: "bg-slate-500/10",
+    accent: "text-ink2",
+    accentBg: "bg-ink3/10",
   },
 };
 
@@ -85,12 +86,12 @@ export default function AgentActionCard({
     <div
       className={`solve-fade-in rounded-xl border transition-colors ${
         result?.status === "success"
-          ? "border-emerald-300/60 bg-emerald-50/40 dark:border-emerald-500/30 dark:bg-emerald-500/5"
+          ? "border-ok-line bg-ok-soft"
           : result?.status === "error"
-            ? "border-red-300/60 bg-red-50/40 dark:border-red-500/30 dark:bg-red-500/5"
+            ? "border-danger-line bg-danger-soft"
             : included
-              ? "border-[var(--border)] bg-[var(--surface)]"
-              : "border-dashed border-[var(--border)] bg-transparent"
+              ? "border-line bg-raised"
+              : "border-dashed border-line bg-transparent"
       } ${subdued ? "opacity-70" : ""}`}
     >
       <div className="px-4 pt-3.5 pb-3">
@@ -98,12 +99,7 @@ export default function AgentActionCard({
           <span
             className={`inline-flex h-6 w-6 items-center justify-center rounded-md ${meta.accentBg} ${meta.accent}`}
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: "14px" }}
-            >
-              {meta.icon}
-            </span>
+            <Icon name={meta.icon} size={14} />
           </span>
           <span
             className={`text-[10.5px] font-semibold uppercase tracking-[0.14em] ${meta.accent}`}
@@ -111,23 +107,18 @@ export default function AgentActionCard({
             {meta.label}
           </span>
           {action.recommended && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "10px" }}
-              >
-                auto_awesome
-              </span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-ok/15 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-ok">
+              <Icon name="auto_awesome" size={10} />
               Recommended
             </span>
           )}
           {action.priority && action.priority !== "medium" && (
-            <span className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-1.5 py-0.5 text-[9.5px] uppercase tracking-wider text-[var(--muted)]">
+            <span className="rounded-full border border-line bg-field px-1.5 py-0.5 text-[9.5px] uppercase tracking-wider text-ink3">
               {action.priority}
             </span>
           )}
           {action.bucket && action.bucket !== "single" && (
-            <span className="ml-auto rounded-full bg-[var(--surface-2)] px-1.5 py-0.5 text-[9.5px] uppercase tracking-wider text-[var(--muted)]">
+            <span className="ml-auto rounded-full bg-field px-1.5 py-0.5 text-[9.5px] uppercase tracking-wider text-ink3">
               {action.bucket}
             </span>
           )}
@@ -135,54 +126,34 @@ export default function AgentActionCard({
             <span
               className={`${action.bucket && action.bucket !== "single" ? "" : "ml-auto"} inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
                 result.status === "success"
-                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                  : "bg-red-500/15 text-red-600 dark:text-red-400"
+                  ? "bg-ok/15 text-ok"
+                  : "bg-danger/15 text-danger"
               }`}
             >
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "12px" }}
-              >
-                {result.status === "success" ? "check_circle" : "error"}
-              </span>
+              <Icon name={result.status === "success" ? "check_circle" : "error"} size={12} />
               {result.status === "success" ? "Done" : "Failed"}
             </span>
           )}
         </div>
 
-        <h4 className="mt-2 text-[13.5px] font-semibold leading-snug text-[var(--foreground)]">
+        <h4 className="mt-2 text-[13.5px] font-semibold leading-snug text-ink">
           {action.type === "reply" && (
             <span className="inline-flex flex-wrap items-center gap-1.5">
               {replyMode(action) === "send" && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "11px" }}
-                  >
-                    send
-                  </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-ok/15 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-ok">
+                  <Icon name="send" size={11} />
                   Send
                 </span>
               )}
               {replyMode(action) === "draft" && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-slate-500/15 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "11px" }}
-                  >
-                    drafts
-                  </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-ink3/15 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-ink2">
+                  <Icon name="drafts" size={11} />
                   Draft
                 </span>
               )}
               {replyMode(action) === "resolve" && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "11px" }}
-                  >
-                    done_all
-                  </span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-warn/15 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wider text-warn">
+                  <Icon name="done_all" size={11} />
                   Resolve only
                 </span>
               )}
@@ -201,26 +172,21 @@ export default function AgentActionCard({
         </h4>
 
         {action.reasoning && (
-          <p className="mt-1.5 flex items-start gap-1.5 text-[11.5px] leading-snug italic text-[var(--muted)]">
-            <span
-              className="material-symbols-outlined mt-0.5 text-emerald-600/70 dark:text-emerald-400/70"
-              style={{ fontSize: "13px" }}
-            >
-              psychology
-            </span>
+          <p className="mt-1.5 flex items-start gap-1.5 text-[11.5px] leading-snug italic text-ink3">
+            <Icon name="psychology" size={13} className="mt-0.5 text-ok/70" />
             <span className="flex-1">{action.reasoning}</span>
           </p>
         )}
 
         {(result?.info || result?.error) && (
-          <p className="mt-1.5 text-[11px] text-[var(--muted)]">
+          <p className="mt-1.5 text-[11px] text-ink3">
             {result.info ?? result.error}
           </p>
         )}
 
         {/* Expanded editor */}
         {expanded && !locked && (
-          <div className="mt-3 space-y-2.5 rounded-lg border border-dashed border-[var(--border)] bg-[var(--background)]/60 p-3">
+          <div className="mt-3 space-y-2.5 rounded-lg border border-dashed border-line bg-canvas/60 p-3">
             {action.type === "reply" && (
               <>
                 <LabeledInput
@@ -241,8 +207,8 @@ export default function AgentActionCard({
                   disabled={replyMode(action) === "resolve"}
                 />
                 <div className="flex flex-wrap items-center gap-2 text-[11.5px]">
-                  <span className="text-[var(--muted)]">Intent:</span>
-                  <div className="inline-flex rounded-full border border-[var(--border)] p-0.5 bg-[var(--surface-2)]">
+                  <span className="text-ink3">Intent:</span>
+                  <div className="inline-flex rounded-full border border-line p-0.5 bg-field">
                     <TriStatePill
                       active={replyMode(action) === "send"}
                       onClick={() =>
@@ -250,7 +216,7 @@ export default function AgentActionCard({
                       }
                       icon="send"
                       label="Send"
-                      activeClass="bg-emerald-600 text-white"
+                      activeClass="bg-ok text-white"
                     />
                     <TriStatePill
                       active={replyMode(action) === "draft"}
@@ -259,7 +225,7 @@ export default function AgentActionCard({
                       }
                       icon="drafts"
                       label="Draft"
-                      activeClass="bg-slate-600 text-white"
+                      activeClass="bg-ink3 text-white"
                     />
                     <TriStatePill
                       active={replyMode(action) === "resolve"}
@@ -268,12 +234,12 @@ export default function AgentActionCard({
                       }
                       icon="done_all"
                       label="Resolve only"
-                      activeClass="bg-amber-600 text-white"
+                      activeClass="bg-warn text-white"
                     />
                   </div>
                 </div>
                 {replyMode(action) === "resolve" && (
-                  <p className="text-[11px] leading-snug text-amber-700 dark:text-amber-400">
+                  <p className="text-[11px] leading-snug text-warn">
                     This thread will be marked handled. No email will be sent or
                     saved as a draft.
                   </p>
@@ -337,49 +303,34 @@ export default function AgentActionCard({
 
         {/* Footer: edit + include + remove. No top-left checkbox. */}
         {!locked && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--border)]/60 pt-2.5">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-line/60 pt-2.5">
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => setExpanded((v) => !v)}
-                className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium text-[var(--muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--foreground)]"
+                className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium text-ink3 transition-colors hover:bg-field hover:text-ink"
               >
-                <span
-                  className="material-symbols-outlined"
-                  style={{ fontSize: "13px" }}
-                >
-                  {expanded ? "expand_less" : "tune"}
-                </span>
+                <Icon name={expanded ? "expand_less" : "tune"} size={13} />
                 {expanded ? "Hide details" : "Edit"}
               </button>
               <button
                 onClick={() => onToggle(!included)}
                 className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
                   included
-                    ? "bg-emerald-600 text-white hover:bg-emerald-700"
-                    : "border border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--foreground)]"
+                    ? "bg-ok text-white hover:bg-ok"
+                    : "border border-line text-ink3 hover:bg-field hover:text-ink"
                 }`}
                 aria-pressed={included}
               >
-                <span
-                  className="material-symbols-outlined"
-                  style={{ fontSize: "13px" }}
-                >
-                  {included ? "check_box" : "check_box_outline_blank"}
-                </span>
+                <Icon name={included ? "check_box" : "check_box_outline_blank"} size={13} />
                 {included ? "Included" : "Include"}
               </button>
             </div>
             {onRemove && (
               <button
                 onClick={onRemove}
-                className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium text-[var(--muted)] transition-colors hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium text-ink3 transition-colors hover:bg-danger/10 hover:text-danger"
               >
-                <span
-                  className="material-symbols-outlined"
-                  style={{ fontSize: "13px" }}
-                >
-                  delete
-                </span>
+                <Icon name="delete" size={13} />
                 Remove
               </button>
             )}
@@ -410,12 +361,10 @@ function TriStatePill({
       className={`inline-flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors ${
         active
           ? activeClass
-          : "text-[var(--muted)] hover:text-[var(--foreground)]"
+          : "text-ink3 hover:text-ink"
       }`}
     >
-      <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>
-        {icon}
-      </span>
+      <Icon name={icon} size={12} />
       {label}
     </button>
   );
@@ -432,13 +381,13 @@ function LabeledInput({
 }) {
   return (
     <label className="block">
-      <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">
+      <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-[0.1em] text-ink3">
         {label}
       </span>
       <input
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-[12px] text-[var(--foreground)] focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-400/40"
+        className="w-full rounded-md border border-line bg-field px-2.5 py-1.5 text-[12px] text-ink focus:border-ok-line focus:outline-none focus:ring-1 focus:ring-ok-line"
       />
     </label>
   );
@@ -459,7 +408,7 @@ function LabeledTextarea({
 }) {
   return (
     <label className="block">
-      <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">
+      <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-[0.1em] text-ink3">
         {label}
       </span>
       <textarea
@@ -467,7 +416,7 @@ function LabeledTextarea({
         onChange={(e) => onChange(e.target.value)}
         rows={rows}
         disabled={disabled}
-        className="w-full resize-y rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-[12px] text-[var(--foreground)] focus:border-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-400/40 disabled:opacity-50"
+        className="w-full resize-y rounded-md border border-line bg-field px-2.5 py-1.5 text-[12px] text-ink focus:border-ok-line focus:outline-none focus:ring-1 focus:ring-ok-line disabled:opacity-50"
       />
     </label>
   );

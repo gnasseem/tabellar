@@ -1,5 +1,6 @@
 
 import { useState, useEffect, useRef } from "react";
+import Icon from "@/components/Icon";
 
 interface Props {
   value: string; // "YYYY-MM-DDTHH:MM" or ""
@@ -150,44 +151,42 @@ export default function DateTimePicker({ value, onChange, placeholder = "Select 
         onClick={openPicker}
         className={`flex items-center gap-2 w-full px-3 py-2.5 rounded-lg border bg-transparent text-sm focus:outline-none transition-colors ${
           showWarning
-            ? "border-amber-400"
-            : "border-[var(--border)] hover:border-[var(--accent)]"
+            ? "border-warn-line"
+            : "border-line hover:border-wax"
         } ${className}`}
       >
-        <span className="material-symbols-outlined text-[var(--accent)]" style={{ fontSize: "15px" }}>calendar_month</span>
-        <span className={`flex-1 text-left text-sm ${label ? "text-slate-900 dark:text-white" : "text-[var(--muted)]"}`}>
+        <Icon name="calendar_month" size={15} className="text-wax" />
+        <span className={`flex-1 text-left text-sm ${label ? "text-ink" : "text-ink3"}`}>
           {label || placeholder}
         </span>
-        <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "14px" }}>
-          {open ? "expand_less" : "expand_more"}
-        </span>
+        <Icon name={open ? "expand_less" : "expand_more"} size={14} className="text-ink3" />
       </button>
 
       {open && (
         <div
           ref={dropRef}
           style={{ ...dropStyle, zIndex: 9999 }}
-          className="bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-xl p-3"
+          className="bg-canvas border border-line rounded-xl shadow-xl p-3"
         >
           {/* Month nav */}
           <div className="flex items-center justify-between mb-2">
             <button type="button" onClick={prevMonth}
-              className="p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)]">
-              <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>chevron_left</span>
+              className="p-0.5 rounded hover:bg-field text-ink3">
+              <Icon name="chevron_left" size={16} />
             </button>
-            <span className="text-xs font-semibold text-slate-900 dark:text-white">
+            <span className="text-xs font-semibold text-ink">
               {MONTH_NAMES[viewMonth]} {viewYear}
             </span>
             <button type="button" onClick={nextMonth}
-              className="p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)]">
-              <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>chevron_right</span>
+              className="p-0.5 rounded hover:bg-field text-ink3">
+              <Icon name="chevron_right" size={16} />
             </button>
           </div>
 
           {/* Day headers */}
           <div className="grid grid-cols-7 mb-0.5">
             {DAY_LABELS.map(d => (
-              <div key={d} className="text-center text-[9px] font-bold text-[var(--muted)] py-0.5">{d}</div>
+              <div key={d} className="text-center text-[9px] font-bold text-ink3 py-0.5">{d}</div>
             ))}
           </div>
 
@@ -201,12 +200,12 @@ export default function DateTimePicker({ value, onChange, placeholder = "Select 
                   onClick={() => selectDay(cell.year, cell.month, cell.day)}
                   className={`h-7 w-full rounded-md text-[11px] font-medium transition-all ${
                     isSel
-                      ? "bg-[var(--accent)] text-white"
+                      ? "bg-wax text-on-wax"
                       : isToday
-                      ? "ring-1 ring-[var(--accent)] text-[var(--accent)] font-bold"
+                      ? "ring-1 ring-wax text-wax font-bold"
                       : cell.cur
-                      ? "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-                      : "text-slate-300 dark:text-slate-600"
+                      ? "text-ink hover:bg-field"
+                      : "text-ink4"
                   }`}
                 >{cell.day}</button>
               );
@@ -214,39 +213,39 @@ export default function DateTimePicker({ value, onChange, placeholder = "Select 
           </div>
 
           {/* Time row  -  compact single horizontal line */}
-          <div className="border-t border-[var(--border)] pt-2.5 flex items-center gap-1.5">
-            <span className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-wider mr-auto">Time</span>
+          <div className="border-t border-line pt-2.5 flex items-center gap-1.5">
+            <span className="text-[9px] font-bold text-ink3 uppercase tracking-wider mr-auto">Time</span>
 
             {/* Hour stepper */}
             <button type="button" onClick={() => stepHour(-1)}
-              className="p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)]">
-              <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>chevron_left</span>
+              className="p-0.5 rounded hover:bg-field text-ink3">
+              <Icon name="chevron_left" size={13} />
             </button>
-            <span className="text-sm font-bold text-slate-900 dark:text-white w-6 text-center tabular-nums">{pad(hour12)}</span>
+            <span className="text-sm font-bold text-ink w-6 text-center tabular-nums">{pad(hour12)}</span>
             <button type="button" onClick={() => stepHour(1)}
-              className="p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)]">
-              <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>chevron_right</span>
+              className="p-0.5 rounded hover:bg-field text-ink3">
+              <Icon name="chevron_right" size={13} />
             </button>
 
-            <span className="text-sm font-bold text-[var(--muted)]">:</span>
+            <span className="text-sm font-bold text-ink3">:</span>
 
             {/* Minute stepper */}
             <button type="button" onClick={() => stepMinute(-1)}
-              className="p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)]">
-              <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>chevron_left</span>
+              className="p-0.5 rounded hover:bg-field text-ink3">
+              <Icon name="chevron_left" size={13} />
             </button>
-            <span className="text-sm font-bold text-slate-900 dark:text-white w-6 text-center tabular-nums">{pad(minute)}</span>
+            <span className="text-sm font-bold text-ink w-6 text-center tabular-nums">{pad(minute)}</span>
             <button type="button" onClick={() => stepMinute(1)}
-              className="p-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)]">
-              <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>chevron_right</span>
+              className="p-0.5 rounded hover:bg-field text-ink3">
+              <Icon name="chevron_right" size={13} />
             </button>
 
             {/* AM/PM toggle */}
             <button type="button" onClick={toggleAmPm}
               className={`ml-1 px-2 py-1 rounded-lg text-xs font-bold transition-all ${
                 ampm === "AM"
-                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
-                  : "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
+                  ? "bg-field text-ink2"
+                  : "bg-warn-soft text-warn"
               }`}>
               {ampm}
             </button>

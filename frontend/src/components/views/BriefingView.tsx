@@ -1,5 +1,6 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import EmailDetail from "../EmailDetail";
@@ -76,10 +77,10 @@ interface NormalizedBriefing {
 type BriefingAccent = "crucial" | "reply" | "deadline" | "noise";
 
 const ACCENT_BORDER: Record<BriefingAccent, string> = {
-  crucial: "border-l-rose-500/75",
-  reply: "border-l-sky-500/75",
-  deadline: "border-l-violet-500/75",
-  noise: "border-l-slate-400/40",
+  crucial: "border-l-danger/75",
+  reply: "border-l-ink4/75",
+  deadline: "border-l-ink4/75",
+  noise: "border-l-ink4/40",
 };
 
 function executiveSummaryIsUsable(s: string | undefined | null): boolean {
@@ -340,8 +341,8 @@ function EmailCard({
     : ((email.sender && email.sender !== "null") ? email.sender : "");
 
   const rowBase =
-    `rounded-lg border border-[var(--border)] bg-[var(--surface)] border-l-2 ${borderAccent} transition-colors duration-200 ` +
-    (onClick ? "cursor-pointer hover:bg-[var(--surface-2)]/80 " : "");
+    `rounded-lg border border-line bg-raised border-l-2 ${borderAccent} transition-colors duration-200 ` +
+    (onClick ? "cursor-pointer hover:bg-field/80 " : "");
 
   if (hideUrgency) {
     return (
@@ -354,27 +355,27 @@ function EmailCard({
       >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[12px] font-medium text-[var(--foreground)] truncate block leading-snug font-['DM_Sans',ui-sans-serif,sans-serif]">
+            <span className="text-[12px] font-medium text-ink truncate block leading-snug font-['DM_Sans',ui-sans-serif,sans-serif]">
               {email.subject}
             </span>
             {isResolved && (
-              <span className="shrink-0 text-[9px] px-1 py-0.5 rounded font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+              <span className="shrink-0 text-[9px] px-1 py-0.5 rounded font-semibold bg-ok/15 text-ok">
                 resolved
               </span>
             )}
           </div>
           {senderLabel && (
-            <span className="text-[10px] text-[var(--muted)] truncate block leading-snug">{senderLabel}</span>
+            <span className="text-[10px] text-ink3 truncate block leading-snug">{senderLabel}</span>
           )}
         </div>
         {onDismiss && (
           <button
             onClick={(e) => { e.stopPropagation(); onDismiss(); }}
-            className="shrink-0 p-1 rounded-md hover:bg-black/[0.06] dark:hover:bg-white/[0.06] text-[var(--muted)] hover:text-red-400 transition-colors cursor-pointer"
+            className="shrink-0 p-1 rounded-md hover:bg-black/[0.06] text-ink3 hover:text-danger transition-colors cursor-pointer"
             title="Dismiss"
             aria-label="Dismiss"
           >
-            <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>close</span>
+            <Icon name="close" size={14} />
           </button>
         )}
       </div>
@@ -392,32 +393,32 @@ function EmailCard({
       <div className="flex items-start justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1 min-w-0">
           {!hasNoReply && (
-            <span className="text-[9px] font-semibold uppercase tracking-wide text-[var(--muted)] tabular-nums">
+            <span className="text-[9px] font-semibold uppercase tracking-wide text-ink3 tabular-nums">
               {urgencyLabel}
             </span>
           )}
           {email.waitingForReply && !hasNoReply && (
-            <span className="text-[9px] font-semibold uppercase tracking-wide text-sky-600 dark:text-sky-400/90">
+            <span className="text-[9px] font-semibold uppercase tracking-wide text-ink2">
               Reply
             </span>
           )}
           {hasNoReply && (
-            <span className="text-[9px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400/90">
+            <span className="text-[9px] font-semibold uppercase tracking-wide text-warn">
               No reply yet
             </span>
           )}
           {email.deadline && (
-            <span className="text-[9px] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400/90">
+            <span className="text-[9px] font-semibold uppercase tracking-wide text-ink2">
               Due {formatDeadlineDate(email.deadline)}
             </span>
           )}
           {email.tags?.filter((t) => !["REPLY_NEEDED", "DEADLINE", "NO_REPLY"].includes(t)).map((tag) => (
-            <span key={tag} className="text-[9px] text-[var(--muted)]">
+            <span key={tag} className="text-[9px] text-ink3">
               {tag}
             </span>
           ))}
           {isResolved && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded font-semibold bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+            <span className="text-[9px] px-1.5 py-0.5 rounded font-semibold bg-ok/15 text-ok">
               resolved
             </span>
           )}
@@ -425,29 +426,29 @@ function EmailCard({
         {onDismiss && (
           <button
             onClick={(e) => { e.stopPropagation(); onDismiss(); }}
-            className="shrink-0 p-1 rounded-md hover:bg-black/[0.06] dark:hover:bg-white/[0.06] text-[var(--muted)] hover:text-red-400 transition-colors cursor-pointer"
+            className="shrink-0 p-1 rounded-md hover:bg-black/[0.06] text-ink3 hover:text-danger transition-colors cursor-pointer"
             title="Dismiss"
             aria-label="Dismiss"
           >
-            <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>close</span>
+            <Icon name="close" size={14} />
           </button>
         )}
       </div>
-      <p className="text-[13px] font-semibold text-[var(--foreground)] mt-1 leading-snug line-clamp-2 font-['DM_Sans',ui-sans-serif,sans-serif]">
+      <p className="text-[13px] font-semibold text-ink mt-1 leading-snug line-clamp-2 font-['DM_Sans',ui-sans-serif,sans-serif]">
         {email.subject}
       </p>
-      <p className="text-[11px] text-[var(--muted)] mt-0.5 line-clamp-1">
+      <p className="text-[11px] text-ink3 mt-0.5 line-clamp-1">
         {senderLabel}
         {email.senderName && email.senderName !== "null" && email.sender && email.sender !== "null" && email.senderName !== email.sender && (
           <span className="opacity-60"> · {email.sender}</span>
         )}
       </p>
       {email.signal?.trim() && (
-        <p className="text-[11px] text-sky-700/90 dark:text-sky-400/80 mt-1 line-clamp-1 italic">
+        <p className="text-[11px] text-ink2/90 mt-1 line-clamp-1 italic">
           {email.signal.replace(/—/g, " - ")}
         </p>
       )}
-      <p className="text-[12px] text-slate-700 dark:text-slate-200 mt-1 leading-snug line-clamp-2 font-['DM_Sans',ui-sans-serif,sans-serif]">
+      <p className="text-[12px] text-ink mt-1 leading-snug line-clamp-2 font-['DM_Sans',ui-sans-serif,sans-serif]">
         {(email.summary || "").replace(/—/g, " - ")}
       </p>
     </div>
@@ -482,14 +483,14 @@ function GroupedEmailCard({
         onDismiss={primary.email_id && onDismiss ? () => onDismiss(primary) : undefined}
       />
       {rest.length > 0 && (
-        <div className="ml-2 pl-2 border-l border-[var(--border)]">
+        <div className="ml-2 pl-2 border-l border-line">
           {!expanded && (
             <button
               type="button"
               onClick={() => setExpanded(true)}
-              className="text-[10px] text-[var(--muted)] hover:text-[var(--foreground)] transition-colors flex items-center gap-0.5 py-0.5 cursor-pointer"
+              className="text-[10px] text-ink3 hover:text-ink transition-colors flex items-center gap-0.5 py-0.5 cursor-pointer"
             >
-              <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>expand_more</span>
+              <Icon name="expand_more" size={12} />
               {rest.length} more on thread
             </button>
           )}
@@ -508,9 +509,9 @@ function GroupedEmailCard({
               <button
                 type="button"
                 onClick={() => setExpanded(false)}
-                className="text-[10px] text-[var(--muted)] hover:text-[var(--foreground)] transition-colors flex items-center gap-0.5 py-0.5 cursor-pointer"
+                className="text-[10px] text-ink3 hover:text-ink transition-colors flex items-center gap-0.5 py-0.5 cursor-pointer"
               >
-                <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>expand_less</span>
+                <Icon name="expand_less" size={12} />
                 Collapse
               </button>
             </div>
@@ -524,8 +525,8 @@ function GroupedEmailCard({
 function SectionHeader({ icon, label, color }: { icon: string; label: string; color: string }) {
   return (
     <div className="flex items-center gap-2 mb-3 mt-1">
-      <span className={`material-symbols-outlined ${color}`} style={{ fontSize: "16px" }}>{icon}</span>
-      <h2 className="text-xs font-bold tracking-widest text-[var(--muted)] uppercase">{label}</h2>
+      <Icon name={icon} size={16} className={`${color}`} />
+      <h2 className="text-xs font-bold tracking-widest text-ink3 uppercase">{label}</h2>
     </div>
   );
 }
@@ -886,33 +887,33 @@ export default function BriefingView() {
     crucial: {
       label: "Crucial",
       icon: "priority_high",
-      color: "text-rose-500 dark:text-rose-400",
-      border: "border-rose-500/30",
-      activeBg: "bg-rose-500/10",
+      color: "text-danger",
+      border: "border-danger/30",
+      activeBg: "bg-danger/10",
       count: displayStats?.crucial ?? 0,
     },
     replyNeeded: {
       label: "Reply Needed",
       icon: "reply",
-      color: "text-sky-500 dark:text-sky-400",
-      border: "border-sky-500/30",
-      activeBg: "bg-sky-500/10",
+      color: "text-ink2",
+      border: "border-ink4/30",
+      activeBg: "bg-wax/10",
       count: displayStats?.replyNeeded ?? 0,
     },
     deadlines: {
       label: "Deadlines",
       icon: "event_upcoming",
-      color: "text-violet-500 dark:text-violet-400",
-      border: "border-violet-500/30",
-      activeBg: "bg-violet-500/10",
+      color: "text-ink2",
+      border: "border-ink4/30",
+      activeBg: "bg-wax/10",
       count: displayStats?.deadlines ?? 0,
     },
     nonEssential: {
       label: "Non-essential",
       icon: "filter_alt",
-      color: "text-slate-500 dark:text-slate-400",
-      border: "border-slate-500/20",
-      activeBg: "bg-slate-500/10",
+      color: "text-ink2",
+      border: "border-ink4/20",
+      activeBg: "bg-ink3/10",
       count: displayStats?.nonEssential ?? 0,
     },
   };
@@ -920,20 +921,20 @@ export default function BriefingView() {
   return (
     <div className="h-full flex overflow-hidden">
       {/* Left panel: Today's timeline */}
-      <div className="w-72 lg:w-80 border-r border-[var(--border)] flex flex-col flex-shrink-0 overflow-auto">
-        <div className="px-4 py-3 border-b border-[var(--border)]">
-          <h2 className="text-sm font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-            <span className="material-symbols-outlined text-[var(--accent)]" style={{ fontSize: "18px" }}>today</span>
+      <div className="w-72 lg:w-80 border-r border-line flex flex-col flex-shrink-0 overflow-auto">
+        <div className="px-4 py-3 border-b border-line">
+          <h2 className="text-sm font-semibold text-ink flex items-center gap-2">
+            <Icon name="today" size={18} className="text-wax" />
             Today&apos;s Schedule
           </h2>
-          <p className="text-xs text-[var(--muted)] mt-0.5">
+          <p className="text-xs text-ink3 mt-0.5">
             {new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
           </p>
         </div>
         <div className="flex-1 p-4">
           {todayScheduleItems.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-[var(--muted)] text-center">
-              <span className="material-symbols-outlined mb-2" style={{ fontSize: "40px" }}>event_available</span>
+            <div className="flex flex-col items-center justify-center h-48 text-ink3 text-center">
+              <Icon name="event_available" size={40} className="mb-2" />
               <p className="text-sm">No meetings today</p>
               <p className="text-xs mt-1 opacity-70">Your calendar is clear</p>
             </div>
@@ -942,37 +943,37 @@ export default function BriefingView() {
               {todayScheduleItems.map((m: any) => {
                 const isGcal = m.source === "google_calendar";
                 const confirmed = m.status === "confirmed";
-                const borderColor = confirmed ? "border-l-emerald-500" : "border-l-blue-500";
-                const bgColor = confirmed ? "bg-emerald-50 dark:bg-emerald-900/20" : "bg-blue-50 dark:bg-blue-900/20";
+                const borderColor = confirmed ? "border-l-ok" : "border-l-ink4";
+                const bgColor = confirmed ? "bg-ok-soft" : "bg-field";
                 return (
                   <div key={m.id} className="flex gap-3">
                     <div className="text-right shrink-0 w-14">
                       {m.start && !m.allDay && (
-                        <p className="text-xs font-medium text-slate-700 dark:text-slate-300">{formatTime(m.start)}</p>
+                        <p className="text-xs font-medium text-ink">{formatTime(m.start)}</p>
                       )}
                       {m.end && !m.allDay && (
-                        <p className="text-[10px] text-[var(--muted)]">{formatTime(m.end)}</p>
+                        <p className="text-[10px] text-ink3">{formatTime(m.end)}</p>
                       )}
                       {m.allDay && (
-                        <p className="text-[10px] text-[var(--muted)] font-medium">All day</p>
+                        <p className="text-[10px] text-ink3 font-medium">All day</p>
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className={`p-2 rounded-lg border-l-2 ${borderColor} ${bgColor}`}>
                         <div className="flex items-start gap-1.5">
                           {isGcal && (
-                            <span className="material-symbols-outlined text-[var(--muted)] shrink-0 mt-px" style={{ fontSize: "13px" }}>event</span>
+                            <Icon name="event" size={13} className="text-ink3 shrink-0 mt-px" />
                           )}
-                          <p className="text-sm font-medium text-slate-900 dark:text-white truncate leading-snug">{m.title}</p>
+                          <p className="text-sm font-medium text-ink truncate leading-snug">{m.title}</p>
                         </div>
                         {m.attendees?.length > 0 && (
-                          <p className="text-[11px] text-[var(--muted)] truncate mt-0.5">
+                          <p className="text-[11px] text-ink3 truncate mt-0.5">
                             {m.attendees.slice(0, 2).join(", ")}{m.attendees.length > 2 ? ` +${m.attendees.length - 2}` : ""}
                           </p>
                         )}
                         {m.location && (
-                          <p className="text-[10px] text-[var(--muted)] truncate mt-0.5 flex items-center gap-0.5">
-                            <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>location_on</span>
+                          <p className="text-[10px] text-ink3 truncate mt-0.5 flex items-center gap-0.5">
+                            <Icon name="location_on" size={11} />
                             {m.location}
                           </p>
                         )}
@@ -981,10 +982,10 @@ export default function BriefingView() {
                             href={m.meetingLink}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[10px] text-sky-600 dark:text-sky-400 hover:underline flex items-center gap-0.5 mt-0.5"
+                            className="text-[10px] text-ink2 hover:underline flex items-center gap-0.5 mt-0.5"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: "11px" }}>videocam</span>
+                            <Icon name="videocam" size={11} />
                             Join meeting
                           </a>
                         )}
@@ -1017,11 +1018,11 @@ export default function BriefingView() {
             {/* Header */}
             <div className="flex items-center justify-between mb-5">
               <div>
-                <h1 className="text-[1.35rem] font-bold text-[var(--foreground)] flex items-center gap-2 font-['Syne',system-ui,sans-serif] tracking-tight">
-                  <span className="material-symbols-outlined text-[var(--accent)]" style={{ fontSize: "22px" }}>summarize</span>
+                <h1 className="text-[1.35rem] font-bold text-ink flex items-center gap-2 font-['Syne',system-ui,sans-serif] tracking-tight">
+                  <Icon name="summarize" size={22} className="text-wax" />
                   Morning Briefing
                 </h1>
-                <p className="text-[11px] text-[var(--muted)] mt-0.5 font-['DM_Sans',ui-sans-serif,sans-serif]">
+                <p className="text-[11px] text-ink3 mt-0.5 font-['DM_Sans',ui-sans-serif,sans-serif]">
                   {briefingAt
                     ? `Generated ${new Date(briefingAt).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" })} at ${new Date(briefingAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true })}`
                     : new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
@@ -1031,42 +1032,37 @@ export default function BriefingView() {
                 <button
                   onClick={() => void requestBriefingRegeneration()}
                   disabled={briefingRegenerating}
-                  className="flex h-8 w-8 items-center justify-center rounded-full border border-[var(--border)] text-[var(--muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--foreground)] disabled:opacity-50"
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-line text-ink3 transition-colors hover:border-wax hover:text-ink disabled:opacity-50"
                   title={briefingRegenerating ? "Regenerating briefing..." : "Regenerate briefing"}
                   aria-label="Regenerate briefing"
                 >
-                  <span
-                    className={`material-symbols-outlined ${briefingRegenerating ? "animate-spin" : ""}`}
-                    style={{ fontSize: "16px" }}
-                  >
-                    {briefingRegenerating ? "progress_activity" : "refresh"}
-                  </span>
+                  <Icon name={briefingRegenerating ? "progress_activity" : "refresh"} size={16} className={`${briefingRegenerating ? "animate-spin" : ""}`} />
                 </button>
                 {/* Subtle scope selector */}
                 <div className="relative">
                   <button
                     onClick={() => setScopeDropdownOpen((v) => !v)}
-                    className="flex items-center gap-1 rounded-full border border-[var(--border)] px-2.5 py-1 text-[11px] font-medium text-[var(--muted)] transition-colors hover:border-[var(--accent)]/50 hover:text-[var(--foreground)]"
+                    className="flex items-center gap-1 rounded-full border border-line px-2.5 py-1 text-[11px] font-medium text-ink3 transition-colors hover:border-wax/50 hover:text-ink"
                     title="Briefing scope"
                   >
                     {BRIEFING_SCOPE_OPTIONS.find((o) => o.id === activeScope)?.label ?? "Today"}
-                    <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>expand_more</span>
+                    <Icon name="expand_more" size={13} />
                   </button>
                   {scopeDropdownOpen && (
                     <>
                       <div className="fixed inset-0 z-10" onClick={() => setScopeDropdownOpen(false)} />
-                      <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-lg overflow-hidden">
+                      <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-lg border border-line bg-raised shadow-lg overflow-hidden">
                         {BRIEFING_SCOPE_OPTIONS.map((opt) => (
                           <button
                             key={opt.id}
                             onClick={() => void saveScope(opt.id)}
-                            className={`w-full text-left px-3 py-2 flex flex-col transition-colors hover:bg-[var(--surface-2)] ${activeScope === opt.id ? "text-[var(--accent)]" : "text-[var(--foreground)]"}`}
+                            className={`w-full text-left px-3 py-2 flex flex-col transition-colors hover:bg-field ${activeScope === opt.id ? "text-wax" : "text-ink"}`}
                           >
                             <span className="text-[12px] font-medium">{opt.label}</span>
-                            <span className="text-[10px] text-[var(--muted)]">{opt.desc}</span>
+                            <span className="text-[10px] text-ink3">{opt.desc}</span>
                           </button>
                         ))}
-                        <div className="border-t border-[var(--border)] px-3 py-2">
+                        <div className="border-t border-line px-3 py-2">
                           <button
                             type="button"
                             onClick={() => {
@@ -1076,8 +1072,8 @@ export default function BriefingView() {
                             }}
                             className="w-full flex items-center justify-between gap-2 text-left"
                           >
-                            <span className="text-[11px] text-[var(--foreground)]">Resolved emails sort to end</span>
-                            <span className={`relative inline-flex h-4 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors ${resolvedSortToEnd ? "bg-emerald-500" : "bg-[var(--border)]"}`}>
+                            <span className="text-[11px] text-ink">Resolved emails sort to end</span>
+                            <span className={`relative inline-flex h-4 w-7 shrink-0 rounded-full border-2 border-transparent transition-colors ${resolvedSortToEnd ? "bg-ok" : "bg-line"}`}>
                               <span className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow-sm transform transition-transform ${resolvedSortToEnd ? "translate-x-3" : "translate-x-0"}`} />
                             </span>
                           </button>
@@ -1092,30 +1088,30 @@ export default function BriefingView() {
 
             {loading ? (
               <div className="space-y-4">
-                <div className="h-16 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                <div className="h-16 rounded-xl bg-field animate-pulse" />
                 <div className="flex gap-3">
-                  {[1, 2, 3, 4, 5].map((i) => <div key={i} className="h-14 flex-1 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse" />)}
+                  {[1, 2, 3, 4, 5].map((i) => <div key={i} className="h-14 flex-1 rounded-xl bg-field animate-pulse" />)}
                 </div>
-                {[1, 2, 3].map((i) => <div key={i} className="h-24 rounded-xl bg-slate-100 dark:bg-slate-800 animate-pulse" />)}
+                {[1, 2, 3].map((i) => <div key={i} className="h-24 rounded-xl bg-field animate-pulse" />)}
               </div>
             ) : !hasContent ? (
-              <div className="text-center py-16 text-[var(--muted)]">
+              <div className="text-center py-16 text-ink3">
                 {briefingRegenerating ? (
                   <>
-                    <span className="material-symbols-outlined mb-3 animate-spin text-[var(--accent)]" style={{ fontSize: "48px" }}>progress_activity</span>
-                    <p className="text-sm font-medium text-[var(--foreground)]">Generating your briefing...</p>
+                    <Icon name="progress_activity" size={48} className="mb-3 animate-spin text-wax" />
+                    <p className="text-sm font-medium text-ink">Generating your briefing...</p>
                     <p className="text-xs mt-1 opacity-70">This takes a moment. You can keep using the app.</p>
                   </>
                 ) : (
                   <>
-                    <span className="material-symbols-outlined mb-3" style={{ fontSize: "48px" }}>mark_email_read</span>
+                    <Icon name="mark_email_read" size={48} className="mb-3" />
                     <p className="text-sm font-medium">No briefing available</p>
                     <p className="text-xs mt-1 opacity-70 mb-4">Generate a briefing from your current inbox.</p>
                     <button
                       onClick={() => void requestBriefingRegeneration()}
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90"
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-wax text-on-wax text-sm font-medium hover:opacity-90"
                     >
-                      <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>auto_awesome</span>
+                      <Icon name="auto_awesome" size={16} />
                       Generate Briefing
                     </button>
                   </>
@@ -1125,26 +1121,26 @@ export default function BriefingView() {
               <div className="space-y-5">
                 {/* Compact inline meta chips  -  muted, calm, dashboard aesthetic */}
                 {displayStats && (
-                  <div className="flex flex-wrap items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-2)]/60 px-2 py-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5 rounded-full border border-line bg-field/60 px-2 py-1.5">
                     <button
                       onClick={() => setActiveFilter(null)}
                       title="Show all"
                       className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors ${
                         activeFilter === null
-                          ? "bg-[var(--foreground)] text-[var(--background)]"
-                          : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--foreground)]"
+                          ? "bg-ink text-canvas"
+                          : "text-ink3 hover:bg-raised hover:text-ink"
                       }`}
                     >
-                      <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>inbox</span>
+                      <Icon name="inbox" size={13} />
                       <span>All</span>
                       <span className="tabular-nums opacity-70">{displayStats.total}</span>
                     </button>
-                    <span className="h-4 w-px bg-[var(--border)]" aria-hidden />
+                    <span className="h-4 w-px bg-line" aria-hidden />
                     {([
-                      { key: "crucial", label: "Crucial", dot: "bg-rose-400", icon: "priority_high", count: displayStats.crucial },
-                      { key: "replyNeeded", label: "Reply", dot: "bg-sky-400", icon: "reply", count: displayStats.replyNeeded },
-                      { key: "deadlines", label: "Deadlines", dot: "bg-violet-400", icon: "event_upcoming", count: displayStats.deadlines },
-                      { key: "nonEssential", label: "Noise", dot: "bg-slate-400", icon: "filter_alt", count: displayStats.nonEssential },
+                      { key: "crucial", label: "Crucial", dot: "bg-danger", icon: "priority_high", count: displayStats.crucial },
+                      { key: "replyNeeded", label: "Reply", dot: "bg-wax", icon: "reply", count: displayStats.replyNeeded },
+                      { key: "deadlines", label: "Deadlines", dot: "bg-wax", icon: "event_upcoming", count: displayStats.deadlines },
+                      { key: "nonEssential", label: "Noise", dot: "bg-ink4", icon: "filter_alt", count: displayStats.nonEssential },
                     ] as const).map((chip) => {
                       const isActive = activeFilter === chip.key;
                       return (
@@ -1153,8 +1149,8 @@ export default function BriefingView() {
                           onClick={() => setActiveFilter(isActive ? null : chip.key)}
                           className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors ${
                             isActive
-                              ? "bg-[var(--foreground)] text-[var(--background)]"
-                              : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--foreground)]"
+                              ? "bg-ink text-canvas"
+                              : "text-ink3 hover:bg-raised hover:text-ink"
                           }`}
                         >
                           <span className={`h-1.5 w-1.5 rounded-full ${chip.dot}`} aria-hidden />
@@ -1167,32 +1163,30 @@ export default function BriefingView() {
                 )}
                 {/* Executive summary */}
                 {briefing && executiveSummaryIsUsable(briefing.executiveSummary) && (
-                  <div className="px-4 py-3.5 rounded-xl border border-[var(--border)] bg-[var(--surface)]/90">
+                  <div className="px-4 py-3.5 rounded-xl border border-line bg-raised/90">
                     <div className="flex items-center justify-between gap-3 mb-2">
-                      <span className="text-[10px] font-semibold tracking-[0.12em] text-[var(--muted)] uppercase font-['Syne',system-ui,sans-serif]">Executive summary</span>
+                      <span className="text-[10px] font-semibold tracking-[0.12em] text-ink3 uppercase font-['Syne',system-ui,sans-serif]">Executive summary</span>
                     </div>
-                    <p className="text-[13px] leading-relaxed whitespace-pre-wrap text-slate-800 dark:text-slate-100 font-['DM_Sans',ui-sans-serif,sans-serif]">
+                    <p className="text-[13px] leading-relaxed whitespace-pre-wrap text-ink font-['DM_Sans',ui-sans-serif,sans-serif]">
                       {briefingExecutiveSummaryDisplay(briefing.executiveSummary)}
                     </p>
                   </div>
                 )}
                 {summaryFailedButHasCards && (
                   <div
-                    className="rounded-xl border border-amber-500/30 bg-amber-500/[0.06] dark:bg-amber-500/10 px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between"
+                    className="rounded-xl border border-warn/30 bg-warn/[0.06] px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between"
                     role="status"
                   >
-                    <p className="text-[13px] text-[var(--foreground)] leading-snug font-['DM_Sans',ui-sans-serif,sans-serif]">
+                    <p className="text-[13px] text-ink leading-snug font-['DM_Sans',ui-sans-serif,sans-serif]">
                       Overview text did not generate for this inbox load, but the sections below are filled from your mail. Regenerate to try the overview again.
                     </p>
                     <button
                       type="button"
                       onClick={() => void requestBriefingRegeneration()}
                       disabled={briefingRegenerating}
-                      className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-[12px] font-medium hover:border-[var(--accent)]/50 disabled:opacity-50 cursor-pointer transition-colors"
+                      className="shrink-0 inline-flex items-center justify-center gap-1.5 rounded-md border border-line bg-raised px-3 py-1.5 text-[12px] font-medium hover:border-wax/50 disabled:opacity-50 cursor-pointer transition-colors"
                     >
-                      <span className={`material-symbols-outlined ${briefingRegenerating ? "animate-spin" : ""}`} style={{ fontSize: "15px" }}>
-                        {briefingRegenerating ? "progress_activity" : "refresh"}
-                      </span>
+                      <Icon name={briefingRegenerating ? "progress_activity" : "refresh"} size={15} className={`${briefingRegenerating ? "animate-spin" : ""}`} />
                       {briefingRegenerating ? "Working…" : "Regenerate"}
                     </button>
                   </div>
@@ -1206,7 +1200,7 @@ export default function BriefingView() {
                       <div className="space-y-6">
                         {displayReplyNeededIncoming.length > 0 && (
                           <div>
-                            <SectionHeader icon="reply" label="Reply Needed" color="text-sky-500 dark:text-sky-400" />
+                            <SectionHeader icon="reply" label="Reply Needed" color="text-ink2" />
                             <div className="space-y-2.5">
                               {groupByTopic(displayReplyNeededIncoming).map((group, i) => (
                                 <GroupedEmailCard
@@ -1223,7 +1217,7 @@ export default function BriefingView() {
                         )}
                         {displayNoReplyYet.length > 0 && (
                           <div>
-                            <SectionHeader icon="mark_email_unread" label="No Reply Yet" color="text-amber-500 dark:text-amber-400" />
+                            <SectionHeader icon="mark_email_unread" label="No Reply Yet" color="text-warn" />
                             <div className="space-y-2.5">
                               {displayNoReplyYet.map((email, i) => (
                                 <EmailCard
@@ -1239,7 +1233,7 @@ export default function BriefingView() {
                           </div>
                         )}
                         {displayReplyNeededIncoming.length === 0 && displayNoReplyYet.length === 0 && (
-                          <p className="text-sm text-center py-8 text-[var(--muted)]">No emails in this category.</p>
+                          <p className="text-sm text-center py-8 text-ink3">No emails in this category.</p>
                         )}
                       </div>
                     ) : (
@@ -1250,18 +1244,18 @@ export default function BriefingView() {
                           color={FILTER_CONFIG[activeFilter].color}
                         />
                         {filteredEmails.length === 0 ? (
-                          <div className="text-center py-8 text-[var(--muted)]">
+                          <div className="text-center py-8 text-ink3">
                             {activeFilter === "nonEssential" && (displayStats?.nonEssential ?? 0) > 0 ? (
                               <>
-                                <span className="material-symbols-outlined mb-2" style={{ fontSize: "32px" }}>filter_alt</span>
+                                <Icon name="filter_alt" size={32} className="mb-2" />
                                 <p className="text-sm font-medium">{displayStats!.nonEssential} emails filtered</p>
                                 <p className="text-xs mt-1 opacity-70">Regenerate your briefing to see individual non-essential emails.</p>
                                 <button
                                   onClick={() => void requestBriefingRegeneration()}
                                   disabled={briefingRegenerating}
-                                  className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[var(--border)] text-xs hover:border-[var(--accent)] transition-colors disabled:opacity-50"
+                                  className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-line text-xs hover:border-wax transition-colors disabled:opacity-50"
                                 >
-                                  <span className={`material-symbols-outlined ${briefingRegenerating ? "animate-spin" : ""}`} style={{ fontSize: "13px" }}>{briefingRegenerating ? "progress_activity" : "refresh"}</span>
+                                  <Icon name={briefingRegenerating ? "progress_activity" : "refresh"} size={13} className={`${briefingRegenerating ? "animate-spin" : ""}`} />
                                   {briefingRegenerating ? "Generating..." : "Regenerate"}
                                 </button>
                               </>
@@ -1299,7 +1293,7 @@ export default function BriefingView() {
                     {/* Reply Needed: incoming emails that need a response */}
                     {displayReplyNeededIncoming.length > 0 && (
                       <div>
-                        <SectionHeader icon="reply" label="Reply Needed" color="text-sky-500 dark:text-sky-400" />
+                        <SectionHeader icon="reply" label="Reply Needed" color="text-ink2" />
                         <div className="space-y-2.5">
                           {groupByTopic(displayReplyNeededIncoming).map((group, i) => (
                             <GroupedEmailCard
@@ -1318,7 +1312,7 @@ export default function BriefingView() {
                     {/* No Reply Yet: sent emails awaiting response */}
                     {displayNoReplyYet.length > 0 && (
                       <div>
-                        <SectionHeader icon="mark_email_unread" label="No Reply Yet" color="text-amber-500 dark:text-amber-400" />
+                        <SectionHeader icon="mark_email_unread" label="No Reply Yet" color="text-warn" />
                         <div className="space-y-2.5">
                           {displayNoReplyYet.map((email, i) => (
                             <EmailCard
@@ -1337,7 +1331,7 @@ export default function BriefingView() {
                     {/* Crucial: critical/high shown first, medium collapsed under "Also important" */}
                     {displayCrucial.length > 0 && (
                       <div>
-                        <SectionHeader icon="priority_high" label="Crucial" color="text-rose-500 dark:text-rose-400" />
+                        <SectionHeader icon="priority_high" label="Crucial" color="text-danger" />
                         {crucialsHigh.length > 0 && (
                           <div className="space-y-2.5">
                             {groupByTopic(crucialsHigh).map((group, i) => (
@@ -1357,11 +1351,9 @@ export default function BriefingView() {
                             <button
                               type="button"
                               onClick={() => setImportantExpanded((v) => !v)}
-                              className="flex items-center gap-1.5 mb-2 text-[11px] text-[var(--muted)] hover:text-[var(--foreground)] transition-colors group cursor-pointer"
+                              className="flex items-center gap-1.5 mb-2 text-[11px] text-ink3 hover:text-ink transition-colors group cursor-pointer"
                             >
-                              <span className="material-symbols-outlined text-slate-400 group-hover:text-[var(--foreground)] transition-colors" style={{ fontSize: "13px" }}>
-                                {importantExpanded ? "expand_less" : "expand_more"}
-                              </span>
+                              <Icon name={importantExpanded ? "expand_less" : "expand_more"} size={13} className="text-ink3 group-hover:text-ink transition-colors" />
                               Also important ({crucialsImportant.length})
                             </button>
                             {importantExpanded && (
@@ -1385,7 +1377,7 @@ export default function BriefingView() {
 
                     {displayDeadlines.length > 0 && (
                       <div>
-                        <SectionHeader icon="event_upcoming" label="Deadlines" color="text-violet-500 dark:text-violet-400" />
+                        <SectionHeader icon="event_upcoming" label="Deadlines" color="text-ink2" />
                         <div className="space-y-2.5">
                           {groupByTopic(displayDeadlines).map((group, i) => (
                             <GroupedEmailCard
@@ -1404,9 +1396,9 @@ export default function BriefingView() {
                     {(displayStats?.nonEssential ?? 0) > 0 && displayNonEssential.length === 0 && activeFilter !== "nonEssential" && (
                       <button
                         onClick={() => setActiveFilter("nonEssential")}
-                        className="w-full text-[11px] text-[var(--muted)] text-center py-2 hover:text-[var(--foreground)] transition-colors"
+                        className="w-full text-[11px] text-ink3 text-center py-2 hover:text-ink transition-colors"
                       >
-                        <span className="material-symbols-outlined align-middle mr-1" style={{ fontSize: "12px" }}>filter_alt</span>
+                        <Icon name="filter_alt" size={12} className="align-middle mr-1" />
                         {displayStats!.nonEssential} non-essential emails filtered out -- click to view
                       </button>
                     )}
@@ -1417,11 +1409,9 @@ export default function BriefingView() {
                           onClick={() => setNonEssentialExpanded((v) => !v)}
                           className="flex items-center gap-2 mb-3 mt-1 w-full group"
                         >
-                          <span className="material-symbols-outlined text-slate-400" style={{ fontSize: "16px" }}>filter_alt</span>
-                          <h2 className="text-xs font-bold tracking-widest text-[var(--muted)] uppercase flex-1 text-left">Non-essential</h2>
-                          <span className="material-symbols-outlined text-slate-400 group-hover:text-[var(--foreground)] transition-colors" style={{ fontSize: "16px" }}>
-                            {nonEssentialExpanded ? "expand_less" : "expand_more"}
-                          </span>
+                          <Icon name="filter_alt" size={16} className="text-ink3" />
+                          <h2 className="text-xs font-bold tracking-widest text-ink3 uppercase flex-1 text-left">Non-essential</h2>
+                          <Icon name={nonEssentialExpanded ? "expand_less" : "expand_more"} size={16} className="text-ink3 group-hover:text-ink transition-colors" />
                         </button>
                         {nonEssentialExpanded && (
                           <div className="space-y-1">
@@ -1444,10 +1434,8 @@ export default function BriefingView() {
 
                 {/* Which model wrote it */}
                 {writer && (
-                  <p className="text-[11px] text-[var(--muted)] flex items-center gap-1 pb-2">
-                    <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>
-                      {writer.format === "ollama" ? "laptop_mac" : "cloud"}
-                    </span>
+                  <p className="text-[11px] text-ink3 flex items-center gap-1 pb-2">
+                    <Icon name={writer.format === "ollama" ? "laptop_mac" : "cloud"} size={12} />
                     Written by {writer.model}
                     {writer.format === "ollama" ? " on this Mac" : " in the cloud"}
                   </p>

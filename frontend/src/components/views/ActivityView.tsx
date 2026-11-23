@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 
@@ -80,12 +81,12 @@ function plain(html: string): string {
 }
 
 const STATUS_STYLE: Record<string, string> = {
-  done: "text-emerald-600 dark:text-emerald-400",
-  undone: "text-[var(--muted)]",
-  dismissed: "text-[var(--muted)]",
-  blocked: "text-amber-600 dark:text-amber-400",
-  failed: "text-red-500",
-  running: "text-[var(--accent)]",
+  done: "text-ok",
+  undone: "text-ink3",
+  dismissed: "text-ink3",
+  blocked: "text-warn",
+  failed: "text-danger",
+  running: "text-wax",
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -205,7 +206,7 @@ export default function ActivityView() {
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
-        <span className="material-symbols-outlined animate-spin text-[var(--muted)]" style={{ fontSize: "24px" }}>progress_activity</span>
+        <Icon name="progress_activity" size={24} className="animate-spin text-ink3" />
       </div>
     );
   }
@@ -214,12 +215,12 @@ export default function ActivityView() {
     r.emails ? `${r.emails.sender?.split("<")[0]?.trim() || "Unknown"}: ${r.emails.subject || "(no subject)"}` : null;
 
   return (
-    <div className="h-full overflow-auto bg-[var(--background)]">
+    <div className="h-full overflow-auto bg-canvas">
       <div className="max-w-2xl mx-auto px-4 py-6">
         <div className="flex items-start justify-between gap-4 mb-5">
           <div>
-            <h1 className="text-xl font-bold text-[var(--foreground)]">Activity</h1>
-            <p className="text-sm text-[var(--muted)] mt-0.5">
+            <h1 className="text-xl font-bold text-ink">Activity</h1>
+            <p className="text-sm text-ink3 mt-0.5">
               {status?.paused
                 ? "Paused. Nothing happens until you resume."
                 : status?.running
@@ -228,56 +229,52 @@ export default function ActivityView() {
                     ? `Checked mail ${timeAgo(status.lastCycleAt)}`
                     : "Checks mail every two minutes while Tabellar runs"}
             </p>
-            {status?.lastError && <p className="text-xs text-red-500 mt-1">Last check failed: {status.lastError}</p>}
+            {status?.lastError && <p className="text-xs text-danger mt-1">Last check failed: {status.lastError}</p>}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={checkNow}
               disabled={status?.running}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-[var(--border)] text-xs font-medium text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--foreground)] disabled:opacity-50 cursor-pointer"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-line text-xs font-medium text-ink3 hover:bg-field hover:text-ink disabled:opacity-50 cursor-pointer"
             >
-              <span className={`material-symbols-outlined${status?.running ? " animate-spin" : ""}`} style={{ fontSize: "15px" }}>
-                {status?.running ? "progress_activity" : "refresh"}
-              </span>
+              <Icon name={status?.running ? "progress_activity" : "refresh"} size={15} className={`${status?.running ? " animate-spin" : ""}`} />
               Check now
             </button>
             <button
               onClick={togglePause}
               className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
-                status?.paused ? "bg-[var(--accent)] text-white hover:opacity-90" : "bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400"
+                status?.paused ? "bg-wax text-on-wax hover:opacity-90" : "bg-danger-soft text-danger hover:bg-danger-soft"
               }`}
             >
-              <span className="material-symbols-outlined" style={{ fontSize: "15px", fontVariationSettings: "'FILL' 1" }}>
-                {status?.paused ? "play_arrow" : "pause"}
-              </span>
+              <Icon name={status?.paused ? "play_arrow" : "pause"} size={15} fill />
               {status?.paused ? "Resume" : "Pause"}
             </button>
           </div>
         </div>
 
         {/* Level */}
-        <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-[var(--surface-2)] mb-2">
+        <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-field mb-2">
           {LEVELS.map((l) => (
             <button
               key={l.id}
               onClick={() => setLevel(l.id)}
               className={`py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                status?.level === l.id ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                status?.level === l.id ? "bg-canvas text-ink shadow-sm" : "text-ink3 hover:text-ink"
               }`}
             >
               {l.label}
             </button>
           ))}
         </div>
-        <p className="text-xs text-[var(--muted)] mb-6 px-1">{LEVELS.find((l) => l.id === status?.level)?.text}</p>
+        <p className="text-xs text-ink3 mb-6 px-1">{LEVELS.find((l) => l.id === status?.level)?.text}</p>
 
         {/* Proposals */}
         {proposals.length > 0 && (
           <section className="mb-8">
             <div className="flex items-center justify-between mb-2">
-              <h2 className="text-xs font-semibold uppercase tracking-widest text-[var(--muted)]">Waiting for you ({proposals.length})</h2>
+              <h2 className="text-xs font-semibold uppercase tracking-widest text-ink3">Waiting for you ({proposals.length})</h2>
               {labelProposals.length > 1 && (
-                <button onClick={approveAllLabels} className="text-xs font-medium text-[var(--accent)] hover:underline cursor-pointer">
+                <button onClick={approveAllLabels} className="text-xs font-medium text-wax hover:underline cursor-pointer">
                   Approve all {labelProposals.length} labels
                 </button>
               )}
@@ -287,16 +284,16 @@ export default function ActivityView() {
                 const isOpen = open.has(r.id);
                 const body = r.kind === "draft" ? String(r.detail.body ?? "") : "";
                 return (
-                  <div key={r.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+                  <div key={r.id} className="rounded-xl border border-line bg-raised p-3">
                     <div className="flex items-start gap-2.5">
-                      <span className="material-symbols-outlined text-[var(--accent)] mt-0.5" style={{ fontSize: "18px" }}>{KIND_ICON[r.kind]}</span>
+                      <Icon name={KIND_ICON[r.kind]} size={18} className="text-wax mt-0.5" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[var(--foreground)]">{r.summary}</p>
-                        {emailLine(r) && <p className="text-xs text-[var(--muted)] truncate">{emailLine(r)}</p>}
+                        <p className="text-sm font-medium text-ink">{r.summary}</p>
+                        {emailLine(r) && <p className="text-xs text-ink3 truncate">{emailLine(r)}</p>}
                         {r.kind === "draft" && (
                           <button
                             onClick={() => setOpen((o) => { const n = new Set(o); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); return n; })}
-                            className="text-xs text-[var(--accent)] mt-1 hover:underline cursor-pointer"
+                            className="text-xs text-wax mt-1 hover:underline cursor-pointer"
                           >
                             {isOpen ? "Hide draft" : "Read draft"}
                           </button>
@@ -306,14 +303,14 @@ export default function ActivityView() {
                         <button
                           onClick={() => dismiss(r)}
                           disabled={busy.has(r.id)}
-                          className="px-2.5 py-1 rounded-lg text-xs font-medium text-[var(--muted)] hover:bg-[var(--surface-2)] disabled:opacity-50 cursor-pointer"
+                          className="px-2.5 py-1 rounded-lg text-xs font-medium text-ink3 hover:bg-field disabled:opacity-50 cursor-pointer"
                         >
                           Dismiss
                         </button>
                         <button
                           onClick={() => approve(r)}
                           disabled={busy.has(r.id)}
-                          className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 cursor-pointer"
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-wax text-on-wax hover:opacity-90 disabled:opacity-50 cursor-pointer"
                         >
                           {r.kind === "draft" ? "Save draft" : "Approve"}
                         </button>
@@ -321,10 +318,10 @@ export default function ActivityView() {
                     </div>
                     {isOpen && (
                       <div className="mt-2 ml-7 text-xs">
-                        <p className="text-[var(--muted)] mb-1">
+                        <p className="text-ink3 mb-1">
                           To {(r.detail.to as string[] | undefined)?.join(", ")} · {String(r.detail.subject ?? "")}
                         </p>
-                        <pre className="whitespace-pre-wrap font-sans text-[var(--foreground)] bg-[var(--surface-2)] rounded-lg p-2.5">{plain(body)}</pre>
+                        <pre className="whitespace-pre-wrap font-sans text-ink bg-field rounded-lg p-2.5">{plain(body)}</pre>
                       </div>
                     )}
                   </div>
@@ -336,25 +333,25 @@ export default function ActivityView() {
 
         {/* History */}
         <section>
-          <h2 className="text-xs font-semibold uppercase tracking-widest text-[var(--muted)] mb-2">History</h2>
+          <h2 className="text-xs font-semibold uppercase tracking-widest text-ink3 mb-2">History</h2>
           {history.length === 0 ? (
-            <div className="text-center py-12 text-[var(--muted)]">
-              <span className="material-symbols-outlined mb-2" style={{ fontSize: "40px" }}>history</span>
+            <div className="text-center py-12 text-ink3">
+              <Icon name="history" size={40} className="mb-2" />
               <p className="text-sm">Nothing yet. New mail is checked every two minutes.</p>
             </div>
           ) : (
-            <div className="divide-y divide-[var(--border)]">
+            <div className="divide-y divide-line">
               {history.map((r) => (
                 <div key={r.id} className="flex items-start gap-2.5 py-2.5">
-                  <span className="material-symbols-outlined text-[var(--muted)] mt-0.5" style={{ fontSize: "17px" }}>{KIND_ICON[r.kind]}</span>
+                  <Icon name={KIND_ICON[r.kind]} size={17} className="text-ink3 mt-0.5" />
                   <div className="flex-1 min-w-0">
-                    <p className={`text-sm ${r.status === "undone" || r.status === "dismissed" ? "line-through text-[var(--muted)]" : "text-[var(--foreground)]"}`}>{r.summary}</p>
-                    {emailLine(r) && <p className="text-xs text-[var(--muted)] truncate">{emailLine(r)}</p>}
+                    <p className={`text-sm ${r.status === "undone" || r.status === "dismissed" ? "line-through text-ink3" : "text-ink"}`}>{r.summary}</p>
+                    {emailLine(r) && <p className="text-xs text-ink3 truncate">{emailLine(r)}</p>}
                     {(r.status === "blocked" || r.status === "failed") && (r.reason || r.error) && (
-                      <p className="text-xs text-[var(--muted)] mt-0.5">{r.error || r.reason}</p>
+                      <p className="text-xs text-ink3 mt-0.5">{r.error || r.reason}</p>
                     )}
                     {r.kind === "send" && r.status === "done" && (
-                      <p className={`text-xs mt-0.5 ${pendingSend(r) ? "text-[var(--accent)] font-medium" : "text-[var(--muted)]"}`}>
+                      <p className={`text-xs mt-0.5 ${pendingSend(r) ? "text-wax font-medium" : "text-ink3"}`}>
                         {r.detail.sentAt
                           ? `Sent ${timeAgo(String(r.detail.sentAt))}`
                           : pendingSend(r)
@@ -366,14 +363,14 @@ export default function ActivityView() {
                       <>
                         <button
                           onClick={() => setOpen((o) => { const n = new Set(o); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); return n; })}
-                          className="text-xs text-[var(--accent)] mt-0.5 hover:underline cursor-pointer"
+                          className="text-xs text-wax mt-0.5 hover:underline cursor-pointer"
                         >
                           {open.has(r.id) ? "Hide reply" : "Read reply"}
                         </button>
                         {open.has(r.id) && (
                           <div className="mt-1.5 text-xs">
-                            <p className="text-[var(--muted)] mb-1">To {(r.detail.to as string[] | undefined)?.join(", ")} · {String(r.detail.subject ?? "")}</p>
-                            <pre className="whitespace-pre-wrap font-sans text-[var(--foreground)] bg-[var(--surface-2)] rounded-lg p-2.5">{String(r.detail.body)}</pre>
+                            <p className="text-ink3 mb-1">To {(r.detail.to as string[] | undefined)?.join(", ")} · {String(r.detail.subject ?? "")}</p>
+                            <pre className="whitespace-pre-wrap font-sans text-ink bg-field rounded-lg p-2.5">{String(r.detail.body)}</pre>
                           </div>
                         )}
                       </>
@@ -384,12 +381,12 @@ export default function ActivityView() {
                       {r.kind === "send" && r.status === "undone" ? "Cancelled" : (STATUS_LABEL[r.status] ?? r.status)}
                       {r.source !== "engine" ? ` · ${r.source === "agent" ? "agent" : r.source === "assistant" ? "assistant" : "you"}` : ""}
                     </span>
-                    <span className="text-[10px] text-[var(--muted)]">{timeAgo(r.created_at)}</span>
+                    <span className="text-[10px] text-ink3">{timeAgo(r.created_at)}</span>
                     {pendingSend(r) && (
                       <button
                         onClick={() => undo(r)}
                         disabled={busy.has(r.id)}
-                        className="mt-0.5 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-400 disabled:opacity-50 cursor-pointer"
+                        className="mt-0.5 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-danger-soft text-danger hover:bg-danger-soft disabled:opacity-50 cursor-pointer"
                       >
                         Cancel send
                       </button>
@@ -398,7 +395,7 @@ export default function ActivityView() {
                       <button
                         onClick={() => undo(r)}
                         disabled={busy.has(r.id)}
-                        className="text-[11px] font-medium text-[var(--accent)] hover:underline disabled:opacity-50 cursor-pointer"
+                        className="text-[11px] font-medium text-wax hover:underline disabled:opacity-50 cursor-pointer"
                       >
                         Undo
                       </button>

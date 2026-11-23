@@ -1,5 +1,6 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import Icon from "@/components/Icon";
 import { useApp } from "../AppShell";
 import { normalizeAgentSessionError } from "@/lib/agentClient";
 import type {
@@ -55,27 +56,27 @@ const BUCKET_META: Record<
   replies: {
     label: "Replies",
     icon: "send",
-    color: "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10",
+    color: "text-ok bg-ok/10",
   },
   meetings: {
     label: "Meetings",
     icon: "event",
-    color: "text-sky-700 dark:text-sky-300 bg-sky-500/10",
+    color: "text-ink2 bg-wax/10",
   },
   todos: {
     label: "Todos",
     icon: "task_alt",
-    color: "text-violet-700 dark:text-violet-300 bg-violet-500/10",
+    color: "text-ink2 bg-wax/10",
   },
   noise: {
     label: "Noise",
     icon: "archive",
-    color: "text-slate-600 dark:text-slate-300 bg-slate-500/10",
+    color: "text-ink2 bg-ink3/10",
   },
   single: {
     label: "Agent",
     icon: "auto_awesome",
-    color: "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10",
+    color: "text-ok bg-ok/10",
   },
 };
 
@@ -384,18 +385,18 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
 
   const statusTone =
     solveAgentCancelInFlight
-      ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-300/50 dark:border-amber-500/30"
+      ? "bg-warn/15 text-warn border-warn-line"
       : status === "asking"
-      ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-300/50 dark:border-amber-500/30"
+      ? "bg-warn/15 text-warn border-warn-line"
       : status === "ready" && localActions.length === 0
-        ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-300/50 dark:border-amber-500/30"
+        ? "bg-warn/15 text-warn border-warn-line"
         : status === "ready"
-          ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-300/50 dark:border-emerald-500/30"
+          ? "bg-ok/15 text-ok border-ok-line"
           : status === "error"
-            ? "bg-red-500/15 text-red-700 dark:text-red-300 border-red-300/50 dark:border-red-500/30"
+            ? "bg-danger/15 text-danger border-danger-line"
             : status === "done"
-              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-300/50 dark:border-emerald-500/30"
-              : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-300/40 dark:border-emerald-500/25";
+              ? "bg-ok/15 text-ok border-ok-line"
+              : "bg-ok/10 text-ok border-ok-line";
 
   const toggleAction = (id: string, selected: boolean) => {
     setLocalActions((prev) =>
@@ -472,29 +473,24 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex justify-end bg-slate-950/35 backdrop-blur-[3px] solve-fade-in"
+      className="fixed inset-0 z-50 flex justify-end bg-ink/35 backdrop-blur-[3px] solve-fade-in"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className="solve-grain solve-panel-bg relative flex h-full w-full max-w-[min(880px,100%)] flex-col border-l border-[var(--border)] shadow-[0_20px_80px_-20px_rgba(0,0,0,0.45)]"
+        className="solve-grain solve-panel-bg relative flex h-full w-full max-w-[min(880px,100%)] flex-col border-l border-line shadow-[0_20px_80px_-20px_rgba(0,0,0,0.45)]"
         role="dialog"
         aria-label="Auto-Resolve agent"
       >
         {/* Header */}
-        <div className="relative flex items-center justify-between border-b border-[var(--border)]/70 px-6 py-4 backdrop-blur-sm">
+        <div className="relative flex items-center justify-between border-b border-line/70 px-6 py-4 backdrop-blur-sm">
           <div className="flex items-center gap-3.5">
-            <div className="relative flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-[0_4px_14px_-4px_rgba(5,150,105,0.55)]">
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "22px" }}
-              >
-                auto_awesome
-              </span>
+            <div className="relative flex h-11 w-11 items-center justify-center rounded-2xl bg-ok text-white shadow-[0_4px_14px_-4px_rgba(5,150,105,0.55)]">
+              <Icon name="auto_awesome" size={22} />
             </div>
             <div>
-              <h2 className="font-semibold leading-tight text-[var(--foreground)] tracking-tight text-[18px]">
+              <h2 className="font-semibold leading-tight text-ink tracking-tight text-[18px]">
                 Auto-Resolve
               </h2>
               <div className="mt-1 flex items-center gap-2">
@@ -509,11 +505,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                     </span>
                   )}
                   {status !== "planning" && (
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "12px" }}
-                    >
-                      {status === "asking"
+                    <Icon name={status === "asking"
                         ? "help"
                         : status === "ready"
                           ? "check_circle"
@@ -523,28 +515,22 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                               ? "bolt"
                               : status === "done"
                                 ? "done_all"
-                                : "auto_awesome"}
-                    </span>
+                                : "auto_awesome"} size={12} />
                   )}
                   {statusLabel}
                 </span>
                 {steps.length > 0 && (
-                  <span className="text-[10.5px] text-[var(--muted)]">
+                  <span className="text-[10.5px] text-ink3">
                     {doneCount}/{steps.length} steps
                   </span>
                 )}
                 {anyReasoning && (
                   <button
                     onClick={() => setShowReasoning((v) => !v)}
-                    className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-[var(--border)] px-2 py-0.5 text-[10.5px] font-medium text-[var(--muted)] hover:border-[var(--foreground)] hover:text-[var(--foreground)] transition-colors"
+                    className="inline-flex cursor-pointer items-center gap-1 rounded-full border border-line px-2 py-0.5 text-[10.5px] font-medium text-ink3 hover:border-ink hover:text-ink transition-colors"
                     title="Toggle reasoning"
                   >
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "12px" }}
-                    >
-                      psychology
-                    </span>
+                    <Icon name="psychology" size={12} />
                     {showReasoning ? "Hide thinking" : "Show thinking"}
                   </button>
                 )}
@@ -557,7 +543,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                 type="button"
                 onClick={() => void cancelSolveAgent()}
                 disabled={solveAgentCancelInFlight}
-                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] px-3.5 py-1.5 text-[11.5px] font-medium text-[var(--muted)] transition-colors hover:border-red-400 hover:text-red-500 disabled:cursor-wait disabled:opacity-70 disabled:hover:border-[var(--border)] disabled:hover:text-[var(--muted)]"
+                className="inline-flex items-center gap-1.5 rounded-full border border-line px-3.5 py-1.5 text-[11.5px] font-medium text-ink3 transition-colors hover:border-danger-line hover:text-danger disabled:cursor-wait disabled:opacity-70 disabled:hover:border-line disabled:hover:text-ink3"
                 title={
                   solveAgentCancelInFlight
                     ? "Cancelling"
@@ -565,13 +551,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                 }
               >
                 {solveAgentCancelInFlight && (
-                  <span
-                    className="material-symbols-outlined animate-spin"
-                    style={{ fontSize: "14px" }}
-                    aria-hidden
-                  >
-                    progress_activity
-                  </span>
+                  <Icon name="progress_activity" size={14} className="animate-spin" />
                 )}
                 {solveAgentCancelInFlight ? "Cancelling…" : "Cancel plan"}
               </button>
@@ -581,22 +561,17 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
               status === "error") && (
               <button
                 onClick={onClearSession}
-                className="cursor-pointer rounded-full border border-[var(--border)] px-3.5 py-1.5 text-[11.5px] font-medium text-[var(--muted)] transition-colors hover:border-[var(--foreground)] hover:text-[var(--foreground)]"
+                className="cursor-pointer rounded-full border border-line px-3.5 py-1.5 text-[11.5px] font-medium text-ink3 transition-colors hover:border-ink hover:text-ink"
               >
                 Clear
               </button>
             )}
             <button
               onClick={onClose}
-              className="ml-1 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--foreground)]"
+              className="ml-1 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-ink3 transition-colors hover:bg-field hover:text-ink"
               aria-label="Close"
             >
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "20px" }}
-              >
-                close
-              </span>
+              <Icon name="close" size={20} />
             </button>
           </div>
         </div>
@@ -609,18 +584,13 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
           {/* Hero explanation */}
           {steps.length === 0 && status === "planning" && (
             <div className="mx-auto mt-6 max-w-md text-center">
-              <div className="mx-auto mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/15">
-                <span
-                  className="material-symbols-outlined text-emerald-600 dark:text-emerald-400"
-                  style={{ fontSize: "28px" }}
-                >
-                  hourglass_top
-                </span>
+              <div className="mx-auto mb-4 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-ok/15">
+                <Icon name="hourglass_top" size={28} className="text-ok" />
               </div>
-              <h3 className="text-[15px] font-semibold text-[var(--foreground)]">
+              <h3 className="text-[15px] font-semibold text-ink">
                 Starting Auto-Resolve
               </h3>
-              <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--muted)]">
+              <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink3">
                 Feel free to keep working. The agent splits your inbox into
                 parallel lanes and runs in the background. You&apos;ll be
                 notified the moment it needs your input.
@@ -632,13 +602,13 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
           {steps.length > 0 && (
             <div className="mb-5">
               <div className="mb-2.5 flex items-center justify-between">
-                <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-[var(--muted)]">
+                <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink3">
                   Progress
                 </span>
                 {steps.length > 4 && (
                   <button
                     onClick={() => setShowAdvanced((v) => !v)}
-                    className="cursor-pointer text-[10.5px] font-medium text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+                    className="cursor-pointer text-[10.5px] font-medium text-ink3 hover:text-ink transition-colors"
                   >
                     {showAdvanced ? "Hide all" : "Show all"}
                   </button>
@@ -662,21 +632,16 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                     return (
                       <div
                         key={bk}
-                        className="rounded-xl border border-[var(--border)]/60 bg-[var(--surface)]/50 p-3"
+                        className="rounded-xl border border-line/60 bg-raised/50 p-3"
                       >
                         <div className="mb-2 flex items-center gap-2">
                           <span
                             className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold ${meta.color}`}
                           >
-                            <span
-                              className="material-symbols-outlined"
-                              style={{ fontSize: "12px" }}
-                            >
-                              {meta.icon}
-                            </span>
+                            <Icon name={meta.icon} size={12} />
                             {meta.label}
                           </span>
-                          <span className="text-[10.5px] text-[var(--muted)]">
+                          <span className="text-[10.5px] text-ink3">
                             {laneDone}/{list.length}
                           </span>
                         </div>
@@ -708,13 +673,13 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
               )}
 
               {assistantStatusLine && (
-                <p className="mt-3 pl-8 text-[12px] italic leading-snug text-[var(--muted)]">
+                <p className="mt-3 pl-8 text-[12px] italic leading-snug text-ink3">
                   &ldquo;{assistantStatusLine}&rdquo;
                 </p>
               )}
 
               {showThinking && (
-                <div className="mt-3 flex items-center gap-2 pl-1 text-[12px] text-[var(--muted)]">
+                <div className="mt-3 flex items-center gap-2 pl-1 text-[12px] text-ink3">
                   <span className="inline-flex solve-dot-wave">
                     <span />
                     <span />
@@ -751,13 +716,8 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
               ) : (
                 <div>
                   <div className="mb-3 flex items-center gap-2">
-                    <span
-                      className="material-symbols-outlined text-amber-600 dark:text-amber-400"
-                      style={{ fontSize: "18px" }}
-                    >
-                      help
-                    </span>
-                    <h3 className="text-[14px] font-semibold text-[var(--foreground)]">
+                    <Icon name="help" size={18} className="text-warn" />
+                    <h3 className="text-[14px] font-semibold text-ink">
                       {pendingQuestions.length} quick decisions
                     </h3>
                   </div>
@@ -780,8 +740,8 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                       />
                     ))}
                   </div>
-                  <div className="sticky bottom-0 mt-4 -mx-6 border-t border-[var(--border)] bg-[var(--surface)]/95 px-6 py-3 backdrop-blur-sm flex items-center justify-between">
-                    <div className="text-[11.5px] text-[var(--muted)]">
+                  <div className="sticky bottom-0 mt-4 -mx-6 border-t border-line bg-raised/95 px-6 py-3 backdrop-blur-sm flex items-center justify-between">
+                    <div className="text-[11.5px] text-ink3">
                       {answeredCount} of {totalQuestions} answered
                       {answeredCount < totalQuestions
                         ? " (unanswered will be skipped)"
@@ -790,7 +750,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                     <button
                       onClick={() => void submitBatch()}
                       disabled={answeredCount === 0}
-                      className="cursor-pointer rounded-full bg-emerald-600 px-4 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-emerald-700 disabled:opacity-40 disabled:hover:bg-emerald-600"
+                      className="cursor-pointer rounded-full bg-ok px-4 py-1.5 text-[12px] font-semibold text-white transition-colors hover:bg-ok disabled:opacity-40 disabled:hover:bg-ok"
                     >
                       Continue
                     </button>
@@ -802,7 +762,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
 
           {/* Error */}
           {status === "error" && (
-            <div className="my-4 rounded-xl border border-red-300/60 bg-red-50 p-3.5 text-[12.5px] text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+            <div className="my-4 rounded-xl border border-danger-line bg-danger-soft p-3.5 text-[12.5px] text-danger">
               {normalizeAgentSessionError(agentSession.error) ??
                 "Unknown error"}
             </div>
@@ -812,15 +772,10 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
           {localActions.length > 0 &&
             status !== "ready" &&
             status !== "done" && (
-              <div className="mt-2 rounded-2xl border border-emerald-200/60 bg-emerald-50/40 dark:border-emerald-500/20 dark:bg-emerald-500/5 p-4">
+              <div className="mt-2 rounded-2xl border border-ok-line bg-ok-soft p-4">
                 <div className="mb-2 flex items-center gap-2">
-                  <span
-                    className="material-symbols-outlined text-emerald-600 dark:text-emerald-400"
-                    style={{ fontSize: "16px" }}
-                  >
-                    list_alt
-                  </span>
-                  <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-300">
+                  <Icon name="list_alt" size={16} className="text-ok" />
+                  <span className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ok">
                     Drafted so far · {localActions.length} action
                     {localActions.length === 1 ? "" : "s"}
                   </span>
@@ -829,20 +784,15 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                   {localActions.map((a) => (
                     <li
                       key={a.id}
-                      className="flex items-center gap-2 text-[12px] text-[var(--foreground)]"
+                      className="flex items-center gap-2 text-[12px] text-ink"
                     >
-                      <span
-                        className="material-symbols-outlined text-[var(--muted)]"
-                        style={{ fontSize: "14px" }}
-                      >
-                        {a.type === "reply"
+                      <Icon name={a.type === "reply"
                           ? "send"
                           : a.type === "todo"
                             ? "task_alt"
                             : a.type === "meeting"
                               ? "event"
-                              : "archive"}
-                      </span>
+                              : "archive"} size={14} className="text-ink3" />
                       <span className="truncate">
                         {a.type === "reply"
                           ? `Reply to ${a.payload.to}`
@@ -866,43 +816,33 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
           {(status === "ready" ||
             status === "executing" ||
             status === "done") && (
-            <div className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--surface)]/90 backdrop-blur-sm p-5 solve-fade-in shadow-[0_8px_30px_-12px_rgba(0,0,0,0.12)]">
+            <div className="mt-5 rounded-2xl border border-line bg-raised/90 backdrop-blur-sm p-5 solve-fade-in shadow-[0_8px_30px_-12px_rgba(0,0,0,0.12)]">
               <div className="mb-3 flex items-center gap-2">
-                <span
-                  className="material-symbols-outlined text-emerald-600 dark:text-emerald-400"
-                  style={{ fontSize: "20px" }}
-                >
-                  verified
-                </span>
-                <h3 className="text-[15px] font-semibold text-[var(--foreground)] tracking-tight">
+                <Icon name="verified" size={20} className="text-ok" />
+                <h3 className="text-[15px] font-semibold text-ink tracking-tight">
                   {status === "done"
                     ? "Execution complete"
                     : "Review and execute"}
                 </h3>
               </div>
               {agentSession.summary && (
-                <p className="mb-3 text-[12.5px] leading-relaxed text-slate-700 dark:text-slate-200">
+                <p className="mb-3 text-[12.5px] leading-relaxed text-ink">
                   {agentSession.summary}
                 </p>
               )}
               {finalReasoning && status === "ready" && (
-                <details className="mb-4 rounded-lg border border-[var(--border)]/50 bg-[var(--surface-2)]/40 px-3 py-2">
-                  <summary className="cursor-pointer text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100">
-                    <span
-                      className="material-symbols-outlined align-middle mr-1"
-                      style={{ fontSize: "13px" }}
-                    >
-                      psychology
-                    </span>
+                <details className="mb-4 rounded-lg border border-line/50 bg-field/40 px-3 py-2">
+                  <summary className="cursor-pointer text-[11px] font-medium text-ink2 hover:text-ink">
+                    <Icon name="psychology" size={13} className="align-middle mr-1" />
                     Plan rationale
                   </summary>
-                  <p className="mt-2 whitespace-pre-wrap text-[11.5px] italic leading-relaxed text-slate-600 dark:text-slate-300">
+                  <p className="mt-2 whitespace-pre-wrap text-[11.5px] italic leading-relaxed text-ink2">
                     {finalReasoning}
                   </p>
                 </details>
               )}
               {localActions.length === 0 ? (
-                <p className="py-6 text-center text-[12px] text-slate-600 dark:text-slate-300">
+                <p className="py-6 text-center text-[12px] text-ink2">
                   No actions proposed.
                 </p>
               ) : (
@@ -922,7 +862,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
 
               {status === "ready" && (
                 <div className="mt-5 flex items-center justify-between gap-2">
-                  <div className="text-[11.5px] text-slate-600 dark:text-slate-400">
+                  <div className="text-[11.5px] text-ink2">
                     {localActions.filter((a) => a.selected).length} of{" "}
                     {localActions.length} selected
                   </div>
@@ -933,7 +873,7 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                           prev.map((a) => ({ ...a, selected: true })),
                         );
                       }}
-                      className="cursor-pointer rounded-full border border-[var(--border)] px-3.5 py-1.5 text-[11.5px] font-medium text-slate-700 dark:text-slate-200 transition-colors hover:border-[var(--foreground)] hover:text-[var(--foreground)]"
+                      className="cursor-pointer rounded-full border border-line px-3.5 py-1.5 text-[11.5px] font-medium text-ink transition-colors hover:border-ink hover:text-ink"
                     >
                       Select all
                     </button>
@@ -944,14 +884,9 @@ export default function AgentWorkspace({ open, onClose }: AgentWorkspaceProps) {
                         !localActions.some((a) => a.selected) ||
                         status !== "ready"
                       }
-                      className="group cursor-pointer relative inline-flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-1.5 text-[12px] font-semibold text-white shadow-[0_2px_8px_-2px_rgba(5,150,105,0.45)] transition-colors hover:bg-emerald-700 disabled:bg-emerald-900/55 disabled:text-white/90 disabled:shadow-none disabled:hover:bg-emerald-900/55"
+                      className="group cursor-pointer relative inline-flex items-center gap-1.5 rounded-full bg-ok px-4 py-1.5 text-[12px] font-semibold text-white shadow-[0_2px_8px_-2px_rgba(5,150,105,0.45)] transition-colors hover:bg-ok disabled:bg-ok/55 disabled:text-white/90 disabled:shadow-none disabled:hover:bg-ok/55"
                     >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{ fontSize: "14px" }}
-                      >
-                        {executing ? "progress_activity" : "bolt"}
-                      </span>
+                      <Icon name={executing ? "progress_activity" : "bolt"} size={14} />
                       {executing ? "Executing..." : "Execute plan"}
                     </button>
                   </div>
@@ -980,10 +915,10 @@ function StepRow({
         <div
           className={`relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors ${
             isDone
-              ? "bg-emerald-600 text-white"
+              ? "bg-ok text-white"
               : isRunning
-                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                : "bg-[var(--surface-2)] text-[var(--muted)]"
+                ? "bg-ok/15 text-ok"
+                : "bg-field text-ink3"
           }`}
         >
           {isRunning && (
@@ -995,43 +930,38 @@ function StepRow({
               }}
             />
           )}
-          <span
-            className="material-symbols-outlined"
-            style={{ fontSize: "13px" }}
-          >
-            {isDone ? "check" : step.icon}
-          </span>
+          <Icon name={isDone ? "check" : step.icon} size={13} />
         </div>
         <div className="min-w-0 flex-1">
           <span
             className={`${
               isDone
-                ? "text-slate-800/90 dark:text-slate-100/90"
+                ? "text-ink/90"
                 : isRunning
-                  ? "text-slate-900 dark:text-slate-50"
-                  : "text-slate-600 dark:text-slate-300"
+                  ? "text-ink"
+                  : "text-ink2"
             }`}
           >
             {step.label}
           </span>
           {step.detail && (
-            <span className="ml-1.5 text-[var(--muted)]">· {step.detail}</span>
+            <span className="ml-1.5 text-ink3">· {step.detail}</span>
           )}
           {step.suffix && !step.detail && (
-            <span className="ml-1.5 rounded-md bg-[var(--surface-2)] px-1.5 py-0.5 text-[10.5px] text-[var(--muted)]">
+            <span className="ml-1.5 rounded-md bg-field px-1.5 py-0.5 text-[10.5px] text-ink3">
               {step.suffix}
             </span>
           )}
         </div>
         {isRunning && (
-          <span className="text-[10.5px] font-medium text-emerald-600 dark:text-emerald-400">
+          <span className="text-[10.5px] font-medium text-ok">
             Working
           </span>
         )}
       </div>
       {showReasoning && step.reasoning && (
-        <div className="ml-9 mt-1 rounded-md border border-[var(--border)]/40 bg-[var(--surface-2)]/40 px-2.5 py-1.5">
-          <p className="whitespace-pre-wrap text-[11px] italic leading-snug text-[var(--muted)]">
+        <div className="ml-9 mt-1 rounded-md border border-line/40 bg-field/40 px-2.5 py-1.5">
+          <p className="whitespace-pre-wrap text-[11px] italic leading-snug text-ink3">
             {step.reasoning}
           </p>
         </div>

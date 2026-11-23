@@ -1,5 +1,6 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 import DOMPurify from "dompurify";
@@ -250,10 +251,10 @@ export default function SentView() {
   };
 
   const scheduledStatusColors: Record<string, string> = {
-    pending: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400",
-    sent: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
-    failed: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-    cancelled: "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
+    pending: "bg-field text-ink2",
+    sent: "bg-ok-soft text-ok",
+    failed: "bg-danger-soft text-danger",
+    cancelled: "bg-field text-ink2",
   };
 
   const hasRightContent =
@@ -274,16 +275,16 @@ export default function SentView() {
     <div className="h-full flex overflow-hidden">
       {/* Left pane: list */}
       <div
-        className={`flex flex-col border-r border-[var(--border)] flex-shrink-0 w-80 lg:w-96 ${hasRightContent ? "hidden md:flex" : "flex"}`}
+        className={`flex flex-col border-r border-line flex-shrink-0 w-80 lg:w-96 ${hasRightContent ? "hidden md:flex" : "flex"}`}
       >
-        <div className="px-3 py-2.5 border-b border-[var(--border)] flex flex-col gap-2 flex-shrink-0">
+        <div className="px-3 py-2.5 border-b border-line flex flex-col gap-2 flex-shrink-0">
           <div className="flex items-center gap-1">
             <button
               onClick={() => {
                 setTab("sent");
                 setSelectedEmail(null);
               }}
-              className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === "sent" ? "bg-[var(--accent-light)] text-[var(--accent)]" : "text-[var(--muted)] hover:bg-slate-100 dark:hover:bg-slate-800"}`}
+              className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === "sent" ? "bg-wax-soft text-wax" : "text-ink3 hover:bg-field"}`}
             >
               Sent
             </button>
@@ -292,11 +293,11 @@ export default function SentView() {
                 setTab("scheduled");
                 setSelectedEmail(null);
               }}
-              className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === "scheduled" ? "bg-[var(--accent-light)] text-[var(--accent)]" : "text-[var(--muted)] hover:bg-slate-100 dark:hover:bg-slate-800"}`}
+              className={`flex-1 py-1.5 text-xs font-medium rounded-lg transition-colors ${tab === "scheduled" ? "bg-wax-soft text-wax" : "text-ink3 hover:bg-field"}`}
             >
               Scheduled
               {scheduled.filter((s) => s.status === "pending").length > 0 && (
-                <span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-[var(--accent)] text-white text-[9px]">
+                <span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full bg-wax text-on-wax text-[9px]">
                   {scheduled.filter((s) => s.status === "pending").length}
                 </span>
               )}
@@ -308,28 +309,18 @@ export default function SentView() {
           {tab === "sent" ? (
             loading ? (
               <div className="flex items-center justify-center h-32">
-                <div className="animate-pulse text-[var(--muted)] text-sm">
+                <div className="animate-pulse text-ink3 text-sm">
                   Loading...
                 </div>
               </div>
             ) : error ? (
-              <div className="flex flex-col items-center justify-center h-48 px-4 text-center text-[var(--muted)]">
-                <span
-                  className="material-symbols-outlined mb-2 text-red-400"
-                  style={{ fontSize: "40px" }}
-                >
-                  error_outline
-                </span>
-                <p className="text-sm text-red-500">{error}</p>
+              <div className="flex flex-col items-center justify-center h-48 px-4 text-center text-ink3">
+                <Icon name="error_outline" size={40} className="mb-2 text-danger" />
+                <p className="text-sm text-danger">{error}</p>
               </div>
             ) : emails.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-[var(--muted)] px-4">
-                <span
-                  className="material-symbols-outlined mb-2"
-                  style={{ fontSize: "40px" }}
-                >
-                  send
-                </span>
+              <div className="flex flex-col items-center justify-center h-48 text-ink3 px-4">
+                <Icon name="send" size={40} className="mb-2" />
                 <p className="text-sm text-center">No sent emails to show.</p>
               </div>
             ) : (
@@ -351,16 +342,16 @@ export default function SentView() {
                   <button
                     key={e.id}
                     onClick={() => setSelectedEmail(e)}
-                    className={`w-full text-left px-3 py-2.5 border-b border-[var(--border)] hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${selectedEmail?.id === e.id ? "bg-[var(--accent-light)] border-l-2 border-l-[var(--accent)]" : ""}`}
+                    className={`w-full text-left px-3 py-2.5 border-b border-line hover:bg-hover transition-colors ${selectedEmail?.id === e.id ? "bg-wax-soft border-l-2 border-l-wax" : ""}`}
                   >
-                    <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                    <p className="text-sm font-medium text-ink truncate">
                       {e.subject || "(no subject)"}
                     </p>
-                    <p className="text-xs text-[var(--muted)] truncate mt-0.5">
+                    <p className="text-xs text-ink3 truncate mt-0.5">
                       To: {e.recipients}
                     </p>
                     {e.received_at && (
-                      <p className="text-[10px] text-[var(--muted)] mt-0.5">
+                      <p className="text-[10px] text-ink3 mt-0.5">
                         {formatDate(e.received_at)}
                       </p>
                     )}
@@ -368,13 +359,8 @@ export default function SentView() {
                 ))
             )
           ) : filteredScheduled.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-[var(--muted)] px-4">
-              <span
-                className="material-symbols-outlined mb-2"
-                style={{ fontSize: "40px" }}
-              >
-                schedule_send
-              </span>
+            <div className="flex flex-col items-center justify-center h-48 text-ink3 px-4">
+              <Icon name="schedule_send" size={40} className="mb-2" />
               <p className="text-sm text-center">No scheduled emails.</p>
             </div>
           ) : (
@@ -382,10 +368,10 @@ export default function SentView() {
               <button
                 key={s.id}
                 onClick={() => setSelectedScheduled(s)}
-                className={`w-full text-left px-3 py-2.5 border-b border-[var(--border)] hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors ${selectedScheduled?.id === s.id ? "bg-[var(--accent-light)] border-l-2 border-l-[var(--accent)]" : ""}`}
+                className={`w-full text-left px-3 py-2.5 border-b border-line hover:bg-hover transition-colors ${selectedScheduled?.id === s.id ? "bg-wax-soft border-l-2 border-l-wax" : ""}`}
               >
                 <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-slate-900 dark:text-white truncate flex-1">
+                  <p className="text-sm font-medium text-ink truncate flex-1">
                     {s.subject || "(no subject)"}
                   </p>
                   <span
@@ -394,10 +380,10 @@ export default function SentView() {
                     {s.status}
                   </span>
                 </div>
-                <p className="text-xs text-[var(--muted)] truncate mt-0.5">
+                <p className="text-xs text-ink3 truncate mt-0.5">
                   To: {s.to_addresses?.join(", ")}
                 </p>
-                <p className="text-[10px] text-[var(--muted)] mt-0.5">
+                <p className="text-[10px] text-ink3 mt-0.5">
                   Sends: {new Date(s.send_at).toLocaleString()}
                 </p>
               </button>
@@ -414,23 +400,18 @@ export default function SentView() {
           selectedScheduled ? (
             <div className="flex-1 overflow-auto flex flex-col">
               {/* Header */}
-              <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-3 flex-shrink-0">
+              <div className="px-5 py-4 border-b border-line flex items-center gap-3 flex-shrink-0">
                 <button
                   onClick={() => setSelectedScheduled(null)}
-                  className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 md:hidden shrink-0"
+                  className="p-1.5 rounded-lg hover:bg-field md:hidden shrink-0"
                 >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "20px" }}
-                  >
-                    arrow_back
-                  </span>
+                  <Icon name="arrow_back" size={20} />
                 </button>
                 <div className="flex-1 min-w-0">
-                  <h2 className="text-base font-semibold text-slate-900 dark:text-white truncate">
+                  <h2 className="text-base font-semibold text-ink truncate">
                     {selectedScheduled.subject || "(no subject)"}
                   </h2>
-                  <p className="text-xs text-[var(--muted)] mt-0.5">
+                  <p className="text-xs text-ink3 mt-0.5">
                     To: {selectedScheduled.to_addresses?.join(", ")}
                   </p>
                 </div>
@@ -442,15 +423,10 @@ export default function SentView() {
                 {selectedScheduled.status === "pending" && (
                   <button
                     onClick={() => cancelScheduled(selectedScheduled.id)}
-                    className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 shrink-0"
+                    className="p-1.5 rounded-lg hover:bg-danger-soft text-danger shrink-0"
                     title="Cancel scheduled email"
                   >
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "18px" }}
-                    >
-                      close
-                    </span>
+                    <Icon name="close" size={18} />
                   </button>
                 )}
               </div>
@@ -460,18 +436,18 @@ export default function SentView() {
                 <div className="flex-1 overflow-auto p-6">
                   <div className="w-full max-w-md mx-auto space-y-4">
                     <div>
-                      <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">
+                      <label className="block text-xs font-medium text-ink3 mb-1.5">
                         Subject
                       </label>
                       <input
                         type="text"
                         value={editSubject}
                         onChange={(e) => setEditSubject(e.target.value)}
-                        className="w-full px-3 py-2.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 text-slate-900 dark:text-white"
+                        className="w-full px-3 py-2.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-wax/30 text-ink"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">
+                      <label className="block text-xs font-medium text-ink3 mb-1.5">
                         To
                       </label>
                       <input
@@ -479,11 +455,11 @@ export default function SentView() {
                         value={editTo}
                         onChange={(e) => setEditTo(e.target.value)}
                         placeholder="Comma-separated emails"
-                        className="w-full px-3 py-2.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 text-slate-900 dark:text-white"
+                        className="w-full px-3 py-2.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-wax/30 text-ink"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">
+                      <label className="block text-xs font-medium text-ink3 mb-1.5">
                         Send at
                       </label>
                       <DateTimePicker
@@ -492,14 +468,14 @@ export default function SentView() {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-[var(--muted)] mb-1.5">
+                      <label className="block text-xs font-medium text-ink3 mb-1.5">
                         Body
                       </label>
                       <textarea
                         value={editBody}
                         onChange={(e) => setEditBody(e.target.value)}
                         rows={10}
-                        className="w-full px-3 py-2.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/30 text-slate-900 dark:text-white resize-y"
+                        className="w-full px-3 py-2.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none focus:ring-2 focus:ring-wax/30 text-ink resize-y"
                       />
                     </div>
                     <button
@@ -510,22 +486,12 @@ export default function SentView() {
                         !editTo.trim() ||
                         !editSendAt
                       }
-                      className="w-full px-4 py-2.5 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
+                      className="w-full px-4 py-2.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-40 flex items-center justify-center gap-2"
                     >
                       {saving ? (
-                        <span
-                          className="material-symbols-outlined animate-spin"
-                          style={{ fontSize: "16px" }}
-                        >
-                          progress_activity
-                        </span>
+                        <Icon name="progress_activity" size={16} className="animate-spin" />
                       ) : (
-                        <span
-                          className="material-symbols-outlined"
-                          style={{ fontSize: "16px" }}
-                        >
-                          save
-                        </span>
+                        <Icon name="save" size={16} />
                       )}
                       {saving ? "Saving..." : "Save changes"}
                     </button>
@@ -534,28 +500,23 @@ export default function SentView() {
               ) : (
                 /* Read-only view for sent/failed/cancelled */
                 <div className="p-5 space-y-3 max-w-xl">
-                  <div className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-                    <span
-                      className="material-symbols-outlined text-[var(--muted)]"
-                      style={{ fontSize: "16px" }}
-                    >
-                      schedule
-                    </span>
+                  <div className="flex items-center gap-2 text-sm text-ink">
+                    <Icon name="schedule" size={16} className="text-ink3" />
                     {new Date(selectedScheduled.send_at).toLocaleString()}
                   </div>
                   {selectedScheduled.error_message && (
-                    <p className="text-sm text-red-500">
+                    <p className="text-sm text-danger">
                       {selectedScheduled.error_message}
                     </p>
                   )}
-                  <div className="rounded-lg border border-[var(--border)] overflow-hidden mt-3">
+                  <div className="rounded-lg border border-line overflow-hidden mt-3">
                     {selectedScheduled.body_html ? (
                       <SentEmailFrame
                         html={selectedScheduled.body_html}
                         isDark={theme === "dark"}
                       />
                     ) : (
-                      <p className="p-3 text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
+                      <p className="p-3 text-sm text-ink whitespace-pre-wrap">
                         {selectedScheduled.body_text || "(no content)"}
                       </p>
                     )}
@@ -564,13 +525,8 @@ export default function SentView() {
               )}
             </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-[var(--muted)] gap-2">
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "56px" }}
-              >
-                schedule_send
-              </span>
+            <div className="flex-1 flex flex-col items-center justify-center text-ink3 gap-2">
+              <Icon name="schedule_send" size={56} />
               <p className="text-sm">
                 Select a scheduled email to view or edit
               </p>
@@ -578,23 +534,18 @@ export default function SentView() {
           )
         ) : selectedEmail ? (
           <div className="flex-1 overflow-auto flex flex-col">
-            <div className="px-5 py-4 border-b border-[var(--border)] flex items-start gap-3 flex-shrink-0">
+            <div className="px-5 py-4 border-b border-line flex items-start gap-3 flex-shrink-0">
               <button
                 onClick={() => setSelectedEmail(null)}
-                className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 md:hidden shrink-0"
+                className="p-1.5 rounded-lg hover:bg-field md:hidden shrink-0"
               >
-                <span
-                  className="material-symbols-outlined"
-                  style={{ fontSize: "20px" }}
-                >
-                  arrow_back
-                </span>
+                <Icon name="arrow_back" size={20} />
               </button>
               <div className="flex-1 min-w-0">
-                <h2 className="text-base font-semibold text-slate-900 dark:text-white mb-1">
+                <h2 className="text-base font-semibold text-ink mb-1">
                   {selectedEmail.subject || "(no subject)"}
                 </h2>
-                <p className="text-xs text-[var(--muted)]">
+                <p className="text-xs text-ink3">
                   To: {selectedEmail.recipients}
                   {selectedEmail.received_at && (
                     <span className="ml-3">
@@ -611,7 +562,7 @@ export default function SentView() {
                   isDark={theme === "dark"}
                 />
               ) : (
-                <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
+                <p className="text-sm text-ink whitespace-pre-wrap">
                   {selectedEmail.body_text ||
                     selectedEmail.snippet ||
                     "(no content)"}
@@ -620,8 +571,8 @@ export default function SentView() {
             </div>
             {Array.isArray(selectedEmail.attachments) &&
               selectedEmail.attachments.length > 0 && (
-                <div className="px-5 pb-4 flex-shrink-0 border-t border-[var(--border)]">
-                  <p className="text-[10px] font-semibold text-[var(--muted)] uppercase tracking-wider mb-2 pt-2.5">
+                <div className="px-5 pb-4 flex-shrink-0 border-t border-line">
+                  <p className="text-[10px] font-semibold text-ink3 uppercase tracking-wider mb-2 pt-2.5">
                     Attachments ({selectedEmail.attachments.length})
                   </p>
                   <div className="flex flex-wrap gap-2">
@@ -635,23 +586,18 @@ export default function SentView() {
                     ).map((att, i) => (
                       <div
                         key={i}
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--surface)]"
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-line bg-raised"
                       >
-                        <span
-                          className="material-symbols-outlined text-[var(--muted)]"
-                          style={{ fontSize: "15px" }}
-                        >
-                          {att.mime_type?.startsWith("image/")
+                        <Icon name={att.mime_type?.startsWith("image/")
                             ? "image"
                             : att.mime_type?.includes("pdf")
                               ? "picture_as_pdf"
-                              : "attach_file"}
-                        </span>
+                              : "attach_file"} size={15} className="text-ink3" />
                         <div className="min-w-0">
-                          <p className="text-[11px] font-medium text-[var(--foreground)] truncate max-w-[160px]">
+                          <p className="text-[11px] font-medium text-ink truncate max-w-[160px]">
                             {att.filename}
                           </p>
-                          <p className="text-[9px] text-[var(--muted)]">
+                          <p className="text-[9px] text-ink3">
                             {att.size > 1024 * 1024
                               ? `${(att.size / 1024 / 1024).toFixed(1)} MB`
                               : `${Math.ceil(att.size / 1024)} KB`}
@@ -664,13 +610,8 @@ export default function SentView() {
               )}
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-[var(--muted)] gap-2">
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: "56px" }}
-            >
-              send
-            </span>
+          <div className="flex-1 flex flex-col items-center justify-center text-ink3 gap-2">
+            <Icon name="send" size={56} />
             <p className="text-sm">Select a sent email to view</p>
           </div>
         )}

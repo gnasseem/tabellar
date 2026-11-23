@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import Icon from "@/components/Icon";
 import { useApp } from "../AppShell";
 import { engineFetch } from "./ActivityView";
 
@@ -142,34 +143,34 @@ export default function NewslettersView() {
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
-        <span className="material-symbols-outlined animate-spin text-[var(--muted)]" style={{ fontSize: "24px" }}>progress_activity</span>
+        <Icon name="progress_activity" size={24} className="animate-spin text-ink3" />
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-auto bg-[var(--background)]">
+    <div className="h-full overflow-auto bg-canvas">
       <div className="max-w-2xl mx-auto px-4 py-6">
-        <h1 className="text-xl font-bold text-[var(--foreground)]">Newsletters</h1>
-        <p className="text-sm text-[var(--muted)] mt-0.5 mb-5">
+        <h1 className="text-xl font-bold text-ink">Newsletters</h1>
+        <p className="text-sm text-ink3 mt-0.5 mb-5">
           {counts.clean
             ? `${counts.clean} sender${counts.clean === 1 ? "" : "s"} of bulk mail, with ${inboxTotal} email${inboxTotal === 1 ? "" : "s"} in your inbox.`
             : "No bulk mail left to clean up."}
         </p>
 
         {pages.length > 0 && (
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 mb-5">
+          <div className="rounded-xl border border-line bg-raised p-3 mb-5">
             <div className="flex items-center justify-between mb-1.5">
-              <p className="text-sm font-medium text-[var(--foreground)]">Finish on their page</p>
-              <button onClick={() => setPages([])} className="text-xs text-[var(--muted)] hover:text-[var(--foreground)] cursor-pointer">
+              <p className="text-sm font-medium text-ink">Finish on their page</p>
+              <button onClick={() => setPages([])} className="text-xs text-ink3 hover:text-ink cursor-pointer">
                 Done
               </button>
             </div>
-            <p className="text-xs text-[var(--muted)] mb-2">These senders only unsubscribe through their website.</p>
+            <p className="text-xs text-ink3 mb-2">These senders only unsubscribe through their website.</p>
             <ul className="space-y-1">
               {pages.map((p) => (
                 <li key={p.url}>
-                  <a href={p.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[var(--accent)] hover:underline">
+                  <a href={p.url} target="_blank" rel="noopener noreferrer" className="text-xs text-wax hover:underline">
                     Unsubscribe from {p.sender}
                   </a>
                 </li>
@@ -179,7 +180,7 @@ export default function NewslettersView() {
         )}
 
         <div className="flex items-center justify-between gap-3 mb-3">
-          <div className="flex gap-1 p-1 rounded-xl bg-[var(--surface-2)]">
+          <div className="flex gap-1 p-1 rounded-xl bg-field">
             {TABS.map((t) => (
               <button
                 key={t.id}
@@ -188,7 +189,7 @@ export default function NewslettersView() {
                   setSelected(new Set());
                 }}
                 className={`px-3 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
-                  tab === t.id ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                  tab === t.id ? "bg-canvas text-ink shadow-sm" : "text-ink3 hover:text-ink"
                 }`}
               >
                 {t.label} {counts[t.id] > 0 && <span className="opacity-60">{counts[t.id]}</span>}
@@ -198,7 +199,7 @@ export default function NewslettersView() {
           {tab === "clean" && selected.size > 0 && (
             <button
               onClick={cleanSelected}
-              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--accent)] text-white hover:opacity-90 cursor-pointer"
+              className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-wax text-on-wax hover:opacity-90 cursor-pointer"
             >
               Unsubscribe and archive {selected.size}
             </button>
@@ -206,12 +207,12 @@ export default function NewslettersView() {
         </div>
 
         {shown.length === 0 ? (
-          <div className="text-center py-12 text-[var(--muted)]">
-            <span className="material-symbols-outlined mb-2" style={{ fontSize: "40px" }}>mark_email_read</span>
+          <div className="text-center py-12 text-ink3">
+            <Icon name="mark_email_read" size={40} className="mb-2" />
             <p className="text-sm">{tab === "clean" ? "Nothing to clean up." : tab === "kept" ? "Senders you keep show up here." : "Senders you unsubscribe from show up here."}</p>
           </div>
         ) : (
-          <div className="divide-y divide-[var(--border)]">
+          <div className="divide-y divide-line">
             {shown.map((s) => {
               const isBusy = busy.has(s.sender_email);
               return (
@@ -228,23 +229,23 @@ export default function NewslettersView() {
                           return n;
                         })
                       }
-                      className="accent-[var(--accent)] cursor-pointer"
+                      className="accent-wax cursor-pointer"
                     />
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-[var(--foreground)] truncate">{s.name}</p>
-                    <p className="text-xs text-[var(--muted)] truncate">
+                    <p className="text-sm font-medium text-ink truncate">{s.name}</p>
+                    <p className="text-xs text-ink3 truncate">
                       {s.sender_email} · {s.inbox} in inbox · {s.total} in all · last {shortDate(s.last_at)}
                       {s.status === "unsubscribed" && s.method === "web" ? " · finished on their page?" : ""}
                     </p>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
-                    {isBusy && <span className="material-symbols-outlined animate-spin text-[var(--muted)]" style={{ fontSize: "16px" }}>progress_activity</span>}
+                    {isBusy && <Icon name="progress_activity" size={16} className="animate-spin text-ink3" />}
                     {s.status !== "kept" && s.can_unsubscribe && s.status !== "unsubscribed" && (
                       <button
                         onClick={() => unsubscribe(s)}
                         disabled={isBusy}
-                        className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 cursor-pointer"
+                        className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-wax text-on-wax hover:opacity-90 disabled:opacity-50 cursor-pointer"
                       >
                         Unsubscribe
                       </button>
@@ -253,7 +254,7 @@ export default function NewslettersView() {
                       <button
                         onClick={() => archive(s)}
                         disabled={isBusy}
-                        className="px-2.5 py-1 rounded-lg text-xs font-medium border border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--surface-2)] disabled:opacity-50 cursor-pointer"
+                        className="px-2.5 py-1 rounded-lg text-xs font-medium border border-line text-ink hover:bg-field disabled:opacity-50 cursor-pointer"
                       >
                         Archive {s.inbox}
                       </button>
@@ -262,7 +263,7 @@ export default function NewslettersView() {
                       <button
                         onClick={() => keep(s, true)}
                         disabled={isBusy}
-                        className="px-2.5 py-1 rounded-lg text-xs font-medium text-[var(--muted)] hover:bg-[var(--surface-2)] disabled:opacity-50 cursor-pointer"
+                        className="px-2.5 py-1 rounded-lg text-xs font-medium text-ink3 hover:bg-field disabled:opacity-50 cursor-pointer"
                       >
                         Keep
                       </button>
@@ -271,7 +272,7 @@ export default function NewslettersView() {
                       <button
                         onClick={() => keep(s, false)}
                         disabled={isBusy}
-                        className="px-2.5 py-1 rounded-lg text-xs font-medium text-[var(--muted)] hover:bg-[var(--surface-2)] disabled:opacity-50 cursor-pointer"
+                        className="px-2.5 py-1 rounded-lg text-xs font-medium text-ink3 hover:bg-field disabled:opacity-50 cursor-pointer"
                       >
                         Move back
                       </button>

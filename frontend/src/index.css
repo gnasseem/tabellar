@@ -2,150 +2,358 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Light mode — Gmail-inspired clean palette ── */
+/* The wordmark face. Everything else is set in the system face. */
+@font-face {
+  font-family: "Ysabeau Office";
+  src: url("./assets/fonts/ysabeau-office.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: block;
+}
+
+/* Tokens. Warm neutral surfaces, three steps of ink, and one sealing-wax red
+   that is kept for what needs the user: waiting decisions, primary actions
+   and replies about to go out. Amber is only for held mail and cautions. */
 :root {
-  --foreground: #202124;
-  --background: #ffffff;
-  --sidebar-bg: #f6f8fc;
-  --border: #e2e8f0;
-  --muted: #5f6368;
-  --accent: #1a7a48;
-  --accent-light: #e6f4ed;
-  --danger: #d93025;
-  --success: #1e8e3e;
-  --warning: #e37400;
-  --surface: #ffffff;
-  --surface-2: #f1f3f4;
+  --bg: oklch(1 0 0);
+  --side: oklch(0.968 0.004 75);
+  --raised: oklch(1 0 0);
+  --line: oklch(0.912 0.004 75);
+  --line-soft: oklch(0.948 0.003 75);
+  --hover: oklch(0.968 0.003 75);
+  --sel: oklch(0.932 0.005 75);
+  --field: oklch(0.955 0.004 75);
+  --ink: oklch(0.2 0.006 60);
+  --ink2: oklch(0.4 0.006 60);
+  --ink3: oklch(0.535 0.005 60);
+  --ink4: oklch(0.7 0.004 60);
+  --wax: oklch(0.55 0.185 31);
+  --wax-ink: oklch(0.5 0.18 31);
+  --wax-soft: oklch(0.55 0.185 31 / 0.09);
+  --on-wax: oklch(1 0 0);
+  --warn: oklch(0.52 0.12 65);
+  --warn-soft: oklch(0.7 0.14 75 / 0.13);
+  --warn-line: oklch(0.7 0.14 75 / 0.4);
+  --danger: oklch(0.5 0.19 20);
+  --danger-soft: oklch(0.55 0.2 20 / 0.08);
+  --danger-line: oklch(0.55 0.2 20 / 0.32);
+  --ok: oklch(0.48 0.11 155);
+  --ok-soft: oklch(0.6 0.13 155 / 0.1);
+  --ok-line: oklch(0.6 0.13 155 / 0.35);
+  --run: oklch(0.62 0.13 150);
+  --shadow-control: 0 1px 2px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14);
+  --shadow-pop: 0 10px 32px oklch(0.2 0.01 60 / 0.16), 0 2px 6px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14);
+  color-scheme: light;
 }
 
-/* ── Dark mode — Gmail dark palette ── */
 .dark {
-  --foreground: #e8eaed;
-  --background: #202124;
-  --sidebar-bg: #1a1b1e;
-  --border: #3c4043;
-  --muted: #9aa0a6;
-  --accent: #4ade80;
-  --accent-light: #052e16;
-  --danger: #f28b82;
-  --success: #81c995;
-  --warning: #fdd663;
-  --surface: #292a2d;
-  --surface-2: #35363a;
-}
-
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family:
-    var(--font-dm-sans),
-    system-ui,
-    -apple-system,
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-/* Ensure form controls inherit text color — fixes dark mode invisible text */
-input,
-textarea,
-select {
-  color: var(--foreground);
-}
-
-/* Native select dropdowns: set color-scheme so the browser renders the popup
-   in the correct theme, and give options an explicit background/color so text
-   is never invisible in dark mode. */
-select {
-  color-scheme: light;
-}
-.dark select {
-  color-scheme: dark;
-  background-color: var(--surface);
-}
-option,
-optgroup {
-  background-color: var(--surface);
-  color: var(--foreground);
-}
-
-/* Dark mode: neon accent bg needs dark text.
-   Matched with ~= so only a solid accent background gets dark text. A *=
-   substring match also caught the translucent variants (bg-[var(--accent)]/10
-   and friends) and the hover: prefixed ones, painting near-black text onto
-   dark surfaces - which is what made the Cancel action on the undo-send toast
-   invisible in dark mode. */
-.dark [class~="bg-[var(--accent)]"] {
-  color: #202124;
-}
-
-/* ── Style datetime-local inputs to match dark theme ── */
-input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  filter: invert(0.5);
-  cursor: pointer;
-}
-.dark input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  filter: invert(0.8);
-}
-input[type="datetime-local"] {
-  color-scheme: light;
-}
-.dark input[type="datetime-local"] {
+  --bg: oklch(0.205 0.004 60);
+  --side: oklch(0.176 0.004 60);
+  --raised: oklch(0.25 0.004 60);
+  --line: oklch(0.29 0.004 60);
+  --line-soft: oklch(0.25 0.004 60);
+  --hover: oklch(0.24 0.004 60);
+  --sel: oklch(0.295 0.005 60);
+  --field: oklch(0.255 0.004 60);
+  --ink: oklch(0.945 0.004 75);
+  --ink2: oklch(0.77 0.005 75);
+  --ink3: oklch(0.64 0.005 75);
+  --ink4: oklch(0.46 0.004 75);
+  --wax: oklch(0.7 0.165 35);
+  --wax-ink: oklch(0.76 0.14 38);
+  --wax-soft: oklch(0.7 0.165 35 / 0.13);
+  --on-wax: oklch(0.18 0.02 35);
+  --warn: oklch(0.8 0.12 80);
+  --warn-soft: oklch(0.8 0.12 80 / 0.12);
+  --warn-line: oklch(0.8 0.12 80 / 0.35);
+  --danger: oklch(0.74 0.15 22);
+  --danger-soft: oklch(0.7 0.17 22 / 0.13);
+  --danger-line: oklch(0.7 0.17 22 / 0.4);
+  --ok: oklch(0.78 0.13 155);
+  --ok-soft: oklch(0.75 0.13 155 / 0.12);
+  --ok-line: oklch(0.75 0.13 155 / 0.35);
+  --run: oklch(0.74 0.14 150);
+  --shadow-control: 0 1px 2px oklch(0 0 0 / 0.4), 0 0 0 0.5px oklch(1 0 0 / 0.12);
+  --shadow-pop: 0 12px 36px oklch(0 0 0 / 0.5), 0 0 0 0.5px oklch(1 0 0 / 0.14);
   color-scheme: dark;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 99px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--muted);
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    color: var(--ink);
+    background: var(--bg);
+    font-family: system-ui, -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
+    letter-spacing: -0.003em;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--wax) 22%, transparent);
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--ink4) transparent;
+  }
+  :focus-visible {
+    outline: 2px solid var(--wax);
+    outline-offset: 1px;
+  }
+  input,
+  textarea,
+  select {
+    color: var(--ink);
+    caret-color: var(--wax);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--ink3);
+  }
+  option,
+  optgroup {
+    background-color: var(--raised);
+    color: var(--ink);
+  }
+  input[type="checkbox"],
+  input[type="radio"],
+  input[type="range"] {
+    accent-color: var(--wax);
+  }
+  input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.6;
+  }
+  button {
+    cursor: default;
+  }
 }
 
-/* Email reader: native scrollbars match theme (Firefox + color-scheme) */
+/* Shared parts. Views are built from these so a button, a row or a bar looks
+   the same everywhere. */
+@layer components {
+  /* Buttons: .btn is the standard control, .btn-pri the one primary action in
+     a region, .btn-plain a quiet text action. */
+  .btn {
+    @apply inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-[7px] bg-raised px-[11px] text-[13px] font-medium text-ink shadow-control transition-colors duration-150;
+  }
+  .btn:hover {
+    background: var(--hover);
+  }
+  .btn:disabled {
+    @apply pointer-events-none opacity-45;
+  }
+  .btn-pri {
+    @apply bg-wax text-on-wax;
+    box-shadow: 0 1px 2px oklch(0.3 0.1 31 / 0.3);
+  }
+  .btn-pri:hover {
+    background: var(--wax-ink);
+  }
+  .btn-plain {
+    @apply bg-transparent px-2 font-normal text-ink2 shadow-none;
+  }
+  .btn-plain:hover {
+    @apply bg-hover text-ink;
+  }
+  .btn-danger {
+    @apply text-danger;
+  }
+  .btn-sm {
+    @apply h-6 rounded-md px-2 text-xs;
+  }
+  .iconbtn {
+    @apply grid h-7 w-7 flex-none place-items-center rounded-md text-ink2 transition-colors duration-150;
+  }
+  .iconbtn:hover {
+    @apply bg-sel text-ink;
+  }
+  .iconbtn:disabled {
+    @apply pointer-events-none opacity-40;
+  }
+  .link {
+    @apply text-xs text-ink2 underline decoration-ink4 underline-offset-[2.5px];
+  }
+  .link:hover {
+    @apply text-ink;
+  }
+  .kbd {
+    @apply inline-block min-w-[17px] rounded border border-line bg-canvas px-1 py-0.5 text-center text-[10.5px] font-medium leading-none text-ink3;
+  }
+  .btn .kbd {
+    @apply min-w-0 border-0 bg-transparent p-0 text-[11px] text-ink3;
+  }
+  .btn-pri .kbd {
+    color: inherit;
+    opacity: 0.78;
+  }
+
+  /* The bar at the top of every view: title, filters, search. */
+  .bar {
+    @apply flex h-[52px] flex-none items-center gap-3.5 border-b border-line pl-5 pr-3.5;
+  }
+  .bar-title {
+    @apply text-[15px] font-[650] tracking-[-0.01em] text-ink;
+  }
+  .seg {
+    @apply flex gap-0.5;
+  }
+  .seg > button {
+    @apply flex h-[26px] items-center gap-1.5 rounded-md px-[9px] text-ink2 transition-colors duration-150;
+  }
+  .seg > button:hover {
+    @apply bg-hover;
+  }
+  .seg > button[aria-pressed="true"],
+  .seg > button.on {
+    @apply bg-sel font-medium text-ink;
+  }
+  .seg em {
+    @apply text-xs not-italic text-ink3;
+  }
+  .seg em.need,
+  .count-need {
+    @apply font-semibold text-wax-ink;
+  }
+  .searchbox {
+    @apply flex h-7 w-[248px] items-center gap-[7px] rounded-[7px] bg-field pl-2 pr-1.5 text-ink3;
+  }
+  .searchbox input {
+    @apply min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none;
+  }
+  .searchbox:focus-within {
+    box-shadow: 0 0 0 2px color-mix(in oklch, var(--wax) 55%, transparent);
+  }
+
+  /* Sticky group header inside a list: Today, Yesterday, Ready to send. */
+  .day {
+    @apply sticky top-0 z-[2] flex h-[34px] items-end gap-2 bg-canvas px-5 pb-[7px] text-xs;
+  }
+  .day > b {
+    @apply font-[650] text-ink;
+  }
+  .day > span {
+    @apply text-ink3;
+  }
+
+  /* One-line list row, 32px: the default for anything listed at volume. */
+  .row {
+    @apply mx-2 flex h-8 items-center rounded-md pl-1.5 pr-3 text-ink2;
+  }
+  .row:hover {
+    @apply bg-hover;
+  }
+  .row[aria-selected="true"],
+  .row.cur {
+    @apply bg-sel;
+  }
+  /* Two-line row with a hairline under it. */
+  .row2 {
+    @apply relative mx-2 rounded-[7px] py-[9px] pl-1.5 pr-3;
+  }
+  .row2::after {
+    content: "";
+    @apply absolute bottom-0 left-8 right-3 border-b border-line-soft;
+  }
+  .row2:hover {
+    @apply bg-hover;
+  }
+  .row2.cur,
+  .row2[aria-selected="true"] {
+    @apply bg-sel;
+  }
+  .row2.cur::after,
+  .row2[aria-selected="true"]::after,
+  .row2:has(+ .cur)::after,
+  .row2:has(+ [aria-selected="true"])::after {
+    border-color: transparent;
+  }
+
+  /* Tick box used for bulk selection and todos. */
+  .tick {
+    @apply grid h-[15px] w-[15px] flex-none place-items-center rounded-[4.5px] border-[1.2px] border-ink4 text-transparent transition-colors duration-150;
+  }
+  .tick:hover {
+    @apply border-ink3;
+  }
+  .tick[aria-checked="true"] {
+    @apply border-ink bg-ink text-canvas;
+  }
+
+  /* The slim footer with key hints. */
+  .foot {
+    @apply flex h-[30px] flex-none items-center gap-4 border-t border-line pl-5 pr-3.5 text-xs text-ink3;
+  }
+  .foot .k {
+    @apply flex items-center gap-[5px];
+  }
+
+  /* Form fields. */
+  .input {
+    @apply h-7 w-full rounded-[7px] bg-field px-2.5 text-[13px] text-ink outline-none;
+  }
+  .input:focus {
+    box-shadow: 0 0 0 2px color-mix(in oklch, var(--wax) 55%, transparent);
+  }
+  textarea.input {
+    @apply h-auto py-2 leading-normal;
+  }
+
+  /* Menus and popovers. */
+  .pop {
+    @apply z-50 rounded-[10px] bg-raised p-1 shadow-pop;
+  }
+  .pop-item {
+    @apply flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-ink;
+  }
+  .pop-item:hover,
+  .pop-item[data-active="true"] {
+    @apply bg-sel;
+  }
+
+  /* A quiet inset block: quoted context, notes. */
+  .inset {
+    @apply rounded-[9px] bg-side px-3.5 py-3;
+  }
+
+  /* Section label above a group of rows or settings. */
+  .label {
+    @apply text-xs font-semibold text-ink3;
+  }
+
+  /* Empty, loading and error states share one layout. */
+  .empty {
+    @apply mx-auto flex max-w-[380px] flex-col items-center px-6 py-16 text-center;
+  }
+  .empty h3 {
+    @apply mt-3 text-[15px] font-[650] tracking-[-0.01em] text-ink;
+  }
+  .empty p {
+    @apply mt-1.5 text-[13px] leading-relaxed text-ink2;
+  }
+  .skel {
+    @apply rounded bg-field;
+    animation: skel 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes skel {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* The email reader keeps its own scheme so remote mail renders as written. */
 .email-reader-pane {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-}
-.dark .email-reader-pane {
-  color-scheme: dark;
-  scrollbar-color: #5f6368 #1a1b1e;
-}
-.dark .email-reader-pane::-webkit-scrollbar-thumb {
-  background: #5f6368;
-}
-.dark .email-reader-pane::-webkit-scrollbar-thumb:hover {
-  background: #80868b;
+  scrollbar-color: var(--ink4) transparent;
 }
 
-/* ── Tabellar wordmark ── */
-.tabellar-wordmark {
-  font-family: var(--font-syne), sans-serif;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  background: linear-gradient(135deg, #c4954a 5%, #82b07a 52%, #3a6b48 95%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  display: inline-block;
-}
-
-.dark .tabellar-wordmark {
-  background: linear-gradient(135deg, #4ade80 0%, #16a34a 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-/* ── Auto-Resolve agent animations (subtle, no rotations or gradients) ── */
+/* Agent workspace: thinking dots and step fade. */
 @keyframes solveDotBounce {
   0%,
   80%,
@@ -158,17 +366,6 @@ input[type="datetime-local"] {
     opacity: 1;
   }
 }
-@keyframes solvePulseRing {
-  0% {
-    box-shadow: 0 0 0 0 rgba(5, 150, 105, 0.35);
-  }
-  70% {
-    box-shadow: 0 0 0 10px rgba(5, 150, 105, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(5, 150, 105, 0);
-  }
-}
 @keyframes solveFadeIn {
   from {
     opacity: 0;
@@ -179,7 +376,6 @@ input[type="datetime-local"] {
     transform: translateY(0);
   }
 }
-
 .solve-dot-wave span {
   display: inline-block;
   width: 4px;
@@ -195,74 +391,26 @@ input[type="datetime-local"] {
 .solve-dot-wave span:nth-child(3) {
   animation-delay: 0.3s;
 }
-
 .solve-fade-in {
   animation: solveFadeIn 180ms ease-out;
 }
-
-/* Backdrop surface for the Auto-Resolve panel — flat, calm, no gradients. */
 .solve-panel-bg {
-  background: var(--background);
-}
-.dark .solve-panel-bg {
-  background: var(--background);
+  background: var(--bg);
 }
 
-/* ── First-run onboarding ── */
-.ob {
-  --ob-rail: #0f3a26;
-  --ob-rail-glow: #1d6141;
-  --ob-rail-fg: #f0f7f2;
-  --ob-rail-muted: #a8c9b5;
-  --ob-rail-line: rgba(240, 247, 242, 0.16);
-  --ob-rail-accent: #8fe0b0;
-  caret-color: var(--accent);
-}
-.dark .ob {
-  --ob-rail: #0b1d14;
-  --ob-rail-glow: #143a27;
-  --ob-rail-fg: #e8f2ec;
-  --ob-rail-muted: #8fb19d;
-  --ob-rail-line: rgba(232, 242, 236, 0.13);
-  --ob-rail-accent: #4ade80;
-}
-.ob-rail {
-  color: var(--ob-rail-fg);
-  background:
-    radial-gradient(120% 70% at 0% 0%, var(--ob-rail-glow) 0%, transparent 62%),
-    var(--ob-rail);
-}
-.ob ::selection {
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-}
-.ob-rail ::selection {
-  background: color-mix(in srgb, var(--ob-rail-accent) 35%, transparent);
-}
-.ob :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 8px;
-}
-.ob-rail :focus-visible {
-  outline-color: var(--ob-rail-accent);
-}
-.ob input:focus-visible {
-  outline: none;
-}
+/* First-run setup. */
 @keyframes ob-enter {
   from {
     opacity: 0.35;
-    transform: translateY(10px);
-    filter: blur(5px);
+    transform: translateY(8px);
   }
   to {
     opacity: 1;
     transform: none;
-    filter: none;
   }
 }
 .ob-enter {
-  animation: ob-enter 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: ob-enter 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 @keyframes ob-indeterminate {
   from {
@@ -275,9 +423,16 @@ input[type="datetime-local"] {
 .ob-indeterminate {
   animation: ob-indeterminate 1.3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
+
 @media (prefers-reduced-motion: reduce) {
   .ob-enter,
-  .ob-indeterminate {
+  .ob-indeterminate,
+  .skel,
+  .solve-fade-in,
+  .solve-dot-wave span {
     animation: none;
+  }
+  * {
+    transition-duration: 0.01ms !important;
   }
 }

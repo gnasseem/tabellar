@@ -1,5 +1,6 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
+import Icon from "@/components/Icon";
 import { createPortal } from "react-dom";
 import { createClient } from "@/lib/db";
 
@@ -349,24 +350,22 @@ export function EmailField({
         <div className={isDark ? "dark" : ""}>
           <div
             style={dropdownStyle}
-            className="bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden text-[var(--foreground)]"
+            className="bg-raised border border-line rounded-lg shadow-xl overflow-hidden text-ink"
           >
             {suggestions.map((c, i) => (
               <button
                 key={c.email}
                 type="button"
                 onMouseDown={() => onChange(applySuggestion(value, c))}
-                className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-[var(--surface-2)] ${i === activeIdx ? "bg-[var(--surface-2)]" : ""}`}
+                className={`w-full text-left px-3 py-2 text-sm flex items-center gap-2 hover:bg-field ${i === activeIdx ? "bg-field" : ""}`}
               >
-                <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "14px" }}>
-                  {c.source === "directory" ? "domain" : "person"}
-                </span>
+                <Icon name={c.source === "directory" ? "domain" : "person"} size={14} className="text-ink3" />
                 <span className="truncate flex-1">
                   {c.name && <span className="font-medium">{c.name} </span>}
-                  <span className="text-[var(--muted)]">{c.email}</span>
+                  <span className="text-ink3">{c.email}</span>
                 </span>
                 {c.source === "directory" && (
-                  <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400 font-medium">
+                  <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-field text-ink2 font-medium">
                     org
                   </span>
                 )}
@@ -381,7 +380,7 @@ export function EmailField({
   return (
     <div className={`relative ${label ? "flex items-center gap-2" : ""} ${className ?? ""}`}>
       {label && (
-        <span className="text-xs text-[var(--muted)] w-8 shrink-0">{label}</span>
+        <span className="text-xs text-ink3 w-8 shrink-0">{label}</span>
       )}
       <input
         ref={ref}
@@ -394,8 +393,8 @@ export function EmailField({
         className={
           inputClassName ??
           (label
-            ? "flex-1 px-2 py-1.5 border-b border-[var(--border)] bg-transparent text-sm focus:outline-none focus:border-[var(--accent)]"
-            : "w-full px-3 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-sm focus:outline-none")
+            ? "flex-1 px-2 py-1.5 border-b border-line bg-transparent text-sm focus:outline-none focus:border-wax"
+            : "w-full px-3 py-1.5 rounded-lg border border-line bg-transparent text-sm focus:outline-none")
         }
       />
       {suffix}

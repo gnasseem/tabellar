@@ -1,1390 +1,689 @@
-
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
+import { parseSearch } from "@/lib/searchQuery";
+import { isTypingTarget } from "@/lib/shortcuts";
+import { rowStatus, type Outcome } from "@/lib/outcomes";
+import { useInboxSync } from "@/lib/useInboxSync";
 import { useApp } from "../AppShell";
 import EmailDetail from "../EmailDetail";
 import InitialFetchOverlay from "../InitialFetchOverlay";
-import { parseSearch } from "@/lib/searchQuery";
+import { Countdown, Empty, Glyph, KeyHints, Kbd, Menu, Seg, SkeletonRows, Tick, ViewBar, VirtualList, dayLabel, shortWhen, type MailState } from "../ui";
 
+// The inbox: every email on one quiet line that ends in what Tabellar did
+// with it. Only mail that needs the user is set in strong type and wax red.
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 type Email = {
   id: string;
   gmail_id: string;
+  thread_id?: string;
   subject: string;
   sender: string;
   sender_email: string;
   snippet: string;
-  body_text?: string;
-  body_html?: string;
   received_at: string;
   is_read: boolean;
   is_starred: boolean;
   is_archived: boolean;
   has_attachments: boolean;
-  thread_id?: string;
   resolved_at?: string | null;
-  email_processed: {
-    category: string;
-    summary: string;
-    quick_actions: any[];
-    extra_labels: string[] | null;
-  } | null;
+  email_processed: { category: string; summary: string; quick_actions: any[]; extra_labels: string[] | null } | null;
 };
 
-const categoryColors: Record<string, string> = {
-  important:
-    "bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-400 ring-1 ring-red-200 dark:ring-red-900/50",
-  "action-required":
-    "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 ring-1 ring-amber-200 dark:ring-amber-900/50",
-  promotions:
-    "bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-400 ring-1 ring-violet-200 dark:ring-violet-900/50",
-  updates:
-    "bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400 ring-1 ring-sky-200 dark:ring-sky-900/50",
-};
+type Thread = { key: string; latest: Email; ids: string[]; count: number; outcomes: Outcome[]; state: MailState; text: string; sendAt?: string };
+type Head = { head: true; key: string; name: string; note: string; count: number; need: number; going: number };
+type Item = Head | Thread;
+type Filter = "all" | "need" | "going" | "handled" | "filed";
+type Group = "day" | "sender" | "outcome";
 
-const PAGE_SIZE = 20;
-// Smart sort ranks emails globally, so it needs a wider window than a single page.
-// We fetch this many rows up-front and paginate client-side when smart sort is active.
-const SMART_SORT_WINDOW = 100;
+const CHUNK = 300;
+const COLUMNS = "!grid grid-cols-[26px_164px_minmax(0,1fr)_172px_46px]";
+const SELECT =
+  "id, user_id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, snippet, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed!inner(*)";
+const CATEGORY: Record<string, string> = { important: "Important", "action-required": "Action required", promotions: "Promotions", updates: "Updates" };
+const OUTCOME_GROUPS: [MailState, string, string][] = [
+  ["need", "Needs you", "Waiting on a decision from you"],
+  ["going", "Going out", "Replies Autopilot is about to send"],
+  ["failed", "Could not finish", "Something went wrong"],
+  ["held", "Held", "Only labelled, nothing else was done"],
+  ["done", "Handled", "Tabellar took care of it"],
+  ["filed", "Filed", "Sorted, nothing to do"],
+];
 
-function getResolvedSortToEnd(userId: string): boolean {
-  try {
-    const raw = localStorage.getItem(`tabellar_resolved_sort_end_${userId}`);
-    return raw === null ? true : raw === "true";
-  } catch { return true; }
+function senderName(e: Email): string {
+  return (e.sender || e.sender_email || "Unknown").replace(/<.*>/, "").replace(/"/g, "").trim() || e.sender_email;
 }
 
 export default function InboxView() {
-  const {
-    user,
-    profile,
-    openCompose,
-    addToast,
-    search,
-    setSyncing,
-    inboxFilters,
-    inboxSort,
-    setInboxCustomCategories,
-    setInboxCustomTags,
-    getViewCache,
-    setViewCache,
-    invalidateViewCache,
-    liveChanges,
-    processingCount,
-    notifyBriefingUpdated,
-  } = useApp();
+  const { user, openCompose, addToast, search, getViewCache, setViewCache, invalidateViewCache, liveChanges, mail, setView } = useApp();
   const supabase = createClient();
-  const [emails, setEmails] = useState<Email[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
-  const [syncing, setSyncingLocal] = useState(false);
-  const [syncError, setSyncError] = useState<string | null>(null);
-  const [initialPhase, setInitialPhase] = useState(-1);
-  const [syncMode, setSyncMode] = useState<"initial" | "refresh">("initial");
-  const [page, setPage] = useState(0);
+  const [emails, setEmails] = useState<Email[]>(() => getViewCache("inbox")?.emails ?? []);
+  const [loading, setLoading] = useState(() => !getViewCache("inbox"));
   const [hasMore, setHasMore] = useState(false);
-  const [noAccountsConnected, setNoAccountsConnected] = useState(false);
-  const autoSyncAttempted = useRef(false);
-  const [customTagColors, setCustomTagColors] = useState<
-    Record<string, { displayName: string; color: string }>
-  >({});
-  // Tracks whether this user has ever synced emails (DB count, not React state)
-  const [isFirstEver, setIsFirstEver] = useState<boolean | null>(null);
+  const [total, setTotal] = useState<number | null>(null);
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const [filter, setFilter] = useState<Filter>("all");
+  const [group, setGroup] = useState<Group>(() => (localStorage.getItem("tabellar_inbox_group") as Group) || "day");
+  const [details, setDetails] = useState(() => localStorage.getItem("tabellar_inbox_details") !== "off");
+  const [cursorKey, setCursorKey] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [reading, setReading] = useState<Email | null>(null);
+  const loaded = useRef(0);
+  const busy = useRef(false);
+  const anchor = useRef<string | null>(null);
+  const lastUndo = useRef<{ label: string; run: () => Promise<void> } | null>(null);
 
-  // Check if the user has any active Gmail accounts; if not, show reconnect UI
+  const load = useCallback(
+    async (more = false) => {
+      if (busy.current) return;
+      busy.current = true;
+      try {
+        const want = more ? loaded.current + CHUNK : Math.max(CHUNK, loaded.current);
+        let query = supabase
+          .from("emails")
+          .select(SELECT)
+          .eq("user_id", user.id)
+          .eq("is_archived", false)
+          .not("label_ids", "cs", '{"SENT"}')
+          .or("is_snoozed.eq.false,snooze_until.lt." + new Date().toISOString())
+          .order("received_at", { ascending: false })
+          .range(0, want);
+        if (search) {
+          const q = parseSearch(search);
+          if (q.text) query = query.textSearch("search_vector", q.text, { type: "websearch", config: "english" });
+          if (q.from) query = query.or(`sender.ilike.%${q.from}%,sender_email.ilike.%${q.from}%`);
+          if (q.to) query = query.ilike("recipients", `%${q.to}%`);
+          if (q.subject) query = query.ilike("subject", `%${q.subject}%`);
+          if (q.category) query = query.eq("email_processed.category", q.category);
+          if (q.after) query = query.gte("received_at", `${q.after}T00:00:00Z`);
+          if (q.before) query = query.lt("received_at", `${q.before}T00:00:00Z`);
+          if (q.isUnread) query = query.eq("is_read", false);
+          if (q.isRead) query = query.eq("is_read", true);
+          if (q.isStarred) query = query.eq("is_starred", true);
+          if (q.isResolved) query = query.not("resolved_at", "is", null);
+          if (q.isUnresolved) query = query.is("resolved_at", null);
+          if (q.hasAttachment) query = query.eq("has_attachments", true);
+        }
+        const { data } = await query;
+        let rows = ((data || []) as any[]).map((e) => ({ ...e, email_processed: Array.isArray(e.email_processed) ? e.email_processed[0] : e.email_processed })) as Email[];
+        const extra = rows.length > want;
+        if (extra) rows = rows.slice(0, want);
+        loaded.current = rows.length;
+        setHasMore(extra);
+        setEmails(rows);
+        if (!search) setViewCache("inbox", { emails: rows });
+      } finally {
+        busy.current = false;
+        setLoading(false);
+      }
+    },
+    [user.id, search],
+  );
+
+  const reload = useCallback(() => {
+    invalidateViewCache("inbox");
+    return load();
+  }, [load]);
+  const { syncInbox, syncing, syncError, initialPhase, syncMode, noAccountsConnected } = useInboxSync(reload);
+
   useEffect(() => {
-    supabase
-      .from("gmail_accounts")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .eq("is_active", true)
-      .then(({ count }) => setNoAccountsConnected((count ?? 0) === 0));
-  }, [user.id]);
+    loaded.current = 0;
+    load();
+  }, [load, liveChanges.emails, liveChanges.email_processed]);
 
-  // One-time DB check: is this the very first time this user has emails?
   useEffect(() => {
     supabase
       .from("emails")
       .select("id", { count: "exact", head: true })
       .eq("user_id", user.id)
-      .then(({ count }) => setIsFirstEver((count ?? 0) === 0));
-  }, [user.id]);
-
-  // Fetch custom tag metadata for display in cards and filter menu
-  useEffect(() => {
+      .eq("is_archived", false)
+      .not("label_ids", "cs", '{"SENT"}')
+      .then(({ count }: { count: number | null }) => setTotal(count));
     supabase
       .from("categories")
-      .select("slug, display_name, color")
+      .select("slug, display_name")
       .eq("user_id", user.id)
-      .then(({ data }) => {
-        if (data) {
-          const map: Record<string, { displayName: string; color: string }> =
-            {};
-          for (const t of data)
-            map[t.slug] = { displayName: t.display_name, color: t.color };
-          setCustomTagColors(map);
-        }
-      });
-  }, [user.id]);
+      .then(({ data }: { data: { slug: string; display_name: string }[] | null }) => setLabels(Object.fromEntries((data || []).map((c) => [c.slug, c.display_name]))));
+  }, [user.id, liveChanges.emails]);
 
-  const isSnoozed = (emailId: string) => {
-    const until = localStorage.getItem(`snooze:${emailId}`);
-    return until ? new Date(until) > new Date() : false;
+  // One row per conversation: the newest message stands for the thread.
+  const threads = useMemo(() => {
+    const byKey = new Map<string, Thread>();
+    for (const e of emails) {
+      const key = e.thread_id || e.id;
+      const t = byKey.get(key);
+      if (t) {
+        t.ids.push(e.id);
+        t.count++;
+      } else byKey.set(key, { key, latest: e, ids: [e.id], count: 1, outcomes: [], state: "filed", text: "" });
+    }
+    const list = [...byKey.values()];
+    for (const t of list) {
+      t.outcomes = t.ids.flatMap((id) => mail.byEmail.get(id) || []);
+      if (t.ids.length > 1) t.outcomes.sort((a, b) => rank(a.state) - rank(b.state) || b.at.localeCompare(a.at));
+      const s = rowStatus(t.outcomes);
+      const cat = t.latest.email_processed?.category || "";
+      t.state = s.state;
+      t.text = s.text || labels[cat] || CATEGORY[cat] || cat;
+      t.sendAt = s.sendAt;
+    }
+    return list;
+  }, [emails, mail.byEmail, labels]);
+
+  const counts = useMemo(() => ({ need: threads.filter((t) => t.state === "need").length, going: threads.filter((t) => t.state === "going").length }), [threads]);
+
+  const items = useMemo(() => {
+    const shown = threads.filter((t) =>
+      filter === "all" ? true : filter === "need" ? t.state === "need" : filter === "going" ? t.state === "going" : filter === "filed" ? t.state === "filed" : t.state === "done" || t.state === "held" || t.state === "failed",
+    );
+    const out: Item[] = [];
+    const add = (key: string, name: string, note: string, list: Thread[]) => {
+      if (!list.length) return;
+      out.push({ head: true, key: `head:${key}`, name, note, count: list.reduce((n, t) => n + t.count, 0), need: list.filter((t) => t.state === "need").length, going: list.filter((t) => t.state === "going").length });
+      out.push(...list);
+    };
+    if (group === "outcome") {
+      for (const [state, name, note] of OUTCOME_GROUPS) add(state, name, note, shown.filter((t) => t.state === state));
+    } else if (group === "sender") {
+      const by = new Map<string, Thread[]>();
+      for (const t of shown) {
+        const k = t.latest.sender_email || senderName(t.latest);
+        by.set(k, [...(by.get(k) || []), t]);
+      }
+      for (const [k, list] of by) add(k, senderName(list[0].latest), k, list);
+    } else {
+      let run: Thread[] = [];
+      let day = { name: "", date: "", key: "" };
+      for (const t of shown) {
+        const d = dayLabel(t.latest.received_at);
+        if (d.key !== day.key) {
+          add(day.key, day.name, day.date, run);
+          run = [];
+          day = d;
+        }
+        run.push(t);
+      }
+      add(day.key, day.name, day.date, run);
+    }
+    return out;
+  }, [threads, filter, group]);
+
+  const rows = useMemo(() => items.filter((i): i is Thread => !("head" in i)), [items]);
+  const cursor = rows.find((t) => t.key === cursorKey) || rows[0] || null;
+  const cursorIndex = cursor ? items.indexOf(cursor) : -1;
+  const heightOf = useCallback((i: Item) => ("head" in i ? 34 : 32), []);
+
+  const move = (delta: number) => {
+    if (!rows.length) return;
+    const at = cursor ? rows.indexOf(cursor) : -1;
+    setCursorKey(rows[Math.min(rows.length - 1, Math.max(0, at + delta))].key);
   };
 
-  const mountedRef = useRef(true);
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const fetchEmails = useCallback(
-    async (pageNum = 0) => {
-      // Smart sort needs a global ranking across emails, so we fetch a wider window
-      // once and paginate client-side. Newest-sort uses classic server-side paging.
-      const useSmartWindow = inboxSort === "smart" && !search;
-      const cacheKey = useSmartWindow ? "inbox:smart" : "inbox";
-      const ssKey = `inbox:${user.id}:${useSmartWindow ? "smart" : "newest"}`;
-
-      if (pageNum === 0 && !search) {
-        // Check in-memory cache first (survives view switches, ~5 min TTL)
-        const cached = getViewCache(cacheKey);
-        if (cached) {
-          setEmails(cached.emails);
-          setHasMore(cached.hasMore);
-          setLoading(false);
-          return;
-        }
-
-        // Check sessionStorage (survives page reloads, ~10 min TTL)
-        // Fresh entries (< 90s) skip the network fetch entirely.
-        // Stale entries are shown immediately while a background refresh runs.
-        try {
-          const raw = sessionStorage.getItem(ssKey);
-          if (raw) {
-            const { emails: se, hasMore: shm, ts } = JSON.parse(raw);
-            const age = Date.now() - ts;
-            if (age < 10 * 60 * 1000) {
-              setEmails(se);
-              setHasMore(shm);
-              setLoading(false);
-              setViewCache(cacheKey, { emails: se, hasMore: shm });
-              if (age < 90 * 1000) return; // fresh enough, skip re-fetch
-              // stale: fall through and refresh in background (loading stays false)
-            }
-          }
-        } catch {}
-      }
-
-      setLoading((prev) => prev || pageNum > 0);
-
-      let from: number;
-      let fetchLimit: number;
-      if (useSmartWindow) {
-        from = 0;
-        fetchLimit = SMART_SORT_WINDOW;
-      } else {
-        from = pageNum * PAGE_SIZE;
-        fetchLimit = PAGE_SIZE;
-      }
-      const to = from + fetchLimit - 1;
-
-      const resolvedSortToEnd = getResolvedSortToEnd(user.id);
-      let query = supabase
-        .from("emails")
-        .select(
-          "id, user_id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, snippet, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed!inner(*)",
-        )
-        .eq("user_id", user.id)
-        .eq("is_archived", false)
-        .not("label_ids", "cs", '{"SENT"}') // exclude imported sent emails from inbox
-        .or("is_snoozed.eq.false,snooze_until.lt." + new Date().toISOString());
-
-      if (resolvedSortToEnd) {
-        query = query.order("resolved_at", { ascending: true, nullsFirst: true });
-      }
-
-      query = query
-        .order("received_at", { ascending: false })
-        .range(from, to + 1);
-
-      if (search) {
-        // Gmail-style operators become real column filters; whatever is left
-        // over still goes through full-text search exactly as before.
-        const q = parseSearch(search);
-        if (q.text) {
-          query = query.textSearch("search_vector", q.text, {
-            type: "websearch",
-            config: "english",
-          });
-        }
-        if (q.from) {
-          const term = `%${q.from}%`;
-          query = query.or(`sender.ilike.${term},sender_email.ilike.${term}`);
-        }
-        if (q.to) query = query.ilike("recipients", `%${q.to}%`);
-        if (q.subject) query = query.ilike("subject", `%${q.subject}%`);
-        if (q.category)
-          query = query.eq("email_processed.category", q.category);
-        if (q.after) query = query.gte("received_at", `${q.after}T00:00:00Z`);
-        // Exclusive of the named day, so before:2026-08-15 excludes the 15th.
-        if (q.before) query = query.lt("received_at", `${q.before}T00:00:00Z`);
-        if (q.isUnread) query = query.eq("is_read", false);
-        if (q.isRead) query = query.eq("is_read", true);
-        if (q.isStarred) query = query.eq("is_starred", true);
-        if (q.isResolved) query = query.not("resolved_at", "is", null);
-        if (q.isUnresolved) query = query.is("resolved_at", null);
-        if (q.hasAttachment) query = query.eq("has_attachments", true);
-      }
-
-      const { data } = await query;
-      let rows = (data || []) as unknown as Email[];
-
-      const hasMoreEmails = rows.length > fetchLimit;
-      if (hasMoreEmails) rows = rows.slice(0, fetchLimit);
-
-      rows = rows.map((e) => ({
-        ...e,
-        email_processed: Array.isArray(e.email_processed)
-          ? e.email_processed[0]
-          : e.email_processed,
-      }));
-
-      if (!mountedRef.current) return;
-      setHasMore(hasMoreEmails);
-      setEmails(rows);
-      setLoading(false);
-
-      if (pageNum === 0 && !search) {
-        setViewCache(cacheKey, { emails: rows, hasMore: hasMoreEmails });
-        try {
-          sessionStorage.setItem(
-            ssKey,
-            JSON.stringify({ emails: rows, hasMore: hasMoreEmails, ts: Date.now() }),
-          );
-        } catch {} // quota exceeded, skip
-      }
-    },
-    [user.id, search, inboxSort],
-  );
-
-  useEffect(() => {
-    setPage(0);
-    fetchEmails(0);
-  }, [fetchEmails]);
-
-  // Derive custom categories + tags from emails in state  -  no extra DB query needed
-  useEffect(() => {
-    const STANDARD = new Set([
-      "important",
-      "action-required",
-      "promotions",
-      "updates",
-    ]);
-    const custom = [
-      ...new Set(
-        emails
-          .map(
-            (e) => (e.email_processed as any)?.category as string | undefined,
-          )
-          .filter((c): c is string => !!c && !STANDARD.has(c)),
-      ),
-    ];
-    setInboxCustomCategories(custom);
-
-    const tagSlugs = new Set<string>();
-    emails.forEach((e) => {
-      const labels = (e.email_processed as any)?.extra_labels;
-      if (Array.isArray(labels)) labels.forEach((l: string) => tagSlugs.add(l));
+  const pick = (t: Thread, range = false) => {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (range && anchor.current) {
+        const a = rows.findIndex((r) => r.key === anchor.current);
+        const b = rows.indexOf(t);
+        if (a >= 0) for (let i = Math.min(a, b); i <= Math.max(a, b); i++) next.add(rows[i].key);
+      } else if (next.has(t.key)) next.delete(t.key);
+      else next.add(t.key);
+      return next;
     });
-    const tags = [...tagSlugs].map((slug) => ({
-      slug,
-      displayName: customTagColors[slug]?.displayName || slug,
-      color: customTagColors[slug]?.color || "#6b7280",
-    }));
-    setInboxCustomTags(tags);
-  }, [emails, customTagColors, setInboxCustomCategories, setInboxCustomTags]);
+    anchor.current = t.key;
+  };
 
-  const syncInbox = useCallback(async () => {
-    if (syncing) return;
-    setSyncingLocal(true);
-    setSyncing(true);
-    setSyncError(null);
-    const isFirstFetch = isFirstEver === true;
-    setSyncMode(isFirstFetch ? "initial" : "refresh");
+  const targets = (): Thread[] => (picked.size ? rows.filter((t) => picked.has(t.key)) : cursor ? [cursor] : []);
 
-    try {
-      const apiUrl = "/api";
-      let {
-        data: { session },
-      } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        const { data: refreshed } = await supabase.auth.refreshSession();
-        session = refreshed.session;
-      }
-      if (!session?.access_token) {
-        setSyncError(
-          "Session expired. Please reload the page and sign in again.",
-        );
-        return;
-      }
-      let headers = {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-      };
-
-      const handleAuthRefresh = async (): Promise<boolean> => {
-        const { data: refreshed } = await supabase.auth.refreshSession();
-        if (!refreshed.session?.access_token) return false;
-        session = refreshed.session;
-        headers = {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        };
-        return true;
-      };
-
-      const handleFetchError = async (
-        res: Response,
-        isRetry = false,
-      ): Promise<boolean> => {
-        if (res.status === 401) {
-          if (isRetry) {
-            setSyncError(
-              "Authentication failed. Please sign out and sign in again.",
-            );
-            return true;
-          }
-          const refreshed = await handleAuthRefresh();
-          if (!refreshed) {
-            setSyncError(
-              "Session expired. Please reload the page and sign in again.",
-            );
-            return true;
-          }
-          return false;
-        }
-        const err = await res.json().catch(() => ({}));
-        const msg = (err as { error?: string }).error ?? `Error ${res.status}`;
-        if (msg === "No Gmail account connected") {
-          setNoAccountsConnected(true);
-        } else {
-          setSyncError(msg);
-        }
-        return true;
-      };
-
-      // Phase 1: Fetch new emails from Gmail
-      // Only show the blocking overlay for the very first sync
-      if (isFirstFetch) {
-        setInitialPhase(0);
-        setInitialPhase(1);
-      }
-      const fetchBody = JSON.stringify({
-        initial: isFirstFetch,
-      });
-      let fetchRes = await fetch(`${apiUrl}/fetch-emails`, {
-        method: "POST",
-        headers,
-        body: fetchBody,
-      });
-      if (!fetchRes.ok) {
-        const shouldRetry = !(await handleFetchError(fetchRes));
-        if (shouldRetry) {
-          fetchRes = await fetch(`${apiUrl}/fetch-emails`, {
-            method: "POST",
-            headers,
-            body: fetchBody,
-          });
-        }
-        if (!fetchRes.ok) {
-          await handleFetchError(fetchRes, true);
-          setInitialPhase(-1);
-          return;
-        }
-      }
-      const fetchData = await fetchRes.json();
-      const newEmailCount: number = fetchData.fetched ?? 0;
-      const backgroundPipeline: boolean =
-        fetchData.background_pipeline === true;
-
-      // Fast path: no new emails and not first fetch.
-      if (newEmailCount === 0 && !isFirstFetch) {
-        invalidateViewCache("inbox", "inbox:smart");
-        try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
-        await fetchEmails(0);
-        setInitialPhase(-1);
-        return;
-      }
-
-      const shouldAnalyze = newEmailCount > 0 || isFirstFetch;
-
-      // For initial fetch, learn writing style in parallel (fire and forget)
-      if (isFirstFetch) {
-        fetch(`${apiUrl}/learn-style`, { method: "POST", headers }).catch(
-          () => {},
-        );
-      }
-
-      // On the initial fetch the backend has already kicked off
-      // analysis + briefing in the background via EdgeRuntime.waitUntil, so
-      // we don't hit /analyze-inbox at all; we just wait for email_processed
-      // rows to show up via Realtime (see the overlay's poll/subscribe below).
-      const cloudBackgroundHandled = backgroundPipeline;
-      const analyzePromise: Promise<unknown> = shouldAnalyze
-        ? cloudBackgroundHandled
-          ? Promise.resolve()
-          : fetch(`${apiUrl}/analyze-inbox`, { method: "POST", headers })
-              .then((r) => r.ok)
-              .catch(() => false)
-        : Promise.resolve();
-
-      // Briefing is fire-and-forget from the frontend's perspective; it never
-      // blocks the overlay. On the initial fetch the backend also writes
-      // last_briefing itself, so we skip the HTTP call and rely on a profiles
-      // realtime/polling pickup. For non-initial fetches we still fetch
-      // so the BriefingView gets a fresh snapshot.
-      void (async () => {
-        try {
-          await analyzePromise;
-        } catch {
-          /* ignore */
-        }
-        if (!mountedRef.current) return;
-
-        if (cloudBackgroundHandled) {
-          // Backend owns briefing generation. Poll profiles.last_briefing_at
-          // briefly (backend usually lands it within ~10s) then notify.
-          for (let i = 0; i < 60; i++) {
-            const { data: p } = await supabase
-              .from("profiles")
-              .select("last_briefing, last_briefing_at")
-              .eq("id", user.id)
-              .single();
-            if (p?.last_briefing && p.last_briefing_at) {
-              try {
-                const ts = new Date(p.last_briefing_at as string).getTime();
-                localStorage.setItem(
-                  `tabellar_briefing_cache_${user.id}`,
-                  JSON.stringify({ data: p.last_briefing, ts }),
-                );
-              } catch {
-                /* ignore */
-              }
-              notifyBriefingUpdated();
-              return;
-            }
-            await new Promise((r) => setTimeout(r, 1000));
-          }
-          return;
-        }
-
-        try {
-          const briefingRes = await fetch(
-            `${apiUrl}/briefing?scope=all_recent`,
-            { headers },
-          );
-          if (!briefingRes.ok) return;
-          const briefingJson = await briefingRes.json();
-          const briefingData = briefingJson.briefing ?? briefingJson;
-          if (briefingData?.executiveSummary !== undefined) {
-            const ts = Date.now();
-            try {
-              localStorage.setItem(
-                `tabellar_briefing_cache_${user.id}`,
-                JSON.stringify({ data: briefingData, ts }),
-              );
-            } catch {
-              /* ignore */
-            }
-            await supabase
-              .from("profiles")
-              .update({
-                last_briefing: briefingData,
-                last_briefing_at: new Date(ts).toISOString(),
-              })
-              .eq("id", user.id);
-            notifyBriefingUpdated();
-          }
-        } catch {
-          /* non-blocking */
-        }
-      })();
-
-      if (isFirstFetch) {
-        // Keep the overlay visible until every fetched inbox email has an
-        // email_processed row. This ensures the user never lands on a
-        // half-processed inbox. Safety timeout at 5 minutes as an absolute cap.
-        setInitialPhase(2);
-        const safetyTimer = setTimeout(() => {
-          if (!mountedRef.current) return;
-          setInitialPhase(-1);
-          invalidateViewCache("inbox", "inbox:smart");
-        try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
-          fetchEmails(0);
-        }, 300_000);
-
-        // Realtime shortcut: the backend micro-batches email_processed
-        // upserts, so we subscribe and short-circuit the poll as soon as
-        // processed count >= total (no need to wait the 500ms tick).
-        let remoteDoneResolve: (() => void) | null = null;
-        const remoteDonePromise = new Promise<void>((r) => {
-          remoteDoneResolve = r;
-        });
-        const checkDone = async (): Promise<number> => {
-          const [totalRes, processedRes] = await Promise.all([
-            supabase
-              .from("emails")
-              .select("id", { count: "exact", head: true })
-              .eq("user_id", user.id)
-              .eq("is_archived", false)
-              .not("label_ids", "cs", '{"SENT"}'),
-            supabase
-              .from("email_processed")
-              .select("email_id", { count: "exact", head: true })
-              .eq("user_id", user.id),
-          ]);
-          const total = totalRes.count ?? 0;
-          const processedCount = processedRes.count ?? 0;
-          return Math.max(0, total - processedCount);
-        };
-
-        const processedChannel = supabase
-          .channel(`initial-processed-${user.id}`)
-          .on(
-            "postgres_changes",
-            {
-              event: "INSERT",
-              schema: "public",
-              table: "email_processed",
-              filter: `user_id=eq.${user.id}`,
-            },
-            () => {
-              checkDone().then((n) => {
-                if (n === 0) remoteDoneResolve?.();
-              });
-            },
-          )
-          .subscribe();
-
-        await Promise.allSettled([analyzePromise]);
-
-        // Fast poll (500ms) after backend work completes, racing the realtime
-        // notifier so whichever fires first dismisses the overlay.
-        const pollLoop = (async () => {
-          for (let tick = 0; tick < 360; tick++) {
-            if (!mountedRef.current) break;
-            const remaining = await checkDone();
-            if (remaining === 0) return;
-            await new Promise((r) => setTimeout(r, 500));
-          }
-        })();
-
-        await Promise.race([pollLoop, remoteDonePromise]);
-        try {
-          await supabase.removeChannel(processedChannel);
-        } catch {
-          /* noop */
-        }
-
-        clearTimeout(safetyTimer);
-        if (!mountedRef.current) return;
-        setInitialPhase(3);
-        invalidateViewCache("inbox", "inbox:smart");
-        try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
-        await fetchEmails(0);
-        setInitialPhase(-1);
-      } else {
-        // Non-initial sync: run in background, no blocking overlay
-        await Promise.allSettled([analyzePromise]);
-        invalidateViewCache("inbox", "inbox:smart");
-        try { sessionStorage.removeItem(`inbox:${user.id}:smart`); sessionStorage.removeItem(`inbox:${user.id}:newest`); } catch {}
-        await fetchEmails(0);
-      }
-    } catch {
-      setSyncError("Network error - check your connection.");
-      setInitialPhase(-1);
-    } finally {
-      setSyncingLocal(false);
-      setSyncing(false);
+  const archive = async (list: Thread[]) => {
+    if (!list.length) return;
+    const ids = list.flatMap((t) => t.ids);
+    const gone = new Set(ids);
+    const next = rows[rows.findIndex((r) => !list.includes(r) && rows.indexOf(r) > rows.indexOf(list[list.length - 1]))] || rows.find((r) => !list.includes(r));
+    setEmails((prev) => prev.filter((e) => !gone.has(e.id)));
+    setPicked(new Set());
+    setCursorKey(next?.key ?? null);
+    const { error } = await supabase.from("emails").update({ is_archived: true }).in("id", ids);
+    if (error) {
+      addToast("error", "Could not archive. Nothing was changed.");
+      return reload();
     }
-  }, [
-    isFirstEver,
-    syncing,
-    fetchEmails,
-    addToast,
-    setSyncing,
-    notifyBriefingUpdated,
-  ]);
+    invalidateViewCache("inbox");
+    const run = async () => {
+      await supabase.from("emails").update({ is_archived: false }).in("id", ids);
+      await reload();
+    };
+    lastUndo.current = { label: "archive", run };
+    addToast("success", list.length === 1 ? "Archived" : `Archived ${list.length} conversations`, { action: { label: "Undo", onClick: run } });
+  };
 
-  // Live updates: re-fetch when emails or email_processed change (via centralized realtime)
-  const prevEmailsChange = useRef(liveChanges.emails);
-  const prevProcessedChange = useRef(liveChanges.email_processed);
+  const approve = async (list: Thread[]) => {
+    const proposals = list.flatMap((t) => t.outcomes).filter((o) => o.act?.kind === "approve");
+    if (!proposals.length) return addToast("info", "Nothing here is waiting for approval");
+    let done = 0;
+    for (const o of proposals) {
+      if (o.act?.kind !== "approve") continue;
+      try {
+        await mail.approve(o.act.id, o.act.hash);
+        done++;
+      } catch {
+        // the reason is already shown; keep going with the rest
+      }
+    }
+    setPicked(new Set());
+    if (!done) return;
+    const ids = proposals.map((o) => (o.act as { id: string }).id);
+    const run = async () => {
+      for (const id of ids) await mail.undo(id).catch(() => {});
+    };
+    lastUndo.current = { label: "approval", run };
+    addToast("success", done === 1 ? "Approved" : `Approved ${done}`, { action: { label: "Undo", onClick: run } });
+  };
+
+  const markRead = async (list: Thread[], read: boolean) => {
+    const ids = list.flatMap((t) => t.ids);
+    if (!ids.length) return;
+    setEmails((prev) => prev.map((e) => (ids.includes(e.id) ? { ...e, is_read: read } : e)));
+    setPicked(new Set());
+    await supabase.from("emails").update({ is_read: read }).in("id", ids);
+  };
+
+  const open = (t: Thread) => {
+    setReading(t.latest);
+    if (!t.latest.is_read) markRead([t], true);
+  };
+
+  // What Enter does: the one thing this row is waiting for, else open the email.
+  const primary = (t: Thread): { label: string; run: () => void } => {
+    const o = t.outcomes.find((x) => x.act && (x.state === "need" || x.state === "going"));
+    if (o?.act?.kind === "review") {
+      const id = o.act.draftId;
+      return { label: "Review reply", run: () => (setViewCache("replies:focus", id), setView("replies")) };
+    }
+    if (o?.act?.kind === "approve") return { label: "Approve", run: () => approve([t]) };
+    if (o?.act?.kind === "view") {
+      const v = o.act.view;
+      return { label: "Open in Meetings", run: () => setView(v) };
+    }
+    if (o?.act?.kind === "cancel") {
+      const id = o.act.id;
+      return { label: "Cancel reply", run: () => mail.undo(id).then(() => addToast("success", "Reply cancelled. It is kept as a draft.")).catch(() => {}) };
+    }
+    return { label: "Open email", run: () => open(t) };
+  };
+
   useEffect(() => {
-    if (
-      liveChanges.emails !== prevEmailsChange.current ||
-      liveChanges.email_processed !== prevProcessedChange.current
-    ) {
-      prevEmailsChange.current = liveChanges.emails;
-      prevProcessedChange.current = liveChanges.email_processed;
-      invalidateViewCache("inbox", "inbox:smart");
-      fetchEmails(0);
-    }
-  }, [liveChanges.emails, liveChanges.email_processed, fetchEmails]);
-
-  // Auto-sync on every login for all modes.
-  // Sets up the Gmail watch so push notifications work, catches emails
-  // missed since last session.
-  useEffect(() => {
-    if (isFirstEver === null) return; // wait for DB count check
-    if (!profile) return; // wait for profile
-    if (autoSyncAttempted.current) return;
-
-    autoSyncAttempted.current = true;
-
-    // Clean up URL param if present
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      if (url.searchParams.has("initial")) {
-        url.searchParams.delete("initial");
-        window.history.replaceState({}, "", url.toString());
-      }
-    }
-
-    syncInbox();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFirstEver]);
-
-  const markRead = useCallback(async (email: Email, threadMsgs?: Email[]) => {
-    const unreadIds = threadMsgs
-      ? threadMsgs.filter((m) => !m.is_read).map((m) => m.id)
-      : email.is_read
-        ? []
-        : [email.id];
-
-    setSelectedEmail({ ...email, is_read: true });
-
-    if (unreadIds.length > 0) {
-      const unreadSet = new Set(unreadIds);
-      setEmails((prev) =>
-        prev.map((e) => (unreadSet.has(e.id) ? { ...e, is_read: true } : e)),
-      );
-      await supabase
-        .from("emails")
-        .update({ is_read: true })
-        .in("id", unreadIds);
-    }
-  }, [supabase]);
-
-  // Event is optional so the keyboard shortcut can call this too.
-  const toggleStar = useCallback(
-    async (email: Email, e?: React.MouseEvent) => {
-      e?.stopPropagation();
-      const newVal = !email.is_starred;
-      await supabase
-        .from("emails")
-        .update({ is_starred: newVal })
-        .eq("id", email.id);
-      setEmails((prev) =>
-        prev.map((em) =>
-          em.id === email.id ? { ...em, is_starred: newVal } : em,
-        ),
-      );
-      setSelectedEmail((prev) =>
-        prev && prev.id === email.id ? { ...prev, is_starred: newVal } : prev,
-      );
-    },
-    [supabase],
-  );
-
-  const toggleResolvedFromList = useCallback(
-    async (email: Email) => {
-      const next = email.resolved_at ? null : new Date().toISOString();
-      await supabase
-        .from("emails")
-        .update({ resolved_at: next })
-        .eq("id", email.id);
-      setEmails((prev) =>
-        prev.map((em) => (em.id === email.id ? { ...em, resolved_at: next } : em)),
-      );
-      setSelectedEmail((prev) =>
-        prev && prev.id === email.id ? { ...prev, resolved_at: next } : prev,
-      );
-      addToast(
-        next ? "success" : "info",
-        next ? "Marked resolved" : "Marked unresolved",
-      );
-    },
-    [supabase, addToast],
-  );
-
-  const markUnreadFromList = useCallback(
-    async (email: Email) => {
-      await supabase
-        .from("emails")
-        .update({ is_read: false })
-        .eq("id", email.id);
-      setEmails((prev) =>
-        prev.map((em) => (em.id === email.id ? { ...em, is_read: false } : em)),
-      );
-      setSelectedEmail(null);
-      addToast("info", "Marked as unread");
-    },
-    [supabase, addToast],
-  );
-
-  const archiveEmail = useCallback(
-    async (email: Email) => {
-      // Optimistic update first so the UI feels snappy, but revert on error so
-      // users never see a false "Archived" toast when the update actually failed.
-      setEmails((prev) => prev.filter((e) => e.id !== email.id));
-      if (selectedEmail?.id === email.id) setSelectedEmail(null);
-      const { error } = await supabase
-        .from("emails")
-        .update({ is_archived: true })
-        .eq("id", email.id);
-      if (error) {
-        console.error("[inbox/archive] failed:", error);
-        setEmails((prev) =>
-          prev.some((e) => e.id === email.id) ? prev : [email, ...prev],
-        );
-        addToast("error", "Failed to archive");
-        return;
-      }
-      addToast("success", "Archived");
-    },
-    [supabase, selectedEmail, addToast],
-  );
-
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      const tag = target.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (target.isContentEditable) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (document.querySelector("[data-compose-modal]")) return;
-
-      // Compose, search, navigation and the help overlay are global and live
-      // in AppShell; this handler only covers actions on the inbox list.
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === "Escape") {
-        setSelectedEmail(null);
+      if (reading) {
+        if (e.key === "Escape") setReading(null);
+        return;
       }
-      if (e.key === "s" || e.key === "S") {
-        if (selectedEmail) {
-          e.preventDefault();
-          toggleStar(selectedEmail);
-        }
-      }
-      if (e.key === "y" || e.key === "Y") {
-        if (selectedEmail) {
-          e.preventDefault();
-          toggleResolvedFromList(selectedEmail);
-        }
-      }
-      if (e.key === "u" || e.key === "U") {
-        if (selectedEmail) {
-          e.preventDefault();
-          markUnreadFromList(selectedEmail);
-        }
-      }
-      if (e.key === "e" || e.key === "E") {
-        if (selectedEmail) {
-          e.preventDefault();
-          archiveEmail(selectedEmail);
-        }
-      }
-      if (e.key === "r" || e.key === "R") {
-        if (selectedEmail) {
-          e.preventDefault();
-          openCompose(selectedEmail);
-        }
-      }
-      if (e.key === "j" || e.key === "J") {
-        e.preventDefault();
-        setSelectedEmail((prev) => {
-          const seen = new Set<string>();
-          const latestList: Email[] = [];
-          for (const em of emails) {
-            const k = em.thread_id || em.id;
-            if (!seen.has(k)) {
-              seen.add(k);
-              latestList.push(em);
-            }
-          }
-          const idx = prev
-            ? latestList.findIndex((em) => em.id === prev.id)
-            : -1;
-          const next = latestList[idx + 1];
-          if (next) {
-            markRead(next);
-            return next;
-          }
-          return prev;
-        });
-      }
-      if (e.key === "k" || e.key === "K") {
-        e.preventDefault();
-        setSelectedEmail((prev) => {
-          const seen = new Set<string>();
-          const latestList: Email[] = [];
-          for (const em of emails) {
-            const k = em.thread_id || em.id;
-            if (!seen.has(k)) {
-              seen.add(k);
-              latestList.push(em);
-            }
-          }
-          const idx = prev
-            ? latestList.findIndex((em) => em.id === prev.id)
-            : latestList.length;
-          const prev2 = latestList[idx - 1];
-          if (prev2) {
-            markRead(prev2);
-            return prev2;
-          }
-          return prev;
-        });
-      }
+      const k = e.key.toLowerCase();
+      if (k === "j" || e.key === "ArrowDown") move(1);
+      else if (k === "k" || e.key === "ArrowUp") move(-1);
+      else if (k === "x" && cursor) pick(cursor, e.shiftKey);
+      else if (e.key === " ") {
+        setDetails((d) => (localStorage.setItem("tabellar_inbox_details", d ? "off" : "on"), !d));
+      } else if (e.key === "Enter" && cursor) primary(cursor).run();
+      else if (k === "o" && cursor) open(cursor);
+      else if (k === "e") archive(targets());
+      else if (k === "a") approve(targets());
+      else if (k === "r" && cursor) openCompose(cursor.latest);
+      else if (k === "u") markRead(targets(), false);
+      else if (k === "z" && lastUndo.current) {
+        const u = lastUndo.current;
+        lastUndo.current = null;
+        u.run().then(() => addToast("info", `Undid the ${u.label}`));
+      } else if (e.key === "Escape" && picked.size) setPicked(new Set());
+      else return;
+      e.preventDefault();
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [
-    emails,
-    selectedEmail,
-    archiveEmail,
-    markRead,
-    openCompose,
-    toggleStar,
-    toggleResolvedFromList,
-    markUnreadFromList,
-  ]);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
 
-  const formatTime = (dateStr: string) => {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return "";
-    const isToday = new Date().toDateString() === d.toDateString();
-    if (isToday)
-      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  if (reading)
+    return (
+      <EmailDetail
+        key={reading.id}
+        email={reading as any}
+        showBack
+        onBack={() => setReading(null)}
+        onArchive={() => {
+          const t = rows.find((r) => r.ids.includes(reading.id));
+          setReading(null);
+          if (t) archive([t]);
+        }}
+        onReply={() => openCompose(reading)}
+        onMarkUnread={() => {
+          const t = rows.find((r) => r.ids.includes(reading.id));
+          setReading(null);
+          if (t) markRead([t], false);
+        }}
+        onSnooze={() => {
+          setEmails((prev) => prev.filter((e) => e.id !== reading.id));
+          setReading(null);
+        }}
+        onRethink={(updated: any) => setEmails((prev) => prev.map((e) => (e.id === reading.id ? { ...e, email_processed: updated } : e)))}
+        onResolvedChange={(id: string, at: string | null) => setEmails((prev) => prev.map((e) => (e.id === id ? { ...e, resolved_at: at } : e)))}
+      />
+    );
+
+  const selected = rows.filter((t) => picked.has(t.key));
+  const waiting = selected.flatMap((t) => t.outcomes).filter((o) => o.act?.kind === "approve").length;
+
+  const renderItem = (item: Item) => {
+    if ("head" in item) return <GroupHead key={item.key} head={item} />;
+    const t = item;
+    const e = t.latest;
+    const isCursor = cursor === t;
+    const isPicked = picked.has(t.key);
+    const filed = t.state === "filed";
+    const need = t.state === "need";
+    return (
+      <div
+        key={t.key}
+        role="option"
+        aria-selected={isCursor}
+        className={`row group ${COLUMNS} ${isPicked && !isCursor ? "bg-hover" : ""}`}
+        onClick={(ev) => (ev.shiftKey ? pick(t, true) : setCursorKey(t.key))}
+        onDoubleClick={() => open(t)}
+      >
+        <span className="grid place-items-center">
+          <span className={isPicked ? "" : "hidden group-hover:block"}>
+            <Tick checked={isPicked} onChange={(_, ev) => pick(t, ev.shiftKey)} label={`Select ${senderName(e)}`} />
+          </span>
+          <span className={isPicked ? "hidden" : "group-hover:hidden"}>
+            <Glyph state={t.state} />
+          </span>
+        </span>
+        <span className={`truncate pr-3 ${filed ? "text-ink2" : "text-ink"} ${need ? "font-[650]" : ""}`}>
+          {senderName(e)}
+          {t.count > 1 && <span className="ml-[5px] text-xs font-normal text-ink3">{t.count}</span>}
+        </span>
+        <span className="flex min-w-0 items-center gap-2 pr-4">
+          <b className={`shrink truncate ${filed ? "font-normal text-ink3" : need ? "font-medium text-ink" : "font-normal text-ink"}`}>{e.subject || "(no subject)"}</b>
+          {e.has_attachments && <Icon name="attachment" size={13} className="text-ink3" />}
+          {!filed && <span className="min-w-0 flex-1 truncate text-ink3">{e.email_processed?.summary || e.snippet}</span>}
+        </span>
+        <span className={`truncate text-[12.5px] ${need ? "font-semibold text-wax-ink" : t.state === "going" ? "font-medium text-wax-ink" : t.state === "held" ? "font-medium text-warn" : t.state === "failed" ? "font-medium text-danger" : t.state === "done" ? "text-ink2" : "text-ink3"}`}>
+          {t.text}
+          {t.state === "going" && t.sendAt && (
+            <>
+              {" in "}
+              <Countdown until={t.sendAt} />
+            </>
+          )}
+        </span>
+        <time className="text-right text-xs text-ink3">{shortWhen(e.received_at)}</time>
+      </div>
+    );
   };
 
-  const handlePageChange = (newPage: number) => {
-    setPage(newPage);
-    // Smart sort fetches one wide window and paginates client-side, so no refetch.
-    if (inboxSort === "smart" && !search) return;
-    fetchEmails(newPage);
+  const firstHead = (first: number): Head | null => {
+    for (let i = Math.min(first, items.length - 1); i >= 0; i--) if ("head" in items[i]) return items[i] as Head;
+    return null;
   };
-
-  const displayedEmails = useMemo(() => {
-    let rows = [...emails];
-
-    // OR filter: email must match ANY active filter
-    if (inboxFilters.size > 0) {
-      rows = rows.filter((e) => {
-        const proc = e.email_processed as any;
-        for (const f of inboxFilters) {
-          if (f === "unread" && !e.is_read) return true;
-          if (f === "starred" && e.is_starred) return true;
-          if (proc?.category === f) return true;
-          if (
-            Array.isArray(proc?.extra_labels) &&
-            proc.extra_labels.includes(f)
-          )
-            return true;
-        }
-        return false;
-      });
-    }
-
-    // Smart sort (newest/oldest handled at DB level).
-    // For smart sort we fetch a wide window and rank+paginate client-side so the
-    // top-ranked emails always appear on page 1, not scattered across pages.
-    if (inboxSort === "smart") {
-      rows = [...rows].sort((a, b) => {
-        const score = (e: Email) => {
-          const p = e.email_processed as any;
-          let s = 0;
-
-          if (!e.is_read) s += 20;
-
-          // Urgency field (from process_email) takes precedence over category proxy.
-          const urgency = p?.urgency;
-          if (urgency === "critical") s += 40;
-          else if (urgency === "high") s += 25;
-          else {
-            // Fall back to category-based scoring when urgency is medium/low/absent.
-            const cat = p?.category;
-            if (cat === "action-required") s += 30;
-            else if (cat === "important") s += 20;
-            else if (cat === "updates") s += 5;
-            else if (cat === "promotions") s += 1;
-          }
-
-          if (e.is_starred) s += 10;
-
-          if (e.resolved_at && getResolvedSortToEnd(user.id)) s -= 1000;
-
-          const ageHours =
-            (Date.now() - new Date(e.received_at).getTime()) / 3600000;
-          s += 30 * Math.exp(-ageHours / 12);
-
-          return s;
-        };
-        return (
-          score(b) - score(a) ||
-          new Date(b.received_at).getTime() - new Date(a.received_at).getTime()
-        );
-      });
-    }
-
-    return rows;
-  }, [emails, inboxFilters, inboxSort]);
-
-  // Client-side pagination slice when smart sort is on. Newest sort still relies
-  // on server-side paging and `displayedEmails` already contains one page worth.
-  const pagedEmails = useMemo(() => {
-    if (inboxSort !== "smart" || search) return displayedEmails;
-    const start = page * PAGE_SIZE;
-    return displayedEmails.slice(start, start + PAGE_SIZE);
-  }, [displayedEmails, inboxSort, page, search]);
-
-  const smartHasMore =
-    inboxSort === "smart" && !search
-      ? displayedEmails.length > (page + 1) * PAGE_SIZE
-      : hasMore;
-
-  const groupedEmails = useMemo(() => {
-    const groups = new Map<string, Email[]>();
-    for (const email of pagedEmails) {
-      const key = email.thread_id || email.id;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(email);
-    }
-    return Array.from(groups.values()).map((msgs) => {
-      const sorted = [...msgs].sort(
-        (a, b) =>
-          new Date(b.received_at).getTime() - new Date(a.received_at).getTime(),
-      );
-      const latest = sorted[0];
-      const unreadCount = msgs.filter((m) => !m.is_read).length;
-      const senders = [
-        ...new Set(
-          msgs.map(
-            (m) =>
-              (m.sender ?? "").replace(/<.*>/, "").trim() ||
-              m.sender_email ||
-              "Unknown",
-          ),
-        ),
-      ];
-      return {
-        key: latest.thread_id || latest.id,
-        latest,
-        msgs: sorted,
-        totalCount: msgs.length,
-        unreadCount,
-        senders,
-      };
-    });
-  }, [pagedEmails]);
-
-  // Position stability: snapshot the sorted order when an email is opened so that
-  // marking it read doesn't immediately jump it to a lower position. The order
-  // is only unlocked after the user closes the email.
-  const frozenOrderRef = useRef<string[] | null>(null);
-  const latestGroupedRef = useRef(groupedEmails);
-  latestGroupedRef.current = groupedEmails;
-
-  useEffect(() => {
-    if (selectedEmail !== null && frozenOrderRef.current === null) {
-      frozenOrderRef.current = latestGroupedRef.current.map((g) => g.key);
-    } else if (selectedEmail === null) {
-      frozenOrderRef.current = null;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedEmail]);
-
-  const stableGroupedEmails = useMemo(() => {
-    const frozenIds = frozenOrderRef.current;
-    if (!frozenIds || inboxSort !== "smart") return groupedEmails;
-    const frozenMap = new Map(frozenIds.map((id, i) => [id, i]));
-    return [...groupedEmails].sort((a, b) => {
-      const ai = frozenMap.get(a.key);
-      const bi = frozenMap.get(b.key);
-      // New emails that arrived after the snapshot go to the top
-      if (ai === undefined && bi === undefined) return 0;
-      if (ai === undefined) return -1;
-      if (bi === undefined) return 1;
-      return ai - bi;
-    });
-    // frozenOrderRef.current is intentionally not a dep  -  it's a ref
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupedEmails, inboxSort, selectedEmail]);
 
   return (
     <>
-      {/* Keyboard shortcuts help overlay */}
-      {initialPhase >= 0 && (
-        <InitialFetchOverlay
-          phaseIndex={initialPhase}
-          mode={syncMode}
-        />
+      {initialPhase >= 0 && <InitialFetchOverlay phaseIndex={initialPhase} mode={syncMode} />}
+      {picked.size ? (
+        <header className="bar">
+          <b className="bar-title mr-1.5">{picked.size} selected</b>
+          {waiting > 0 && (
+            <button className="btn btn-pri" onClick={() => approve(selected)}>
+              Approve {waiting} <Kbd>A</Kbd>
+            </button>
+          )}
+          <button className="btn" onClick={() => archive(selected)}>
+            Archive <Kbd>E</Kbd>
+          </button>
+          <button className="btn" onClick={() => markRead(selected, true)}>
+            Mark read
+          </button>
+          <button className="btn btn-plain" onClick={() => setPicked(new Set())}>
+            Clear <Kbd>esc</Kbd>
+          </button>
+        </header>
+      ) : (
+        <ViewBar
+          title="Inbox"
+          search="Search mail"
+          right={
+            <>
+              <Menu
+                label="Group"
+                value={group}
+                onChange={(g) => (localStorage.setItem("tabellar_inbox_group", g), setGroup(g))}
+                options={[
+                  { id: "day", label: "Day" },
+                  { id: "sender", label: "Sender" },
+                  { id: "outcome", label: "Outcome" },
+                ]}
+              />
+              <button className="iconbtn" title="Check Gmail now" aria-label="Check Gmail now" disabled={syncing} onClick={() => syncInbox()}>
+                <Icon name="refresh" size={16} className={syncing ? "animate-spin" : ""} />
+              </button>
+              <button className="iconbtn" title="Details (Space)" aria-label="Details" aria-pressed={details} onClick={() => (localStorage.setItem("tabellar_inbox_details", details ? "off" : "on"), setDetails(!details))}>
+                <Icon name="panel" size={16} />
+              </button>
+            </>
+          }
+        >
+          <Seg
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { id: "all", label: "All" },
+              { id: "need", label: "Needs you", count: counts.need, need: true },
+              { id: "going", label: "Going out", count: counts.going },
+              { id: "handled", label: "Handled" },
+              { id: "filed", label: "Filed" },
+            ]}
+          />
+        </ViewBar>
       )}
-      <div className="h-full flex overflow-hidden">
-        {/* ── Left pane: email list ── */}
-        <div
-          className={`flex flex-col border-r border-[var(--border)] bg-[var(--background)] flex-shrink-0 w-80 lg:w-96 ${selectedEmail ? "hidden md:flex" : "flex"}`}
-        >
-          {syncError && (
-            <div className="mx-2 mt-1 px-2 py-1.5 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-xs flex items-center gap-1.5">
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "14px" }}
-              >
-                error
-              </span>
-              {syncError}
-            </div>
-          )}
-
-          {/* No accounts reconnect banner */}
-          {noAccountsConnected && (
-            <div className="mx-3 mt-3 p-4 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 flex items-start gap-3">
-              <span
-                className="material-symbols-outlined text-amber-500 shrink-0 mt-0.5"
-                style={{ fontSize: "20px" }}
-              >
-                link_off
-              </span>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
-                  No Gmail account connected
-                </p>
-                <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
-                  Connect your Gmail account to get started.
-                </p>
-                <button
-                  onClick={async () => {
-                    await supabase.auth.signInWithOAuth({
-                      provider: "google",
-                      options: {
-                        redirectTo: `${window.location.origin}/auth/callback?next=/app`,
-                        scopes:
-                          "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events",
-                        queryParams: {
-                          access_type: "offline",
-                          prompt: "consent",
-                        },
-                      },
-                    });
-                  }}
-                  className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium transition-colors"
-                >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "14px" }}
-                  >
-                    add_link
-                  </span>
-                  Connect Gmail
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Processing banner */}
-          {processingCount > 0 && (
-            <div className="px-4 py-2 bg-[var(--accent-light)] border-b border-[var(--border)] flex items-center gap-2 text-sm text-[var(--accent)]">
-              <span
-                className="material-symbols-outlined animate-spin"
-                style={{ fontSize: "16px" }}
-              >
-                progress_activity
-              </span>
-              Processing {processingCount} new email
-              {processingCount !== 1 ? "s" : ""}...
-            </div>
-          )}
-
-          {/* Email list */}
-          <div className="flex-1 overflow-auto">
-            {loading ? (
-              <div className="space-y-0">
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className="px-4 py-3 border-b border-[var(--border)] animate-pulse"
-                  >
-                    <div className="flex gap-3">
-                      <div className="w-2 h-2 rounded-full bg-[var(--surface-2)] mt-1.5 shrink-0" />
-                      <div className="flex-1 space-y-2">
-                        <div className="flex justify-between">
-                          <div className="h-3.5 w-32 rounded bg-[var(--surface-2)]" />
-                          <div className="h-3 w-12 rounded bg-[var(--surface-2)]" />
-                        </div>
-                        <div className="h-3 w-48 rounded bg-[var(--surface-2)]" />
-                        <div className="h-2.5 w-16 rounded bg-[var(--surface-2)]" />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : displayedEmails.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-48 text-[var(--muted)] px-4">
-                <span
-                  className="material-symbols-outlined mb-2"
-                  style={{ fontSize: "40px" }}
-                >
-                  inbox
-                </span>
-                <p className="text-sm text-center">
-                  No emails yet. Click sync to fetch your inbox.
-                </p>
-              </div>
-            ) : (
-              stableGroupedEmails.map(
-                ({ key, latest, msgs, totalCount, unreadCount, senders }) => {
-                  const proc = latest.email_processed as any;
-                  const isSelected = selectedEmail?.id === latest.id;
-                  const hasThread = totalCount > 1;
-                  const isUnread = unreadCount > 0;
-
-                  return (
-                    <div
-                      key={key}
-                      onClick={() => markRead(latest, msgs)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) =>
-                        e.key === "Enter" && markRead(latest, msgs)
-                      }
-                      className={`relative w-full text-left px-4 py-3 border-b border-[var(--border)] flex items-start gap-3 transition-all duration-100 cursor-pointer group
-                    ${
-                      isSelected
-                        ? "bg-[var(--accent-light)]"
-                        : "hover:bg-[var(--surface-2)]"
-                    }`}
-                    >
-                      {/* Left accent bar for selected */}
-                      {isSelected && (
-                        <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-[var(--accent)] rounded-r" />
-                      )}
-
-                      {/* Unread indicator */}
-                      <div className="mt-1.5 shrink-0 w-2 flex justify-center">
-                        {isUnread && (
-                          <span
-                            className="w-2 h-2 rounded-full bg-[var(--accent)] shrink-0"
-                            title="Unread"
-                          />
-                        )}
-                      </div>
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-1.5 mb-0.5">
-                          <span
-                            className={`text-[13px] flex-1 truncate leading-snug ${isUnread ? "font-semibold text-[var(--foreground)]" : "font-medium text-[var(--foreground)] opacity-75"}`}
-                          >
-                            {senders.slice(0, 2).join(", ")}
-                          </span>
-                          {hasThread && (
-                            <span className="text-[10px] px-1 leading-none py-0.5 rounded font-medium bg-[var(--surface-2)] text-[var(--muted)] border border-[var(--border)] shrink-0 tabular-nums">
-                              {totalCount}
-                            </span>
-                          )}
-                          <span className="text-[11px] text-[var(--muted)] shrink-0 tabular-nums">
-                            {formatTime(latest.received_at)}
-                          </span>
-                        </div>
-
-                        <p
-                          className={`text-[12px] truncate leading-snug ${isUnread ? "text-[var(--foreground)] opacity-90" : "text-[var(--muted)]"}`}
-                        >
-                          {latest.subject || "(no subject)"}
-                        </p>
-
-                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                          {!proc ? (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium bg-[var(--surface-2)] text-[var(--muted)] flex items-center gap-0.5">
-                              <span
-                                className="material-symbols-outlined animate-spin"
-                                style={{ fontSize: "9px" }}
-                              >
-                                progress_activity
-                              </span>
-                              analyzing
-                            </span>
-                          ) : (
-                            proc.category && (
-                              <span
-                                className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium ${categoryColors[proc.category] || "bg-[var(--surface-2)] text-[var(--muted)]"}`}
-                              >
-                                {proc.category}
-                              </span>
-                            )
-                          )}
-                          {Array.isArray(proc?.extra_labels) &&
-                            proc.extra_labels.map((label: string) => {
-                              const tagMeta = customTagColors[label];
-                              const hex = tagMeta?.color || "#6b7280";
-                              return (
-                                <span
-                                  key={label}
-                                  className="text-[10px] px-1.5 py-0.5 rounded-md font-medium"
-                                  style={{
-                                    backgroundColor: `${hex}18`,
-                                    color: hex,
-                                    boxShadow: `inset 0 0 0 1px ${hex}40`,
-                                  }}
-                                >
-                                  {tagMeta?.displayName || label}
-                                </span>
-                              );
-                            })}
-                          {latest.has_attachments && (
-                            <span
-                              className="material-symbols-outlined text-[var(--muted)] opacity-60"
-                              style={{ fontSize: "12px" }}
-                            >
-                              attachment
-                            </span>
-                          )}
-                          {latest.resolved_at && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 shrink-0">
-                              resolved
-                            </span>
-                          )}
-                          <div className="ml-auto flex items-center gap-1">
-                            <button
-                              onClick={(e) => toggleStar(latest, e)}
-                              className={`transition-opacity ${latest.is_starred ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
-                            >
-                              <span
-                                className={`material-symbols-outlined ${latest.is_starred ? "text-amber-400" : "text-[var(--muted)]"} hover:text-amber-400`}
-                                style={{
-                                  fontSize: "14px",
-                                  fontVariationSettings: latest.is_starred
-                                    ? "'FILL' 1"
-                                    : "'FILL' 0",
-                                }}
-                              >
-                                star
-                              </span>
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                },
-              )
-            )}
-          </div>
-
-          {/* Pagination */}
-          {(page > 0 || smartHasMore) && (
-            <div className="flex items-center justify-between px-3 py-2 border-t border-[var(--border)] flex-shrink-0">
-              <button
-                onClick={() => handlePageChange(page - 1)}
-                disabled={page === 0}
-                className="text-xs text-[var(--muted)] hover:text-slate-900 dark:hover:text-white disabled:opacity-30"
-              >
-                ← Prev
-              </button>
-              <span className="text-xs text-[var(--muted)]">
-                Page {page + 1}
-              </span>
-              <button
-                onClick={() => handlePageChange(page + 1)}
-                disabled={!smartHasMore}
-                className="text-xs text-[var(--muted)] hover:text-slate-900 dark:hover:text-white disabled:opacity-30"
-              >
-                Next →
-              </button>
-            </div>
-          )}
+      {syncError && (
+        <div className="flex items-center gap-2 border-b border-line bg-danger-soft px-5 py-1.5 text-xs text-danger" role="alert">
+          <Icon name="error" size={14} />
+          <span className="flex-1">{syncError}</span>
+          <button className="link !text-danger" onClick={() => syncInbox()}>
+            Try again
+          </button>
         </div>
-
-        {/* ── Right pane: email detail or empty state ── */}
-        <div
-          className={`flex-1 overflow-hidden ${selectedEmail ? "flex" : "hidden md:flex"} flex-col`}
-        >
-          {selectedEmail ? (
-            <EmailDetail
-              key={selectedEmail.id}
-              email={selectedEmail}
-              onBack={() => setSelectedEmail(null)}
-              onArchive={() => archiveEmail(selectedEmail)}
-              onReply={() => openCompose(selectedEmail)}
-              onMarkUnread={() => {
-                setEmails((prev) =>
-                  prev.map((e) =>
-                    e.id === selectedEmail.id ? { ...e, is_read: false } : e,
-                  ),
-                );
-                setSelectedEmail(null);
-              }}
-              onSnooze={() => {
-                setEmails((prev) =>
-                  prev.filter((e) => e.id !== selectedEmail.id),
-                );
-                setSelectedEmail(null);
-              }}
-              onRethink={(updated) => {
-                setEmails((prev) =>
-                  prev.map((e) =>
-                    e.id === selectedEmail.id
-                      ? { ...e, email_processed: updated }
-                      : e,
-                  ),
-                );
-                setSelectedEmail((prev) =>
-                  prev ? { ...prev, email_processed: updated } : prev,
-                );
-              }}
-              onResolvedChange={(emailId, resolvedAt) => {
-                setEmails((prev) =>
-                  prev.map((e) =>
-                    e.id === emailId ? { ...e, resolved_at: resolvedAt } : e,
-                  ),
-                );
-                setSelectedEmail((prev) =>
-                  prev && prev.id === emailId
-                    ? { ...prev, resolved_at: resolvedAt }
-                    : prev,
-                );
+      )}
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col" role="listbox" aria-label="Inbox">
+          {loading && !emails.length ? (
+            <div className="pt-9">
+              <SkeletonRows count={22} />
+            </div>
+          ) : noAccountsConnected && !emails.length ? (
+            <Empty icon="link_off" title="No Gmail account is connected">
+              Connect one in Settings, under Accounts, and your mail appears here.{" "}
+              <button className="link" onClick={() => setView("settings")}>
+                Open Settings
+              </button>
+            </Empty>
+          ) : !rows.length ? (
+            search ? (
+              <Empty icon="search" title="No mail matches that search">
+                Try fewer words, or an operator such as from:, subject:, is:unread or has:attachment.
+              </Empty>
+            ) : filter !== "all" ? (
+              <Empty icon="inbox" title={filter === "need" ? "Nothing needs you" : filter === "going" ? "Nothing is going out" : "Nothing here"}>
+                {filter === "need" ? "When a reply is ready to send or a proposal waits for approval, it shows here in red." : "Mail in this state will appear here."}{" "}
+                <button className="link" onClick={() => setFilter("all")}>
+                  Show all mail
+                </button>
+              </Empty>
+            ) : (
+              <Empty icon="inbox" title="Your inbox is empty">
+                New mail arrives here within two minutes, already sorted, with what Tabellar did on the right of each line.
+              </Empty>
+            )
+          ) : (
+            <VirtualList
+              items={items}
+              heightOf={heightOf}
+              render={renderItem}
+              cursor={cursorIndex}
+              onEnd={hasMore ? () => load(true) : undefined}
+              sticky={(first) => {
+                const h = firstHead(first);
+                return h ? <GroupHead head={h} /> : null;
               }}
             />
-          ) : (
-            <div className="flex-1 flex flex-col overflow-y-auto">
-              {/* Empty state hint */}
-              <div className="flex-1 flex flex-col items-center justify-center text-[var(--muted)] gap-3">
-                <div className="w-14 h-14 rounded-2xl bg-[var(--surface-2)] flex items-center justify-center">
-                  <span
-                    className="material-symbols-outlined text-[var(--muted)]"
-                    style={{
-                      fontSize: "28px",
-                      fontVariationSettings: "'FILL' 1, 'wght' 200",
-                    }}
-                  >
-                    mark_email_read
-                  </span>
-                </div>
-                <div className="text-center">
-                  <p className="text-[13px] font-medium text-[var(--foreground)] opacity-50">
-                    Select an email to read
-                  </p>
-                  <p className="text-[11px] opacity-40 mt-0.5">
-                    J/K to navigate · E to archive · ? for shortcuts
-                  </p>
-                </div>
-              </div>
-            </div>
           )}
         </div>
+        {details && cursor && rows.length > 0 && <Details thread={cursor} primary={primary(cursor)} onOpen={() => open(cursor)} onArchive={() => archive([cursor])} />}
       </div>
+      <KeyHints
+        left={total === null ? "" : `${total.toLocaleString()} in Inbox${hasMore ? `, ${emails.length.toLocaleString()} loaded` : ""}`}
+        keys={[
+          ["J K", "Move"],
+          ["X", "Select"],
+          ["Space", "Details"],
+          ["↵", "Act"],
+          ["A", "Approve"],
+          ["E", "Archive"],
+          ["Z", "Undo"],
+          ["?", "All keys"],
+        ]}
+      />
     </>
+  );
+}
+
+function rank(s: MailState): number {
+  return { going: 0, need: 1, failed: 2, held: 3, done: 4, info: 5, filed: 6 }[s];
+}
+
+function GroupHead({ head }: { head: Head }) {
+  return (
+    <div className="day !static">
+      <b>{head.name}</b>
+      <span className="truncate">{head.note}</span>
+      <span className="flex-1" />
+      <span className="whitespace-nowrap">
+        {head.count.toLocaleString()} {head.count === 1 ? "email" : "emails"}
+        {head.need > 0 && (
+          <>
+            , <b className="count-need">{head.need} need you</b>
+          </>
+        )}
+        {head.going > 0 && `, ${head.going} going out`}
+      </span>
+    </div>
+  );
+}
+
+// The panel on the right: what the email says, what Tabellar did about it and
+// why, and how to take each thing back.
+function Details({ thread, primary, onOpen, onArchive }: { thread: Thread; primary: { label: string; run: () => void }; onOpen: () => void; onArchive: () => void }) {
+  const { mail, setView, setViewCache, addToast } = useApp();
+  const e = thread.latest;
+  const act = (o: Outcome) => {
+    const a = o.act;
+    if (!a) return null;
+    if (a.kind === "undo")
+      return (
+        <button className="link" onClick={() => mail.undo(a.id).then(() => addToast("info", "Undone")).catch(() => {})}>
+          Undo
+        </button>
+      );
+    if (a.kind === "cancel")
+      return (
+        <button className="link" onClick={() => mail.undo(a.id).then(() => addToast("success", "Reply cancelled. It is kept as a draft.")).catch(() => {})}>
+          Cancel
+        </button>
+      );
+    if (a.kind === "approve")
+      return (
+        <span className="flex gap-3">
+          <button className="link" onClick={() => mail.dismiss(a.id).catch(() => {})}>
+            Not this
+          </button>
+          <button className="link !text-wax-ink" onClick={() => mail.approve(a.id, a.hash).then(() => addToast("success", "Approved")).catch(() => {})}>
+            Approve
+          </button>
+        </span>
+      );
+    if (a.kind === "review")
+      return (
+        <button className="link" onClick={() => (setViewCache("replies:focus", a.draftId), setView("replies"))}>
+          Review
+        </button>
+      );
+    return (
+      <button className="link" onClick={() => setView(a.view)}>
+        Show
+      </button>
+    );
+  };
+  return (
+    <aside className="hidden w-[404px] flex-none flex-col border-l border-line md:flex" aria-label="Details">
+      <div className="border-b border-line-soft px-5 pb-3.5 pt-4">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-[15px] font-[650] leading-tight tracking-[-0.01em]">{senderName(e)}</h2>
+            <p className="mt-0.5 truncate text-xs text-ink3">
+              {e.sender_email}, {dayLabel(e.received_at).name.toLowerCase()} {shortWhen(e.received_at)}
+            </p>
+          </div>
+          <button className="iconbtn" title="Open email (O)" aria-label="Open email" onClick={onOpen}>
+            <Icon name="open" size={16} />
+          </button>
+        </div>
+        <p className="mt-3 font-semibold leading-snug">{e.subject || "(no subject)"}</p>
+        {e.email_processed?.summary && <p className="mt-1.5 leading-normal text-ink2">{e.email_processed.summary}</p>}
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
+        <h3 className="label mb-1 mt-4">What Tabellar did</h3>
+        {thread.outcomes.length ? (
+          thread.outcomes.map((o) => (
+            <div key={o.key} className="grid grid-cols-[22px_1fr_auto] items-start gap-x-1 border-b border-line-soft py-[9px] last:border-0">
+              <Glyph state={o.state} className="mt-px" />
+              <div className="min-w-0">
+                <b className={`block leading-snug ${o.state === "info" ? "font-normal text-ink2" : "font-medium"}`}>{o.title}</b>
+                {o.why && <p className="mt-0.5 text-[12.5px] leading-snug text-ink2">{o.why}</p>}
+                {o.sendAt && (
+                  <p className="mt-0.5 text-[12.5px] font-medium text-wax-ink">
+                    Sends in <Countdown until={o.sendAt} />
+                  </p>
+                )}
+              </div>
+              <div className="pt-px">{act(o)}</div>
+            </div>
+          ))
+        ) : (
+          <p className="py-2 text-[12.5px] leading-snug text-ink2">Sorted as {thread.text || "mail"} and left alone. There was nothing to reply to, add or schedule.</p>
+        )}
+        {e.snippet && (
+          <>
+            <h3 className="label mb-1 mt-4">The email</h3>
+            <p className="text-[12.5px] leading-relaxed text-ink2">{e.snippet}</p>
+          </>
+        )}
+      </div>
+      <div className="flex flex-none items-center gap-2 border-t border-line py-2.5 pl-5 pr-3.5">
+        <button className="btn btn-pri" onClick={primary.run}>
+          {primary.label} <Kbd>↵</Kbd>
+        </button>
+        <button className="btn" onClick={onArchive}>
+          Archive <Kbd>E</Kbd>
+        </button>
+        <span className="flex-1" />
+        {primary.label !== "Open email" && (
+          <button className="btn btn-plain" onClick={onOpen}>
+            Open email
+          </button>
+        )}
+      </div>
+    </aside>
   );
 }

@@ -1,5 +1,6 @@
 
 import { useState, useEffect, useRef } from "react";
+import Icon from "@/components/Icon";
 import DOMPurify from "dompurify";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
@@ -151,37 +152,27 @@ function TimePickerAmPm({
         ref={btnRef}
         type="button"
         onClick={openDropdown}
-        className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-[var(--border)] hover:border-[var(--accent)] transition-colors group"
+        className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-line hover:border-wax transition-colors group"
       >
-        <span
-          className="material-symbols-outlined text-[var(--accent)]"
-          style={{ fontSize: "15px" }}
-        >
-          schedule
-        </span>
-        <span className="text-sm font-semibold text-slate-900 dark:text-white flex-1 text-left tabular-nums">
+        <Icon name="schedule" size={15} className="text-wax" />
+        <span className="text-sm font-semibold text-ink flex-1 text-left tabular-nums">
           {hour}:{minute}
         </span>
         <span
-          className={`text-xs font-bold px-1.5 py-0.5 rounded ${ampm === "AM" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300" : "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"}`}
+          className={`text-xs font-bold px-1.5 py-0.5 rounded ${ampm === "AM" ? "bg-field text-ink2" : "bg-warn-soft text-warn"}`}
         >
           {ampm}
         </span>
-        <span
-          className="material-symbols-outlined text-[var(--muted)]"
-          style={{ fontSize: "14px" }}
-        >
-          {open ? "expand_less" : "expand_more"}
-        </span>
+        <Icon name={open ? "expand_less" : "expand_more"} size={14} className="text-ink3" />
       </button>
 
       {open && (
         <div
           ref={dropdownRef}
           style={{ ...dropdownStyle, zIndex: 9999 }}
-          className="bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-xl p-3 w-56"
+          className="bg-canvas border border-line rounded-xl shadow-xl p-3 w-56"
         >
-          <p className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-widest mb-1.5">
+          <p className="text-[9px] font-bold text-ink3 uppercase tracking-widest mb-1.5">
             Hour
           </p>
           <div className="grid grid-cols-6 gap-1 mb-3">
@@ -192,8 +183,8 @@ function TimePickerAmPm({
                 onClick={() => onChange(to24h(String(h), minute, ampm))}
                 className={`py-1.5 rounded-lg text-xs font-semibold transition-all ${
                   hour === String(h)
-                    ? "bg-[var(--accent)] text-white shadow-sm"
-                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    ? "bg-wax text-on-wax shadow-sm"
+                    : "text-ink2 hover:bg-field"
                 }`}
               >
                 {h}
@@ -201,7 +192,7 @@ function TimePickerAmPm({
             ))}
           </div>
 
-          <p className="text-[9px] font-bold text-[var(--muted)] uppercase tracking-widest mb-1.5">
+          <p className="text-[9px] font-bold text-ink3 uppercase tracking-widest mb-1.5">
             Minute
           </p>
           <div className="flex gap-1 mb-3">
@@ -212,8 +203,8 @@ function TimePickerAmPm({
                 onClick={() => onChange(to24h(hour, m, ampm))}
                 className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                   minute === m
-                    ? "bg-[var(--accent)] text-white shadow-sm"
-                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                    ? "bg-wax text-on-wax shadow-sm"
+                    : "text-ink2 hover:bg-field"
                 }`}
               >
                 :{m}
@@ -221,7 +212,7 @@ function TimePickerAmPm({
             ))}
           </div>
 
-          <div className="flex rounded-lg overflow-hidden border border-[var(--border)]">
+          <div className="flex rounded-lg overflow-hidden border border-line">
             {(["AM", "PM"] as const).map((period) => (
               <button
                 key={period}
@@ -233,9 +224,9 @@ function TimePickerAmPm({
                 className={`flex-1 py-1.5 text-xs font-bold transition-all ${
                   ampm === period
                     ? period === "AM"
-                      ? "bg-blue-500 text-white"
-                      : "bg-orange-500 text-white"
-                    : "text-[var(--muted)] hover:bg-slate-50 dark:hover:bg-slate-800"
+                      ? "bg-wax text-on-wax"
+                      : "bg-warn text-white"
+                    : "text-ink3 hover:bg-hover"
                 }`}
               >
                 {period}
@@ -312,14 +303,12 @@ function BackgroundSettings() {
               setLevel(l.id);
               save({ autonomy_level: l.id });
             }}
-            className="w-full flex items-start gap-3 py-3.5 px-5 border-b border-[var(--border)] last:border-0 text-left hover:bg-[var(--surface-2)] transition-colors"
+            className="w-full flex items-start gap-3 py-3.5 px-5 border-b border-line last:border-0 text-left hover:bg-field transition-colors"
           >
-            <span className="material-symbols-outlined mt-0.5" style={{ fontSize: "18px", color: level === l.id ? "var(--accent)" : "var(--muted)", fontVariationSettings: level === l.id ? "'FILL' 1" : "'FILL' 0" }}>
-              {level === l.id ? "radio_button_checked" : "radio_button_unchecked"}
-            </span>
+            <Icon name={level === l.id ? "radio_button_checked" : "radio_button_unchecked"} size={18} fill={level === l.id} className="mt-0.5" style={{ color: level === l.id ? "var(--wax)" : "var(--ink3)" }} />
             <span>
-              <span className="block text-sm font-medium text-[var(--foreground)]">{l.label}</span>
-              <span className="block text-xs text-[var(--muted)] mt-0.5">{l.text}</span>
+              <span className="block text-sm font-medium text-ink">{l.label}</span>
+              <span className="block text-xs text-ink3 mt-0.5">{l.text}</span>
             </span>
           </button>
         ))}
@@ -333,7 +322,7 @@ function BackgroundSettings() {
           />
         </SettingRow>
       </SectionCard>
-      <p className="text-xs text-[var(--muted)] px-1 -mt-1">
+      <p className="text-xs text-ink3 px-1 -mt-1">
         It never deletes mail. Everything it does is listed in Activity, where labels, drafts, todos and meeting proposals can be undone.
       </p>
 
@@ -349,7 +338,7 @@ function BackgroundSettings() {
                   setDelay(v);
                   save({ autopilot_delay_min: v });
                 }}
-                className="text-sm bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-[var(--foreground)]"
+                className="text-sm bg-field border border-line rounded-lg px-2 py-1.5 text-ink"
               >
                 {[2, 5, 10, 30, 60].map((m) => (
                   <option key={m} value={m}>{m} minutes</option>
@@ -364,7 +353,7 @@ function BackgroundSettings() {
                   setCap(v);
                   save({ autopilot_daily_cap: v });
                 }}
-                className="text-sm bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-[var(--foreground)]"
+                className="text-sm bg-field border border-line rounded-lg px-2 py-1.5 text-ink"
               >
                 {[1, 3, 5, 10, 20].map((n) => (
                   <option key={n} value={n}>{n}</option>
@@ -381,7 +370,7 @@ function BackgroundSettings() {
               />
             </SettingRow>
           </SectionCard>
-          <p className="text-xs text-[var(--muted)] px-1 -mt-1">
+          <p className="text-xs text-ink3 px-1 -mt-1">
             Autopilot only answers the person who wrote, inside the same thread, with nobody copied in and no attachments. When a good answer needs a decision or facts it does not have, it saves a draft instead.
           </p>
         </>
@@ -396,7 +385,7 @@ function BackgroundSettings() {
               setNotify(e.target.value);
               save({ notification_level: e.target.value });
             }}
-            className="text-sm bg-[var(--surface-2)] border border-[var(--border)] rounded-lg px-2 py-1.5 text-[var(--foreground)]"
+            className="text-sm bg-field border border-line rounded-lg px-2 py-1.5 text-ink"
           >
             <option value="important">Important and action needed</option>
             <option value="all">All new mail</option>
@@ -418,7 +407,7 @@ function BackgroundSettings() {
       <SectionCard>
         <SettingRow label="Start at login" description="Keeps Tabellar running after you close this window and the terminal, and restarts it if it stops unexpectedly.">
           {autostart === null ? (
-            <span className="material-symbols-outlined animate-spin text-[var(--muted)]" style={{ fontSize: "18px" }}>progress_activity</span>
+            <Icon name="progress_activity" size={18} className="animate-spin text-ink3" />
           ) : (
             <Toggle value={autostart} onChange={toggleAutostart} />
           )}
@@ -438,11 +427,11 @@ function SettingRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-4 px-5 border-b border-[var(--border)] last:border-0">
+    <div className="flex items-center justify-between gap-4 py-4 px-5 border-b border-line last:border-0">
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-[var(--foreground)]">{label}</p>
+        <p className="text-sm font-medium text-ink">{label}</p>
         {description && (
-          <p className="text-xs text-[var(--muted)] mt-0.5 leading-relaxed">
+          <p className="text-xs text-ink3 mt-0.5 leading-relaxed">
             {description}
           </p>
         )}
@@ -463,7 +452,7 @@ function Toggle({
     <button
       type="button"
       onClick={() => onChange(!value)}
-      className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${value ? "bg-[var(--accent)]" : "bg-slate-300 dark:bg-slate-600"}`}
+      className={`relative w-11 h-6 rounded-full transition-colors duration-200 ${value ? "bg-wax" : "bg-ink4"}`}
     >
       <span
         className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${value ? "translate-x-5" : ""}`}
@@ -483,7 +472,7 @@ function SectionCard({
 }) {
   return (
     <div
-      className={`rounded-xl border border-[var(--border)] ${allowOverflow ? "overflow-visible" : "overflow-hidden"} ${className}`}
+      className={`rounded-xl border border-line ${allowOverflow ? "overflow-visible" : "overflow-hidden"} ${className}`}
     >
       {children}
     </div>
@@ -499,7 +488,7 @@ function SectionLabel({
 }) {
   return (
     <p
-      className={`text-[11px] font-semibold uppercase tracking-widest px-1 pt-1 pb-1 text-[var(--muted)] ${className}`}
+      className={`text-[11px] font-semibold uppercase tracking-widest px-1 pt-1 pb-1 text-ink3 ${className}`}
     >
       {children}
     </p>
@@ -1081,42 +1070,32 @@ export default function SettingsView() {
       {/* Header */}
       <div className="max-w-xl mx-auto w-full px-6 pt-6 pb-0 shrink-0">
         <div className="flex items-center justify-between mb-5">
-          <h1 className="text-lg font-bold text-[var(--foreground)]">
+          <h1 className="text-lg font-bold text-ink">
             Settings
           </h1>
           {(saving || saved) && (
             <div
-              className={`flex items-center gap-1.5 text-xs font-medium transition-all ${saved ? "text-green-500" : "text-[var(--muted)]"}`}
+              className={`flex items-center gap-1.5 text-xs font-medium transition-all ${saved ? "text-ok" : "text-ink3"}`}
             >
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "14px" }}
-              >
-                {saving ? "sync" : "check_circle"}
-              </span>
+              <Icon name={saving ? "sync" : "check_circle"} size={14} />
               {saving ? "Saving..." : "Saved"}
             </div>
           )}
         </div>
 
         {/* Tab bar */}
-        <div className="flex gap-0.5 bg-slate-100 dark:bg-slate-800/60 rounded-xl p-1">
+        <div className="flex gap-0.5 bg-field rounded-xl p-1">
           {TABS.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-1 flex flex-col items-center gap-0.5 py-2 px-1 rounded-lg text-center transition-all duration-150 ${
                 activeTab === tab.id
-                  ? "bg-[var(--background)] text-[var(--accent)] shadow-sm"
-                  : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                  ? "bg-canvas text-wax shadow-sm"
+                  : "text-ink3 hover:text-ink"
               }`}
             >
-              <span
-                className="material-symbols-outlined"
-                style={{ fontSize: "18px" }}
-              >
-                {tab.icon}
-              </span>
+              <Icon name={tab.icon} size={18} />
               <span className="text-[10px] font-semibold tracking-wide">
                 {tab.label}
               </span>
@@ -1134,13 +1113,8 @@ export default function SettingsView() {
               <SectionLabel>Gmail Accounts</SectionLabel>
               <SectionCard>
                 {gmailAccounts.length === 0 ? (
-                  <div className="p-4 flex items-center gap-3 text-[var(--muted)]">
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "22px" }}
-                    >
-                      error
-                    </span>
+                  <div className="p-4 flex items-center gap-3 text-ink3">
+                    <Icon name="error" size={22} />
                     <p className="text-sm">
                       No Gmail account connected. Connect one to start fetching
                       emails.
@@ -1150,58 +1124,38 @@ export default function SettingsView() {
                   gmailAccounts.map((acc) => (
                     <div
                       key={acc.id}
-                      className="p-3 flex items-center gap-3 border-b border-[var(--border)] last:border-0"
+                      className="p-3 flex items-center gap-3 border-b border-line last:border-0"
                     >
-                      <span
-                        className="material-symbols-outlined text-green-500"
-                        style={{ fontSize: "20px" }}
-                      >
-                        check_circle
-                      </span>
-                      <p className="text-sm font-medium text-[var(--foreground)] flex-1 truncate">
+                      <Icon name="check_circle" size={20} className="text-ok" />
+                      <p className="text-sm font-medium text-ink flex-1 truncate">
                         {acc.gmail_address || "Connected account"}
                       </p>
                       <button
                         onClick={() => connectGmail(false)}
                         title="Re-connect"
-                        className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-[var(--muted)]"
+                        className="p-1.5 rounded-lg hover:bg-field text-ink3"
                       >
-                        <span
-                          className="material-symbols-outlined"
-                          style={{ fontSize: "16px" }}
-                        >
-                          sync
-                        </span>
+                        <Icon name="sync" size={16} />
                       </button>
                       <button
                         onClick={() => removeGmailAccount(acc.id)}
                         disabled={removingAccount === acc.id}
                         title="Remove"
-                        className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 disabled:opacity-50"
+                        className="p-1.5 rounded-lg hover:bg-danger-soft text-danger disabled:opacity-50"
                       >
-                        <span
-                          className="material-symbols-outlined"
-                          style={{ fontSize: "16px" }}
-                        >
-                          {removingAccount === acc.id
+                        <Icon name={removingAccount === acc.id
                             ? "hourglass_top"
-                            : "close"}
-                        </span>
+                            : "close"} size={16} />
                       </button>
                     </div>
                   ))
                 )}
-                <div className="p-3 border-t border-[var(--border)]">
+                <div className="p-3 border-t border-line">
                   <button
                     onClick={() => connectGmail(gmailAccounts.length > 0)}
-                    className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-dashed border-[var(--border)] text-sm text-[var(--muted)] hover:border-[var(--accent)] hover:text-[var(--accent)] transition-colors"
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-dashed border-line text-sm text-ink3 hover:border-wax hover:text-wax transition-colors"
                   >
-                    <span
-                      className="material-symbols-outlined"
-                      style={{ fontSize: "18px" }}
-                    >
-                      add
-                    </span>
+                    <Icon name="add" size={18} />
                     {gmailAccounts.length === 0
                       ? "Connect Gmail"
                       : "Add another account"}
@@ -1225,16 +1179,11 @@ export default function SettingsView() {
 
               <SectionLabel>Writing Style</SectionLabel>
               <SectionCard>
-                <div className="p-4 border-b border-[var(--border)]">
+                <div className="p-4 border-b border-line">
                   <div className="flex items-center justify-between gap-2 mb-3">
                     <div className="flex items-center gap-2">
-                      <span
-                        className="material-symbols-outlined text-[var(--accent)]"
-                        style={{ fontSize: "15px" }}
-                      >
-                        auto_awesome
-                      </span>
-                      <span className="text-xs font-medium text-[var(--accent)]">
+                      <Icon name="auto_awesome" size={15} className="text-wax" />
+                      <span className="text-xs font-medium text-wax">
                         {detectedStyle
                           ? "Auto-detected from your sent emails"
                           : "Detect from your sent emails or set manually"}
@@ -1244,14 +1193,9 @@ export default function SettingsView() {
                       type="button"
                       onClick={handleDetectStyle}
                       disabled={detectingStyle}
-                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
+                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium bg-wax text-on-wax hover:opacity-90 disabled:opacity-50 transition-opacity"
                     >
-                      <span
-                        className={`material-symbols-outlined${detectingStyle ? " animate-spin" : ""}`}
-                        style={{ fontSize: "13px" }}
-                      >
-                        {detectingStyle ? "progress_activity" : "auto_fix"}
-                      </span>
+                      <Icon name={detectingStyle ? "progress_activity" : "auto_fix"} size={13} className={`${detectingStyle ? " animate-spin" : ""}`} />
                       {detectingStyle
                         ? "Detecting..."
                         : detectedStyle
@@ -1287,7 +1231,7 @@ export default function SettingsView() {
                       },
                     ].map(({ label, value, set, placeholder }) => (
                       <div key={label} className="flex flex-col gap-1">
-                        <span className="text-xs text-[var(--muted)]">
+                        <span className="text-xs text-ink3">
                           {label}
                         </span>
                         <input
@@ -1295,7 +1239,7 @@ export default function SettingsView() {
                           value={value}
                           onChange={(e) => set(e.target.value)}
                           placeholder={placeholder}
-                          className="px-2 py-1.5 rounded-lg border border-[var(--border)] bg-transparent text-xs font-medium text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                          className="px-2 py-1.5 rounded-lg border border-line bg-transparent text-xs font-medium text-ink placeholder:text-ink3 focus:outline-none focus:ring-1 focus:ring-wax"
                         />
                       </div>
                     ))}
@@ -1305,14 +1249,14 @@ export default function SettingsView() {
                     !styleClosing &&
                     !styleTone &&
                     !styleLength && (
-                      <p className="text-[11px] text-[var(--muted)] mt-2">
+                      <p className="text-[11px] text-ink3 mt-2">
                         Style not yet detected. Click Detect now, or fill these
                         fields manually.
                       </p>
                     )}
                 </div>
                 <div className="p-4">
-                  <p className="text-xs text-[var(--muted)] mb-3">
+                  <p className="text-xs text-ink3 mb-3">
                     Override or add context the AI can&apos;t detect, e.g.
                     &quot;Always sign off with &apos;Best, George&apos;&quot; or
                     &quot;Never use bullet points&quot;.
@@ -1322,7 +1266,7 @@ export default function SettingsView() {
                     onChange={(e) => setStyleNotes(e.target.value)}
                     placeholder="e.g. Always sign off with 'Best, George'. Never use bullet points."
                     rows={3}
-                    className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-transparent text-sm text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)] resize-none"
+                    className="w-full px-3 py-2 rounded-lg border border-line bg-transparent text-sm text-ink placeholder:text-ink3 focus:outline-none focus:ring-1 focus:ring-wax resize-none"
                   />
                 </div>
               </SectionCard>
@@ -1334,8 +1278,8 @@ export default function SettingsView() {
             <>
               <SectionLabel>Working Hours</SectionLabel>
               <SectionCard allowOverflow>
-                <div className="p-4 border-b border-[var(--border)]">
-                  <p className="text-xs font-medium text-[var(--muted)] mb-2">
+                <div className="p-4 border-b border-line">
+                  <p className="text-xs font-medium text-ink3 mb-2">
                     Work Days
                   </p>
                   <div className="flex gap-1.5">
@@ -1351,8 +1295,8 @@ export default function SettingsView() {
                         }
                         className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                           workDays.includes(i)
-                            ? "bg-[var(--accent)] text-white"
-                            : "bg-slate-100 dark:bg-slate-800 text-[var(--muted)] hover:bg-slate-200 dark:hover:bg-slate-700"
+                            ? "bg-wax text-on-wax"
+                            : "bg-field text-ink3 hover:bg-sel"
                         }`}
                       >
                         {day}
@@ -1361,12 +1305,12 @@ export default function SettingsView() {
                   </div>
                 </div>
                 <div className="p-4 overflow-visible">
-                  <p className="text-xs font-medium text-[var(--muted)] mb-2">
+                  <p className="text-xs font-medium text-ink3 mb-2">
                     Hours
                   </p>
                   <div className="flex items-center gap-3 overflow-visible">
                     <div className="flex-1 overflow-visible">
-                      <label className="text-[10px] text-[var(--muted)] uppercase tracking-wide">
+                      <label className="text-[10px] text-ink3 uppercase tracking-wide">
                         Start
                       </label>
                       <TimePickerAmPm
@@ -1374,9 +1318,9 @@ export default function SettingsView() {
                         onChange={setWorkStart}
                       />
                     </div>
-                    <span className="text-[var(--muted)] mt-6 text-sm">to</span>
+                    <span className="text-ink3 mt-6 text-sm">to</span>
                     <div className="flex-1 overflow-visible">
-                      <label className="text-[10px] text-[var(--muted)] uppercase tracking-wide">
+                      <label className="text-[10px] text-ink3 uppercase tracking-wide">
                         End
                       </label>
                       <TimePickerAmPm value={workEnd} onChange={setWorkEnd} />
@@ -1392,8 +1336,8 @@ export default function SettingsView() {
             <>
               <SectionLabel>Daily Briefing Scope</SectionLabel>
               <SectionCard>
-                <div className="px-4 pt-3 pb-2 border-b border-[var(--border)]">
-                  <p className="text-xs text-[var(--muted)]">
+                <div className="px-4 pt-3 pb-2 border-b border-line">
+                  <p className="text-xs text-ink3">
                     Choose which emails are included in your AI-generated daily
                     briefing.
                   </p>
@@ -1431,31 +1375,26 @@ export default function SettingsView() {
                     onClick={() => setBriefingScope(opt.id)}
                     className={`w-full text-left flex items-center gap-3 p-4 transition-colors ${
                       i < arr.length - 1
-                        ? "border-b border-[var(--border)]"
+                        ? "border-b border-line"
                         : ""
-                    } ${briefingScope === opt.id ? "bg-[var(--accent-light)]" : "hover:bg-slate-50 dark:hover:bg-slate-800/50"}`}
+                    } ${briefingScope === opt.id ? "bg-wax-soft" : "hover:bg-hover"}`}
                   >
-                    <span
-                      className={`material-symbols-outlined ${briefingScope === opt.id ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
-                      style={{ fontSize: "20px" }}
-                    >
-                      {opt.icon}
-                    </span>
+                    <Icon name={opt.icon} size={20} className={`${briefingScope === opt.id ? "text-wax" : "text-ink3"}`} />
                     <div className="flex-1">
                       <p
-                        className={`text-sm font-medium ${briefingScope === opt.id ? "text-[var(--accent)]" : "text-[var(--foreground)]"}`}
+                        className={`text-sm font-medium ${briefingScope === opt.id ? "text-wax" : "text-ink"}`}
                       >
                         {opt.label}
                       </p>
-                      <p className="text-xs text-[var(--muted)] mt-0.5">
+                      <p className="text-xs text-ink3 mt-0.5">
                         {opt.desc}
                       </p>
                     </div>
                     <div
-                      className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${briefingScope === opt.id ? "border-[var(--accent)]" : "border-[var(--border)]"}`}
+                      className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${briefingScope === opt.id ? "border-wax" : "border-line"}`}
                     >
                       {briefingScope === opt.id && (
-                        <div className="w-2 h-2 rounded-full bg-[var(--accent)]" />
+                        <div className="w-2 h-2 rounded-full bg-wax" />
                       )}
                     </div>
                   </button>
@@ -1482,8 +1421,8 @@ export default function SettingsView() {
             <>
               <SectionLabel>Delegation Rules</SectionLabel>
               <SectionCard>
-                <div className="p-4 border-b border-[var(--border)] bg-slate-50 dark:bg-slate-800/40 space-y-3">
-                  <p className="text-xs text-[var(--muted)]">
+                <div className="p-4 border-b border-line bg-hover space-y-3">
+                  <p className="text-xs text-ink3">
                     When an email matches the pattern, it will be flagged for
                     forwarding to the target address.
                   </p>
@@ -1493,7 +1432,7 @@ export default function SettingsView() {
                       value={newPattern}
                       onChange={(e) => setNewPattern(e.target.value)}
                       placeholder="Pattern (e.g. invoice, support request)"
-                      className="flex-1 min-w-[150px] px-3 py-1.5 rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--accent)]"
+                      className="flex-1 min-w-[150px] px-3 py-1.5 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:ring-1 focus:ring-wax"
                     />
                     <EmailField
                       value={newTargetEmail}
@@ -1506,28 +1445,23 @@ export default function SettingsView() {
                     <button
                       onClick={addDelegation}
                       disabled={!newPattern.trim() || !newTargetEmail.trim()}
-                      className="px-4 py-1.5 rounded-lg bg-[var(--accent)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                      className="px-4 py-1.5 rounded-lg bg-wax text-on-wax text-sm font-medium hover:opacity-90 disabled:opacity-50"
                     >
                       Add
                     </button>
                   </div>
                 </div>
                 {!delegationsLoaded ? (
-                  <div className="p-4 text-sm text-[var(--muted)]">
+                  <div className="p-4 text-sm text-ink3">
                     Loading...
                   </div>
                 ) : delegations.length === 0 ? (
-                  <div className="p-8 text-center text-sm text-[var(--muted)]">
-                    <span
-                      className="material-symbols-outlined block mx-auto mb-2 text-slate-300 dark:text-slate-600"
-                      style={{ fontSize: "32px" }}
-                    >
-                      alt_route
-                    </span>
+                  <div className="p-8 text-center text-sm text-ink3">
+                    <Icon name="alt_route" size={32} className="block mx-auto mb-2 text-ink4" />
                     No delegation rules yet.
                   </div>
                 ) : (
-                  <div className="divide-y divide-[var(--border)]">
+                  <div className="divide-y divide-line">
                     {delegations.map((d) => (
                       <div
                         key={d.id}
@@ -1536,42 +1470,22 @@ export default function SettingsView() {
                         <button
                           onClick={() => toggleDelegation(d.id, d.is_enabled)}
                         >
-                          <span
-                            className={`material-symbols-outlined ${d.is_enabled ? "text-[var(--success)]" : "text-[var(--muted)]"}`}
-                            style={{
-                              fontSize: "22px",
-                              fontVariationSettings: d.is_enabled
-                                ? "'FILL' 1"
-                                : "'FILL' 0",
-                            }}
-                          >
-                            toggle_on
-                          </span>
+                          <Icon name="toggle_on" size={22} fill={d.is_enabled} className={`${d.is_enabled ? "text-ok" : "text-ink3"}`} />
                         </button>
                         <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
-                          <span className="text-sm text-[var(--foreground)]">
+                          <span className="text-sm text-ink">
                             &ldquo;{d.pattern}&rdquo;
                           </span>
-                          <span
-                            className="material-symbols-outlined text-[var(--muted)]"
-                            style={{ fontSize: "16px" }}
-                          >
-                            arrow_forward
-                          </span>
-                          <span className="text-sm text-[var(--accent)]">
+                          <Icon name="arrow_forward" size={16} className="text-ink3" />
+                          <span className="text-sm text-wax">
                             {d.target_email}
                           </span>
                         </div>
                         <button
                           onClick={() => deleteDelegation(d.id)}
-                          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 transition-opacity"
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-danger-soft text-danger transition-opacity"
                         >
-                          <span
-                            className="material-symbols-outlined"
-                            style={{ fontSize: "18px" }}
-                          >
-                            delete
-                          </span>
+                          <Icon name="delete" size={18} />
                         </button>
                       </div>
                     ))}
@@ -1587,55 +1501,37 @@ export default function SettingsView() {
                 <SectionLabel className="mb-0">Email Templates</SectionLabel>
                 <button
                   onClick={openNewTemplate}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
                 >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "15px" }}
-                  >
-                    add
-                  </span>
+                  <Icon name="add" size={15} />
                   New Template
                 </button>
               </div>
 
               {/* Template editor */}
               {showTemplateEditor && (
-                <SectionCard className="mb-4 border-[var(--accent)] shadow-sm">
-                  <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
+                <SectionCard className="mb-4 border-wax shadow-sm">
+                  <div className="p-4 border-b border-line flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
-                        <span
-                          className="material-symbols-outlined text-white"
-                          style={{
-                            fontSize: "15px",
-                            fontVariationSettings: "'FILL' 1",
-                          }}
-                        >
-                          description
-                        </span>
+                      <div className="w-7 h-7 rounded-lg bg-wax flex items-center justify-center">
+                        <Icon name="description" size={15} fill className="text-white" />
                       </div>
-                      <p className="text-sm font-semibold text-[var(--foreground)]">
+                      <p className="text-sm font-semibold text-ink">
                         {editingTemplate ? "Edit Template" : "New Template"}
                       </p>
                     </div>
                     <button
                       onClick={() => setShowTemplateEditor(false)}
-                      className="p-1 rounded hover:bg-[var(--surface-2)] text-[var(--muted)] cursor-pointer"
+                      className="p-1 rounded hover:bg-field text-ink3 cursor-pointer"
                     >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{ fontSize: "18px" }}
-                      >
-                        close
-                      </span>
+                      <Icon name="close" size={18} />
                     </button>
                   </div>
 
                   <div className="p-4 space-y-4">
                     {/* Name */}
                     <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-[var(--muted)] mb-1.5">
+                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
                         Template Name
                       </label>
                       <input
@@ -1648,13 +1544,13 @@ export default function SettingsView() {
                           }))
                         }
                         placeholder="e.g. Follow-up, Introduction, Thank you"
-                        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--accent)] transition-colors"
+                        className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-wax transition-colors"
                       />
                     </div>
 
                     {/* Subject */}
                     <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-[var(--muted)] mb-1.5">
+                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
                         Subject{" "}
                         <span className="normal-case font-normal opacity-60">
                           (optional)
@@ -1670,13 +1566,13 @@ export default function SettingsView() {
                           }))
                         }
                         placeholder="Pre-fill the subject line when applied"
-                        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--accent)] transition-colors"
+                        className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-wax transition-colors"
                       />
                     </div>
 
                     {/* Body */}
                     <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-[var(--muted)] mb-1.5">
+                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
                         Body
                       </label>
                       <textarea
@@ -1689,9 +1585,9 @@ export default function SettingsView() {
                         }
                         placeholder="Write your template content here..."
                         rows={8}
-                        className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--accent)] transition-colors resize-y font-mono leading-relaxed"
+                        className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-wax transition-colors resize-y font-mono leading-relaxed"
                       />
-                      <p className="text-[11px] text-[var(--muted)] mt-1.5">
+                      <p className="text-[11px] text-ink3 mt-1.5">
                         This template can only be applied when composing an
                         email.
                       </p>
@@ -1706,21 +1602,16 @@ export default function SettingsView() {
                           !templateForm.name.trim() ||
                           !templateForm.body_html.trim()
                         }
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-wax text-on-wax text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity cursor-pointer"
                       >
                         {savingTemplate && (
-                          <span
-                            className="material-symbols-outlined animate-spin"
-                            style={{ fontSize: "15px" }}
-                          >
-                            progress_activity
-                          </span>
+                          <Icon name="progress_activity" size={15} className="animate-spin" />
                         )}
                         {editingTemplate ? "Save Changes" : "Create Template"}
                       </button>
                       <button
                         onClick={() => setShowTemplateEditor(false)}
-                        className="px-4 py-2 rounded-lg border border-[var(--border)] text-sm text-[var(--muted)] hover:text-[var(--foreground)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                        className="px-4 py-2 rounded-lg border border-line text-sm text-ink3 hover:text-ink hover:bg-field transition-colors cursor-pointer"
                       >
                         Cancel
                       </button>
@@ -1733,38 +1624,25 @@ export default function SettingsView() {
               <SectionCard>
                 {!templatesLoaded ? (
                   <div className="p-6 flex justify-center">
-                    <span
-                      className="material-symbols-outlined animate-spin text-[var(--muted)]"
-                      style={{ fontSize: "20px" }}
-                    >
-                      progress_activity
-                    </span>
+                    <Icon name="progress_activity" size={20} className="animate-spin text-ink3" />
                   </div>
                 ) : emailTemplates.length === 0 ? (
                   <div className="p-8 flex flex-col items-center gap-3 text-center">
-                    <div className="w-12 h-12 rounded-2xl bg-[var(--surface-2)] flex items-center justify-center">
-                      <span
-                        className="material-symbols-outlined text-[var(--muted)]"
-                        style={{
-                          fontSize: "24px",
-                          fontVariationSettings: "'FILL' 1, 'wght' 200",
-                        }}
-                      >
-                        description
-                      </span>
+                    <div className="w-12 h-12 rounded-2xl bg-field flex items-center justify-center">
+                      <Icon name="description" size={24} fill className="text-ink3" />
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-[var(--foreground)] opacity-60">
+                      <p className="text-sm font-medium text-ink opacity-60">
                         No templates yet
                       </p>
-                      <p className="text-xs text-[var(--muted)] mt-1">
+                      <p className="text-xs text-ink3 mt-1">
                         Create one above, or save your current message as a
                         template while composing.
                       </p>
                     </div>
                   </div>
                 ) : (
-                  <div className="divide-y divide-[var(--border)]">
+                  <div className="divide-y divide-line">
                     {emailTemplates.map((t) => {
                       const bodyText = t.body_html
                         .replace(/<[^>]+>/g, " ")
@@ -1776,30 +1654,22 @@ export default function SettingsView() {
                       return (
                         <div
                           key={t.id}
-                          className={`flex items-start gap-3 px-4 py-3 transition-colors group ${isEditing ? "bg-[var(--accent-light)]" : "hover:bg-[var(--surface-2)]"}`}
+                          className={`flex items-start gap-3 px-4 py-3 transition-colors group ${isEditing ? "bg-wax-soft" : "hover:bg-field"}`}
                         >
-                          <div className="w-8 h-8 rounded-lg bg-[var(--accent-light)] flex items-center justify-center shrink-0 mt-0.5">
-                            <span
-                              className="material-symbols-outlined text-[var(--accent)]"
-                              style={{
-                                fontSize: "16px",
-                                fontVariationSettings: "'FILL' 1",
-                              }}
-                            >
-                              description
-                            </span>
+                          <div className="w-8 h-8 rounded-lg bg-wax-soft flex items-center justify-center shrink-0 mt-0.5">
+                            <Icon name="description" size={16} fill className="text-wax" />
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="text-sm font-semibold text-[var(--foreground)] truncate">
+                            <p className="text-sm font-semibold text-ink truncate">
                               {t.name}
                             </p>
                             {t.subject && (
-                              <p className="text-xs text-[var(--muted)] truncate mt-0.5">
+                              <p className="text-xs text-ink3 truncate mt-0.5">
                                 Subject: {t.subject}
                               </p>
                             )}
                             {bodyText && (
-                              <p className="text-xs text-[var(--muted)] truncate mt-0.5 opacity-70">
+                              <p className="text-xs text-ink3 truncate mt-0.5 opacity-70">
                                 {bodyText}
                                 {bodyText.length === 120 ? "..." : ""}
                               </p>
@@ -1812,29 +1682,19 @@ export default function SettingsView() {
                                   ? setShowTemplateEditor(false)
                                   : openEditTemplate(t)
                               }
-                              className="p-1 rounded hover:bg-[var(--surface-2)] text-[var(--muted)] hover:text-[var(--accent)] transition-colors"
+                              className="p-1 rounded hover:bg-field text-ink3 hover:text-wax transition-colors"
                               title={
                                 isEditing ? "Close editor" : "Edit template"
                               }
                             >
-                              <span
-                                className="material-symbols-outlined"
-                                style={{ fontSize: "16px" }}
-                              >
-                                {isEditing ? "close" : "edit"}
-                              </span>
+                              <Icon name={isEditing ? "close" : "edit"} size={16} />
                             </button>
                             <button
                               onClick={() => deleteTemplate(t.id)}
-                              className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-[var(--muted)] hover:text-red-500 transition-colors"
+                              className="p-1 rounded hover:bg-danger-soft text-ink3 hover:text-danger transition-colors"
                               title="Delete template"
                             >
-                              <span
-                                className="material-symbols-outlined"
-                                style={{ fontSize: "16px" }}
-                              >
-                                delete
-                              </span>
+                              <Icon name="delete" size={16} />
                             </button>
                           </div>
                         </div>
@@ -1852,48 +1712,30 @@ export default function SettingsView() {
                 <SectionLabel className="mb-0">Email Signatures</SectionLabel>
                 <button
                   onClick={openNewSignature}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--accent)] text-white text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-wax text-on-wax text-xs font-semibold hover:opacity-90 transition-opacity cursor-pointer"
                 >
-                  <span
-                    className="material-symbols-outlined"
-                    style={{ fontSize: "15px" }}
-                  >
-                    add
-                  </span>
+                  <Icon name="add" size={15} />
                   New Signature
                 </button>
               </div>
 
               {/* Editor / form */}
               {showSigEditor && (
-                <SectionCard className="mb-4 border-[var(--accent)] shadow-sm">
-                  <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
+                <SectionCard className="mb-4 border-wax shadow-sm">
+                  <div className="p-4 border-b border-line flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
-                        <span
-                          className="material-symbols-outlined text-white"
-                          style={{
-                            fontSize: "15px",
-                            fontVariationSettings: "'FILL' 1",
-                          }}
-                        >
-                          draw
-                        </span>
+                      <div className="w-7 h-7 rounded-lg bg-wax flex items-center justify-center">
+                        <Icon name="draw" size={15} fill className="text-white" />
                       </div>
-                      <p className="text-sm font-semibold text-[var(--foreground)]">
+                      <p className="text-sm font-semibold text-ink">
                         {editingSignature ? "Edit Signature" : "New Signature"}
                       </p>
                     </div>
                     <button
                       onClick={() => setShowSigEditor(false)}
-                      className="p-1 rounded hover:bg-[var(--surface-2)] text-[var(--muted)] cursor-pointer"
+                      className="p-1 rounded hover:bg-field text-ink3 cursor-pointer"
                     >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{ fontSize: "18px" }}
-                      >
-                        close
-                      </span>
+                      <Icon name="close" size={18} />
                     </button>
                   </div>
 
@@ -1901,7 +1743,7 @@ export default function SettingsView() {
                     {/* Name + account row */}
                     <div className="flex gap-3">
                       <div className="flex-1">
-                        <label className="block text-[11px] font-semibold uppercase tracking-widest text-[var(--muted)] mb-1.5">
+                        <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
                           Name
                         </label>
                         <input
@@ -1911,12 +1753,12 @@ export default function SettingsView() {
                             setSigForm((f) => ({ ...f, name: e.target.value }))
                           }
                           placeholder="e.g. Work Signature"
-                          className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--accent)] transition-colors"
+                          className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-wax transition-colors"
                         />
                       </div>
                       {gmailAccounts.length > 1 && (
                         <div className="flex-1">
-                          <label className="block text-[11px] font-semibold uppercase tracking-widest text-[var(--muted)] mb-1.5">
+                          <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
                             Account
                           </label>
                           <select
@@ -1927,7 +1769,7 @@ export default function SettingsView() {
                                 gmail_account_id: e.target.value,
                               }))
                             }
-                            className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--background)] text-sm text-[var(--foreground)] focus:outline-none focus:border-[var(--accent)] transition-colors cursor-pointer"
+                            className="w-full px-3 py-2 rounded-lg border border-line bg-canvas text-sm text-ink focus:outline-none focus:border-wax transition-colors cursor-pointer"
                           >
                             <option value="">All accounts</option>
                             {gmailAccounts.map((a) => (
@@ -1942,13 +1784,13 @@ export default function SettingsView() {
 
                     {/* Rich HTML body */}
                     <div>
-                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-[var(--muted)] mb-1.5">
+                      <label className="block text-[11px] font-semibold uppercase tracking-widest text-ink3 mb-1.5">
                         Signature Content
                       </label>
                       {/* Simple contenteditable-backed rich area */}
-                      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+                      <div className="rounded-xl border border-line overflow-hidden">
                         {/* Mini toolbar */}
-                        <div className="flex items-center gap-1 px-3 py-2 bg-[var(--surface-2)] border-b border-[var(--border)]">
+                        <div className="flex items-center gap-1 px-3 py-2 bg-field border-b border-line">
                           {[
                             { cmd: "bold", icon: "format_bold", title: "Bold" },
                             {
@@ -1970,17 +1812,12 @@ export default function SettingsView() {
                                 e.preventDefault();
                                 document.execCommand(cmd, false);
                               }}
-                              className="p-1.5 rounded hover:bg-[var(--border)] text-[var(--foreground)] transition-colors cursor-pointer"
+                              className="p-1.5 rounded hover:bg-line text-ink transition-colors cursor-pointer"
                             >
-                              <span
-                                className="material-symbols-outlined"
-                                style={{ fontSize: "16px" }}
-                              >
-                                {icon}
-                              </span>
+                              <Icon name={icon} size={16} />
                             </button>
                           ))}
-                          <div className="w-px h-5 bg-[var(--border)] mx-1" />
+                          <div className="w-px h-5 bg-line mx-1" />
                           <button
                             type="button"
                             title="Insert link"
@@ -1990,14 +1827,9 @@ export default function SettingsView() {
                               if (url)
                                 document.execCommand("createLink", false, url);
                             }}
-                            className="p-1.5 rounded hover:bg-[var(--border)] text-[var(--foreground)] transition-colors cursor-pointer"
+                            className="p-1.5 rounded hover:bg-line text-ink transition-colors cursor-pointer"
                           >
-                            <span
-                              className="material-symbols-outlined"
-                              style={{ fontSize: "16px" }}
-                            >
-                              link
-                            </span>
+                            <Icon name="link" size={16} />
                           </button>
                           <button
                             type="button"
@@ -2006,14 +1838,9 @@ export default function SettingsView() {
                               e.preventDefault();
                               document.execCommand("removeFormat", false);
                             }}
-                            className="p-1.5 rounded hover:bg-[var(--border)] text-[var(--foreground)] transition-colors cursor-pointer"
+                            className="p-1.5 rounded hover:bg-line text-ink transition-colors cursor-pointer"
                           >
-                            <span
-                              className="material-symbols-outlined"
-                              style={{ fontSize: "16px" }}
-                            >
-                              format_clear
-                            </span>
+                            <Icon name="format_clear" size={16} />
                           </button>
                         </div>
                         <div
@@ -2028,11 +1855,11 @@ export default function SettingsView() {
                               html: (e.target as HTMLDivElement).innerHTML,
                             }))
                           }
-                          className="min-h-[120px] p-4 text-sm text-[var(--foreground)] focus:outline-none"
+                          className="min-h-[120px] p-4 text-sm text-ink focus:outline-none"
                           style={{ lineHeight: "1.6" }}
                         />
                       </div>
-                      <p className="text-[11px] text-[var(--muted)] mt-1.5">
+                      <p className="text-[11px] text-ink3 mt-1.5">
                         Your signature is your contact block, appended after
                         your closing (e.g. "Best regards,"). Include your name,
                         title, company, phone, or a link.
@@ -2040,12 +1867,12 @@ export default function SettingsView() {
                     </div>
 
                     {/* Default toggle */}
-                    <div className="flex items-center justify-between py-3 px-4 rounded-xl bg-[var(--surface-2)]">
+                    <div className="flex items-center justify-between py-3 px-4 rounded-xl bg-field">
                       <div>
-                        <p className="text-sm font-medium text-[var(--foreground)]">
+                        <p className="text-sm font-medium text-ink">
                           Set as default
                         </p>
-                        <p className="text-xs text-[var(--muted)] mt-0.5">
+                        <p className="text-xs text-ink3 mt-0.5">
                           Auto-append to new emails
                           {gmailAccounts.length > 1
                             ? " for the selected account"
@@ -2065,22 +1892,12 @@ export default function SettingsView() {
                       <button
                         onClick={saveSignature}
                         disabled={savingSignature || !sigForm.name.trim()}
-                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--accent)] text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-all cursor-pointer"
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-wax text-on-wax text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-all cursor-pointer"
                       >
                         {savingSignature ? (
-                          <span
-                            className="material-symbols-outlined animate-spin"
-                            style={{ fontSize: "16px" }}
-                          >
-                            progress_activity
-                          </span>
+                          <Icon name="progress_activity" size={16} className="animate-spin" />
                         ) : (
-                          <span
-                            className="material-symbols-outlined"
-                            style={{ fontSize: "16px" }}
-                          >
-                            save
-                          </span>
+                          <Icon name="save" size={16} />
                         )}
                         {savingSignature
                           ? "Saving..."
@@ -2090,7 +1907,7 @@ export default function SettingsView() {
                       </button>
                       <button
                         onClick={() => setShowSigEditor(false)}
-                        className="px-4 py-2 rounded-lg border border-[var(--border)] text-sm font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                        className="px-4 py-2 rounded-lg border border-line text-sm font-medium text-ink hover:bg-field transition-colors cursor-pointer"
                       >
                         Cancel
                       </button>
@@ -2103,50 +1920,32 @@ export default function SettingsView() {
               <SectionCard>
                 {!signaturesLoaded ? (
                   <div className="p-6 flex justify-center">
-                    <span
-                      className="material-symbols-outlined animate-spin text-[var(--muted)]"
-                      style={{ fontSize: "20px" }}
-                    >
-                      progress_activity
-                    </span>
+                    <Icon name="progress_activity" size={20} className="animate-spin text-ink3" />
                   </div>
                 ) : signatures.length === 0 ? (
                   <div className="p-10 flex flex-col items-center gap-4 text-center">
-                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[var(--accent-light)] to-[var(--surface-2)] flex items-center justify-center shadow-sm">
-                      <span
-                        className="material-symbols-outlined text-[var(--accent)]"
-                        style={{
-                          fontSize: "28px",
-                          fontVariationSettings: "'FILL' 1, 'wght' 200",
-                        }}
-                      >
-                        draw
-                      </span>
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-wax-soft to-field flex items-center justify-center shadow-sm">
+                      <Icon name="draw" size={28} fill className="text-wax" />
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-[var(--foreground)]">
+                      <p className="text-sm font-semibold text-ink">
                         No signatures yet
                       </p>
-                      <p className="text-xs text-[var(--muted)] mt-1 max-w-xs">
+                      <p className="text-xs text-ink3 mt-1 max-w-xs">
                         Create a signature with your name, title, company, and
                         contact info. It appears after your email closing.
                       </p>
                     </div>
                     <button
                       onClick={openNewSignature}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[var(--accent)] text-white text-sm font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-wax text-on-wax text-sm font-semibold hover:opacity-90 transition-opacity cursor-pointer shadow-sm"
                     >
-                      <span
-                        className="material-symbols-outlined"
-                        style={{ fontSize: "16px" }}
-                      >
-                        add
-                      </span>
+                      <Icon name="add" size={16} />
                       Create your first signature
                     </button>
                   </div>
                 ) : (
-                  <div className="divide-y divide-[var(--border)]">
+                  <div className="divide-y divide-line">
                     {signatures.map((sig) => {
                       const accountLabel = sig.gmail_account_id
                         ? (gmailAccounts.find(
@@ -2161,53 +1960,32 @@ export default function SettingsView() {
                       return (
                         <div
                           key={sig.id}
-                          className="group flex items-start gap-4 px-5 py-4 hover:bg-[var(--surface-2)] transition-colors"
+                          className="group flex items-start gap-4 px-5 py-4 hover:bg-field transition-colors"
                         >
                           {/* Icon */}
-                          <div className="w-9 h-9 rounded-xl bg-[var(--accent-light)] flex items-center justify-center shrink-0 mt-0.5">
-                            <span
-                              className="material-symbols-outlined text-[var(--accent)]"
-                              style={{
-                                fontSize: "18px",
-                                fontVariationSettings: "'FILL' 1",
-                              }}
-                            >
-                              draw
-                            </span>
+                          <div className="w-9 h-9 rounded-xl bg-wax-soft flex items-center justify-center shrink-0 mt-0.5">
+                            <Icon name="draw" size={18} fill className="text-wax" />
                           </div>
 
                           {/* Content */}
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-sm font-semibold text-[var(--foreground)] truncate">
+                              <p className="text-sm font-semibold text-ink truncate">
                                 {sig.name}
                               </p>
                               {sig.is_default && (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--accent)] text-white text-[10px] font-bold uppercase tracking-wide">
-                                  <span
-                                    className="material-symbols-outlined"
-                                    style={{
-                                      fontSize: "10px",
-                                      fontVariationSettings: "'FILL' 1",
-                                    }}
-                                  >
-                                    star
-                                  </span>
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-wax text-on-wax text-[10px] font-bold uppercase tracking-wide">
+                                  <Icon name="star" size={10} fill />
                                   Default
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-[var(--muted)] mt-0.5 flex items-center gap-1">
-                              <span
-                                className="material-symbols-outlined"
-                                style={{ fontSize: "12px" }}
-                              >
-                                mail
-                              </span>
+                            <p className="text-xs text-ink3 mt-0.5 flex items-center gap-1">
+                              <Icon name="mail" size={12} />
                               {accountLabel}
                             </p>
                             {preview && (
-                              <p className="text-xs text-[var(--muted)] mt-1.5 opacity-70 leading-relaxed line-clamp-2">
+                              <p className="text-xs text-ink3 mt-1.5 opacity-70 leading-relaxed line-clamp-2">
                                 {preview}
                                 {preview.length >= 100 ? "..." : ""}
                               </p>
@@ -2218,27 +1996,17 @@ export default function SettingsView() {
                           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                             <button
                               onClick={() => openEditSignature(sig)}
-                              className="p-1.5 rounded-lg hover:bg-[var(--border)] text-[var(--muted)] hover:text-[var(--foreground)] transition-all cursor-pointer"
+                              className="p-1.5 rounded-lg hover:bg-line text-ink3 hover:text-ink transition-all cursor-pointer"
                               title="Edit signature"
                             >
-                              <span
-                                className="material-symbols-outlined"
-                                style={{ fontSize: "16px" }}
-                              >
-                                edit
-                              </span>
+                              <Icon name="edit" size={16} />
                             </button>
                             <button
                               onClick={() => deleteSignature(sig.id)}
-                              className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 text-[var(--muted)] hover:text-red-500 transition-all cursor-pointer"
+                              className="p-1.5 rounded-lg hover:bg-danger-soft text-ink3 hover:text-danger transition-all cursor-pointer"
                               title="Delete signature"
                             >
-                              <span
-                                className="material-symbols-outlined"
-                                style={{ fontSize: "16px" }}
-                              >
-                                delete
-                              </span>
+                              <Icon name="delete" size={16} />
                             </button>
                           </div>
                         </div>
@@ -2249,17 +2017,9 @@ export default function SettingsView() {
               </SectionCard>
 
               {/* Info callout */}
-              <div className="mt-3 flex items-start gap-3 px-4 py-3 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
-                <span
-                  className="material-symbols-outlined text-blue-500 mt-0.5"
-                  style={{
-                    fontSize: "16px",
-                    fontVariationSettings: "'FILL' 1",
-                  }}
-                >
-                  info
-                </span>
-                <p className="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
+              <div className="mt-3 flex items-start gap-3 px-4 py-3 rounded-xl bg-field border border-line">
+                <Icon name="info" size={16} fill className="text-ink2 mt-0.5" />
+                <p className="text-xs text-ink2 leading-relaxed">
                   Your signature is appended after the email closing and
                   contains your contact details. It is added automatically when
                   you open a new email; you can switch or remove it inside the

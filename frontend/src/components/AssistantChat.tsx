@@ -1,5 +1,6 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
 
@@ -225,8 +226,8 @@ export default function AssistantChat({ className, visible }: { className?: stri
               <div
                 className={`text-[13px] leading-relaxed whitespace-pre-wrap ${
                   msg.role === "user"
-                    ? "px-3.5 py-2 rounded-2xl rounded-br-sm bg-[var(--accent)] text-white"
-                    : "text-[var(--foreground)] py-0.5"
+                    ? "px-3.5 py-2 rounded-2xl rounded-br-sm bg-wax text-on-wax"
+                    : "text-ink py-0.5"
                 }`}
               >
                 {msg.content.replace(/ - /g, " - ")}
@@ -251,9 +252,9 @@ export default function AssistantChat({ className, visible }: { className?: stri
 
         {loading && (
           <div className="flex items-center gap-1.5 py-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-bounce" style={{ animationDelay: "0ms" }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-bounce" style={{ animationDelay: "150ms" }} />
-            <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)] animate-bounce" style={{ animationDelay: "300ms" }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-wax animate-bounce" style={{ animationDelay: "0ms" }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-wax animate-bounce" style={{ animationDelay: "150ms" }} />
+            <span className="w-1.5 h-1.5 rounded-full bg-wax animate-bounce" style={{ animationDelay: "300ms" }} />
           </div>
         )}
         <div ref={bottomRef} />
@@ -264,16 +265,16 @@ export default function AssistantChat({ className, visible }: { className?: stri
         <div className="px-3 pb-1">
           <button
             onClick={resetConversation}
-            className="w-full text-[11px] py-1.5 rounded-lg text-[var(--muted)] hover:text-[var(--accent)] hover:bg-[var(--surface-2)] transition-colors flex items-center justify-center gap-1 cursor-pointer"
+            className="w-full text-[11px] py-1.5 rounded-lg text-ink3 hover:text-wax hover:bg-field transition-colors flex items-center justify-center gap-1 cursor-pointer"
           >
-            <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>refresh</span>
+            <Icon name="refresh" size={13} />
             New conversation
           </button>
         </div>
       )}
 
       {/* Input */}
-      <div className="border-t border-[var(--border)] p-3 flex gap-2 items-end">
+      <div className="border-t border-line p-3 flex gap-2 items-end">
         <textarea
           ref={textareaRef}
           value={input}
@@ -290,7 +291,7 @@ export default function AssistantChat({ className, visible }: { className?: stri
           }}
           placeholder="Ask anything or tell me what to do..."
           rows={1}
-          className="flex-1 px-3 py-2 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] text-[13px] placeholder:text-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/20 focus:border-[var(--accent)]/50 resize-none overflow-y-hidden leading-relaxed transition-all"
+          className="flex-1 px-3 py-2 rounded-xl border border-line bg-field text-[13px] placeholder:text-ink3 focus:outline-none focus:ring-2 focus:ring-wax/20 focus:border-wax/50 resize-none overflow-y-hidden leading-relaxed transition-all"
           style={{ minHeight: "38px", maxHeight: "160px" }}
           disabled={loading}
         />
@@ -300,30 +301,28 @@ export default function AssistantChat({ className, visible }: { className?: stri
           aria-label={recording ? "Stop recording" : "Start voice input"}
           className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 cursor-pointer transition-all ${
             recording
-              ? "bg-red-500 text-white animate-pulse hover:opacity-90"
-              : "bg-[var(--surface-2)] text-[var(--muted)] border border-[var(--border)] hover:text-[var(--accent)] hover:border-[var(--accent)]/50"
+              ? "bg-danger text-white animate-pulse hover:opacity-90"
+              : "bg-field text-ink3 border border-line hover:text-wax hover:border-wax/50"
           } disabled:opacity-40`}
         >
-          <span className="material-symbols-outlined" style={{ fontSize: "17px" }}>
-            {recording ? "stop" : "mic"}
-          </span>
+          <Icon name={recording ? "stop" : "mic"} size={17} />
         </button>
         {loading ? (
           <button
             onClick={stopGenerating}
             aria-label="Stop generating"
-            className="w-9 h-9 rounded-xl bg-[var(--danger)] text-white hover:opacity-90 transition-all flex items-center justify-center shrink-0 cursor-pointer"
+            className="w-9 h-9 rounded-xl bg-danger text-white hover:opacity-90 transition-all flex items-center justify-center shrink-0 cursor-pointer"
           >
-            <span className="material-symbols-outlined" style={{ fontSize: "17px" }}>stop</span>
+            <Icon name="stop" size={17} />
           </button>
         ) : (
           <button
             onClick={() => sendMessage(undefined)}
             disabled={!input.trim()}
             aria-label="Send message"
-            className="w-9 h-9 rounded-xl bg-[var(--accent)] text-white hover:opacity-90 disabled:opacity-40 transition-all flex items-center justify-center shrink-0 cursor-pointer"
+            className="w-9 h-9 rounded-xl bg-wax text-on-wax hover:opacity-90 disabled:opacity-40 transition-all flex items-center justify-center shrink-0 cursor-pointer"
           >
-            <span className="material-symbols-outlined" style={{ fontSize: "17px" }}>send</span>
+            <Icon name="send" size={17} />
           </button>
         )}
       </div>
@@ -333,11 +332,11 @@ export default function AssistantChat({ className, visible }: { className?: stri
 
 /* ── Action card color maps ──────────────────────────────────────── */
 const CARD_ICON_STYLES = {
-  green:  "bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400",
-  blue:   "bg-sky-100 dark:bg-sky-900/40 text-sky-600 dark:text-sky-400",
-  red:    "bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400",
-  purple: "bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400",
-  slate:  "bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400",
+  green:  "bg-ok-soft text-ok",
+  blue:   "bg-field text-ink2",
+  red:    "bg-danger-soft text-danger",
+  purple: "bg-field text-ink2",
+  slate:  "bg-field text-ink2",
 };
 
 function ActionCard({ color, icon, title, subtitle, onClick }: {
@@ -347,24 +346,24 @@ function ActionCard({ color, icon, title, subtitle, onClick }: {
   subtitle?: string;
   onClick?: () => void;
 }) {
-  const base = "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] text-left transition-all";
+  const base = "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-line bg-field text-left transition-all";
   const inner = (
     <>
       <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${CARD_ICON_STYLES[color]}`}>
-        <span className="material-symbols-outlined" style={{ fontSize: "16px" }}>{icon}</span>
+        <Icon name={icon} size={16} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-[12px] font-semibold text-[var(--foreground)] leading-tight truncate">{title}</p>
-        {subtitle && <p className="text-[11px] text-[var(--muted)] leading-tight mt-0.5 truncate">{subtitle}</p>}
+        <p className="text-[12px] font-semibold text-ink leading-tight truncate">{title}</p>
+        {subtitle && <p className="text-[11px] text-ink3 leading-tight mt-0.5 truncate">{subtitle}</p>}
       </div>
       {onClick && (
-        <span className="material-symbols-outlined text-[var(--muted)] shrink-0 opacity-50 group-hover:opacity-100 transition-opacity" style={{ fontSize: "16px" }}>chevron_right</span>
+        <Icon name="chevron_right" size={16} className="text-ink3 shrink-0 opacity-50 group-hover:opacity-100 transition-opacity" />
       )}
     </>
   );
   if (onClick) {
     return (
-      <button onClick={onClick} className={`${base} cursor-pointer hover:bg-[var(--accent)]/5 hover:border-[var(--accent)]/30 group`}>
+      <button onClick={onClick} className={`${base} cursor-pointer hover:bg-wax/5 hover:border-wax/30 group`}>
         {inner}
       </button>
     );
@@ -402,7 +401,7 @@ function ActionChip({
     return (
       <div className="w-full space-y-2 mt-0.5">
         {context && (
-          <p className="text-[11px] text-[var(--muted)] px-0.5">{context}</p>
+          <p className="text-[11px] text-ink3 px-0.5">{context}</p>
         )}
         {options.map((opt, idx) => (
           <button
@@ -410,30 +409,30 @@ function ActionChip({
             onClick={() => onSelectOption(`Execute: ${opt.label} - ${opt.description}`)}
             className={`w-full text-left px-3 py-2.5 rounded-xl border-2 transition-all cursor-pointer group ${
               idx === recommended
-                ? "border-[var(--accent)] bg-[var(--accent)]/8"
-                : "border-[var(--border)] hover:border-[var(--accent)]/50 bg-[var(--surface-2)]"
+                ? "border-wax bg-wax/8"
+                : "border-line hover:border-wax/50 bg-field"
             }`}
           >
             <div className="flex items-center gap-2">
               <span
                 className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
                   idx === recommended
-                    ? "bg-[var(--accent)] text-white"
-                    : "bg-[var(--border)] text-[var(--muted)] group-hover:bg-[var(--accent)]/20 group-hover:text-[var(--accent)]"
+                    ? "bg-wax text-on-wax"
+                    : "bg-line text-ink3 group-hover:bg-wax/20 group-hover:text-wax"
                 }`}
               >
                 {idx + 1}
               </span>
               <span className={`text-[12px] font-semibold leading-tight ${
-                idx === recommended ? "text-[var(--accent)]" : "text-[var(--foreground)]"
+                idx === recommended ? "text-wax" : "text-ink"
               }`}>
                 {opt.label}
               </span>
               {idx === recommended && (
-                <span className="ml-auto text-[10px] font-medium text-[var(--accent)] opacity-70 shrink-0">recommended</span>
+                <span className="ml-auto text-[10px] font-medium text-wax opacity-70 shrink-0">recommended</span>
               )}
             </div>
-            <p className="text-[11px] text-[var(--muted)] mt-1 ml-7 leading-relaxed">{opt.description}</p>
+            <p className="text-[11px] text-ink3 mt-1 ml-7 leading-relaxed">{opt.description}</p>
           </button>
         ))}
       </div>

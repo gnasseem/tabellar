@@ -1,5 +1,6 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "../AppShell";
 
@@ -44,38 +45,38 @@ function StatusBadge({ status, remindAt }: { status: FollowUp["status"]; remindA
   const isOverdue = status === "waiting" && new Date(remindAt) < new Date();
   if (status === "replied") {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-[10px] font-bold uppercase tracking-wide">
-        <span className="material-symbols-outlined" style={{ fontSize: "10px", fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-ok-soft text-ok text-[10px] font-bold uppercase tracking-wide">
+        <Icon name="check_circle" size={10} fill />
         Replied
       </span>
     );
   }
   if (status === "snoozed") {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-[10px] font-bold uppercase tracking-wide">
-        <span className="material-symbols-outlined" style={{ fontSize: "10px", fontVariationSettings: "'FILL' 1" }}>bedtime</span>
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-field text-ink2 text-[10px] font-bold uppercase tracking-wide">
+        <Icon name="bedtime" size={10} fill />
         Snoozed
       </span>
     );
   }
   if (status === "dismissed") {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 text-[10px] font-bold uppercase tracking-wide">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-field text-ink2 text-[10px] font-bold uppercase tracking-wide">
         Dismissed
       </span>
     );
   }
   if (isOverdue) {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-[10px] font-bold uppercase tracking-wide">
-        <span className="material-symbols-outlined" style={{ fontSize: "10px", fontVariationSettings: "'FILL' 1" }}>warning</span>
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-danger-soft text-danger text-[10px] font-bold uppercase tracking-wide">
+        <Icon name="warning" size={10} fill />
         Overdue
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-[10px] font-bold uppercase tracking-wide">
-      <span className="material-symbols-outlined" style={{ fontSize: "10px", fontVariationSettings: "'FILL' 1" }}>hourglass_empty</span>
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-warn-soft text-warn text-[10px] font-bold uppercase tracking-wide">
+      <Icon name="hourglass_empty" size={10} fill />
       Waiting
     </span>
   );
@@ -93,21 +94,21 @@ function SnoozeMenu({ onSnooze }: { onSnooze: (days: number) => void }) {
     <div className="relative">
       <button
         onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--border)] text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--foreground)] transition-colors cursor-pointer"
+        className="flex items-center gap-1 px-2 py-1 rounded-lg border border-line text-[11px] font-medium text-ink3 hover:bg-field hover:text-ink transition-colors cursor-pointer"
         title="Snooze"
       >
-        <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>bedtime</span>
+        <Icon name="bedtime" size={13} />
         Snooze
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-20 bg-[var(--background)] border border-[var(--border)] rounded-xl shadow-xl overflow-hidden min-w-[120px]">
+          <div className="absolute right-0 top-full mt-1 z-20 bg-canvas border border-line rounded-xl shadow-xl overflow-hidden min-w-[120px]">
             {options.map((o) => (
               <button
                 key={o.days}
                 onClick={(e) => { e.stopPropagation(); onSnooze(o.days); setOpen(false); }}
-                className="w-full text-left px-3 py-2 text-xs font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                className="w-full text-left px-3 py-2 text-xs font-medium text-ink hover:bg-field transition-colors cursor-pointer"
               >
                 {o.label}
               </button>
@@ -268,43 +269,43 @@ export default function FollowupsView() {
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
-        <span className="material-symbols-outlined animate-spin text-[var(--muted)]" style={{ fontSize: "24px" }}>progress_activity</span>
+        <Icon name="progress_activity" size={24} className="animate-spin text-ink3" />
       </div>
     );
   }
 
   return (
-    <div className="h-full overflow-auto bg-[var(--background)]">
+    <div className="h-full overflow-auto bg-canvas">
       <div className="max-w-2xl mx-auto px-4 py-6">
 
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-xl font-bold text-[var(--foreground)]">Follow-ups</h1>
-            <p className="text-sm text-[var(--muted)] mt-0.5">
+            <h1 className="text-xl font-bold text-ink">Follow-ups</h1>
+            <p className="text-sm text-ink3 mt-0.5">
               {waitingCount > 0 ? `${waitingCount} awaiting reply` : "All caught up"}
             </p>
           </div>
-          <div className="flex items-center gap-2 text-[var(--muted)]">
-            <span className="material-symbols-outlined" style={{ fontSize: "28px", fontVariationSettings: "'FILL' 1, 'wght' 200", color: "var(--accent)", opacity: 0.7 }}>schedule_send</span>
+          <div className="flex items-center gap-2 text-ink3">
+            <Icon name="schedule_send" size={28} fill style={{ color: "var(--wax)", opacity: 0.7 }} />
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 p-1 rounded-xl bg-[var(--surface-2)] mb-5">
+        <div className="flex gap-1 p-1 rounded-xl bg-field mb-5">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === tab.id
-                  ? "bg-[var(--background)] text-[var(--foreground)] shadow-sm"
-                  : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                  ? "bg-canvas text-ink shadow-sm"
+                  : "text-ink3 hover:text-ink"
               }`}
             >
               {tab.label}
               {tab.id === "waiting" && waitingCount > 0 && (
-                <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-[var(--accent)] text-white text-[9px] font-bold">
+                <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-wax text-on-wax text-[9px] font-bold">
                   {waitingCount}
                 </span>
               )}
@@ -314,36 +315,36 @@ export default function FollowupsView() {
 
         {/* Suggestions banner (only on waiting tab) */}
         {activeTab === "waiting" && visibleSuggestions.length > 0 && (
-          <div className="mb-5 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-amber-200 dark:border-amber-800 flex items-center gap-2">
-              <span className="material-symbols-outlined text-amber-600 dark:text-amber-400" style={{ fontSize: "15px", fontVariationSettings: "'FILL' 1" }}>lightbulb</span>
-              <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">Suggested follow-ups</p>
-              <span className="text-xs text-amber-600 dark:text-amber-400 ml-auto">No reply in {visibleSuggestions[0]?.days_waiting}+ days</span>
+          <div className="mb-5 rounded-xl border border-warn-line bg-warn-soft overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-warn-line flex items-center gap-2">
+              <Icon name="lightbulb" size={15} fill className="text-warn" />
+              <p className="text-xs font-semibold text-warn">Suggested follow-ups</p>
+              <span className="text-xs text-warn ml-auto">No reply in {visibleSuggestions[0]?.days_waiting}+ days</span>
             </div>
-            <div className="divide-y divide-amber-100 dark:divide-amber-900/50">
+            <div className="divide-y divide-warn-line">
               {visibleSuggestions.slice(0, 5).map((s) => (
                 <div key={s.thread_id} className="flex items-start gap-3 px-4 py-3">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-[var(--foreground)] truncate">{s.subject}</p>
-                    <p className="text-xs text-[var(--muted)] mt-0.5 truncate">{s.recipient_name || s.recipient_email} &bull; Sent {formatDate(s.sent_at)}</p>
+                    <p className="text-sm font-medium text-ink truncate">{s.subject}</p>
+                    <p className="text-xs text-ink3 mt-0.5 truncate">{s.recipient_name || s.recipient_email} &bull; Sent {formatDate(s.sent_at)}</p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <button
                       onClick={() => setDismissedSuggestions((prev) => new Set([...prev, s.thread_id]))}
-                      className="text-[var(--muted)] hover:text-[var(--foreground)] p-1 rounded cursor-pointer transition-colors"
+                      className="text-ink3 hover:text-ink p-1 rounded cursor-pointer transition-colors"
                       title="Dismiss suggestion"
                     >
-                      <span className="material-symbols-outlined" style={{ fontSize: "14px" }}>close</span>
+                      <Icon name="close" size={14} />
                     </button>
                     <button
                       onClick={() => addFromSuggestion(s)}
                       disabled={addingThreadId === s.thread_id}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-600 dark:bg-amber-700 text-white text-[11px] font-semibold hover:opacity-90 transition-opacity disabled:opacity-60 cursor-pointer"
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-warn text-white text-[11px] font-semibold hover:opacity-90 transition-opacity disabled:opacity-60 cursor-pointer"
                     >
                       {addingThreadId === s.thread_id ? (
-                        <span className="material-symbols-outlined animate-spin" style={{ fontSize: "12px" }}>progress_activity</span>
+                        <Icon name="progress_activity" size={12} className="animate-spin" />
                       ) : (
-                        <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>add</span>
+                        <Icon name="add" size={12} />
                       )}
                       Track
                     </button>
@@ -357,14 +358,14 @@ export default function FollowupsView() {
         {/* Follow-up list */}
         {filteredFollowUps.length === 0 ? (
           <div className="flex flex-col items-center gap-4 py-16 text-center">
-            <div className="w-16 h-16 rounded-2xl bg-[var(--surface-2)] flex items-center justify-center">
-              <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "32px", fontVariationSettings: "'FILL' 1, 'wght' 200" }}>schedule_send</span>
+            <div className="w-16 h-16 rounded-2xl bg-field flex items-center justify-center">
+              <Icon name="schedule_send" size={32} fill className="text-ink3" />
             </div>
             <div>
-              <p className="text-sm font-semibold text-[var(--foreground)]">
+              <p className="text-sm font-semibold text-ink">
                 {activeTab === "waiting" ? "No pending follow-ups" : activeTab === "dismissed" ? "Nothing dismissed" : "No follow-ups yet"}
               </p>
-              <p className="text-xs text-[var(--muted)] mt-1 max-w-xs">
+              <p className="text-xs text-ink3 mt-1 max-w-xs">
                 {activeTab === "waiting"
                   ? "Track important sent emails to get reminded if no one replies."
                   : "Follow-ups you track will appear here."}
@@ -381,19 +382,19 @@ export default function FollowupsView() {
                   key={f.id}
                   className={`group rounded-xl border transition-all ${
                     isOverdue
-                      ? "border-red-200 dark:border-red-900 bg-red-50/50 dark:bg-red-900/10"
+                      ? "border-danger-line bg-danger-soft"
                       : f.status === "replied"
-                      ? "border-green-200 dark:border-green-900 bg-green-50/30 dark:bg-green-900/10"
-                      : "border-[var(--border)] bg-[var(--background)] hover:bg-[var(--surface-2)]"
+                      ? "border-ok-line bg-ok-soft"
+                      : "border-line bg-canvas hover:bg-field"
                   }`}
                 >
                   <div className="px-4 py-3.5">
                     <div className="flex items-start gap-3">
                       {/* Avatar */}
                       <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-sm font-bold mt-0.5 ${
-                        isOverdue ? "bg-red-100 dark:bg-red-900/40 text-red-600 dark:text-red-400" :
-                        f.status === "replied" ? "bg-green-100 dark:bg-green-900/40 text-green-600 dark:text-green-400" :
-                        "bg-[var(--accent-light)] text-[var(--accent)]"
+                        isOverdue ? "bg-danger-soft text-danger" :
+                        f.status === "replied" ? "bg-ok-soft text-ok" :
+                        "bg-wax-soft text-wax"
                       }`}>
                         {(f.recipient_name || f.recipient_email).charAt(0).toUpperCase()}
                       </div>
@@ -401,12 +402,12 @@ export default function FollowupsView() {
                       {/* Content */}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <p className="text-sm font-semibold text-[var(--foreground)] truncate">{f.subject}</p>
+                          <p className="text-sm font-semibold text-ink truncate">{f.subject}</p>
                           <StatusBadge status={f.status} remindAt={f.remind_at} />
                         </div>
                         <div className="flex items-center gap-1 mt-0.5">
-                          <span className="material-symbols-outlined text-[var(--muted)]" style={{ fontSize: "12px" }}>person</span>
-                          <p className="text-xs text-[var(--muted)] truncate">
+                          <Icon name="person" size={12} className="text-ink3" />
+                          <p className="text-xs text-ink3 truncate">
                             {f.recipient_name || f.recipient_email}
                             {f.recipient_name && f.recipient_name !== f.recipient_email && (
                               <span className="opacity-60 ml-1">({f.recipient_email})</span>
@@ -414,16 +415,16 @@ export default function FollowupsView() {
                           </p>
                         </div>
                         <div className="flex items-center gap-3 mt-1">
-                          <p className="text-[11px] text-[var(--muted)]">
+                          <p className="text-[11px] text-ink3">
                             {daysWaiting === 0 ? "Added today" : daysWaiting === 1 ? "Waiting 1 day" : `Waiting ${daysWaiting} days`}
                           </p>
                           {f.status === "snoozed" && f.snooze_until && (
-                            <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                            <p className="text-[11px] text-ink2">
                               Resumes {formatDate(f.snooze_until)}
                             </p>
                           )}
                           {(f.status === "waiting" || f.status === "snoozed") && (
-                            <p className="text-[11px] text-[var(--muted)]">
+                            <p className="text-[11px] text-ink3">
                               Remind: {formatDate(f.remind_at)}
                             </p>
                           )}
@@ -433,47 +434,47 @@ export default function FollowupsView() {
 
                     {/* Actions */}
                     {(f.status === "waiting" || f.status === "snoozed") && (
-                      <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[var(--border)]">
+                      <div className="flex items-center gap-2 mt-3 pt-3 border-t border-line">
                         <button
                           onClick={() => openCompose({ sender_email: f.recipient_email, subject: `Re: ${f.subject}`, thread_id: f.thread_id })}
-                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--accent)] text-white text-[11px] font-semibold hover:opacity-90 transition-opacity cursor-pointer"
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-wax text-on-wax text-[11px] font-semibold hover:opacity-90 transition-opacity cursor-pointer"
                         >
-                          <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>reply</span>
+                          <Icon name="reply" size={13} />
                           Follow up
                         </button>
                         <SnoozeMenu onSnooze={(days) => handleSnooze(f.id, days)} />
                         <button
                           onClick={() => updateStatus(f.id, "replied")}
-                          className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--border)] text-[11px] font-medium text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors cursor-pointer"
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg border border-line text-[11px] font-medium text-ok hover:bg-ok-soft transition-colors cursor-pointer"
                           title="Mark as replied"
                         >
-                          <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>check</span>
+                          <Icon name="check" size={13} />
                           Mark replied
                         </button>
                         <button
                           onClick={() => handleDismiss(f.id)}
-                          className="flex items-center gap-1 px-2 py-1 rounded-lg border border-[var(--border)] text-[11px] font-medium text-[var(--muted)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer ml-auto"
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg border border-line text-[11px] font-medium text-ink3 hover:bg-field transition-colors cursor-pointer ml-auto"
                         >
                           Dismiss
                         </button>
                       </div>
                     )}
                     {(f.status === "dismissed" || f.status === "replied") && (
-                      <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[var(--border)]">
+                      <div className="flex items-center gap-2 mt-3 pt-3 border-t border-line">
                         {f.status === "dismissed" && (
                           <button
                             onClick={() => updateStatus(f.id, "waiting")}
-                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-[var(--border)] text-[11px] font-medium text-[var(--foreground)] hover:bg-[var(--surface-2)] transition-colors cursor-pointer"
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg border border-line text-[11px] font-medium text-ink hover:bg-field transition-colors cursor-pointer"
                           >
-                            <span className="material-symbols-outlined" style={{ fontSize: "12px" }}>undo</span>
+                            <Icon name="undo" size={12} />
                             Restore
                           </button>
                         )}
                         <button
                           onClick={() => handleDelete(f.id)}
-                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors cursor-pointer ml-auto"
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium text-danger hover:bg-danger-soft transition-colors cursor-pointer ml-auto"
                         >
-                          <span className="material-symbols-outlined" style={{ fontSize: "13px" }}>delete</span>
+                          <Icon name="delete" size={13} />
                           Delete
                         </button>
                       </div>

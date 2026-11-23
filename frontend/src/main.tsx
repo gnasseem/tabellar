@@ -1,6 +1,4 @@
 import { createRoot } from "react-dom/client";
-import "material-symbols/outlined.css";
-import "material-symbols/rounded.css";
 import "./index.css";
 import AppShell from "@/components/AppShell";
 import EmailDashboard from "@/components/EmailDashboard";

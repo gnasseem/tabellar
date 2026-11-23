@@ -1,5 +1,6 @@
 
 import { useEffect, useState } from "react";
+import Icon from "@/components/Icon";
 import type { AgentQuestion, QuestionOption } from "@/lib/agentTypes";
 
 export interface QuestionAnswer {
@@ -88,35 +89,30 @@ export default function QuestionCard({
 
   return (
     <div
-      className={`solve-fade-in rounded-2xl border border-[var(--border)] bg-[var(--surface)] ${padding} ${compact ? "" : "shadow-[0_2px_16px_-8px_rgba(5,150,105,0.22)]"}`}
+      className={`solve-fade-in rounded-2xl border border-line bg-raised ${padding} ${compact ? "" : "shadow-[0_2px_16px_-8px_rgba(5,150,105,0.22)]"}`}
       role="dialog"
       aria-label={question.question}
     >
       {question.eyebrow && (
         <div className="mb-2 flex items-center gap-2">
-          <span
-            className="material-symbols-outlined text-emerald-600 dark:text-emerald-400"
-            style={{ fontSize: "14px" }}
-          >
-            help
-          </span>
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700 dark:text-emerald-300">
+          <Icon name="help" size={14} className="text-ok" />
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-ok">
             {question.eyebrow}
           </span>
           {question.bucket && question.bucket !== "single" && (
-            <span className="rounded-full bg-[var(--surface-2)] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+            <span className="rounded-full bg-field px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-ink3">
               {question.bucket}
             </span>
           )}
         </div>
       )}
       <h3
-        className={`${questionSize} font-semibold leading-snug text-[var(--foreground)]`}
+        className={`${questionSize} font-semibold leading-snug text-ink`}
       >
         {question.question}
       </h3>
       {question.brief && (
-        <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--muted)]">
+        <p className="mt-1.5 text-[12.5px] leading-relaxed text-ink3">
           {question.brief}
         </p>
       )}
@@ -132,57 +128,47 @@ export default function QuestionCard({
               disabled={submitting || disabled}
               className={`group cursor-pointer text-left rounded-xl border px-3 py-2.5 transition-colors duration-150 ${
                 active
-                  ? "border-emerald-500/80 bg-emerald-50/70 dark:border-emerald-400/70 dark:bg-emerald-500/10"
-                  : "border-[var(--border)] bg-[var(--surface-2)]/50 hover:border-emerald-300/70 hover:bg-emerald-50/30 dark:hover:border-emerald-500/40 dark:hover:bg-emerald-500/5"
+                  ? "border-ok/80 bg-ok-soft"
+                  : "border-line bg-field/50 hover:border-ok-line hover:bg-ok-soft"
               }`}
             >
               <div className="flex items-start gap-2.5">
                 <div
                   className={`mt-0.5 h-4 w-4 shrink-0 rounded-full border-2 transition-colors ${
                     active
-                      ? "border-emerald-500 bg-emerald-500"
-                      : "border-[var(--border)] bg-transparent group-hover:border-emerald-400"
+                      ? "border-ok bg-ok"
+                      : "border-line bg-transparent group-hover:border-ok-line"
                   }`}
                 >
                   {active && (
-                    <div className="h-full w-full rounded-full border-2 border-white dark:border-[var(--surface)]" />
+                    <div className="h-full w-full rounded-full border-2 border-white" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[13px] font-medium text-[var(--foreground)]">
+                    <span className="text-[13px] font-medium text-ink">
                       {opt.label}
                     </span>
                     {isRec && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
-                        <span
-                          className="material-symbols-outlined"
-                          style={{ fontSize: "10px" }}
-                        >
-                          auto_awesome
-                        </span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-ok/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-ok">
+                        <Icon name="auto_awesome" size={10} />
                         Recommended
                       </span>
                     )}
                     {opt.no_reply && (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">
-                        <span
-                          className="material-symbols-outlined"
-                          style={{ fontSize: "10px" }}
-                        >
-                          done_all
-                        </span>
+                      <span className="inline-flex items-center gap-1 rounded-full bg-warn/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-warn">
+                        <Icon name="done_all" size={10} />
                         No email
                       </span>
                     )}
                   </div>
                   {opt.rationale && (
-                    <p className="mt-0.5 text-[11.5px] leading-snug text-[var(--muted)]">
+                    <p className="mt-0.5 text-[11.5px] leading-snug text-ink3">
                       {opt.rationale}
                     </p>
                   )}
                   {opt.preview && (
-                    <pre className="mt-1.5 whitespace-pre-wrap break-words rounded-md border border-dashed border-[var(--border)] bg-[var(--background)]/60 px-2 py-1 text-[11px] font-mono leading-snug text-[var(--muted)]">
+                    <pre className="mt-1.5 whitespace-pre-wrap break-words rounded-md border border-dashed border-line bg-canvas/60 px-2 py-1 text-[11px] font-mono leading-snug text-ink3">
                       {opt.preview}
                     </pre>
                   )}
@@ -195,7 +181,7 @@ export default function QuestionCard({
 
       {question.allow_custom && (
         <div className="mt-3">
-          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+          <label className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.12em] text-ink3">
             Or tell the agent exactly what to do
           </label>
           <textarea
@@ -204,7 +190,7 @@ export default function QuestionCard({
             disabled={submitting || disabled}
             placeholder="e.g. Reply saying I'll confirm by Thursday..."
             rows={2}
-            className="w-full resize-none rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-[12.5px] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/25"
+            className="w-full resize-none rounded-xl border border-line bg-field px-3 py-2 text-[12.5px] text-ink placeholder:text-ink3 focus:border-ok-line focus:outline-none focus:ring-2 focus:ring-ok-line"
           />
         </div>
       )}
@@ -216,14 +202,14 @@ export default function QuestionCard({
             <button
               onClick={() => submit({ not_sure: true })}
               disabled={submitting || disabled}
-              className="cursor-pointer rounded-full border border-[var(--border)] px-3 py-1.5 text-[11.5px] text-[var(--muted)] transition-colors hover:border-[var(--foreground)] hover:text-[var(--foreground)] disabled:opacity-40"
+              className="cursor-pointer rounded-full border border-line px-3 py-1.5 text-[11.5px] text-ink3 transition-colors hover:border-ink hover:text-ink disabled:opacity-40"
             >
               I&apos;m not sure, you choose
             </button>
             <button
               onClick={() => submit({ skip: true })}
               disabled={submitting || disabled}
-              className="cursor-pointer rounded-full border border-[var(--border)] px-3 py-1.5 text-[11.5px] text-[var(--muted)] transition-colors hover:border-[var(--foreground)] hover:text-[var(--foreground)] disabled:opacity-40"
+              className="cursor-pointer rounded-full border border-line px-3 py-1.5 text-[11.5px] text-ink3 transition-colors hover:border-ink hover:text-ink disabled:opacity-40"
             >
               Skip
             </button>
@@ -234,14 +220,9 @@ export default function QuestionCard({
               if (selected) return submit({ option_id: selected });
             }}
             disabled={submitting || disabled || (!selected && !custom.trim())}
-            className="group cursor-pointer inline-flex items-center gap-1.5 rounded-full bg-emerald-600 hover:bg-emerald-700 px-4 py-1.5 text-[12px] font-semibold text-white transition-colors disabled:opacity-40"
+            className="group cursor-pointer inline-flex items-center gap-1.5 rounded-full bg-ok hover:bg-ok px-4 py-1.5 text-[12px] font-semibold text-white transition-colors disabled:opacity-40"
           >
-            <span
-              className="material-symbols-outlined"
-              style={{ fontSize: "14px" }}
-            >
-              {submitting ? "hourglass_empty" : "arrow_forward"}
-            </span>
+            <Icon name={submitting ? "hourglass_empty" : "arrow_forward"} size={14} />
             {submitting ? "Sending..." : "Continue"}
           </button>
         </div>

@@ -1,5 +1,6 @@
 
 import { useEffect, useState } from "react";
+import Icon from "@/components/Icon";
 
 type Phase = { label: string; pct: number };
 
@@ -41,7 +42,7 @@ export default function InitialFetchOverlay({ phaseIndex, mode = "initial" }: Pr
   }, [target]);
 
   return (
-    <div className="fixed inset-0 z-[250] flex flex-col items-center justify-center bg-[var(--background)]">
+    <div className="fixed inset-0 z-[250] flex flex-col items-center justify-center bg-canvas">
       {/* Logo */}
       <div className="mb-10 flex flex-col items-center gap-4">
         <div className="relative">
@@ -52,10 +53,10 @@ export default function InitialFetchOverlay({ phaseIndex, mode = "initial" }: Pr
           />
           {!isDone && (
             <span
-              className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-[var(--background)] flex items-center justify-center"
+              className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-canvas flex items-center justify-center"
             >
               <span
-                className="block w-2.5 h-2.5 rounded-full bg-[var(--accent)]"
+                className="block w-2.5 h-2.5 rounded-full bg-wax"
                 style={{ animation: "pulse 1.5s ease-in-out infinite" }}
               />
             </span>
@@ -64,12 +65,12 @@ export default function InitialFetchOverlay({ phaseIndex, mode = "initial" }: Pr
 
         <div className="text-center">
           <h1
-            className="text-[22px] font-bold text-[var(--foreground)] mb-1.5"
+            className="text-[22px] font-bold text-ink mb-1.5"
             style={{ fontFamily: '"Syne", sans-serif', letterSpacing: "-0.03em" }}
           >
             {mode === "refresh" ? "Syncing Tabellar" : "Setting up Tabellar"}
           </h1>
-          <p className="text-sm text-[var(--muted)]">
+          <p className="text-sm text-ink3">
             {mode === "refresh" ? "Fetching everything fresh…" : "This only happens once. Grab a coffee."}
           </p>
         </div>
@@ -80,34 +81,24 @@ export default function InitialFetchOverlay({ phaseIndex, mode = "initial" }: Pr
         {/* Bar */}
         <div
           className="h-1 rounded-full overflow-hidden"
-          style={{ background: "var(--border)" }}
+          style={{ background: "var(--line)" }}
         >
           <div
-            className="h-full rounded-full bg-[var(--accent)] transition-none"
+            className="h-full rounded-full bg-wax transition-none"
             style={{ width: `${displayPct}%`, transition: "width 0.06s linear" }}
           />
         </div>
 
         {/* Status row */}
-        <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+        <div className="flex items-center gap-2 text-sm text-ink3">
           {!isDone ? (
-            <span
-              className="material-symbols-outlined text-[var(--accent)] shrink-0"
-              style={{ fontSize: "16px", animation: "spin 1s linear infinite" }}
-            >
-              progress_activity
-            </span>
+            <Icon name="progress_activity" size={16} className="text-wax shrink-0" style={{ animation: "spin 1s linear infinite" }} />
           ) : (
-            <span
-              className="material-symbols-outlined text-[var(--accent)] shrink-0"
-              style={{ fontSize: "16px" }}
-            >
-              check_circle
-            </span>
+            <Icon name="check_circle" size={16} className="text-wax shrink-0" />
           )}
           <span className="flex-1 truncate">{label}</span>
           <span
-            className="font-mono text-xs tabular-nums text-[var(--accent)]"
+            className="font-mono text-xs tabular-nums text-wax"
           >
             {displayPct}%
           </span>
@@ -124,8 +115,8 @@ export default function InitialFetchOverlay({ phaseIndex, mode = "initial" }: Pr
                 width: i < phaseIndex ? "16px" : i === phaseIndex ? "24px" : "4px",
                 background:
                   i <= phaseIndex
-                    ? "var(--accent)"
-                    : "var(--border)",
+                    ? "var(--wax)"
+                    : "var(--line)",
                 opacity: i === phaseIndex ? 0.8 : 1,
               }}
             />

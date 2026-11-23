@@ -6,7 +6,7 @@ import ViewSkeleton from "./ViewSkeleton";
 
 const InboxView = lazy(() => import("./views/InboxView"));
 const SentView = lazy(() => import("./views/SentView"));
-const DraftsView = lazy(() => import("./views/DraftsView"));
+const RepliesView = lazy(() => import("./views/RepliesView"));
 const ScheduledView = lazy(() => import("./views/ScheduledView"));
 const TodosView = lazy(() => import("./views/TodosView"));
 const MeetingsView = lazy(() => import("./views/MeetingsView"));
@@ -21,7 +21,8 @@ const NewslettersView = lazy(() => import("./views/NewslettersView"));
 const views: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
   inbox: InboxView,
   sent: SentView,
-  drafts: DraftsView,
+  replies: RepliesView,
+  drafts: RepliesView,
   scheduled: ScheduledView,
   todos: TodosView,
   meetings: MeetingsView,
