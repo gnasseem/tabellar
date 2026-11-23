@@ -14,6 +14,7 @@ import { db } from "./db.ts";
 import { messageHeaders, sendEmail } from "./gmail.ts";
 import { act, engineSettings, record } from "./actions.ts";
 import { decide } from "./policy.ts";
+import { allPrefs, pick, stops } from "./profile.ts";
 
 type Sender = {
   sender_email: string;
@@ -31,7 +32,7 @@ const BULK_CATEGORIES = new Set(["promotions", "newsletter"]);
 
 // Senders of bulk mail, noisiest in the inbox first.
 export async function listNewsletters(userId: string): Promise<Sender[]> {
-  const [{ data: rows }, { data: marks }] = await Promise.all([
+  const [{ data: rows }, { data: marks }, prefs] = await Promise.all([
     db
       .from("emails")
       .select("sender, sender_email, recipients, received_at, is_read, is_archived, label_ids, has_list_unsubscribe, precedence_header, email_processed(category)")
@@ -39,6 +40,7 @@ export async function listNewsletters(userId: string): Promise<Sender[]> {
       .order("received_at", { ascending: false })
       .limit(20000),
     db.from("newsletter_senders").select("sender_email, status, method").eq("user_id", userId),
+    allPrefs(userId),
   ]);
   const marked = new Map<string, { status?: unknown; method?: unknown }>((marks ?? []).map((m: Record<string, unknown>) => [String(m.sender_email), m]));
   // People the user has written to are correspondents, even when their mail
@@ -53,7 +55,8 @@ export async function listNewsletters(userId: string): Promise<Sender[]> {
     const labels = (e.label_ids as string[] | null) ?? [];
     if (labels.includes("SENT") || !e.sender_email) continue;
     const addr = String(e.sender_email).toLowerCase();
-    if (wroteTo.has(addr)) continue;
+    // Correspondents, and senders the user said are not newsletters, are left out.
+    if (wroteTo.has(addr) || stops(pick(prefs, addr, ""), "newsletter")) continue;
     const processed = (Array.isArray(e.email_processed) ? e.email_processed[0] : e.email_processed) as { category?: string } | null;
     const bulk = !!e.has_list_unsubscribe || BULK_CATEGORIES.has(String(processed?.category)) || /^(bulk|list)$/i.test(String(e.precedence_header ?? ""));
     let s = by.get(addr);

@@ -6,6 +6,7 @@ import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import EmailDetail from "../EmailDetail";
 import { Empty, KeyHints, Menu, Seg, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
+import { NotThis, usePrefStops } from "../Profile";
 
 // Todos: what the user has to do, typed in by hand or pulled out of their mail
 // by Tabellar. One line each, ticked off in place. What Tabellar found in
@@ -47,6 +48,8 @@ export default function TodosView() {
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const stopped = usePrefStops("todo");
+
   const loadTodos = useCallback(async () => {
     const cached = getViewCache("todos");
     if (cached) {
@@ -72,24 +75,27 @@ export default function TodosView() {
     const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
     const { data } = await supabase
       .from("email_processed")
-      .select("email_id, category, quick_actions, emails!inner(subject, sender, received_at)")
+      .select("email_id, category, quick_actions, emails!inner(subject, sender, sender_email, received_at)")
       .eq("user_id", user.id)
       .filter("emails.received_at", "gte", threeDaysAgo)
       .limit(100);
     if (!data) return;
+    // Mail Tabellar is still asking about, or that the user's preferences rule out, suggests nothing.
+    const { data: asking } = await supabase.from("questions").select("email_id").eq("user_id", user.id).in("status", ["open", "waiting"]);
+    const held = new Set(((asking || []) as any[]).map((q) => q.email_id));
     const out: Suggestion[] = [];
     for (const row of data as any[]) {
-      if (!row.emails) continue;
+      if (!row.emails || held.has(row.email_id)) continue;
       for (const qa of Array.isArray(row.quick_actions) ? row.quick_actions : []) {
         const task = qa.action === "add_todo" && qa.label ? String(qa.label).replace(/^Todo:\s*/i, "").trim() : "";
-        if (!task) continue;
+        if (!task || stopped(row.emails.sender_email, `${row.emails.subject ?? ""} ${task}`)) continue;
         out.push({ key: `s:${row.email_id}:${task}`, emailId: row.email_id, task, subject: row.emails.subject || "(no subject)", sender: nameOf(row.emails.sender), receivedAt: row.emails.received_at, category: row.category || "updates" });
       }
     }
     // What matters most first, then the newest mail.
     out.sort((a, b) => (CATEGORY_PRIORITY[b.category] ?? 0) - (CATEGORY_PRIORITY[a.category] ?? 0) || b.receivedAt.localeCompare(a.receivedAt));
     setSuggestions(out);
-  }, [user.id]);
+  }, [user.id, stopped]);
 
   useEffect(() => {
     loadTodos();
@@ -431,6 +437,11 @@ export default function TodosView() {
                 <button className="iconbtn hidden h-6 w-6 group-hover:grid" title="Delete (Backspace)" aria-label={`Delete: ${t.text}`} onClick={(e) => (e.stopPropagation(), removeTodo(t))}>
                   <Icon name="delete" size={14} />
                 </button>
+                {t.email_id && t.source !== "manual" && !t.is_completed && (
+                  <span className="opacity-0 focus-within:opacity-100 group-hover:opacity-100 group-aria-selected:opacity-100 has-[[aria-expanded=true]]:opacity-100">
+                    <NotThis thing="todo" id={t.id} who={src?.sender} onDone={loadTodos} />
+                  </span>
+                )}
                 <time className="flex-none pl-2.5 text-xs text-ink3">{shortWhen(t.created_at)}</time>
               </div>
             );

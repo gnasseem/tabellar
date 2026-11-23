@@ -56,6 +56,7 @@ import {
 import { syncMail, analyzeInbox } from "./sync.ts";
 import { kickEngine, draftReply, runCycle, engineStatus } from "./engine.ts";
 import { approve, dismiss, undo, record, engineSettings } from "./actions.ts";
+import { answer, applyPref, feedback, profileContext, setPref, type Feedback } from "./profile.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
 import { buildBriefingForUser } from "./buildBriefing.ts";
 import {
@@ -259,6 +260,45 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         else if (path === "/actions/dismiss") await dismiss(userId, id);
         else if (path === "/actions/undo") await undo(userId, id);
         else return json({ error: "Not found" }, 404);
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
+      return json({ ok: true });
+    }
+
+    // ── What Tabellar knows about the user ─────────────────────────────────
+    //   POST /questions/answer {id, option}       option is the index of the answer
+    //   POST /profile/feedback {thing, outcome, id?, sender?, topic?}
+    //   POST /preferences {kind, subject, value, replace?}   replace: the id of the row it edits
+    if (path === "/questions/answer" && req.method === "POST") {
+      const { id, option } = await req.json();
+      if (typeof id !== "string" || !UUID_RE.test(id) || !Number.isInteger(option)) return json({ error: "id and option are required" }, 400);
+      try {
+        const { replan } = await answer(userId, id, option);
+        if (replan) kickEngine();
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
+      return json({ ok: true });
+    }
+    if (path === "/profile/feedback" && req.method === "POST") {
+      const f = (await req.json()) as Feedback;
+      if (!["todo", "meeting", "followup", "newsletter"].includes(f.thing) || !["not_this", "never_sender", "never_topic"].includes(f.outcome)) {
+        return json({ error: "thing and outcome are required" }, 400);
+      }
+      try {
+        await feedback(userId, f);
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
+      return json({ ok: true });
+    }
+    if (path === "/preferences" && req.method === "POST") {
+      const { kind, subject, value, replace } = await req.json();
+      try {
+        if (typeof replace === "string" && UUID_RE.test(replace)) await db.from("preferences").delete().eq("id", replace).eq("user_id", userId);
+        await setPref(userId, String(kind ?? ""), String(subject ?? ""), String(value ?? ""), "user");
+        await applyPref(userId, String(kind), String(subject ?? "").trim().toLowerCase(), String(value));
       } catch (e) {
         return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
       }
@@ -505,62 +545,20 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           .eq("id", userId)
           .single(),
         (async () => {
-          // Prioritize entries relevant to the recipient, then fill with most-used entries
+          // People and companies that match the recipient.
           const recipientDomain = recipientEmail?.split("@")[1] ?? "";
           const recipientFirstName = recipientName?.split(" ")[0] ?? "";
           const filters: string[] = [];
-          if (recipientFirstName.length > 1)
-            filters.push(
-              `entity.ilike.%${recipientFirstName}%`,
-              `info.ilike.%${recipientFirstName}%`,
-            );
-          if (recipientDomain.length > 3)
-            filters.push(
-              `entity.ilike.%${recipientDomain}%`,
-              `info.ilike.%${recipientDomain}%`,
-            );
-
-          const [relevantRes, topRes] = await Promise.all([
-            filters.length > 0
-              ? db
-                  .from("knowledge_base")
-                  .select("entity, entity_type, info")
-                  .eq("user_id", userId)
-                  .or(filters.join(","))
-                  .limit(10)
-              : Promise.resolve({
-                  data: [] as {
-                    entity: string;
-                    entity_type: string;
-                    info: string;
-                  }[],
-                }),
-            db
-              .from("knowledge_base")
-              .select("entity, entity_type, info")
-              .eq("user_id", userId)
-              .order("use_count", { ascending: false })
-              .order("updated_at", { ascending: false })
-              .limit(15),
-          ]);
-
-          const seen = new Set<string>();
-          const merged: {
-            entity: string;
-            entity_type: string;
-            info: string;
-          }[] = [];
-          for (const row of [
-            ...(relevantRes.data ?? []),
-            ...(topRes.data ?? []),
-          ]) {
-            if (!seen.has(row.entity)) {
-              seen.add(row.entity);
-              merged.push(row);
-            }
-            if (merged.length >= 20) break;
-          }
-          return { data: merged };
+          if (recipientFirstName.length > 1) filters.push(`entity.ilike.%${recipientFirstName}%`, `info.ilike.%${recipientFirstName}%`);
+          if (recipientDomain.length > 3) filters.push(`entity.ilike.%${recipientDomain}%`, `info.ilike.%${recipientDomain}%`);
+          if (!filters.length) return { data: [] as { entity: string; entity_type: string; info: string }[] };
+          return db
+            .from("knowledge_base")
+            .select("entity, entity_type, info")
+            .eq("user_id", userId)
+            .in("entity_type", ["person", "company"])
+            .or(filters.join(","))
+            .limit(8);
         })(),
         recipientEmail
           ? db
@@ -583,6 +581,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
       let knowledgeContext: string | undefined;
       const kbParts: string[] = [];
+      const about = await profileContext(userId, { sender_email: recipientEmail, subject: body.subject ?? "", text: body.replyTo?.body ?? "" });
+      if (about) kbParts.push(about);
       if (kbData?.length) {
         kbParts.push(
           kbData
@@ -1579,7 +1579,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       // Wipe everything Tabellar learned or stored. The profile and the
       // connected accounts stay, so the user remains signed in.
       for (const t of ["agent_sessions", "email_processed", "todos", "meetings", "follow_up_reminders",
-        "scheduled_emails", "draft_emails", "email_memory", "contacts", "knowledge_base", "categories",
+        "scheduled_emails", "draft_emails", "email_memory", "contacts", "knowledge_base", "categories", "preferences", "questions",
         "category_rules", "delegation_rules", "style_profiles", "email_templates", "email_signatures", "newsletter_senders", "emails"]) {
         const { error } = await db.from(t).delete().eq("user_id", userId);
         if (error) return json({ error: "Failed to delete data: " + error.message }, 500, corsHeaders);

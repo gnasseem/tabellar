@@ -7,6 +7,7 @@
  */
 
 import type { Db } from "./db.ts";
+import { allPrefs, pick, profileContext, stops } from "./profile.ts";
 import {
   briefingSummaryNeedsRecovery,
   generateBriefingExecutiveSummary,
@@ -468,7 +469,7 @@ export async function buildBriefingForUser(
   let emailsQuery = db
     .from("emails")
     .select(
-      "id, subject, sender, snippet, received_at, is_read, label_ids, email_processed(category, urgency, summary, quick_actions)",
+      "id, subject, sender, sender_email, snippet, received_at, is_read, label_ids, email_processed(category, urgency, summary, quick_actions)",
     )
     .eq("user_id", userId)
     .not("label_ids", "cs", '{"SENT"}')
@@ -502,17 +503,11 @@ export async function buildBriefingForUser(
     emailsQuery = emailsQuery.limit(40);
   }
 
-  const [{ data: recent }, { data: briefingKb }, { data: briefingMem }] =
+  const [{ data: fetched }, about, prefs, { data: briefingMem }] =
     await Promise.all([
       emailsQuery,
-      db
-        .from("knowledge_base")
-        .select("entity, entity_type, info, importance")
-        .eq("user_id", userId)
-        .in("importance", ["critical", "high"])
-        .order("use_count", { ascending: false })
-        .order("updated_at", { ascending: false })
-        .limit(30),
+      profileContext(userId),
+      allPrefs(userId),
       db
         .from("email_memory")
         .select("sender_email, interaction_count, relationship_notes")
@@ -521,7 +516,12 @@ export async function buildBriefingForUser(
         .limit(10),
     ]);
 
-  if (!recent?.length) {
+  // Mail from senders and topics the user ignores is left out.
+  const recent = (fetched ?? []).filter(
+    (r) => !stops(pick(prefs, String(r.sender_email ?? ""), String(r.subject ?? "")), "briefing"),
+  );
+
+  if (!recent.length) {
     return {
       executiveSummary: "No recent emails to brief on.",
       crucial: [],
@@ -539,17 +539,7 @@ export async function buildBriefingForUser(
   }
 
   const briefingKbParts: string[] = [];
-  if (briefingKb?.length) {
-    briefingKbParts.push(
-      "Known entities:\n" +
-        briefingKb
-          .map(
-            (k: { entity: string; entity_type: string; info: string }) =>
-              `${k.entity} (${k.entity_type}): ${k.info}`,
-          )
-          .join("\n"),
-    );
-  }
+  if (about) briefingKbParts.push(about);
   if (briefingMem?.length) {
     briefingKbParts.push(
       "Top contacts:\n" +

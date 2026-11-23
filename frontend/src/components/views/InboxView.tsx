@@ -8,6 +8,7 @@ import { useInboxSync } from "@/lib/useInboxSync";
 import { useApp } from "../AppShell";
 import EmailDetail from "../EmailDetail";
 import InitialFetchOverlay from "../InitialFetchOverlay";
+import { Questions } from "../Profile";
 import { Countdown, Empty, Glyph, KeyHints, Kbd, Menu, Seg, SkeletonRows, Tick, ViewBar, VirtualList, dayLabel, shortWhen, type MailState } from "../ui";
 
 // The inbox: every email on one quiet line that ends in what Tabellar did
@@ -524,7 +525,9 @@ export default function InboxView() {
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col" role="listbox" aria-label="Inbox">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Questions />
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col" role="listbox" aria-label="Inbox">
           {loading && !emails.length ? (
             <div className="pt-9">
               <SkeletonRows count={22} />
@@ -566,6 +569,7 @@ export default function InboxView() {
               }}
             />
           )}
+          </div>
         </div>
         {details && cursor && rows.length > 0 && <Details thread={cursor} primary={primary(cursor)} onOpen={() => open(cursor)} onArchive={() => archive([cursor])} />}
       </div>

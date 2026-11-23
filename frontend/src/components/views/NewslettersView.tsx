@@ -4,6 +4,7 @@ import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { engineFetch } from "./ActivityView";
 import { Empty, KeyHints, Kbd, Seg, SkeletonRows, Tick, ViewBar, shortWhen } from "../ui";
+import { NotThis } from "../Profile";
 
 // Newsletter cleanup: senders of bulk mail, the ones filling the inbox first.
 // Unsubscribe follows the sender's own unsubscribe header (the server reads it
@@ -293,6 +294,7 @@ export default function NewslettersView() {
         <button className="btn btn-plain btn-sm" disabled={off} onClick={(e) => (e.stopPropagation(), keep([s], s.status === null))}>
           {s.status === null ? "Keep" : "Move back"}
         </button>
+        <NotThis thing="newsletter" sender={s.sender_email} who={s.name} onDone={load} />
       </>
     );
   };
@@ -416,7 +418,7 @@ export default function NewslettersView() {
                     <span className={`truncate text-xs text-ink3 ${isCursor ? "hidden" : "group-hover:hidden"}`}>
                       {s.status === "unsubscribed" ? METHOD[s.method || ""] || "Unsubscribed" : `${s.total.toLocaleString()} in all${s.can_unsubscribe ? "" : ", no unsubscribe link"}`}, last {shortWhen(s.last_at)}
                     </span>
-                    <span className={`items-center gap-1.5 ${isCursor ? "flex" : "hidden group-hover:flex"}`}>{actions(s)}</span>
+                    <span className={`items-center gap-1.5 ${isCursor ? "flex" : "hidden group-hover:flex has-[[aria-expanded=true]]:flex"}`}>{actions(s)}</span>
                   </span>
                 </div>
               );

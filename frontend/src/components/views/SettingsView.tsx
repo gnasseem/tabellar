@@ -8,6 +8,7 @@ import { engineFetch } from "./ActivityView";
 import { EmailField, useContacts } from "../EmailAutocomplete";
 import { ModelSettings, RadioDot } from "../ModelSetup";
 import { Seg, ViewBar } from "../ui";
+import { AboutYou } from "../Profile";
 
 // Settings, laid out like the Mac's own: the sections on the left, the chosen
 // one on the right as groups of rows, each row a setting with its control.
@@ -36,10 +37,11 @@ type DelegationRule = {
   weight: number;
 };
 
-type TabId = "account" | "background" | "ai" | "style" | "signatures" | "templates" | "schedule" | "briefing" | "automation";
+type TabId = "account" | "about" | "background" | "ai" | "style" | "signatures" | "templates" | "schedule" | "briefing" | "automation";
 
 const SECTIONS: { id: TabId; label: string }[] = [
   { id: "account", label: "General" },
+  { id: "about", label: "About you" },
   { id: "background", label: "Engine" },
   { id: "ai", label: "Models" },
   { id: "style", label: "Writing style" },
@@ -922,6 +924,8 @@ export default function SettingsView() {
               All settings
             </button>
             <h2 className="bar-title mb-5">{section.label}</h2>
+
+            {activeTab === "about" && <AboutYou />}
 
             {activeTab === "account" && (
               <>

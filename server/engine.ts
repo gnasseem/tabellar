@@ -10,19 +10,22 @@
 // The model that reads the email has no tools: it returns a category, a
 // summary and suggested actions as JSON. What those suggestions can turn into
 // is fixed here in code: a draft always goes back to the sender of the email,
-// a todo is only text, a meeting is only a proposal. Only at Autopilot is a
+// nothing is made that the user's preferences rule out (profile.ts), and a
+// todo or draft from a sender the user does not know becomes a question.
+// A todo is only text, a meeting is only a proposal. Only at Autopilot is a
 // reply sent, and then only to the person who wrote, inside the thread, after
 // a cancel window (policy.checkAutoSend, outbox.ts).
 
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { generateDraft } from "./ai.ts";
-import { hasSentTo, messageHeaders } from "./gmail.ts";
+import { messageHeaders } from "./gmail.ts";
 import { syncMail, analyzeInbox, serial, fillMissingBodies } from "./sync.ts";
 import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions.ts";
 import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
 import { notify } from "./notify.ts";
+import { ask, covers, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
 
 const INTERVAL_MS = 2 * 60_000;
 const TICK_MS = 20_000;
@@ -78,40 +81,19 @@ const HOLD = /^\W*HOLD\W*$/;
 // `tabellar check` swaps this for canned text so Autopilot can be run without a model.
 export const drafter = { draft: (userId: string, e: EmailRow, instructions: string) => draftReply(userId, e, instructions) };
 
-// Has the user written to this address before? Autopilot can be limited to
-// people the user already corresponds with. Mail sent through Tabellar is in
-// the database; for anything else Gmail answers, since sync keeps no sent mail.
-async function wroteTo(userId: string, address: string, tokenRef: string | null): Promise<boolean> {
-  const { count } = await db
-    .from("emails")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId)
-    .contains("label_ids", ["SENT"])
-    .ilike("recipients", `%${address.replace(/[%_]/g, "")}%`);
-  if (count) return true;
-  if (!tokenRef || !/^[^\s@"]+@[^\s@"]+$/.test(address)) return false;
-  try {
-    return await hasSentTo(tokenRef, address);
-  } catch {
-    return false;
-  }
-}
-
 // A reply to one email in the user's writing style, with what Tabellar knows
 // about the sender. Used by the engine and by /generate-draft.
 export async function draftReply(userId: string, e: EmailRow, instructions: string): Promise<string> {
   const emailText = `Subject: ${e.subject}\nFrom: ${e.sender}\n\n${e.body_text || e.snippet}`;
-  const senderName = e.sender?.split("<")[0]?.trim().split(" ")[0]?.toLowerCase() || "";
-  const [{ data: style }, { data: profile }, { data: relevantKb }, { data: recentKb }] = await Promise.all([
+  const senderName = e.sender?.split("<")[0]?.trim().replace(/"/g, "") || "";
+  const [{ data: style }, { data: profile }, { data: known }, about] = await Promise.all([
     db.from("style_profiles").select("*").eq("user_id", userId).limit(1),
     db.from("profiles").select("style_notes").eq("id", userId).single(),
-    senderName
-      ? db.from("knowledge_base").select("entity, entity_type, info").eq("user_id", userId).ilike("entity", `%${senderName}%`).limit(10)
+    senderName.length > 1
+      ? db.from("knowledge_base").select("entity, entity_type, info").eq("user_id", userId).in("entity_type", ["person", "company"]).ilike("entity", `%${senderName.replace(/[%_]/g, "")}%`).limit(5)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    db.from("knowledge_base").select("entity, entity_type, info").eq("user_id", userId).order("updated_at", { ascending: false }).limit(20),
+    profileContext(userId, { sender_email: e.sender_email, subject: e.subject, text: e.body_text || e.snippet }),
   ]);
-  const seen = new Set((relevantKb || []).map((k) => k.entity));
-  const kb = [...(relevantKb || []), ...(recentKb || []).filter((k) => !seen.has(k.entity))].slice(0, 20);
 
   let styleContext: string | undefined;
   if (style?.[0]) {
@@ -119,8 +101,8 @@ export async function draftReply(userId: string, e: EmailRow, instructions: stri
     styleContext = `Greeting: ${s.greeting_style || "Hi"}. Closing: ${s.closing_style || "Best"}. Tone: ${s.tone || "professional"}.`;
   }
   if (profile?.style_notes) styleContext = (styleContext || "") + " " + profile.style_notes;
-  const knowledge = kb.map((k) => `${k.entity} (${k.entity_type}): ${k.info}`).join("\n");
-  return generateDraft(knowledge ? `${emailText}\n\nBackground context:\n${knowledge}` : emailText, instructions, styleContext);
+  const background = [about, (known ?? []).map((k) => `${k.entity} (${k.entity_type}): ${k.info}`).join("\n")].filter(Boolean).join("\n\n");
+  return generateDraft(background ? `${emailText}\n\nBackground context:\n${background}` : emailText, instructions, styleContext);
 }
 
 // ── Planning ────────────────────────────────────────────────────────────────
@@ -178,6 +160,16 @@ export const planNew = serial(async (userId: string): Promise<void> => {
   let cycleCount = 0;
   const notes: { sender: string; summary: string; drafted: boolean; replying?: boolean }[] = [];
 
+  const tokens = new Map<string, string | null>();
+  const tokenFor = async (accountId: string | null | undefined): Promise<string | null> => {
+    if (!accountId) return null;
+    if (!tokens.has(accountId)) {
+      const { data: acct } = await db.from("gmail_accounts").select("token_ref").eq("id", accountId).maybeSingle();
+      tokens.set(accountId, (acct?.token_ref as string | undefined) ?? null);
+    }
+    return tokens.get(accountId)!;
+  };
+
   const sorted = [...rows].sort((a, b) =>
     String((a.emails as EmailRow).received_at).localeCompare(String((b.emails as EmailRow).received_at)),
   );
@@ -205,26 +197,44 @@ export const planNew = serial(async (userId: string): Promise<void> => {
       return r;
     };
 
+    // What the user said about this sender and these topics.
+    const sender = (email.sender_email ?? "").trim().toLowerCase();
+    const prefs = await prefsFor(userId, sender, `${email.subject ?? ""} ${row.summary ?? ""}`);
+    const stopped = (t: Thing) => !!stops(prefs, t);
+
     // Label. A planted-instruction email gets the Suspicious label and nothing else.
     const label = suspicious ? SUSPICIOUS_LABEL : LABELS[category];
     if (label) await run({ kind: "label", emailId: email.id, summary: `Label "${label.replace("Tabellar/", "")}"`, detail: { label } });
+
+    const replyTo = (email.reply_to_email || email.sender_email || "").trim();
+    const reply = actions.find((a) => a.action === "reply");
+    const wantsDraft = category === "action-required" && !!reply && !!replyTo && !NO_REPLY.test(replyTo) && !already.has("draft") && !already.has("send") && !stopped("draft");
+    const todo = actions.find((a) => a.action === "add_todo" && a.label);
+    const wantsTodo = !!todo && !already.has("todo") && !stopped("todo");
+
+    // From someone the user does not know and has said nothing about: ask
+    // instead of guessing, when the draft or todo would otherwise happen.
+    let asked = false;
+    if ((wantsDraft || wantsTodo) && sender && !covers(prefs)) {
+      const kind = wantsDraft ? "draft" : "todo";
+      const would = decide({ kind, ...settings, source: "engine", suspicious, todayCount: today[kind] ?? 0, cycleCount }).verdict !== "refuse";
+      if (would && !(await knowsSender(userId, sender, { exceptEmailId: email.id, tokenRef: await tokenFor(email.gmail_account_id) }))) {
+        const plan = [wantsDraft && `draft a reply to "${email.subject ?? ""}"`, wantsTodo && `add the todo "${todo!.label}"`].filter(Boolean).join(" and ");
+        await ask(userId, senderQuestion(email.sender, sender, `Tabellar would ${plan}.`, email.id));
+        asked = true;
+      }
+    }
 
     // Reply, only to a real person who is waiting on the user: sent by
     // Autopilot when everything allows it, otherwise saved as a draft.
     let drafted = false;
     let replying = false;
-    const replyTo = (email.reply_to_email || email.sender_email || "").trim();
-    const reply = actions.find((a) => a.action === "reply");
-    if (category === "action-required" && reply && replyTo && !NO_REPLY.test(replyTo) && !already.has("draft") && !already.has("send")) {
+    if (wantsDraft && !asked && reply) {
       const subject = /^re:/i.test(email.subject ?? "") ? email.subject! : `Re: ${email.subject ?? ""}`;
       const base: Planned = { kind: "draft", emailId: email.id, summary: `Draft a reply to ${from}`, detail: { to: [replyTo], subject } };
       const autoSend: AutoSend = { to: [replyTo], threadId: email.thread_id, writer: replyTo };
       const sendCtx = { ...settings, source: "engine" as const, suspicious, todayCount: today.send ?? 0, cycleCount, send: autoSend, sendCap };
-      let tokenRef: string | null = null;
-      if (settings.level === "autopilot") {
-        const { data: acct } = await db.from("gmail_accounts").select("token_ref").eq("id", email.gmail_account_id ?? "").maybeSingle();
-        tokenRef = (acct?.token_ref as string | undefined) ?? null;
-      }
+      const tokenRef = settings.level === "autopilot" ? await tokenFor(email.gmail_account_id) : null;
       const trySend =
         settings.level === "autopilot" &&
         decide({ kind: "send", ...sendCtx }).verdict === "do" &&
@@ -268,14 +278,13 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     }
 
     // Todo.
-    const todo = actions.find((a) => a.action === "add_todo" && a.label);
-    if (todo) await run({ kind: "todo", emailId: email.id, summary: `Todo: ${todo.label}`, detail: { text: todo.label } });
+    if (wantsTodo && !asked) await run({ kind: "todo", emailId: email.id, summary: `Todo: ${todo.label}`, detail: { text: todo.label } });
 
     // Meeting proposal, when the email names a time that has not passed.
     // Calendar invitations and their replies carry an .ics: Google Calendar
     // already has that event.
     const fromCalendar = (email.attachments ?? []).some((a) => a.mime_type === "text/calendar");
-    const meeting = fromCalendar ? undefined : actions.find((a) => a.action === "schedule_meeting" && a.meetingDetails?.dateTime);
+    const meeting = fromCalendar || stopped("meeting") ? undefined : actions.find((a) => a.action === "schedule_meeting" && a.meetingDetails?.dateTime);
     const wall = meeting ? parseWallClock(meeting.meetingDetails!.dateTime!) : null;
     if (meeting && wall !== null) {
       const start = wallClockToUtc(wall, timezone);
@@ -298,7 +307,8 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     }
 
     const level = String(profile?.notification_level ?? "important");
-    const worthIt = level === "all" || (level === "important" && (category === "action-required" || category === "important"));
+    const vip = prefs.some((r) => r.value === "vip");
+    const worthIt = !stopped("notify") && (level === "all" || (level !== "none" && vip) || (level === "important" && (category === "action-required" || category === "important")));
     if (replying) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted: false, replying: true });
     else if (worthIt && !suspicious) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted });
   }
@@ -351,6 +361,7 @@ export async function runCycle(): Promise<void> {
   try {
     if (!startedUp) {
       await fillMissingBodies(userId);
+      await retireTrivia(userId);
       startedUp = true;
     }
     await applyWaitingLabels(userId);

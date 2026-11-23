@@ -8,6 +8,7 @@ import DateTimePicker from "../DateTimePicker";
 import EmailDetail from "../EmailDetail";
 import { EmailField, useContacts } from "../EmailAutocomplete";
 import { Empty, Glyph, KeyHints, Kbd, Seg, SkeletonRows, ViewBar, clock, dayLabel } from "../ui";
+import { NotThis, usePrefStops } from "../Profile";
 
 // Meetings: the ones Tabellar proposed from mail and that wait to be confirmed,
 // the ones coming up, and the ones that have passed. The list is on the left;
@@ -266,6 +267,8 @@ export default function MeetingsView() {
   const [editAttendees, setEditAttendees] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const stopped = usePrefStops("meeting");
+
   const loadMeetings = useCallback(async () => {
     const cached = getViewCache("meetings");
     if (cached) {
@@ -310,7 +313,7 @@ export default function MeetingsView() {
       const email = p.emails;
       const actions = Array.isArray(p.quick_actions) ? p.quick_actions : [];
       const meetingAction = actions.find((a: any) => a.action === "schedule_meeting");
-      if (!meetingAction) continue;
+      if (!meetingAction || stopped(email?.sender_email, `${email?.subject ?? ""} ${meetingAction.label ?? ""}`)) continue;
       const details = meetingAction.meetingDetails;
       suggestions.push({
         email_id: p.email_id,
@@ -329,7 +332,7 @@ export default function MeetingsView() {
       });
     }
     setSuggestedMeetings(suggestions);
-  }, [user.id]);
+  }, [user.id, stopped]);
 
   useEffect(() => {
     loadSuggestedMeetings();
@@ -1142,7 +1145,7 @@ export default function MeetingsView() {
                   </div>
                 );
               const isCursor = !showScheduler && cursor === item;
-              const rowClass = "row2 grid scroll-mt-[34px] grid-cols-[26px_minmax(0,1fr)_auto] gap-y-[3px]";
+              const rowClass = "row2 group grid scroll-mt-[34px] grid-cols-[26px_minmax(0,1fr)_auto] gap-y-[3px]";
               if (item.suggestion) {
                 const s = item.suggestion;
                 const when = s.dateTime && !isNaN(new Date(s.dateTime).getTime()) ? `${longDate(s.dateTime)}, ${clock(s.dateTime)}` : s.suggested_time || "No time yet";
@@ -1159,6 +1162,7 @@ export default function MeetingsView() {
                 );
               }
               const m = item.meeting!;
+              const fromMail = m.status === "proposed" && !!m.email_id;
               return (
                 <div key={item.key} role="option" aria-selected={isCursor} className={rowClass} onClick={() => select(item.key)}>
                   <span className="row-span-2 grid place-items-start justify-center pt-px">
@@ -1166,10 +1170,15 @@ export default function MeetingsView() {
                   </span>
                   <b className={`truncate ${m.status === "cancelled" ? "font-normal text-ink3 line-through" : "font-semibold"}`}>{m.title}</b>
                   <span className="pl-2.5 text-xs text-ink3">{m.status === "proposed" ? <b className="font-semibold text-wax-ink">To confirm</b> : m.status === "cancelled" ? "Cancelled" : ""}</span>
-                  <div className="col-span-2 truncate text-ink3">
+                  <div className={`truncate text-ink3 ${fromMail ? "" : "col-span-2"}`}>
                     {clock(m.start_time)} to {clock(m.end_time)}
                     {who(m) && `, ${who(m)}`}
                   </div>
+                  {fromMail && (
+                    <span className="-my-[5px] justify-self-end opacity-0 focus-within:opacity-100 group-hover:opacity-100 group-aria-selected:opacity-100 has-[[aria-expanded=true]]:opacity-100">
+                      <NotThis thing="meeting" id={m.id} who={nameOf(sources.get(m.email_id!)?.sender ?? "") || undefined} onDone={loadMeetings} />
+                    </span>
+                  )}
                 </div>
               );
             })

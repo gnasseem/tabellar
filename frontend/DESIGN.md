@@ -341,6 +341,10 @@ The state of a piece of mail, drawn as the seal in a 16px box: a filled wax dot 
 ### Details panel
 404px, hairline left edge: sender, address and time, the subject as a title, a summary in ink 2, then "What Tabellar did" as a list of seal-glyph items each with a right-aligned Undo or Review link, then the email itself. Actions sit in a hairline-topped strip at the bottom, primary first.
 
+### Questions and "Not this"
+- **Question row:** one 32px row at the top of the Inbox list, an ink 3 info ring, "Tabellar has a question" in medium ink and a chevron. It opens in place: each question in ink, what Tabellar would do in 12.5px ink 3, then its answers as small buttons, the last ("Not now") plain. No wax: a question is asked, not demanded. Hidden when nothing is open.
+- **Not this menu:** a 28px "more" icon button at the end of a todo, proposed meeting, follow-up or newsletter row, shown on hover, on the cursor row and while open. Its popover holds "Not this" (for a newsletter, "Not a newsletter"), "Never for <sender>" and "Not interested in this topic", which turns into a field and Save in place.
+
 ### Empty and loading
 - **Empty:** centred column at most 380px wide, 22px ink 3 icon, 15px title, 13px ink 2 sentence with an inline link to the way out.
 - **Loading:** skeleton bars in the field tone at row height, pulsing to 45% over 1.4s. No spinners.

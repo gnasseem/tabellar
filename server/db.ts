@@ -156,6 +156,22 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       body_html: "text", email_id: "uuid >emails:null", source: "text", created_at: "time ! =now",
     },
   },
+  // What Tabellar knows about the user, and the questions it asks instead of
+  // guessing. See profile.ts.
+  preferences: {
+    cols: {
+      id: "uuid pk =uuid", user_id: "uuid !", kind: "text !", subject: 'text ! =""', value: "text !",
+      source: 'text ! ="user"', evidence: "text", created_at: "time ! =now", updated_at: "time ! =now",
+    },
+    unique: [["user_id", "kind", "subject", "value"]],
+  },
+  questions: {
+    cols: {
+      id: "uuid pk =uuid", user_id: "uuid !", text: "text !", detail: "text", options: "json ! =[]",
+      about: "text !", email_id: "uuid >emails:null", status: 'text ! ="open"', answer: "text",
+      created_at: "time ! =now", answered_at: "time",
+    },
+  },
   // Everything Tabellar does or proposes on its own, and what the agent and
   // assistant do for the user. See policy.ts and actions.ts.
   action_log: {

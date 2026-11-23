@@ -8,8 +8,9 @@
  * - All emails in a batch are analyzed in parallel (no chunk barrier), so one
  *   slow email never stalls the other 49. The only cap is AI_PROCESS_CONCURRENCY
  *   which is a safety ceiling against provider-side throttling.
- * - For each email, processFullEmail and extractEntities run concurrently
- *   (they are independent LLM calls).
+ * - Each email is read with the user's profile (profile.ts). Only mail from
+ *   people the user corresponds with also goes through extractEntities, in
+ *   parallel, and only the people and companies it names are kept.
  * - Preamble DB reads (delegation rules, category rules, user tags, sender
  *   memory) run in parallel via Promise.all.
  * - Results are flushed to email_processed / knowledge_base as they complete
@@ -21,6 +22,7 @@ import type { Db } from "./db.ts";
 import { getEnv } from "./config.ts";
 import { extractEntities, processFullEmail } from "./ai.ts";
 import { isLocalModel } from "./llm.ts";
+import { correspondents, profileContext } from "./profile.ts";
 
 
 /**
@@ -94,6 +96,8 @@ export async function analyzeEmailsForUser(
       .eq("id", userId)
       .maybeSingle(),
   ]);
+
+  const known = await correspondents(userId, senderEmails as string[]);
 
   // Meeting extraction has to resolve relative dates ("Friday", "tomorrow")
   // against the user's day, not the edge runtime's UTC day.
@@ -178,10 +182,8 @@ export async function analyzeEmailsForUser(
       const sender = (email.sender as string) || "";
       const body = (email.body_text as string) || (email.snippet as string) || "";
 
-      // Fire both LLM calls for this email in parallel. The entity extractor
-      // doesn't need the category result; we decide whether to keep the
-      // entities after the category comes back. This roughly halves the
-      // per-email wall-clock vs. running them sequentially.
+      const profile = await profileContext(userId, { sender_email: email.sender_email as string, subject, text: body });
+      const corresponds = known.has(String(email.sender_email ?? "").toLowerCase());
       const [result, rawEntities] = await Promise.all([
         processFullEmail(
           subject,
@@ -191,11 +193,14 @@ export async function analyzeEmailsForUser(
           userTags.length > 0 ? userTags : undefined,
           categoryHints.length > 0 ? categoryHints : undefined,
           userTimezone,
+          profile,
         ),
-        extractEntities(subject, sender, body).catch((err) => {
-          console.error("[analyzeEmailsForUser] entity extraction:", err);
-          return [] as { entity: string; entity_type: string; info: string }[];
-        }),
+        corresponds
+          ? extractEntities(subject, sender, body).catch((err) => {
+              console.error("[analyzeEmailsForUser] entity extraction:", err);
+              return [] as { entity: string; entity_type: string; info: string }[];
+            })
+          : Promise.resolve([] as { entity: string; entity_type: string; info: string }[]),
       ]);
 
       const delegationActions: { label: string; action: string; target: string }[] = [];
@@ -245,9 +250,9 @@ export async function analyzeEmailsForUser(
         extra_labels: extraLabels.length > 0 ? extraLabels : null,
       });
 
-      // Only keep entities when it makes sense (skip promotions/bulk).
+      // People and companies only; topics and places from one email are trivia.
       if (finalCategory !== "promotions") {
-        for (const entity of rawEntities) {
+        for (const entity of rawEntities.filter((x) => x.entity_type === "person" || x.entity_type === "company")) {
           kbBuffer.push({
             user_id: userId,
             entity: entity.entity,

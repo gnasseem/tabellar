@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "./db.ts";
 import { batchModifyLabels, ensureLabel, modifyLabels } from "./gmail.ts";
 import { decide, normalizeLevel, proposalHash, type AutoSend, type Kind, type Source } from "./policy.ts";
+import { learn, type Signal } from "./profile.ts";
 
 export type Planned = {
   kind: Kind;
@@ -225,6 +226,18 @@ export async function approve(userId: string, id: string, hash: string): Promise
   // Claim it first so a double click cannot run it twice.
   if (!(await claim(id))) throw Object.assign(new Error("This proposal was already handled"), { status: 409 });
   await carryOut(userId, row, "Approved");
+  await learnFrom(userId, row, "approved");
+}
+
+// Approving, dismissing and undoing what the engine made teaches the profile.
+async function learnFrom(userId: string, row: Record<string, unknown>, outcome: Signal["outcome"]): Promise<void> {
+  const thing = row.kind as Signal["thing"];
+  if (row.source !== "engine" || !["todo", "meeting", "draft"].includes(thing)) return;
+  try {
+    await learn(userId, { thing, outcome, emailId: row.email_id as string | null });
+  } catch (e) {
+    console.error("[actions] learn:", (e as Error).message);
+  }
 }
 
 // Labels no longer wait for approval at Suggest. Labels proposed before that
@@ -248,8 +261,9 @@ export async function applyWaitingLabels(userId: string): Promise<number> {
 }
 
 export async function dismiss(userId: string, id: string): Promise<void> {
-  const res = await db.from("action_log").update({ status: "dismissed", decided_at: new Date().toISOString() }).eq("id", id).eq("user_id", userId).eq("status", "proposed").select("id");
+  const res = await db.from("action_log").update({ status: "dismissed", decided_at: new Date().toISOString() }).eq("id", id).eq("user_id", userId).eq("status", "proposed").select("id, kind, source, email_id");
   if (!res.data?.length) throw Object.assign(new Error("This proposal was already handled"), { status: 409 });
+  await learnFrom(userId, res.data[0], "dismissed");
 }
 
 // Undo works while paused: pause stops Tabellar acting, not the user reversing.
@@ -281,4 +295,5 @@ export async function undo(userId: string, id: string): Promise<void> {
     throw Object.assign(new Error(`A ${kind} cannot be undone`), { status: 409 });
   }
   await db.from("action_log").update({ status: "undone", undone_at: new Date().toISOString() }).eq("id", id);
+  await learnFrom(userId, row, "dismissed");
 }

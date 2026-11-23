@@ -122,7 +122,7 @@ FORBIDDEN in the prose: any tally of how many emails or messages (no digits with
 
 If the digest is thin, still write a calm overview of what the day looks like based on what is given.`,
   extract_entities:
-    'Extract entities from this email that would be useful to remember for future reference. Return a JSON array of objects with "entity" (proper name or specific identifier), "entity_type" (person|company|project|topic|location), and "info" (one concrete sentence about what was learned  -  must include a specific fact, role, or relationship, not just that they appeared in an email). Rules: only include named people with a clear role or relationship; only include companies/projects if a specific detail was learned (what they do, deal size, status); skip generic words like "meeting", "email", "deadline", "invoice", "document"; skip entities where info would be trivially vague. Confidence bar: only include if you would recommend storing this fact for future drafts or decisions. Return an empty array if nothing clearly useful was found.',
+    'Extract entities from this email that would be useful to remember for future reference. Return a JSON array of objects with "entity" (proper name or specific identifier), "entity_type" (person|company), and "info" (one concrete sentence about what was learned: their role, their relationship to the user, or what the user deals with them about). Rules: only include named people with a clear role or relationship; only include companies if a specific detail was learned (what they do, how the user deals with them); never include topics, places, projects or figures; skip generic words like "meeting", "email", "deadline", "invoice", "document"; skip entities where info would be trivially vague. Confidence bar: only include if you would recommend storing this fact for future drafts or decisions. Return an empty array if nothing clearly useful was found.',
   style_analysis:
     'Analyze the writing style of these sent emails (written BY the user). Return ONLY valid JSON with EXACTLY these four string keys and no extras: {"greeting_style":"<short>","closing_style":"<short>","tone":"formal|casual|mixed","avg_length":"short|medium|long"}. FIELD RULES  -  greeting_style: the exact most common opening word or phrase the user writes (e.g. "Hi", "Hey", "Hi {name}", "Hello", "Dear", "Good morning"). closing_style: the exact most common sign-off the user writes (e.g. "Best", "Thanks", "Cheers", "Best regards", "Talk soon", "Thanks,\\nGeorge"). NEVER return empty strings  -  if there is truly no greeting or closing, use "Hi" and "Thanks" as sensible defaults. tone: single word from formal/casual/mixed. avg_length: single word from short/medium/long. Do NOT wrap in markdown. Do NOT add commentary. Return JSON only.',
   meeting_detect:
@@ -550,6 +550,7 @@ export async function processFullEmail(
   userTags?: { slug: string; description: string }[],
   categoryHints?: { category_slug: string; description: string }[],
   timezone = "UTC",
+  profile = "",
 ): Promise<{
   category: string;
   urgency: string;
@@ -579,6 +580,10 @@ export async function processFullEmail(
       .map((t) => `- ${t.slug}: ${t.description || t.slug}`)
       .join("\n");
     prompt += `\n\nCustom tags (apply any that fit, can be multiple or none):\n${tagLines}\nAdd "tags": ["slug1",...] to the JSON if any apply. Omit "tags" key if none match.`;
+  }
+
+  if (profile) {
+    prompt += `\n\n${profile}\nUse this to judge what matters to the user and what they would actually do.`;
   }
 
   const textWithSignals = signalContext

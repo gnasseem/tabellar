@@ -325,9 +325,11 @@ await db.from("profiles").update({ engine_paused: false }).eq("id", userId);
 ok("pausing inside the window stops the reply", () => assert.equal(sent.length, 1));
 
 const stranger = await incoming("new.person@example.org");
-ok("someone the user never wrote to gets a draft, not a reply", () => {
+const { count: strangerQuestions } = await db.from("questions").select("id", { count: "exact", head: true }).eq("about", "new.person@example.org");
+ok("someone the user never wrote to gets a question, not a reply or a draft", () => {
   assert.equal(stranger.row, null);
-  assert.ok(stranger.log.some((r) => r.kind === "draft" && r.status === "done"));
+  assert.ok(!stranger.log.some((r) => r.kind === "draft" || r.kind === "send"));
+  assert.equal(strangerQuestions, 1);
 });
 
 const redirected = await incoming("ann@example.org", { replyTo: "replies@example.org" });
@@ -361,6 +363,7 @@ const { data: htmlOnly } = await db
   .select("id")
   .single();
 await db.from("email_processed").insert({ user_id: userId, email_id: htmlOnly!.id, category: "promotions", summary: "From the snippet", quick_actions: [] });
+await db.from("contacts").insert({ user_id: userId, email: "hi@voyage.example", source: "contact" });
 await db.from("action_log").insert({ user_id: userId, kind: "todo", email_id: htmlOnly!.id, summary: "Todo: from the snippet", detail: { text: "x" }, status: "proposed", source: "engine" });
 const { fillMissingBodies } = await import("./sync.ts");
 await fillMissingBodies(userId);
@@ -395,5 +398,132 @@ const { applyWaitingLabels } = await import("./actions.ts");
 await applyWaitingLabels(userId);
 const { data: waited } = await db.from("action_log").select("status").eq("id", waiting!.id).single();
 ok("labels left waiting from before are carried out", () => assert.notEqual(waited!.status, "proposed"));
+
+// ── What Tabellar knows about the user ──────────────────────────────────────
+console.log("What Tabellar knows about you");
+const profile = await import("./profile.ts");
+const { dismiss } = await import("./actions.ts");
+await db.from("profiles").update({ autonomy_level: "assist", display_name: "Sam Test" }).eq("id", userId);
+await profile.setPref(userId, "fact", "", "Studies computer science and applies for AI internships", "onboarding");
+let m = 0;
+async function mail(from: string, subject: string, todo: string | null) {
+  m++;
+  const address = from.match(/<([^>]+)>/)![1];
+  const { data } = await db
+    .from("emails")
+    .insert({
+      user_id: userId, gmail_id: `p-${m}`, thread_id: `pt-${m}`, gmail_account_id: account!.id, subject, body_text: subject,
+      sender: from, sender_email: address, received_at: new Date().toISOString(), label_ids: ["INBOX"],
+    })
+    .select("id")
+    .single();
+  await db.from("email_processed").insert({
+    user_id: userId, email_id: data!.id, category: "important", summary: subject,
+    quick_actions: todo ? [{ action: "add_todo", label: todo }] : [],
+  });
+  await planNew(userId);
+  return data!.id as string;
+}
+const todosFor = async (emailId: string) => (await db.from("todos").select("id").eq("email_id", emailId)).data ?? [];
+const questionsAbout = async (about: string) => (await db.from("questions").select("*").eq("about", about)).data ?? [];
+const prefRows = async (subject: string) => ((await db.from("preferences").select("value, source").eq("user_id", userId).eq("subject", subject)).data ?? []).map((r) => `${r.value}/${r.source}`);
+
+const v1 = await mail("Voyage AI <hello@voyageai.example>", "50M free tokens for voyage-3", "Try the voyage-3 embedding model");
+const [vq] = await questionsAbout("hello@voyageai.example");
+const v1Todos = await todosFor(v1);
+ok("a todo from a sender the user does not know becomes a question", () => {
+  assert.equal(v1Todos.length, 0);
+  assert.equal(vq?.status, "open");
+  assert.equal(vq.text, "Do you deal with Voyage AI?");
+  assert.deepEqual((vq.options as { label: string }[]).map((o) => o.label), ["Yes", "No, ignore them", "Not now"]);
+});
+await db.from("todos").insert({ user_id: userId, text: "Try voyage-3", email_id: v1, source: "tabellar" });
+await profile.answer(userId, vq.id, 1);
+const v2 = await mail("Voyage AI <hello@voyageai.example>", "Last day for your free tokens", "Claim the free tokens");
+const v2Todos = await todosFor(v2);
+const vAgain = await questionsAbout("hello@voyageai.example");
+const vPrefs = await prefRows("hello@voyageai.example");
+const v1After = await todosFor(v1);
+ok("\"No, ignore them\" removes its todo, and later mail from them makes none and asks nothing", () => {
+  assert.equal(v1After.length, 0);
+  assert.equal(v2Todos.length, 0);
+  assert.equal(vAgain.length, 1);
+  assert.deepEqual(vPrefs, ["quiet/asked"]);
+});
+
+const d1 = await mail("Dana Reyes <dana@uni.example>", "Chapter 3", "Send Dana chapter 3");
+const [dq] = await questionsAbout("dana@uni.example");
+await profile.answer(userId, dq.id, 0);
+await planNew(userId);
+const d1Todos = await todosFor(d1);
+ok("\"Yes\" makes the todo it held back", () => assert.equal(d1Todos.length, 1));
+
+await db.from("contacts").insert({ user_id: userId, email: "webinars@events.example", source: "contact" });
+const turnedDown: number[] = [];
+for (const i of [1, 2]) {
+  const id = await mail("Events <webinars@events.example>", `Webinar ${i}: scaling agents`, `Register for webinar ${i}`);
+  const [t] = await todosFor(id);
+  turnedDown.push(t ? 1 : 0);
+  if (t) await profile.feedback(userId, { thing: "todo", outcome: "not_this", id: t.id as string });
+}
+const w3 = await mail("Events <webinars@events.example>", "Webinar 3: scaling agents", "Register for webinar 3");
+const w3Todos = await todosFor(w3);
+const wPrefs = await prefRows("webinars@events.example");
+ok("two todos turned down from one sender stop the third", () => {
+  assert.deepEqual(turnedDown, [1, 1]);
+  assert.equal(w3Todos.length, 0);
+  assert.deepEqual(wPrefs, ["never_todo/learned"]);
+});
+
+await db.from("profiles").update({ autonomy_level: "suggest" }).eq("id", userId);
+await db.from("contacts").insert({ user_id: userId, email: "club@uni.example", source: "contact" });
+for (const i of [1, 2]) {
+  const id = await mail("Chess Club <club@uni.example>", `Club night ${i}`, `Bring a board to club night ${i}`);
+  const { data: p } = await db.from("action_log").select("id").eq("email_id", id).eq("kind", "todo").eq("status", "proposed").single();
+  await dismiss(userId, p!.id as string);
+}
+const c3 = await mail("Chess Club <club@uni.example>", "Club night 3", "Bring a board to club night 3");
+const { count: c3Proposed } = await db.from("action_log").select("id", { count: "exact", head: true }).eq("email_id", c3).eq("kind", "todo");
+ok("two dismissed proposals from one sender stop the third", () => assert.equal(c3Proposed, 0));
+await db.from("profiles").update({ autonomy_level: "assist" }).eq("id", userId);
+
+await profile.feedback(userId, { thing: "todo", outcome: "never_topic", topic: "hackathons" });
+await db.from("contacts").insert({ user_id: userId, email: "ana@uni.example", source: "contact" });
+const h1 = await mail("Ana <ana@uni.example>", "Join our hackathon this weekend", "Sign up for the hackathon");
+const h1Todos = await todosFor(h1);
+ok("a topic the user is not interested in makes no todo, even from someone they know", () => assert.equal(h1Todos.length, 0));
+
+await db.from("questions").update({ status: "skipped" }).eq("user_id", userId).eq("status", "open");
+for (const i of [1, 2, 3, 4]) await profile.ask(userId, profile.senderQuestion(null, `asker${i}@example.org`, "x", v1));
+const statuses = async () => Promise.all([1, 2, 3, 4].map(async (i) => (await questionsAbout(`asker${i}@example.org`))[0]?.status));
+const before = await statuses();
+await profile.answer(userId, (await questionsAbout("asker1@example.org"))[0].id as string, 2);
+const after = await statuses();
+ok("at most three questions are open; answering one moves the next up", () => {
+  assert.deepEqual(before, ["open", "open", "open", "waiting"]);
+  assert.deepEqual(after, ["skipped", "open", "open", "open"]);
+});
+
+const { listNewsletters } = await import("./newsletters.ts");
+for (const i of [1, 2]) {
+  await db.from("emails").insert({
+    user_id: userId, gmail_id: `nl-${i}`, gmail_account_id: account!.id, subject: `Issue ${i}`, sender: "Lab List <lab@lists.example>",
+    sender_email: "lab@lists.example", has_list_unsubscribe: true, received_at: new Date().toISOString(), label_ids: ["INBOX"],
+  });
+}
+const listedBefore = (await listNewsletters(userId)).some((s) => s.sender_email === "lab@lists.example");
+await profile.feedback(userId, { thing: "newsletter", outcome: "not_this", sender: "lab@lists.example" });
+const listedAfter = (await listNewsletters(userId)).some((s) => s.sender_email === "lab@lists.example");
+ok("\"Not a newsletter\" takes a sender out of Newsletters", () => {
+  assert.ok(listedBefore);
+  assert.ok(!listedAfter);
+});
+
+const block = await profile.profileContext(userId, { sender_email: "hello@voyageai.example", subject: "Free tokens for hackathons" });
+ok("the profile block names the user, this sender, facts and what they never want, in about 400 tokens", () => {
+  assert.ok(block.includes("Sam Test") && block.includes("hello@voyageai.example") && block.includes("Studies computer science") && block.includes("hackathons"));
+  assert.ok(block.length <= 1700);
+});
+console.log(block.replace(/^/gm, "      | "));
 
 console.log(`\n${passed} checks passed.`);

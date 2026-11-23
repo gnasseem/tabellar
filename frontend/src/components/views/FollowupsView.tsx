@@ -4,6 +4,7 @@ import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { Empty, Glyph, KeyHints, Kbd, Seg, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
+import { NotThis, usePrefStops } from "../Profile";
 
 // Follow-ups: mail the user sent that has had no answer. Each one carries a
 // reminder date; once that date has come it is due and set in wax red. Sent
@@ -148,6 +149,8 @@ export default function FollowupsView() {
   const goKey = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
 
+  const stopped = usePrefStops("followup");
+
   const loadFollowUps = useCallback(async () => {
     const { data, error: failed } = await supabase.from("follow_up_reminders").select("*").eq("user_id", user.id).order("remind_at", { ascending: true });
     setError(failed ? "Could not load your follow-ups." : null);
@@ -226,10 +229,10 @@ export default function FollowupsView() {
     }));
     const threads = new Set(followUps.map((f) => f.thread_id));
     const untracked: Item[] = suggestions
-      .filter((s) => !hidden.has(s.thread_id) && !threads.has(s.thread_id))
+      .filter((s) => !hidden.has(s.thread_id) && !threads.has(s.thread_id) && !stopped(s.recipient_email, s.subject))
       .map((s) => ({ key: `s:${s.thread_id}`, state: "untracked", f: null, s, name: s.recipient_name || s.recipient_email, email: s.recipient_email, subject: s.subject, threadId: s.thread_id, since: s.sent_at, wrote: sent[s.email_id]?.snippet || "" }));
     return [...tracked, ...untracked];
-  }, [followUps, suggestions, hidden, sent]);
+  }, [followUps, suggestions, hidden, sent, stopped]);
 
   const counts = useMemo(() => {
     const n = (s: State) => all.filter((i) => i.state === s).length;
@@ -362,6 +365,21 @@ export default function FollowupsView() {
     setCursorKey((data as FollowUp).id);
     mail.reload();
     addToast("success", `Tracking it. The reminder is due ${onDate((data as FollowUp).remind_at)}.`);
+  };
+
+  // "Not this": a tracked follow-up is dismissed, a suggestion is stored as
+  // dismissed so it does not come back.
+  const notThis = async (i: Item) => {
+    if (i.f) return dismiss([i]);
+    const s = i.s!;
+    stepPast([i]);
+    setHidden((prev) => new Set([...prev, s.thread_id]));
+    const { error: failed } = await supabase.from("follow_up_reminders").insert({
+      user_id: user.id, email_id: s.email_id, thread_id: s.thread_id, recipient_email: s.recipient_email, recipient_name: s.recipient_name,
+      subject: s.subject, remind_at: new Date().toISOString(), status: "dismissed",
+    });
+    if (failed) throw new Error("Could not dismiss it. Try again.");
+    loadFollowUps();
   };
 
   const hide = (i: Item) => {
@@ -507,6 +525,20 @@ export default function FollowupsView() {
                   <div className="col-span-2 flex min-w-0 gap-2.5 text-ink3">
                     <span className="min-w-0 flex-1 truncate">{item.state === "answered" || item.state === "dismissed" ? item.wrote.replace(/\s+/g, " ") : waited(item.since)}</span>
                     <span className={`flex-none text-xs ${due ? "font-semibold text-wax-ink" : ""}`}>{statusOf(item)}</span>
+                    {item.state !== "answered" && item.state !== "dismissed" && (
+                      <span className="-my-[5px] flex-none opacity-0 focus-within:opacity-100 group-hover:opacity-100 group-aria-selected:opacity-100 has-[[aria-expanded=true]]:opacity-100">
+                        <NotThis
+                          thing="followup"
+                          sender={item.email}
+                          who={item.name}
+                          onNotThis={() => notThis(item)}
+                          onDone={() => {
+                            loadFollowUps();
+                            loadSuggestions();
+                          }}
+                        />
+                      </span>
+                    )}
                   </div>
                 </div>
               );
