@@ -14,7 +14,8 @@ type TableName =
   | "draft_emails"
   | "scheduled_emails"
   | "action_log"
-  | "questions";
+  | "questions"
+  | "follow_up_reminders";
 
 
 // How often the briefing is looked at.
@@ -83,6 +84,7 @@ export function useLiveUpdates(
     scheduled_emails: 0,
     action_log: 0,
     questions: 0,
+    follow_up_reminders: 0,
   });
 
   const bumpTable = useCallback((table: TableName) => {
@@ -136,7 +138,7 @@ export function useLiveUpdates(
         () => bumpTable("email_processed"),
       );
       // Rows the background engine writes while the window is open.
-      for (const table of ["action_log", "draft_emails", "todos", "meetings", "questions"] as const) {
+      for (const table of ["action_log", "draft_emails", "todos", "meetings", "questions", "follow_up_reminders"] as const) {
         channel.on(
           "postgres_changes",
           { event: "*", schema: "public", table, filter: `user_id=eq.${userId}` },

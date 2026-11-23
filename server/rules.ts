@@ -102,6 +102,17 @@ export function parseDay(s: string, today: Day & { dow: number }): Day | null {
   return null;
 }
 
+// The day a todo is due, from the sentence that asks for it: a day named
+// after "by", "before", "due", "until", "no later than" or "deadline"
+// ("send it back by December 15", "due Friday"). "YYYY-MM-DD" or null.
+export function dueOf(quote: unknown, userTz: string, now = new Date()): string | null {
+  const t = String(quote ?? "");
+  const at = t.search(/\b(by|before|due|until|till|no later than|deadline)\b/i);
+  if (at < 0) return null;
+  const day = parseDay(t.slice(at), todayIn(userTz, now));
+  return day ? `${day.y}-${String(day.m).padStart(2, "0")}-${String(day.d).padStart(2, "0")}` : null;
+}
+
 // ── Timezones ───────────────────────────────────────────────────────────────
 
 export type Zone = { iana: string } | { offset: number }; // offset in minutes east of UTC

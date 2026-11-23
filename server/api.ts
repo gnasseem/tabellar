@@ -13,20 +13,21 @@
 //   GET  /calendar/events       Calendar events
 //   POST /calendar/create-event Create a Google Calendar event
 //   POST /calendar/update-event Update a Google Calendar event
+//   POST /meetings/confirm      Put a meeting waiting to be confirmed on Google Calendar
 //   POST /rethink-email         Re-categorize one email
 //   GET  /contacts/search       Search contacts
 //   POST /contacts/sync         Import Google contacts
 //   POST /remove-gmail-account  Disconnect a Gmail account
 //   DELETE /delete-all-data     Wipe local mail data
 //   POST /chat                  Assistant chat with inbox tools
-//   GET|POST /follow-ups, PATCH|DELETE /follow-ups/:id, GET /follow-ups/suggested
+//   GET|POST /follow-ups, PATCH|DELETE /follow-ups/:id, GET /follow-ups/list
 //   GET|POST /signatures, PATCH|DELETE /signatures/:id
 //   GET  /attachment            Fetch a Gmail attachment
 //   POST /agent/start|step|answer|execute|cancel   The agent
 //   GET  /engine/status, POST /engine/autostart, POST /mail/state
 //   POST /actions/approve|dismiss|undo   The action log
 
-import { judgeSent, suggestedFollowups } from "./followups.ts";
+import { followupList, judgeSent } from "./followups.ts";
 import { listNewsletters, unsubscribe, archiveSender, keepSender } from "./newsletters.ts";
 import { db, type Db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
@@ -1111,8 +1112,10 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return new Date(guess.getTime() + (guess.getTime() - tzMs));
       }
 
+      // `days` from that date on, today alone by default.
+      const days = Math.min(Math.max(parseInt(url.searchParams.get("days") || "1", 10) || 1, 1), 31);
       const timeMin = zonedMidnight(y, mo - 1, d, timezone, false);
-      const timeMax = zonedMidnight(y, mo - 1, d, timezone, true);
+      const timeMax = zonedMidnight(y, mo - 1, d + days - 1, timezone, true);
 
       const calRes = await fetch(
         `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
@@ -1121,7 +1124,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
             timeMax: timeMax.toISOString(),
             singleEvents: "true",
             orderBy: "startTime",
-            maxResults: "25",
+            maxResults: String(Math.min(25 * days, 250)),
             fields: "items(id,summary,start,end,attendees,location,hangoutLink,conferenceData,htmlLink,status,description)",
           }),
         { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -1141,7 +1144,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           start: ev.start?.dateTime ?? ev.start?.date ?? null,
           end: ev.end?.dateTime ?? ev.end?.date ?? null,
           allDay: !ev.start?.dateTime,
-          attendees: (ev.attendees ?? []).map((a: any) => a.displayName || a.email).filter(Boolean),
+          // The other people: not the user, not a room.
+          attendees: (ev.attendees ?? []).filter((a: any) => !a.self && !a.resource).map((a: any) => a.displayName || a.email).filter(Boolean),
           location: ev.location ?? null,
           meetingLink: ev.hangoutLink ?? ev.conferenceData?.entryPoints?.[0]?.uri ?? null,
           htmlLink: ev.htmlLink ?? null,
@@ -1150,6 +1154,51 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         }));
 
       return json({ events }, 200, corsHeaders);
+    }
+
+    // ── POST /meetings/confirm ─────────────────────────────────────────────
+    // Puts a meeting waiting to be confirmed on Google Calendar: a meetings
+    // row by `id`, or a proposal by `proposal` {id, hash}, which is approved
+    // first. `title`, `start_time`, `end_time`, `location` and `attendees`
+    // change it on the way. Only the
+    // people the user added are invited; Tabellar invites nobody by itself.
+    if (path === "/meetings/confirm" && req.method === "POST") {
+      const body = await req.json();
+      let meetingId = typeof body.id === "string" ? body.id : "";
+      try {
+        if (body.proposal?.id) meetingId = String((await approve(userId, String(body.proposal.id), String(body.proposal.hash ?? ""))).meetingId ?? "");
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
+      const { data: m } = await db.from("meetings").select("*").eq("id", meetingId).eq("user_id", userId).maybeSingle();
+      if (!m) return json({ error: "That meeting is gone" }, 404);
+      const changes: Record<string, unknown> = {};
+      for (const k of ["title", "start_time", "end_time", "location"]) if (typeof body[k] === "string" && body[k]) changes[k] = body[k];
+      if (Array.isArray(body.attendees)) changes.attendees = body.attendees.map(String).filter(Boolean);
+      if (Object.keys(changes).length) await db.from("meetings").update(changes).eq("id", m.id);
+      const meeting = { ...m, ...changes };
+      const accessToken = await getCalendarAccessTokenSafe(db, userId);
+      if (!accessToken) return json({ error: "Google Calendar cannot be reached. Reconnect the account in Settings." }, 502);
+      const attendees = Array.isArray(meeting.attendees) ? (meeting.attendees as string[]) : [];
+      const calRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=${attendees.length ? "all" : "none"}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          summary: meeting.title,
+          description: meeting.description ?? "",
+          start: { dateTime: meeting.start_time },
+          end: { dateTime: meeting.end_time },
+          ...(meeting.location ? { location: meeting.location } : {}),
+          ...(attendees.length ? { attendees: attendees.map((email) => ({ email })) } : {}),
+        }),
+      });
+      if (!calRes.ok) {
+        console.error(`[meetings/confirm] google error status=${calRes.status} body=${await calRes.text().catch(() => "")}`);
+        return json({ error: "Google Calendar did not accept it" }, 502);
+      }
+      const ev = await calRes.json();
+      await db.from("meetings").update({ status: "confirmed", calendar_event_id: ev.id }).eq("id", m.id);
+      return json({ ok: true, meetingId: m.id, link: ev.htmlLink ?? null });
     }
 
     // ── POST /calendar/create-event ────────────────────────────────────────
@@ -2039,10 +2088,10 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ followUps: data ?? [] }, 200, corsHeaders);
     }
 
-    // ── GET /follow-ups/suggested: sent mail worth following up ──────────
-    if (path === "/follow-ups/suggested" && req.method === "GET") {
+    // ── GET /follow-ups/list: reminders that are due and suggested ones ───
+    if (path === "/follow-ups/list" && req.method === "GET") {
       void judgeSent(userId).catch((e) => console.error("[follow-ups] judging:", e));
-      return json({ suggestions: await suggestedFollowups(userId) }, 200, corsHeaders);
+      return json({ followups: await followupList(userId) }, 200, corsHeaders);
     }
 
     // ── POST /follow-ups — create a follow-up reminder ────────────────────

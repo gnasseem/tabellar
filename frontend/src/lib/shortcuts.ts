@@ -83,16 +83,16 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: "Todos",
     shortcuts: [
       { keys: "j k", description: "Move" },
-      { keys: "Space", description: "Done, or reopen" },
+      { keys: "Space", description: "Done, reopen, or add a suggested one" },
       { keys: "n", description: "New todo" },
-      { keys: "Backspace", description: "Delete" },
+      { keys: "Backspace", description: "Delete one you added" },
     ],
   },
   {
     title: "Meetings",
     shortcuts: [
       { keys: "j k", description: "Move" },
-      { keys: "Enter", description: "Confirm" },
+      { keys: "Enter", description: "Add to calendar" },
       { keys: "e", description: "Change time" },
       { keys: "n", description: "New meeting" },
     ],
@@ -101,11 +101,8 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: "Follow-ups",
     shortcuts: [
       { keys: "j k", description: "Move" },
-      { keys: "x", description: "Select" },
       { keys: "Enter", description: "Nudge" },
-      { keys: "s", description: "Snooze 3 days" },
-      { keys: "a", description: "Mark answered" },
-      { keys: "z", description: "Undo" },
+      { keys: "l", description: "Later" },
     ],
   },
   {

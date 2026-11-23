@@ -667,3 +667,42 @@ function InlineReply({ reply, source, onDiscard }: { reply: { draft?: any; going
     </section>
   );
 }
+
+// The reader opened from a page that is not the Inbox (Todos, Meetings): it
+// loads the email by id and goes back to the page on close, archive or reply.
+export function ReaderById({ emailId, onClose }: { emailId: string; onClose: () => void }) {
+  const { addToast } = useApp();
+  const [email, setEmail] = useState<any | null>(null);
+  useEffect(() => {
+    createClient()
+      .from("emails")
+      .select("*, email_processed(*)")
+      .eq("id", emailId)
+      .single()
+      .then(({ data }: { data: any }) => {
+        if (data) setEmail(data);
+        else {
+          addToast("error", "That email is no longer in Tabellar.");
+          onClose();
+        }
+      });
+  }, [emailId]);
+  if (!email) return null;
+  const flag = (archived: boolean) => {
+    onClose();
+    setMailState([email.id], archived ? { archived: true } : { read: false })
+      .then(() => archived && addToast("success", "Archived", { action: { label: "Undo", onClick: () => void setMailState([email.id], { archived: false }) } }))
+      .catch((e: Error) => addToast("error", `Could not ${archived ? "archive" : "mark it unread"}: ${e.message}`));
+  };
+  return (
+    <EmailDetail
+      email={email}
+      onBack={onClose}
+      onArchive={() => flag(true)}
+      onReply={onClose}
+      onMarkUnread={() => flag(false)}
+      onSnooze={onClose}
+      onRethink={(updated: any) => setEmail((prev: any) => (prev ? { ...prev, email_processed: updated } : prev))}
+    />
+  );
+}

@@ -133,7 +133,7 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
   if (p.kind === "todo") {
     const { data, error } = await db
       .from("todos")
-      .insert({ user_id: userId, text: d.text, email_id: p.emailId, source: "tabellar" })
+      .insert({ user_id: userId, text: d.text, due: d.due ?? null, email_id: p.emailId, source: "tabellar" })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
@@ -144,7 +144,7 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
       .from("meetings")
       .insert({
         user_id: userId, email_id: p.emailId, title: d.title, description: d.description ?? null,
-        start_time: d.start_time, end_time: d.end_time, location: d.location ?? null, as_written: d.as_written ?? null, status: "proposed",
+        start_time: d.start_time, end_time: d.end_time, location: d.location ?? null, as_written: d.as_written ?? null, quote: d.quote ?? null, status: "proposed",
       })
       .select("id")
       .single();
@@ -200,11 +200,12 @@ async function loadRow(userId: string, id: string) {
 }
 
 // Carry out a proposal that has been claimed (status "running").
-async function carryOut(userId: string, row: Record<string, unknown>, reason: string): Promise<void> {
+async function carryOut(userId: string, row: Record<string, unknown>, reason: string): Promise<Record<string, unknown>> {
   const p: Planned = { kind: row.kind as Kind, emailId: row.email_id as string | null, summary: row.summary as string, detail: row.detail as Record<string, unknown> };
   try {
     const undoInfo = await execute(userId, p, row.id as string);
     await db.from("action_log").update({ status: "done", detail: { ...p.detail, ...undoInfo }, decided_at: new Date().toISOString(), reason }).eq("id", row.id);
+    return undoInfo;
   } catch (e) {
     await db.from("action_log").update({ status: "failed", error: (e as Error).message.slice(0, 500), decided_at: new Date().toISOString() }).eq("id", row.id);
     throw e;
@@ -218,7 +219,8 @@ async function claim(id: string): Promise<boolean> {
 
 // Approve a proposal. `hash` is the one the window showed alongside the text;
 // it has to match both the stored hash and a fresh hash of the stored detail.
-export async function approve(userId: string, id: string, hash: string): Promise<void> {
+// Returns what was made (todoId, meetingId, draftId).
+export async function approve(userId: string, id: string, hash: string): Promise<Record<string, unknown>> {
   const row = await loadRow(userId, id);
   if (row.status !== "proposed") throw Object.assign(new Error("This proposal was already handled"), { status: 409 });
   const fresh = proposalHash(row.kind as string, row.email_id as string | null, row.detail);
@@ -230,8 +232,9 @@ export async function approve(userId: string, id: string, hash: string): Promise
   if (decision.verdict !== "do") throw Object.assign(new Error(decision.reason), { status: 409 });
   // Claim it first so a double click cannot run it twice.
   if (!(await claim(id))) throw Object.assign(new Error("This proposal was already handled"), { status: 409 });
-  await carryOut(userId, row, "Approved");
+  const made = await carryOut(userId, row, "Approved");
   await learnFrom(userId, row, "approved");
+  return made;
 }
 
 // Approving, dismissing and undoing what the engine made teaches the profile.

@@ -148,16 +148,6 @@ export type AppContextType = {
   /** True while a cancel request is in flight (direct DB update or API fallback). */
   solveAgentCancelInFlight: boolean;
   resetSolveAgent: () => void;
-  // Pending meeting schedule (set when user clicks schedule_meeting quick action)
-  pendingMeetingSchedule: {
-    title?: string;
-    dateTime?: string;
-    duration?: number;
-    location?: string;
-    attendees?: string[];
-    description?: string;
-  } | null;
-  setPendingMeetingSchedule: (v: AppContextType["pendingMeetingSchedule"]) => void;
 };
 
 export const AppContext = createContext<AppContextType | null>(null);
@@ -884,7 +874,6 @@ export default function AppShell({
     return () => clearInterval(interval);
   }, [agentSession?.id, agentSession?.status, loadAgentTurns]);
 
-  const [pendingMeetingSchedule, setPendingMeetingSchedule] = useState<AppContextType["pendingMeetingSchedule"]>(null);
   return (
     <AppContext.Provider
       value={{
@@ -936,8 +925,6 @@ export default function AppShell({
         cancelSolveAgent,
         solveAgentCancelInFlight,
         resetSolveAgent,
-        pendingMeetingSchedule,
-        setPendingMeetingSchedule,
       }}
     >
       <div

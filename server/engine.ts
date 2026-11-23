@@ -28,7 +28,7 @@ import { syncMail, analyzeInbox, serial, fillMissingBodies, refreshStored } from
 import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions.ts";
 import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
-import { meetingOf, todoOf } from "./rules.ts";
+import { dueOf, meetingOf, todoOf } from "./rules.ts";
 import { judgeSent } from "./followups.ts";
 import { notify } from "./notify.ts";
 import { firstReadState, startFirstRead } from "./firstRead.ts";
@@ -283,7 +283,10 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     }
 
     // Todo.
-    if (wantsTodo && !asked) await run({ kind: "todo", emailId: email.id, summary: `Todo: ${todo.label}`, detail: { text: String(todo.label).trim() } });
+    if (wantsTodo && !asked) {
+      const due = dueOf(todo.quote, timezone);
+      await run({ kind: "todo", emailId: email.id, summary: `Todo: ${todo.label}`, detail: { text: String(todo.label).trim(), ...(due ? { due } : {}) } });
+    }
 
     // Meeting proposal, only when the email states a time that has not
     // passed and the calendar has nothing then or with this sender a day
@@ -318,6 +321,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
             location: meeting.location,
             description: suggested!.text ?? null,
             as_written: meeting.asWritten,
+            quote: meeting.quote,
           },
         });
       }

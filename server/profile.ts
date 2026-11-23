@@ -340,18 +340,25 @@ export async function learn(userId: string, s: Signal): Promise<void> {
 // "Not this", "Never for this sender" and "Not interested in this topic" on a
 // todo, meeting, follow-up or newsletter row. Not this removes the one item
 // (a follow-up is dismissed by the window itself); the others also write the
-// preference, which takes back everything else it stops.
+// preference, which takes back everything else it stops. A todo or meeting
+// still waiting for approval is named by its `proposal` (the action_log id).
 export type Feedback = {
   thing: "todo" | "meeting" | "followup" | "newsletter";
   outcome: "not_this" | "never_sender" | "never_topic";
   id?: string;
+  proposal?: string;
   sender?: string;
   topic?: string;
 };
 
 export async function feedback(userId: string, f: Feedback): Promise<void> {
   let emailId: string | null = null;
-  if ((f.thing === "todo" || f.thing === "meeting") && f.id) {
+  if ((f.thing === "todo" || f.thing === "meeting") && f.proposal) {
+    const { data: row } = await db.from("action_log").select("id, email_id").eq("id", f.proposal).eq("user_id", userId).eq("kind", f.thing).eq("status", "proposed").maybeSingle();
+    if (!row) throw Object.assign(new Error(`That ${f.thing} is already gone`), { status: 404 });
+    emailId = (row.email_id as string | null) ?? null;
+    await db.from("action_log").update({ status: "dismissed", decided_at: new Date().toISOString(), reason: "Not this" }).eq("id", row.id);
+  } else if ((f.thing === "todo" || f.thing === "meeting") && f.id) {
     const table = f.thing === "todo" ? "todos" : "meetings";
     const { data: item } = await db.from(table).select(f.thing === "todo" ? "id, email_id" : "id, email_id, status").eq("id", f.id).eq("user_id", userId).maybeSingle();
     if (!item) throw Object.assign(new Error(`That ${f.thing} is already gone`), { status: 404 });

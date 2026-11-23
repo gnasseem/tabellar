@@ -75,6 +75,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", email_id: "uuid >emails:null", text: "text !",
       is_completed: "bool ! =false", source: 'text ="manual"', created_at: "time ! =now",
+      due: "text", // "YYYY-MM-DD", when the email gave a day
     },
   },
   scheduled_emails: {
@@ -99,7 +100,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", email_id: "uuid >emails:null", title: "text !",
       description: "text", start_time: "time !", end_time: "time !", attendees: "json",
-      location: "text", as_written: "text", calendar_event_id: "text", status: 'text ="proposed"', created_at: "time ! =now",
+      location: "text", as_written: "text", quote: "text", calendar_event_id: "text", status: 'text ="proposed"', created_at: "time ! =now",
     },
   },
   email_memory: {

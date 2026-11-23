@@ -90,12 +90,14 @@ export type NotThisThing = "todo" | "meeting" | "followup" | "newsletter";
 
 // The menu on a todo, meeting, follow-up or newsletter row. "Not this" is the
 // one item; the other two teach Tabellar for good. A todo or meeting is found
-// by `id` and its sender by its email; follow-ups and newsletters pass the
-// `sender` address. `who` names the sender in the menu. `onNotThis` replaces
-// the server's "Not this" where the view removes the item itself (follow-ups).
+// by `id` (or, while it waits for approval, by its `proposal`) and its sender
+// by its email; follow-ups and newsletters pass the `sender` address. `who`
+// names the sender in the menu. `onNotThis` replaces the server's "Not this"
+// where the view removes the item itself (follow-ups).
 export function NotThis({
   thing,
   id,
+  proposal,
   sender,
   who: name,
   onDone,
@@ -103,6 +105,7 @@ export function NotThis({
 }: {
   thing: NotThisThing;
   id?: string;
+  proposal?: string;
   sender?: string | null;
   who?: string | null;
   onDone: () => void;
@@ -131,9 +134,8 @@ export function NotThis({
     try {
       if (outcome === "not_this" && onNotThis) await onNotThis();
       else {
-        await api("/profile/feedback", { thing, outcome, id, sender: sender ?? undefined, topic: outcome === "never_topic" ? text.trim() : undefined });
+        await api("/profile/feedback", { thing, outcome, id, proposal, sender: sender ?? undefined, topic: outcome === "never_topic" ? text.trim() : undefined });
         addToast("success", done);
-        prefsChanged();
       }
       onDone();
     } catch (e) {
@@ -169,7 +171,7 @@ export function NotThis({
               <button role="menuitem" className="pop-item" onClick={() => send("not_this", "Removed")}>
                 Not this
               </button>
-              {(sender || id) && (
+              {(sender || id || proposal) && (
                 <button role="menuitem" className="pop-item" onClick={() => send("never_sender", `No more ${thing === "followup" ? "follow-ups" : `${thing}s`} for ${who}`)}>
                   <span className="truncate">Never for {who}</span>
                 </button>
@@ -197,49 +199,6 @@ export function NotThis({
         </div>
       )}
     </div>
-  );
-}
-
-// Which mail the user's preferences keep from becoming a `thing`: a sender,
-// its domain, or a topic the user is not interested in. The server applies
-// the same rules (server/profile.ts); this is for lists the window builds
-// itself, such as suggested todos and meetings.
-const PREFS_EVENT = "tabellar:preferences";
-const prefsChanged = () => window.dispatchEvent(new Event(PREFS_EVENT));
-
-const STOPPERS: Record<string, string[]> = {
-  todo: ["quiet", "ignore", "never_todo"],
-  meeting: ["quiet", "ignore", "never_meeting"],
-};
-export function usePrefStops(thing: "todo" | "meeting") {
-  const { user } = useApp();
-  const [rows, setRows] = useState<{ kind: string; subject: string; value: string }[]>([]);
-  useEffect(() => {
-    const load = () =>
-      supabase
-        .from("preferences")
-        .select("kind, subject, value")
-        .eq("user_id", user.id)
-        .in("value", STOPPERS[thing])
-        .then(({ data }) => setRows((data as { kind: string; subject: string; value: string }[]) ?? []));
-    load();
-    window.addEventListener(PREFS_EVENT, load);
-    return () => window.removeEventListener(PREFS_EVENT, load);
-  }, [user.id, thing]);
-  return useCallback(
-    (address: string | null | undefined, text: string) => {
-      const a = String(address ?? "").toLowerCase();
-      const d = a.split("@")[1] ?? "";
-      const t = text.toLowerCase();
-      return rows.some((r) =>
-        r.kind === "sender"
-          ? r.subject === a
-          : r.kind === "domain"
-            ? !!d && (d === r.subject || d.endsWith(`.${r.subject}`))
-            : r.kind === "topic" && r.subject.split(/\s+/).every((w) => t.includes(w.length > 3 ? w.replace(/s$/, "") : w)),
-      );
-    },
-    [rows],
   );
 }
 
@@ -284,7 +243,6 @@ export function AboutYou() {
   const save = async (kind: string, subject: string, value: string, replace?: string) => {
     try {
       await api("/preferences", { kind, subject, value, replace });
-      prefsChanged();
       setAdding(null);
       setEditing(null);
       load();

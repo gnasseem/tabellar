@@ -624,6 +624,11 @@ ok("a todo needs a person's ask, quoted from the email, and never comes from cal
   for (const c of ["promotions", "updates"]) assert.equal(rules.todoOf([todo], lease, c), null, c);
   assert.equal(rules.todoOf([todo], { ...lease, is_calendar: true }, "important"), null, "calendar mail");
 });
+ok("a todo is due on the day its sentence names after by, before or due, and on no day otherwise", () => {
+  assert.equal(rules.dueOf("could you sign the renewal and send it back by December 15?", TZ, NOW), "2026-12-15");
+  assert.equal(rules.dueOf("Please submit the form before Friday.", TZ, NOW), "2026-11-27");
+  assert.equal(rules.dueOf("We talked on Monday; could you send the slides?", TZ, NOW), null);
+});
 
 // Through the engine: calendar mail is linked, not proposed; sorted mail
 // makes no todo; a meeting without a time is not proposed.
@@ -718,8 +723,28 @@ await sentMail("muted", "Cy <cy@uni.example>", "Did you get my form?", true);
 await sentMail("self", "me.alias@example.com", "Could you remind me to print this?", true);
 await indexMail(ruleUser, ruleAccount!.id as string, [nlHdr("fu-alias", "Me <me.alias@example.com>", { labels: ["SENT"], to: "dana@uni.example" })], new Set(["me@example.com"]));
 await profile.setPref(ruleUser, "sender", "cy@uni.example", "never_followup", "user");
-const suggested = (await fu.suggestedFollowups(ruleUser)).map((x) => x.thread_id);
-ok("Follow-ups: only what asks a person something, two days on, unanswered, not muted, and not to the user's own alias", () => assert.deepEqual(suggested, ["asks"]));
+await sentMail("tracked", "Eve <eve@uni.example>", "Hi Eve,\n\nHope all is well. Can you confirm the room for Thursday?\n\nThanks,\nMe", null, 4);
+await sentMail("later", "Flo <flo@uni.example>", "Will you be there?", null, 4);
+await sentMail("replied", "Gus <gus@uni.example>", "Did the payment go through?", null, 4);
+await db.from("emails").insert({ user_id: ruleUser, gmail_id: "fu-gus", thread_id: "replied", sender_email: "gus@uni.example", subject: "Re: About replied", label_ids: ["INBOX"], received_at: ago(1) });
+const { data: sentIds } = await db.from("emails").select("id, thread_id").eq("user_id", ruleUser).in("thread_id", ["tracked", "later", "replied"]).contains("label_ids", ["SENT"]);
+for (const e of sentIds ?? []) {
+  const later = e.thread_id === "later";
+  await db.from("follow_up_reminders").insert({
+    user_id: ruleUser, email_id: e.id, thread_id: e.thread_id, recipient_email: `${String(e.thread_id) === "tracked" ? "eve" : later ? "flo" : "gus"}@uni.example`,
+    subject: `About ${e.thread_id}`, remind_at: ago(1), status: later ? "snoozed" : "waiting", snooze_until: later ? new Date(Date.now() + 86_400_000).toISOString() : null,
+  });
+}
+const listed = await fu.followupList(ruleUser);
+const { data: gus } = await db.from("follow_up_reminders").select("status").eq("user_id", ruleUser).eq("thread_id", "replied").single();
+ok("Follow-ups: what asks a person something, two days on, unanswered, not muted, not to the user's own alias, and reminders not put off or answered", () => {
+  assert.deepEqual(listed.map((x) => x.thread_id), ["tracked", "asks"]);
+  assert.equal(listed[0].asked, "Can you confirm the room for Thursday?");
+  assert.equal(fu.askedOf("Dear Prof. Smith,\n\nI attached my CV. Would you consider me for the lab?\n\nBest,\nMe"), "Would you consider me for the lab?");
+  assert.equal(fu.askedOf("Dear Prof.\nI attached my CV for the position."), "I attached my CV for the position.");
+  assert.equal(fu.askedOf("Hi Ana,\n\nI am away this week and\nwill be in Paris next term. Could we\nmeet after that?\n\nBest"), "Could we meet after that?");
+  assert.equal(gus?.status, "replied", "a reminder whose thread got an answer is marked replied");
+});
 
 // The same failures through the configured model: what it says is printed,
 // and what code allows of it is checked.

@@ -1,440 +1,297 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { setEmailFlag } from "@/lib/outcomes";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import EmailDetail from "../EmailDetail";
-import { Empty, Menu, Seg, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
-import { NotThis, usePrefStops } from "../Profile";
+import { ReaderById } from "../EmailDetail";
+import { Empty, SkeletonRows, Tick, ViewBar, VirtualList } from "../ui";
+import { NotThis } from "../Profile";
 
-// Todos: what the user has to do, typed in by hand or pulled out of their mail
-// by Tabellar. One line each, ticked off in place. What Tabellar found in
-// recent mail but has not added yet sits in a group at the top of the list.
+// Todos: a plain checklist, grouped by when each is due. A todo Tabellar
+// found but has not added (it waits for approval) is an ordinary row with a
+// dashed box, Add and the "Not this" menu. The email a todo came from is
+// named on hover and opens from the row.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-type Todo = { id: string; text: string; is_completed: boolean; source: string; created_at: string; email_id?: string | null };
-type Suggestion = { key: string; emailId: string; task: string; subject: string; sender: string; receivedAt: string; category: string };
-type Head = { head: true; key: string; name: string };
-type Row = { key: string; todo?: Todo; suggestion?: Suggestion };
+type Todo = { id: string; text: string; is_completed: boolean; source: string; created_at: string; email_id: string | null; due: string | null };
+type Proposal = { id: string; hash: string; text: string; due: string | null; email_id: string | null; created_at: string };
+type Source = { sender: string; subject: string };
+type Row = { key: string; text: string; due: string | null; emailId: string | null; created: string; todo?: Todo; proposal?: Proposal };
+type Head = { head: true; key: Group; name: string };
+type Group = "today" | "week" | "later" | "done";
 
-const CATEGORY_PRIORITY: Record<string, number> = { "action-required": 4, important: 3, updates: 2, promotions: 1 };
-const SUGGESTED_SHOWN = 5;
+const GROUPS: [Group, string][] = [
+  ["today", "Today"],
+  ["week", "This week"],
+  ["later", "Later"],
+  ["done", "Done"],
+];
 
-function nameOf(s: string): string {
-  return (s || "").replace(/<.*>/, "").replace(/"/g, "").trim();
+const pad = (n: number) => String(n).padStart(2, "0");
+const dayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const nameOf = (s: string) => (s || "").replace(/<.*>/, "").replace(/"/g, "").trim();
+
+// When a todo is due, in words: Overdue, Today, Tomorrow, the weekday within
+// the week, else the date.
+function dueLabel(due: string, today: string): string {
+  if (due < today) return "Overdue";
+  const d = new Date(`${due}T12:00`);
+  const days = Math.round((d.getTime() - new Date(`${today}T12:00`).getTime()) / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Tomorrow";
+  if (days < 7) return d.toLocaleDateString([], { weekday: "short" });
+  return d.toLocaleDateString([], { day: "numeric", month: "short" });
+}
+
+// Dated todos go by their day; undated ones are today's on the day they were
+// added and this week's after that.
+function groupOf(r: Row, today: string, weekEnd: string): Group {
+  if (r.todo?.is_completed) return "done";
+  if (r.due) return r.due <= today ? "today" : r.due <= weekEnd ? "week" : "later";
+  return dayKey(new Date(r.created)) === today ? "today" : "week";
 }
 
 export default function TodosView() {
-  const { user, addToast, search, getViewCache, setViewCache, liveChanges } = useApp();
+  const { user, addToast, search, liveChanges, mail } = useApp();
   const supabase = createClient();
-  const [todos, setTodos] = useState<Todo[]>([]);
-  const [sources, setSources] = useState<Map<string, { sender: string; subject: string }>>(new Map());
-  const [loading, setLoading] = useState(true);
+  const [todos, setTodos] = useState<Todo[] | null>(null);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [sources, setSources] = useState<Map<string, Source>>(new Map());
   const [loadError, setLoadError] = useState("");
   const [newTodo, setNewTodo] = useState("");
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [handled, setHandled] = useState<Set<string>>(new Set()); // suggestions added or dismissed
-  const [showSuggested, setShowSuggested] = useState(() => localStorage.getItem("tabellar_todos_suggested") !== "off");
-  const [allSuggested, setAllSuggested] = useState(false);
-  const [filter, setFilterRaw] = useState<"open" | "done">("open");
-  const [group, setGroup] = useState<"day" | "sender">("day");
+  const [showDone, setShowDone] = useState(() => {
+    try {
+      return localStorage.getItem("tabellar_todos_done") === "open";
+    } catch {
+      return false;
+    }
+  });
   const [cursorKey, setCursorKey] = useState<string | null>(null);
-  // Todos ticked or unticked since the filter was chosen stay in the list, so a
-  // slip can be put right where it happened.
-  const [touched, setTouched] = useState<Set<string>>(new Set());
-  const [selectedEmail, setSelectedEmail] = useState<any | null>(null);
-  const anchor = useRef<string | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  const [reading, setReading] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const stopped = usePrefStops("todo");
-
-  const loadTodos = useCallback(async () => {
-    const cached = getViewCache("todos");
-    if (cached) {
-      setTodos(cached);
-      setLoading(false);
-    }
-    const { data, error } = await supabase.from("todos").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(500);
-    setLoading(false);
-    if (error) return setLoadError(error.message || "the database did not answer");
+  const load = useCallback(async () => {
+    const [t, p] = await Promise.all([
+      supabase.from("todos").select("*").eq("user_id", user.id).order("created_at", { ascending: false }).limit(1000),
+      supabase.from("action_log").select("id, hash, detail, email_id, created_at").eq("user_id", user.id).eq("kind", "todo").eq("status", "proposed").order("created_at", { ascending: false }),
+    ]);
+    if (t.error) return setLoadError(t.error.message || "the database did not answer");
     setLoadError("");
-    const result = (data || []) as Todo[];
-    setTodos(result);
-    setViewCache("todos", result);
+    const list = (t.data || []) as Todo[];
+    // A proposal for a todo that is already on the list is not shown twice.
+    const have = new Set(list.map((x) => `${x.email_id}:${x.text.toLowerCase()}`));
+    const waiting = ((p.data || []) as any[])
+      .map((r) => ({ id: r.id, hash: r.hash || "", text: String(r.detail?.text || ""), due: r.detail?.due ?? null, email_id: r.email_id, created_at: r.created_at }))
+      .filter((r) => r.text && !have.has(`${r.email_id}:${r.text.toLowerCase()}`));
+    setTodos(list);
+    setProposals(waiting);
     // Who and what each todo came from.
-    const ids = [...new Set(result.map((t) => t.email_id).filter(Boolean))] as string[];
+    const ids = [...new Set([...list, ...waiting].map((x) => x.email_id).filter(Boolean))] as string[];
     if (!ids.length) return;
     const e = await supabase.from("emails").select("id, sender, sender_email, subject").in("id", ids);
     setSources(new Map(((e.data || []) as any[]).map((x) => [x.id, { sender: nameOf(x.sender) || x.sender_email || "", subject: x.subject || "(no subject)" }])));
   }, [user.id]);
 
-  // Todos that the analysis of the last three days of mail came up with.
-  const loadSuggestions = useCallback(async () => {
-    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
-    const { data } = await supabase
-      .from("email_processed")
-      .select("email_id, category, quick_actions, emails!inner(subject, sender, sender_email, received_at)")
-      .eq("user_id", user.id)
-      .filter("emails.received_at", "gte", threeDaysAgo)
-      .limit(100);
-    if (!data) return;
-    // Mail Tabellar is still asking about, or that the user's preferences rule out, suggests nothing.
-    const { data: asking } = await supabase.from("questions").select("email_id").eq("user_id", user.id).in("status", ["open", "waiting"]);
-    const held = new Set(((asking || []) as any[]).map((q) => q.email_id));
-    const out: Suggestion[] = [];
-    for (const row of data as any[]) {
-      if (!row.emails || held.has(row.email_id)) continue;
-      for (const qa of Array.isArray(row.quick_actions) ? row.quick_actions : []) {
-        const task = qa.action === "add_todo" && qa.label ? String(qa.label).replace(/^Todo:\s*/i, "").trim() : "";
-        if (!task || stopped(row.emails.sender_email, `${row.emails.subject ?? ""} ${task}`)) continue;
-        out.push({ key: `s:${row.email_id}:${task}`, emailId: row.email_id, task, subject: row.emails.subject || "(no subject)", sender: nameOf(row.emails.sender), receivedAt: row.emails.received_at, category: row.category || "updates" });
-      }
-    }
-    // What matters most first, then the newest mail.
-    out.sort((a, b) => (CATEGORY_PRIORITY[b.category] ?? 0) - (CATEGORY_PRIORITY[a.category] ?? 0) || b.receivedAt.localeCompare(a.receivedAt));
-    setSuggestions(out);
-  }, [user.id, stopped]);
-
   useEffect(() => {
-    loadTodos();
-  }, [loadTodos, liveChanges.todos]);
-  useEffect(() => {
-    loadSuggestions();
-  }, [loadSuggestions, liveChanges.email_processed]);
+    load();
+  }, [load, liveChanges.todos, liveChanges.action_log]);
 
   const q = search.trim().toLowerCase();
-  const sourceOf = (t: Todo) => (t.email_id ? sources.get(t.email_id) : undefined);
-
-  // Suggestions that are not already todos and have not been dismissed.
-  const suggested = useMemo(() => {
-    const have = new Set(todos.map((t) => t.text.toLowerCase()));
-    return suggestions.filter((s) => !have.has(s.task.toLowerCase()) && !handled.has(s.key) && (!q || `${s.task} ${s.sender} ${s.subject}`.toLowerCase().includes(q)));
-  }, [suggestions, todos, handled, q]);
-
-  const shown = useMemo(
-    () =>
-      todos.filter((t) => {
-        if (t.is_completed !== (filter === "done") && !touched.has(t.id)) return false;
-        const s = t.email_id ? sources.get(t.email_id) : undefined;
-        return !q || `${t.text} ${s?.sender || ""} ${s?.subject || ""}`.toLowerCase().includes(q);
-      }),
-    [todos, filter, touched, sources, q],
-  );
+  const now = new Date();
+  const today = dayKey(now);
+  const weekEnd = dayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 6));
 
   const items = useMemo(() => {
+    const rows: Row[] = [
+      ...proposals.map((p) => ({ key: `p:${p.id}`, text: p.text, due: p.due, emailId: p.email_id, created: p.created_at, proposal: p })),
+      ...(todos || []).map((t) => ({ key: t.id, text: t.text, due: t.due, emailId: t.email_id, created: t.created_at, todo: t })),
+    ].filter((r) => {
+      const s = r.emailId ? sources.get(r.emailId) : undefined;
+      return !q || `${r.text} ${s?.sender || ""} ${s?.subject || ""}`.toLowerCase().includes(q);
+    });
     const out: (Head | Row)[] = [];
-    if (filter === "open" && suggested.length) {
-      out.push({ head: true, key: "suggested", name: "Suggested" });
-      if (showSuggested) for (const s of allSuggested ? suggested : suggested.slice(0, SUGGESTED_SHOWN)) out.push({ key: s.key, suggestion: s });
+    for (const [g, name] of GROUPS) {
+      const list = rows.filter((r) => groupOf(r, today, weekEnd) === g);
+      if (!list.length) continue;
+      // Dated first by day, then the newest; done ones newest first.
+      list.sort((a, b) => (g === "done" ? 0 : (a.due ?? "9999").localeCompare(b.due ?? "9999")) || b.created.localeCompare(a.created));
+      out.push({ head: true, key: g, name });
+      if (g !== "done" || showDone || q) out.push(...list);
     }
-    const groups = new Map<string, { name: string; list: Todo[] }>();
-    for (const t of shown) {
-      let key: string;
-      let name: string;
-      if (group === "sender") {
-        const s = t.email_id ? sources.get(t.email_id) : undefined;
-        name = s?.sender || (t.email_id || t.source !== "manual" ? "From your mail" : "Added by you");
-        key = `p:${name}`;
-      } else {
-        const d = dayLabel(t.created_at);
-        key = `d:${d.key}`;
-        name = d.head;
-      }
-      const g = groups.get(key) || { name, list: [] };
-      g.list.push(t);
-      groups.set(key, g);
-    }
-    for (const [key, g] of groups) out.push({ head: true, key, name: g.name }, ...g.list.map((t) => ({ key: t.id, todo: t })));
     return out;
-  }, [shown, suggested, showSuggested, allSuggested, filter, group, sources]);
+  }, [todos, proposals, sources, q, today, weekEnd, showDone]);
 
   const rows = useMemo(() => items.filter((i): i is Row => !("head" in i)), [items]);
   const cursor = rows.find((r) => r.key === cursorKey) || rows[0] || null;
-
-  useEffect(() => {
-    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
-  }, [cursor?.key]);
-
-  const setFilter = (f: "open" | "done") => {
-    setFilterRaw(f);
-    setTouched(new Set());
-    anchor.current = null;
-  };
+  const cursorIndex = cursor ? items.indexOf(cursor) : -1;
 
   const move = (delta: number) => {
     if (!rows.length) return;
     const at = cursor ? rows.indexOf(cursor) : -1;
     setCursorKey(rows[Math.min(rows.length - 1, Math.max(0, at + delta))].key);
-    // Let go of a tick clicked earlier, so Space acts on the row the cursor is on.
-    if (listRef.current?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
+  };
+  // The row to land on when the one at `key` leaves the list.
+  const stepPast = (key: string) => {
+    const at = rows.findIndex((r) => r.key === key);
+    setCursorKey((rows[at + 1] || rows[at - 1])?.key ?? null);
   };
 
-  const addTodo = async (text: string, source = "manual", emailId?: string) => {
-    if (!text.trim()) return false;
-    const { data, error } = await supabase
-      .from("todos")
-      .insert({ user_id: user.id, text: text.trim(), source, ...(emailId ? { email_id: emailId } : {}) })
-      .select()
-      .single();
-    if (error || !data) {
-      addToast("error", `The todo was not added: ${error?.message || "the database did not answer"}. Try again.`);
-      return false;
+  const toggleDone = () => {
+    setShowDone(!showDone);
+    try {
+      localStorage.setItem("tabellar_todos_done", showDone ? "closed" : "open");
+    } catch {
+      // Remembering is a convenience.
     }
-    setTodos((prev) => [data as Todo, ...prev.filter((t) => t.id !== data.id)]);
-    setCursorKey(data.id);
-    if (source === "manual") setNewTodo("");
-    return true;
   };
 
-  const addSuggestion = async (s: Suggestion) => {
-    if (!(await addTodo(s.task, "email", s.emailId))) return;
-    setSources((prev) => new Map(prev).set(s.emailId, { sender: s.sender, subject: s.subject }));
-    setHandled((prev) => new Set(prev).add(s.key));
+  const addTodo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = newTodo.trim();
+    if (!text) return;
+    const { data, error } = await supabase.from("todos").insert({ user_id: user.id, text, source: "manual" }).select().single();
+    if (error || !data) return addToast("error", `The todo was not added: ${error?.message || "the database did not answer"}. Try again.`);
+    setTodos((prev) => [data as Todo, ...(prev || [])]);
+    setNewTodo("");
   };
 
-  const dismissSuggestion = (s: Suggestion) => setHandled((prev) => new Set(prev).add(s.key));
-
-  const setDone = async (list: Todo[], done: boolean) => {
-    const ids = list.filter((t) => t.is_completed !== done).map((t) => t.id);
-    if (!ids.length) return;
-    const mark = (value: boolean) => setTodos((prev) => prev.map((t) => (ids.includes(t.id) ? { ...t, is_completed: value } : t)));
+  const setDone = async (t: Todo, done: boolean) => {
+    const mark = (value: boolean) => setTodos((prev) => (prev || []).map((x) => (x.id === t.id ? { ...x, is_completed: value } : x)));
     mark(done);
-    setTouched((prev) => new Set([...prev, ...ids]));
-    const { error } = await supabase.from("todos").update({ is_completed: done }).in("id", ids);
+    const { error } = await supabase.from("todos").update({ is_completed: done }).eq("id", t.id);
     if (error) {
       mark(!done);
-      addToast("error", `That was not saved: ${error.message}. Try again.`);
+      return addToast("error", `That was not saved: ${error.message}. Try again.`);
     }
+    if (done) addToast("info", "Done", { action: { label: "Undo", onClick: () => void setDone({ ...t, is_completed: true }, false) } });
   };
 
-  // The tick completes one todo; with Shift, every todo from the last tick to
-  // this one.
-  const tick = (t: Todo, done: boolean, range: boolean) => {
-    const list = rows.flatMap((r) => (r.todo ? [r.todo] : []));
-    const a = list.findIndex((x) => x.id === anchor.current);
-    const b = list.findIndex((x) => x.id === t.id);
-    anchor.current = t.id;
-    setCursorKey(t.id);
-    if (!range || a < 0 || a === b) return void setDone([t], done);
-    const span = list.slice(Math.min(a, b), Math.max(a, b) + 1).filter((x) => x.is_completed !== done);
-    setDone(span, done);
-    if (span.length > 1) addToast("info", `${span.length} todos marked ${done ? "done" : "open"}`, { action: { label: "Undo", onClick: () => setDone(span.map((x) => ({ ...x, is_completed: done })), !done) } });
+  const add = async (p: Proposal) => {
+    stepPast(`p:${p.id}`);
+    setProposals((prev) => prev.filter((x) => x.id !== p.id));
+    await mail.approve(p.id, p.hash).catch(() => load());
   };
 
-  const removeTodo = async (t: Todo) => {
-    const at = rows.findIndex((r) => r.key === t.id);
-    setCursorKey((rows[at + 1] || rows[at - 1])?.key ?? null);
-    setTodos((prev) => prev.filter((x) => x.id !== t.id));
+  const remove = async (t: Todo) => {
+    stepPast(t.id);
+    setTodos((prev) => (prev || []).filter((x) => x.id !== t.id));
     const { error } = await supabase.from("todos").delete().eq("id", t.id);
     if (error) {
       addToast("error", `The todo was not deleted: ${error.message}. Try again.`);
-      return void loadTodos();
+      return void load();
     }
     const undo = async () => {
-      const { data } = await supabase
-        .from("todos")
-        .insert({ id: t.id, user_id: user.id, text: t.text, is_completed: t.is_completed, source: t.source, created_at: t.created_at, email_id: t.email_id ?? null })
-        .select()
-        .single();
-      if (data) setTodos((prev) => [...prev.filter((x) => x.id !== t.id), data as Todo].sort((x, y) => y.created_at.localeCompare(x.created_at)));
+      const { data } = await supabase.from("todos").insert({ ...t, user_id: user.id }).select().single();
+      if (data) setTodos((prev) => [...(prev || []).filter((x) => x.id !== t.id), data as Todo]);
     };
     addToast("info", "Todo deleted", { action: { label: "Undo", onClick: undo } });
   };
 
-  const openEmailById = useCallback(async (emailId: string) => {
-    const { data } = await supabase.from("emails").select("*, email_processed(*)").eq("id", emailId).single();
-    if (data) setSelectedEmail(data);
-    else addToast("error", "That email is no longer in Tabellar.");
-  }, []);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (selectedEmail || document.querySelector("[data-compose-modal]")) return;
+      if (reading || document.querySelector("[data-compose-modal]")) return;
       if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key.toLowerCase();
       if (k === "j" || e.key === "ArrowDown") move(1);
       else if (k === "k" || e.key === "ArrowUp") move(-1);
-      else if (k === "n" && filter === "open") inputRef.current?.focus();
-      else if (e.key === " " || e.key === "Enter") {
-        // A focused button or link takes its own Space and Enter.
-        if (!cursor || (e.target as HTMLElement).closest?.("button, a")) return;
-        if (cursor.todo) tick(cursor.todo, !cursor.todo.is_completed, e.shiftKey);
-        else addSuggestion(cursor.suggestion!);
-      } else if (e.key === "Backspace" && cursor) {
-        if (cursor.todo) removeTodo(cursor.todo);
-        else dismissSuggestion(cursor.suggestion!);
-      } else return;
+      else if (k === "n") inputRef.current?.focus();
+      else if (e.key === " " && cursor && !(e.target as HTMLElement).closest?.("button, a")) {
+        if (cursor.todo) setDone(cursor.todo, !cursor.todo.is_completed);
+        else add(cursor.proposal!);
+      } else if (e.key === "Backspace" && cursor?.todo) remove(cursor.todo);
+      else return;
       e.preventDefault();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   });
 
-  if (selectedEmail)
-    return (
-      <EmailDetail
-        key={selectedEmail.id}
-        email={selectedEmail}
-        onBack={() => setSelectedEmail(null)}
-        onArchive={() => {
-          const id = selectedEmail.id;
-          setSelectedEmail(null);
-          setEmailFlag(id, "archive")
-            .then((undo) => addToast("success", "Archived", { action: { label: "Undo", onClick: () => void undo() } }))
-            .catch((e: Error) => addToast("error", `Could not archive: ${e.message}`));
-        }}
-        onReply={() => setSelectedEmail(null)}
-        onMarkUnread={() => {
-          const id = selectedEmail.id;
-          setSelectedEmail(null);
-          setEmailFlag(id, "unread").catch(() => {});
-        }}
-        onSnooze={() => setSelectedEmail(null)}
-        onRethink={(updated: any) => setSelectedEmail((prev: any) => (prev ? { ...prev, email_processed: updated } : prev))}
-      />
-    );
+  const heightOf = useCallback((i: Head | Row) => ("head" in i ? 34 : 32), []);
 
-  const source = (emailId: string, sender: string, subject: string) => (
-    <span className="min-w-0 flex-1 truncate pl-2.5 text-ink3">
-      <button className="inline hover:text-ink hover:underline" title="Open the email this came from" onClick={(e) => (e.stopPropagation(), openEmailById(emailId))}>
-        {sender ? `${sender}, ${subject}` : subject}
-      </button>
-    </span>
-  );
+  if (reading) return <ReaderById emailId={reading} onClose={() => setReading(null)} />;
+
+  const render = (item: Head | Row) => {
+    if ("head" in item) {
+      if (item.key !== "done")
+        return (
+          <div key={item.key} className="day !static">
+            <b>{item.name}</b>
+          </div>
+        );
+      return (
+        <div key={item.key} className="day !static">
+          <button className="flex items-center gap-1 text-ink3 hover:text-ink" aria-expanded={showDone || !!q} onClick={toggleDone}>
+            <b className="font-[650] text-ink">{item.name}</b>
+            <Icon name={showDone || q ? "expand_more" : "chevron_right"} size={13} />
+          </button>
+        </div>
+      );
+    }
+    const t = item.todo;
+    const src = item.emailId ? sources.get(item.emailId) : undefined;
+    const from = src ? `From ${src.sender ? `${src.sender}: ` : ""}${src.subject}` : undefined;
+    const done = !!t?.is_completed;
+    const fromMail = !!item.emailId && t?.source !== "manual";
+    const reveal = "opacity-0 focus-within:opacity-100 group-hover:opacity-100 group-aria-selected:opacity-100 has-[[aria-expanded=true]]:opacity-100";
+    return (
+      <div key={item.key} role="option" aria-selected={cursor?.key === item.key} className="row group gap-2.5" title={from} onClick={() => setCursorKey(item.key)}>
+        <span className="grid w-[26px] flex-none place-items-center">
+          {t ? <Tick checked={done} onChange={(v) => setDone(t, v)} label={done ? `Mark as open: ${t.text}` : `Mark as done: ${t.text}`} /> : <span className="tick border-dashed" aria-label="Waiting to be added" />}
+        </span>
+        <span className={`min-w-0 flex-1 truncate ${done ? "text-ink3 line-through" : t ? "text-ink" : "text-ink2"}`}>{item.text}</span>
+        <span className={`flex flex-none items-center ${reveal}`}>
+          {item.emailId && (
+            <button className="iconbtn h-6 w-6" title={from} aria-label={from} onClick={(e) => (e.stopPropagation(), setReading(item.emailId))}>
+              <Icon name="mail" size={14} />
+            </button>
+          )}
+          {t?.source === "manual" && (
+            <button className="iconbtn h-6 w-6" title="Delete" aria-label={`Delete: ${t.text}`} onClick={(e) => (e.stopPropagation(), remove(t))}>
+              <Icon name="delete" size={14} />
+            </button>
+          )}
+          {fromMail && !done && <NotThis thing="todo" id={t?.id} proposal={item.proposal?.id} who={src?.sender} onDone={load} />}
+        </span>
+        {item.proposal && (
+          <button className="link flex-none !text-wax-ink" onClick={(e) => (e.stopPropagation(), add(item.proposal!))}>
+            Add
+          </button>
+        )}
+        {item.due && !done && <span className={`w-[72px] flex-none text-right text-xs ${item.due < today ? "font-medium text-ink2" : "text-ink3"}`}>{dueLabel(item.due, today)}</span>}
+      </div>
+    );
+  };
 
   return (
     <>
-      <ViewBar
-        title="Todos"
-        search="Search todos"
-        right={
-          <Menu
-            label="Group"
-            value={group}
-            onChange={setGroup}
-            options={[
-              { id: "day", label: "Day added" },
-              { id: "sender", label: "Sender" },
-            ]}
-          />
-        }
-      >
-        <Seg
-          value={filter}
-          onChange={setFilter}
-          options={[
-            { id: "open", label: "Open" },
-            { id: "done", label: "Done" },
-          ]}
-        />
-      </ViewBar>
-      <div ref={listRef} className="min-h-0 flex-1 overflow-y-auto pb-3" role="listbox" aria-label="Todos">
-        {filter === "open" && (
-          <form
-            className="mx-2 flex items-center pl-1.5 pr-3 pt-2.5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              addTodo(newTodo);
-            }}
-          >
-            <span className="grid w-[26px] flex-none place-items-center text-ink3">
-              <Icon name="add" size={15} />
-            </span>
-            <input ref={inputRef} className="input" value={newTodo} onChange={(e) => setNewTodo(e.target.value)} placeholder="Add a todo" aria-label="Add a todo" />
-          </form>
-        )}
-        {loadError && (
-          <p className="px-5 pt-3 text-danger" role="alert">
-            Your todos could not be loaded: {loadError}.{" "}
-            <button className="link" onClick={loadTodos}>
-              Try again
-            </button>
-          </p>
-        )}
-        {loading ? (
+      <ViewBar title="Todos" search="Search todos" />
+      <form className="mx-2 flex flex-none items-center pb-1 pl-1.5 pr-3 pt-2.5" onSubmit={addTodo}>
+        <span className="grid w-[26px] flex-none place-items-center text-ink3">
+          <Icon name="add" size={15} />
+        </span>
+        <input ref={inputRef} className="input" value={newTodo} onChange={(e) => setNewTodo(e.target.value)} placeholder="Add a todo" aria-label="Add a todo" />
+      </form>
+      {loadError && (
+        <p className="px-5 pt-3 text-danger" role="alert">
+          Your todos could not be loaded: {loadError}.{" "}
+          <button className="link !text-danger" onClick={load}>
+            Try again
+          </button>
+        </p>
+      )}
+      {todos === null ? (
+        loadError ? null : (
           <div className="pt-9">
-            <SkeletonRows count={16} />
+            <SkeletonRows count={14} />
           </div>
-        ) : loadError && !todos.length ? null : !items.length ? (
-          q ? (
-            <Empty icon="search" title="Nothing matches that search" />
-          ) : filter === "done" ? (
-            <Empty icon="task_alt" title="Nothing done yet" />
-          ) : (
-            <Empty icon="checklist" title="No open todos" />
-          )
-        ) : (
-          items.map((item) => {
-            if ("head" in item)
-              return (
-                <div key={item.key} className="day">
-                  <b>{item.name}</b>
-                  <span className="flex-1" />
-                  {item.key === "suggested" && (
-                    <button
-                      className="link"
-                      onClick={() => {
-                        localStorage.setItem("tabellar_todos_suggested", showSuggested ? "off" : "on");
-                        setShowSuggested(!showSuggested);
-                      }}
-                    >
-                      {showSuggested ? "Hide" : "Show"}
-                    </button>
-                  )}
-                </div>
-              );
-            const isCursor = cursor?.key === item.key;
-            if (item.suggestion) {
-              const s = item.suggestion;
-              const last = !allSuggested && suggested.length > SUGGESTED_SHOWN && s === suggested[SUGGESTED_SHOWN - 1];
-              return (
-                <div key={item.key}>
-                  <div role="option" aria-selected={isCursor} className="row scroll-mt-[34px]" onClick={() => setCursorKey(item.key)}>
-                    <span className="grid w-[26px] flex-none place-items-center text-ink4">
-                      <Icon name="add" size={14} />
-                    </span>
-                    <span className="min-w-0 shrink truncate text-ink">{s.task}</span>
-                    {source(s.emailId, s.sender, s.subject)}
-                    <button className="link ml-3 flex-none" onClick={(e) => (e.stopPropagation(), addSuggestion(s))}>
-                      Add
-                    </button>
-                    <button className="link ml-3 flex-none" onClick={(e) => (e.stopPropagation(), dismissSuggestion(s))}>
-                      Dismiss
-                    </button>
-                  </div>
-                  {last && (
-                    <button className="link mx-2 mb-1 mt-1 block pl-8" onClick={() => setAllSuggested(true)}>
-                      Show {suggested.length - SUGGESTED_SHOWN} more
-                    </button>
-                  )}
-                </div>
-              );
-            }
-            const t = item.todo!;
-            const src = sourceOf(t);
-            return (
-              <div key={item.key} role="option" aria-selected={isCursor} className="row group scroll-mt-[34px]" onClick={() => setCursorKey(item.key)}>
-                <span className="grid w-[26px] flex-none place-items-center">
-                  <Tick checked={t.is_completed} onChange={(v, e) => tick(t, v, e.shiftKey)} label={t.is_completed ? `Mark as open: ${t.text}` : `Mark as done: ${t.text}`} />
-                </span>
-                <span className={`min-w-0 shrink truncate ${t.is_completed ? "text-ink3 line-through" : "text-ink"}`}>{t.text}</span>
-                {src && t.email_id ? source(t.email_id, src.sender, src.subject) : <span className="min-w-0 flex-1 truncate pl-2.5 text-ink3">{t.source !== "manual" && "From your mail"}</span>}
-                <button className="iconbtn hidden h-6 w-6 group-hover:grid" title="Delete (Backspace)" aria-label={`Delete: ${t.text}`} onClick={(e) => (e.stopPropagation(), removeTodo(t))}>
-                  <Icon name="delete" size={14} />
-                </button>
-                {t.email_id && t.source !== "manual" && !t.is_completed && (
-                  <span className="opacity-0 focus-within:opacity-100 group-hover:opacity-100 group-aria-selected:opacity-100 has-[[aria-expanded=true]]:opacity-100">
-                    <NotThis thing="todo" id={t.id} who={src?.sender} onDone={loadTodos} />
-                  </span>
-                )}
-                <time className="flex-none pl-2.5 text-xs text-ink3">{shortWhen(t.created_at)}</time>
-              </div>
-            );
-          })
-        )}
-      </div>
+        )
+      ) : !rows.length && !items.length ? (
+        q ? <Empty icon="search" title="Nothing matches that search" /> : <Empty icon="checklist" title="No todos" />
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col" role="listbox" aria-label="Todos">
+          <VirtualList items={items} heightOf={heightOf} render={render} cursor={cursorIndex} />
+        </div>
+      )}
     </>
   );
 }
