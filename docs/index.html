@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tabellar</title>
+    <meta name="description" content="A personal email agent that runs on your Mac." />
+    <link rel="icon" href="logo.svg" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <a class="brand" href="./"><img src="logo.svg" alt="" />Tabellar</a>
+
+      <h1>A personal email agent that runs on your Mac</h1>
+      <p>
+        Tabellar keeps a local copy of your Gmail, sorts it, writes a daily briefing, drafts replies in your style, pulls out todos and meetings, tracks mail that got no answer, and answers questions about your inbox. It keeps working in the background with the window closed, within limits you set.
+      </p>
+      <p>
+        There is no hosted service and no sign-up. Your mail is stored in one file on your Mac. The AI runs on your Mac through Ollama, or with a cloud provider of your choice on your own API key. Tabellar is free and open source under the MIT licence.
+      </p>
+
+      <h2>Install</h2>
+      <p>Tabellar needs macOS and Node.js 24 or newer.</p>
+      <pre>npm install -g tabellar
+tabellar start</pre>
+      <p>
+        <code>tabellar start</code> opens Tabellar's window, which walks you through choosing a model and signing in to Gmail. The <a href="https://github.com/gnasseem/tabellar#readme">README</a> has everything else.
+      </p>
+
+      <h2>What Tabellar does with your Google account</h2>
+      <p>
+        When you sign in with Google, Tabellar asks to read and manage your Gmail, your Google Calendar and your contacts. It uses them only on your Mac: to show and sort your mail, draft and send the replies you approve, add the labels and calendar events you ask for, and suggest recipients. Nothing is sent to Tabellar's developer, because there is no Tabellar server. The <a href="privacy.html">privacy policy</a> says this in full.
+      </p>
+
+      <footer>
+        <a href="https://github.com/gnasseem/tabellar">Source on GitHub</a> · <a href="privacy.html">Privacy policy</a> ·
+        <a href="https://github.com/gnasseem/tabellar/issues">Questions and problems</a>
+      </footer>
+    </main>
+  </body>
+</html>

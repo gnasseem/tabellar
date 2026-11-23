@@ -2,7 +2,7 @@
 
 A personal email agent that runs on your Mac. Tabellar keeps a local copy of your Gmail, sorts it, writes a daily briefing, drafts replies in your style, pulls out todos and meetings, tracks mail that got no answer, answers questions about your inbox, and can plan and carry out a whole inbox cleanup that you approve. It keeps working in the background with the window closed, within limits you set.
 
-There is no hosted service and no sign-up. Your mail is stored in one SQLite file on your Mac. The AI runs either on your Mac through Ollama, free and private, or with a cloud provider of your choice on your own API key. The only outside calls are to Google for your mail and calendar, and to the cloud provider if you pick one.
+There is no hosted service and no sign-up. Your mail is stored in one SQLite file on your Mac. The AI runs either on your Mac through Ollama, free and private, or with a cloud provider of your choice on your own API key. The only outside calls are to Google for your mail and calendar, and to the cloud provider if you pick one. The [privacy policy](https://gnasseem.github.io/tabellar/privacy.html) says this in full.
 
 ## What it does
 
@@ -92,6 +92,7 @@ server/
   agentLoop.ts, agentTools.ts, agentExecute.ts   the agent
   analyzeEmails.ts, buildBriefing.ts
   config.ts     paths, config.json, the Keychain and the built-in Google client
+docs/             the public home page and privacy policy (GitHub Pages)
 frontend/
   src/components/   views and UI components
   src/lib/          the database client, live updates, helpers

@@ -42,6 +42,7 @@ Set `TABELLAR_HOME` to run against a different data folder (default `~/.tabellar
 bin/         tabellar.js, the command: runs server/tabellar.ts in a checkout, dist/tabellar.js in the npm package
 server/      one Node process, no runtime dependencies
 frontend/    React + Tailwind, built with Vite to frontend/dist, served by the server
+docs/        the public home page and privacy policy, served by GitHub Pages (Google's consent screen links to them)
 ```
 
 The npm package (`files` in package.json) holds `bin/`, `frontend/dist/` and `dist/`, which is `server/` built to JavaScript by `npm run build:server`, because Node does not strip types under `node_modules`. A path to a neighbouring server file goes through `sibling()` in `config.ts`, which picks `.ts` or `.js`; relative imports are rewritten by tsc.

@@ -1,0 +1,105 @@
+/* The two public pages: the home page and the privacy policy. Colours are the app's tokens. */
+:root {
+  --bg: oklch(1 0 0);
+  --ink: oklch(0.2 0.006 60);
+  --ink2: oklch(0.4 0.006 60);
+  --ink3: oklch(0.535 0.005 60);
+  --line: oklch(0.912 0.004 75);
+  --field: oklch(0.955 0.004 75);
+  --wax: oklch(0.5 0.18 31);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: oklch(0.205 0.004 60);
+    --ink: oklch(0.945 0.004 75);
+    --ink2: oklch(0.77 0.005 75);
+    --ink3: oklch(0.64 0.005 75);
+    --line: oklch(0.29 0.004 60);
+    --field: oklch(0.255 0.004 60);
+    --wax: oklch(0.76 0.14 38);
+  }
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink2);
+  font: 16px/1.6 system-ui, -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
+}
+main {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 56px 20px 72px;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.brand img {
+  width: 30px;
+  height: 30px;
+}
+h1 {
+  margin: 44px 0 12px;
+  color: var(--ink);
+  font-size: 30px;
+  line-height: 1.2;
+  font-weight: 650;
+}
+h2 {
+  margin: 36px 0 8px;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 650;
+}
+p,
+ul {
+  margin: 0 0 14px;
+}
+ul {
+  padding-left: 20px;
+}
+li {
+  margin-bottom: 6px;
+}
+b {
+  color: var(--ink);
+  font-weight: 600;
+}
+a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--ink3);
+  text-underline-offset: 2.5px;
+}
+a:hover {
+  text-decoration-color: var(--wax);
+}
+code,
+pre {
+  font: 14px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+  background: var(--field);
+  border-radius: 6px;
+}
+code {
+  padding: 1px 5px;
+}
+pre {
+  padding: 12px 14px;
+  overflow-x: auto;
+  color: var(--ink);
+}
+footer {
+  margin-top: 48px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  color: var(--ink3);
+  font-size: 14px;
+}

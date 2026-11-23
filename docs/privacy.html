@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy policy, Tabellar</title>
+    <meta name="description" content="What Tabellar does with your data, including data from your Google account." />
+    <link rel="icon" href="logo.svg" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main>
+      <a class="brand" href="./"><img src="logo.svg" alt="" />Tabellar</a>
+
+      <h1>Privacy policy</h1>
+      <p>Last updated 23 November 2026.</p>
+      <p>
+        Tabellar is open source software that runs on your own Mac. There is no Tabellar server, no Tabellar account and no telemetry. Tabellar's developer never receives your mail, your calendar, your contacts, your sign-in tokens or any record of how you use the app.
+      </p>
+
+      <h2>What Tabellar accesses in your Google account</h2>
+      <p>When you sign in with Google, Tabellar asks for these permissions and uses them for these purposes only:</p>
+      <ul>
+        <li>
+          <b>Gmail</b> (read, compose, send, label and archive): to copy your mail to your Mac, sort and summarise it, write reply drafts, send the mail you write or approve, add labels, archive what you ask it to, and unsubscribe from senders you choose. If you turn on Autopilot, it also sends replies on its own, only to the person who wrote to you, after a waiting period in which you can cancel. Tabellar has no function that deletes mail.
+        </li>
+        <li><b>Google Calendar</b>: to show your events, find free times and create the events you approve.</li>
+        <li><b>Contacts and your organisation's directory</b> (read only): to suggest recipients and to recognise people you correspond with.</li>
+        <li><b>Your name, email address and profile picture</b>: to show which account is connected.</li>
+      </ul>
+
+      <h2>Where your data is stored</h2>
+      <p>
+        On your Mac only. Mail, calendar entries, contacts and everything Tabellar derives from them (summaries, drafts, todos, the log of its actions) are kept in one database file in the <code>.tabellar</code> folder of your home folder. Google sign-in tokens and any AI provider key are kept in the macOS Keychain. Tabellar listens only on your own machine and is not reachable from the network.
+      </p>
+
+      <h2>Who your data is shared with</h2>
+      <p>Nobody, with one exception that you control: the AI model you choose.</p>
+      <ul>
+        <li><b>A model on your Mac</b> (through Ollama): the text of your mail never leaves your computer.</li>
+        <li>
+          <b>A cloud AI provider</b> that you pick and connect with your own API key: the text of the mail being read, summarised or answered is sent from your Mac directly to that provider, under your own account and that provider's terms. It does not pass through Tabellar's developer. Tabellar tells you this before you choose, and you can switch to a model on your Mac at any time.
+        </li>
+      </ul>
+      <p>Your data is never sold, never used for advertising, and never used by Tabellar or its developer to train AI models. No person other than you reads it.</p>
+      <p>
+        Tabellar's use and transfer of information received from Google APIs adheres to the
+        <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.
+      </p>
+
+      <h2>Keeping and deleting your data</h2>
+      <p>
+        Your data stays on your Mac until you remove it. Disconnecting a Google account in Settings revokes Tabellar's access to it. Deleting the <code>.tabellar</code> folder in your home folder removes the stored mail and settings, and the Keychain items named <code>tabellar</code> hold the tokens and keys. You can also remove Tabellar's access at any time from
+        <a href="https://myaccount.google.com/permissions">your Google account's permissions page</a>.
+      </p>
+
+      <h2>This website</h2>
+      <p>These pages are static files hosted by GitHub Pages. They set no cookies and run no analytics. GitHub, as the host, may log requests as described in its own privacy statement.</p>
+
+      <h2>Changes and contact</h2>
+      <p>
+        Changes to this policy are published on this page, with their history in the
+        <a href="https://github.com/gnasseem/tabellar/commits/main/docs/privacy.html">project's repository</a>. Questions go to the <a href="https://github.com/gnasseem/tabellar/issues">issue tracker</a>.
+      </p>
+
+      <footer><a href="./">Tabellar</a> · <a href="https://github.com/gnasseem/tabellar">Source on GitHub</a></footer>
+    </main>
+  </body>
+</html>
