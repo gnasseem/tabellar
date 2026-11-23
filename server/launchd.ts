@@ -7,12 +7,11 @@ import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { HOME } from "./config.ts";
+import { HOME, sibling } from "./config.ts";
 
 const LABEL = "com.tabellar.server";
 const PLIST = join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
-const CLI = fileURLToPath(new URL("./tabellar.ts", import.meta.url));
+const CLI = sibling("tabellar");
 const DOMAIN = `gui/${userInfo().uid}`;
 
 const xml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

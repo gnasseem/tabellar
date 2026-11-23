@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { homedir, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, keychainGet, keychainSet, modelKey, modelKeyName, HOME, type ModelConfig, type Slot } from "./config.ts";
+import { loadConfig, saveConfig, keychainGet, keychainSet, keychainDelete, googleClient, BUILT_IN_GOOGLE, modelKey, modelKeyName, HOME, type ModelConfig, type Slot } from "./config.ts";
 
 // ── Google sign-in client ───────────────────────────────────────────────────
 
@@ -50,7 +50,15 @@ export async function findClientFiles(): Promise<string[]> {
 }
 
 export function googleConfigured(): boolean {
-  return !!loadConfig().googleClientId && !!keychainGet("google-client-secret");
+  return !!googleClient();
+}
+
+// Forget the user's own client, so sign-in goes back to the built-in one.
+export function useBuiltInGoogleClient(): void {
+  const config = loadConfig();
+  delete config.googleClientId;
+  saveConfig(config);
+  keychainDelete("google-client-secret");
 }
 
 // Check a client file's contents and save it: the id to config.json, the
@@ -389,7 +397,10 @@ async function state() {
   const withReady = (m?: ModelConfig) => (m ? { ...m, ready: m.format === "ollama" || !!modelKey(m) } : null);
   return {
     google: {
-      clientId: googleConfigured() ? config.googleClientId : null,
+      // The user's own client, when they saved one.
+      clientId: googleClient()?.own ? config.googleClientId : null,
+      // Whether this copy of Tabellar ships with a sign-in client.
+      builtIn: !!BUILT_IN_GOOGLE.clientId,
       file: file ? { path: file, name: basename(file), folder: dirname(file).replace(homedir(), "~"), modified: statSync(file, { throwIfNoEntry: false })?.mtimeMs ?? Date.now() } : null,
     },
     model: withReady(config.model),
@@ -408,6 +419,11 @@ export async function handleSetup(req: Request, path: string): Promise<Response>
     if (path === "/state" && req.method === "GET") return json(await state());
 
     if (path === "/google" && req.method === "POST") {
+      if (body.builtIn) {
+        if (!BUILT_IN_GOOGLE.clientId) return json({ error: "This copy of Tabellar has no built-in Google client." }, 400);
+        useBuiltInGoogleClient();
+        return json({ ok: true });
+      }
       // Either the file the window found (only a path findClientFiles returns
       // is accepted) or the contents of a file the user dropped in.
       let text = typeof body.text === "string" ? body.text : "";

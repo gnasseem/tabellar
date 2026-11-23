@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 export const HOME = process.env.TABELLAR_HOME || join(homedir(), ".tabellar");
 export const DB_PATH = join(HOME, "tabellar.db");
@@ -16,6 +17,19 @@ export const CONFIG_PATH = join(HOME, "config.json");
 export const DEFAULT_PORT = 4848;
 
 mkdirSync(HOME, { recursive: true, mode: 0o700 });
+
+// The path of a file next to this one. A source checkout runs the .ts files;
+// the npm package holds the same files built to .js.
+export function sibling(name: string): string {
+  return fileURLToPath(new URL(`./${name}${import.meta.url.endsWith(".ts") ? ".ts" : ".js"}`, import.meta.url));
+}
+
+// The Google sign-in client that ships with Tabellar, so nobody has to open
+// Google Cloud to sign in. Google does not treat the secret of a desktop app's
+// client as confidential: it identifies the app, and sign-in is still
+// protected by PKCE and the loopback redirect. Empty in a copy that has none,
+// in which case setup asks for the user's own client.
+export const BUILT_IN_GOOGLE = { clientId: "", clientSecret: "" };
 
 export type ModelConfig = {
   provider?: string; // "ollama", "openrouter", "anthropic", "openai", ... (setup's provider list)
@@ -32,6 +46,8 @@ export type Slot = "fast" | "careful";
 
 export type Config = {
   port: number;
+  // Set only when the user brought their own Google client; its secret is in
+  // the Keychain. Unset means the built-in client.
   googleClientId?: string;
   model?: ModelConfig;
   fastModel?: ModelConfig;
@@ -103,10 +119,21 @@ export function accessToken(): string {
   return token;
 }
 
+// The Google client sign-in uses: the user's own when they saved one, else
+// the built-in one. An account's tokens only work with the client that issued
+// them, so changing this means signing in again.
+export function googleClient(): { id: string; secret: string; own: boolean } | null {
+  const id = loadConfig().googleClientId;
+  const secret = id ? keychainGet("google-client-secret") : null;
+  if (id && secret) return { id, secret, own: true };
+  if (BUILT_IN_GOOGLE.clientId) return { id: BUILT_IN_GOOGLE.clientId, secret: BUILT_IN_GOOGLE.clientSecret, own: false };
+  return null;
+}
+
 // The backend code reads its settings through getEnv, as it did on the hosted
 // runtime. Here the values come from config.json and the Keychain.
 export function getEnv(key: string): string {
-  if (key === "GOOGLE_CLIENT_ID") return loadConfig().googleClientId ?? "";
-  if (key === "GOOGLE_CLIENT_SECRET") return keychainGet("google-client-secret") ?? "";
+  if (key === "GOOGLE_CLIENT_ID") return googleClient()?.id ?? "";
+  if (key === "GOOGLE_CLIENT_SECRET") return googleClient()?.secret ?? "";
   return process.env[key] ?? "";
 }

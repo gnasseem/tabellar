@@ -15,7 +15,7 @@ import { existsSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { loadConfig, accessToken } from "./config.ts";
+import { loadConfig, accessToken, googleClient } from "./config.ts";
 import { db, execute, callRpc, changes, type Change } from "./db.ts";
 import type { QuerySpec } from "./query.ts";
 import { handleApi } from "./api.ts";
@@ -196,7 +196,7 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
 
       if (path === "/oauth/start") {
         if (!hasCookie) return send(res, 401, page("Not signed in", "<p>Open Tabellar from the terminal with <code>tabellar open</code>.</p>"), "text/html; charset=utf-8");
-        if (!loadConfig().googleClientId) {
+        if (!googleClient()) {
           return send(res, 400, page("Google sign-in is not set up", "<p>Add your Google client first. <a href=\"/\">Back to Tabellar</a></p>"), "text/html; charset=utf-8");
         }
         res.writeHead(302, { Location: signInUrl(redirectUri) });
@@ -280,7 +280,7 @@ async function sessionInfo() {
     user: profile ? { id: profile.id, email: profile.email } : null,
     profile,
     accounts: count ?? 0,
-    googleConfigured: !!loadConfig().googleClientId,
+    googleConfigured: !!googleClient(),
     modelConfigured: modelConfigured(),
   };
 }

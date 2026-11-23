@@ -9,7 +9,10 @@ export type ModelInfo = { provider?: string; format: "ollama" | "anthropic" | "o
 
 export type SetupState = {
   google: {
+    // The user's own client, when they saved one.
     clientId: string | null;
+    // Whether this copy of Tabellar ships with a sign-in client.
+    builtIn: boolean;
     file: { path: string; name: string; folder: string; modified: number } | null;
   };
   // The careful model (drafts, briefing, assistant, agent).

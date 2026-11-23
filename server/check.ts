@@ -6,13 +6,13 @@
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { decide, normalizeLevel, proposalHash, looksLikeInstructions, checkAutoSend, CAP_PER_CYCLE, CAP_PER_DAY, type AutoSend } from "./policy.ts";
 import * as gmail from "./gmail.ts";
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { CHANNELS } from "./notify.ts";
+import { sibling } from "./config.ts";
 
 CHANNELS.length = 0;
 
@@ -104,8 +104,8 @@ ok("an approval is bound to the exact text", () => {
 });
 ok("the Gmail client cannot delete or trash mail", () => {
   for (const name of Object.keys(gmail)) assert.ok(!/delete|trash|remove|purge/i.test(name), `gmail.${name}`);
-  const src = readFileSync(fileURLToPath(new URL("./gmail.ts", import.meta.url)), "utf8");
-  assert.ok(!/\/trash\b|method:\s*["']DELETE["']|batchDelete/.test(src), "gmail.ts calls a delete endpoint");
+  const src = readFileSync(sibling("gmail"), "utf8");
+  assert.ok(!/\/trash\b|method:\s*["']DELETE["']|batchDelete/.test(src), "the Gmail client calls a delete endpoint");
 });
 
 // ── Unsubscribe headers ─────────────────────────────────────────────────────

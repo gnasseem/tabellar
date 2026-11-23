@@ -1,15 +1,39 @@
 {
   "name": "tabellar",
   "version": "0.1.0",
-  "private": true,
   "description": "A personal email agent that runs on your Mac",
+  "keywords": [
+    "email",
+    "gmail",
+    "agent",
+    "inbox",
+    "local",
+    "ollama",
+    "macos"
+  ],
+  "license": "MIT",
+  "author": "George Nasseem",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gnasseem/tabellar.git"
+  },
+  "homepage": "https://github.com/gnasseem/tabellar#readme",
+  "bugs": "https://github.com/gnasseem/tabellar/issues",
   "type": "module",
+  "os": [
+    "darwin"
+  ],
   "engines": {
     "node": ">=24"
   },
   "bin": {
-    "tabellar": "server/tabellar.ts"
+    "tabellar": "bin/tabellar.js"
   },
+  "files": [
+    "bin/",
+    "dist/",
+    "frontend/dist/"
+  ],
   "workspaces": [
     "frontend"
   ],
@@ -17,8 +41,11 @@
     "setup": "node server/tabellar.ts setup",
     "start": "npm run build && node server/tabellar.ts start",
     "build": "npm run build --workspace tabellar-frontend",
+    "build:server": "rm -rf dist && tsc -p server --noEmit false --outDir dist --rewriteRelativeImportExtensions",
     "dev": "npm run dev --workspace tabellar-frontend",
-    "typecheck": "tsc -p server && npm run typecheck --workspace tabellar-frontend"
+    "typecheck": "tsc -p server && npm run typecheck --workspace tabellar-frontend",
+    "prepack": "npm run build && npm run build:server",
+    "prepublishOnly": "node -e \"import('./server/config.ts').then((c) => { if (!c.BUILT_IN_GOOGLE.clientId) { console.error('Fill in BUILT_IN_GOOGLE in server/config.ts before publishing.'); process.exit(1); } })\""
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

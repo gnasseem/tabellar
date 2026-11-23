@@ -2,8 +2,9 @@
 // The `tabellar` command. The terminal is only for setting up, starting and
 // opening Tabellar; everything else happens in the app window.
 //
-//   tabellar setup    Google sign-in client and the AI model, in the terminal
-//                     (the window walks through the same steps on first start)
+//   tabellar setup    The AI model, in the terminal (the window walks through
+//                     the same steps on first start)
+//   tabellar setup google   Sign in to Google through your own client
 //   tabellar start    Run Tabellar and open its window (Ctrl-C stops it)
 //   tabellar open     Open the window of a running Tabellar
 //   tabellar status   Is it running, which accounts and model it uses
@@ -15,11 +16,10 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, keychainSet, modelKeyName, accessToken, HOME, type Config, type ModelConfig, type Slot } from "./config.ts";
+import { loadConfig, saveConfig, keychainSet, modelKeyName, accessToken, googleClient, sibling, BUILT_IN_GOOGLE, HOME, type Config, type ModelConfig, type Slot } from "./config.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
 import {
-  findClientFiles, googleConfigured, saveGoogleClient, moveToTrash, OLLAMA_URL, LOCAL_CHOICES, recommendedLocalModel,
+  findClientFiles, saveGoogleClient, useBuiltInGoogleClient, moveToTrash, OLLAMA_URL, LOCAL_CHOICES, recommendedLocalModel,
   ollamaInstalled, ollamaModels, startOllama, installOllama, pullOllamaModel, PROVIDERS, listModels, savedKeyFor, type Progress,
 } from "./setup.ts";
 
@@ -108,11 +108,22 @@ async function showProgress(steps: AsyncGenerator<Progress>) {
 // ── Google sign-in client ───────────────────────────────────────────────────
 
 async function setupGoogle(config: Config) {
-  if (!args.includes("google") && googleConfigured()) {
-    console.log("1. Google sign-in: already set up. (`tabellar setup google` replaces it.)");
+  const client = googleClient();
+  if (!args.includes("google") && client) {
+    console.log(
+      client.own
+        ? "1. Google sign-in: using your own client. (`tabellar setup google` changes it.)"
+        : "1. Google sign-in: built in, nothing to set up. (`tabellar setup google` uses your own Google client instead.)",
+    );
     return;
   }
   console.log("1. Google sign-in");
+  if (client?.own && BUILT_IN_GOOGLE.clientId && (await yes("   Go back to the sign-in client built into Tabellar?", false))) {
+    useBuiltInGoogleClient();
+    delete config.googleClientId;
+    console.log("   Done. Connected accounts need to sign in again from the window.");
+    return;
+  }
   let path = (await findClientFiles())[0] ?? "";
   if (path) {
     console.log(`   Using ${basename(path)}`);
@@ -130,7 +141,7 @@ async function setupGoogle(config: Config) {
   const { clientId, warning } = saveGoogleClient(readFileSync(path, "utf8"));
   config.googleClientId = clientId;
   if (warning) console.log(`   ${warning}`);
-  console.log("   Saved. The client secret is now in the Keychain.");
+  console.log("   Saved. The client secret is now in the Keychain. An account connected through another client needs to sign in again.");
   if (await yes(`   Move ${basename(path)} to the Trash? Tabellar no longer needs it.`)) {
     console.log(moveToTrash(path) ? "   Moved to the Trash." : `   Could not move it. Delete it yourself: ${path}`);
   }
@@ -261,7 +272,8 @@ async function status() {
   const config = loadConfig();
   const up = await running();
   console.log(`Running:  ${up ? `yes, http://127.0.0.1:${config.port}` : "no"}`);
-  console.log(`Google:   ${config.googleClientId ? "sign-in client set" : "not set up (tabellar setup)"}`);
+  const client = googleClient();
+  console.log(`Google:   ${client ? (client.own ? "your own sign-in client" : "built-in sign-in client") : "not set up (tabellar setup)"}`);
   const where = (m: ModelConfig) => (m.format === "ollama" ? "on this Mac (Ollama)" : `via ${PROVIDERS.find((p) => p.id === m.provider)?.name ?? m.baseUrl}`);
   const m = config.model;
   console.log(`Model:    ${m ? `${m.model} ${where(m)}` : "not set up (tabellar setup)"}`);
@@ -301,7 +313,7 @@ function check() {
   try {
     const { model } = loadConfig();
     if (model) writeFileSync(join(home, "config.json"), JSON.stringify({ model }));
-    const r = spawnSync(process.execPath, [fileURLToPath(new URL("./check.ts", import.meta.url))], {
+    const r = spawnSync(process.execPath, [sibling("check")], {
       stdio: "inherit",
       env: { ...process.env, TABELLAR_HOME: home },
     });

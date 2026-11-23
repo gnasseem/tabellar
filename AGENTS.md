@@ -20,10 +20,11 @@ All commands run from the repo root. This is an npm workspace; `npm install` at 
 
 ```bash
 npm start          # build the interface, run the server, open the window (first run: in-window setup)
-npm run setup      # the same setup in the terminal: Google client and AI model (writes ~/.tabellar/config.json and the Keychain)
+npm run setup      # the same setup in the terminal: the AI model, and with `-- google` your own Google client (writes ~/.tabellar/config.json and the Keychain)
 npm run dev        # Vite dev server for the interface, proxying to a running server on :4848
 npm run build      # build the interface to frontend/dist
 npm run typecheck  # tsc for server/ and frontend/
+npm pack           # the npm package: builds the interface and the server (to JavaScript in dist/) first
 
 tabellar open      # open the window of a running server (after `npm link`; same as node server/tabellar.ts open)
 tabellar status    # running? which accounts, model, engine level?
@@ -38,9 +39,12 @@ Set `TABELLAR_HOME` to run against a different data folder (default `~/.tabellar
 ### Layout
 
 ```
+bin/         tabellar.js, the command: runs server/tabellar.ts in a checkout, dist/tabellar.js in the npm package
 server/      one Node process, no runtime dependencies
 frontend/    React + Tailwind, built with Vite to frontend/dist, served by the server
 ```
+
+The npm package (`files` in package.json) holds `bin/`, `frontend/dist/` and `dist/`, which is `server/` built to JavaScript by `npm run build:server`, because Node does not strip types under `node_modules`. A path to a neighbouring server file goes through `sibling()` in `config.ts`, which picks `.ts` or `.js`; relative imports are rewritten by tsc.
 
 ### Server (`server/`)
 
@@ -55,15 +59,15 @@ frontend/    React + Tailwind, built with Vite to frontend/dist, served by the s
 - `api.ts`: `handleApi(req, path)` with all routes under `/api` (fetch-emails, send-email, drafts, briefing, calendar, chat, follow-ups, signatures, agent, ...). Written against Web `Request`/`Response`.
 - `db.ts`: the SQLite schema (one `SCHEMA` object; columns typed uuid/text/int/real/bool/json/time, defaults filled in on insert, new columns added automatically on start) and `execute(spec)`, which runs supabase-js style queries. Every write is published on `changes` for the event stream. `db.rpc` provides `alloc_agent_turn_idx`, `merge_bucket_draft_actions`, `increment_knowledge_use_count`.
 - `query.ts`: the query builder (`from().select().eq().order()...`, `.or()` PostgREST strings, embedded selects like `email_processed(summary)` and `emails!inner(...)`). Shared by the server and the interface.
-- `google.ts`: installed-app OAuth with PKCE on the loopback address. Refresh tokens live in the Keychain; `gmail_accounts.token_ref` holds only the Keychain item name. Access tokens are kept in memory (`freshAccessToken`).
+- `google.ts`: installed-app OAuth with PKCE on the loopback address, through `googleClient()` in `config.ts`: the user's own client when `config.googleClientId` is set, otherwise `BUILT_IN_GOOGLE`, the client that ships with Tabellar. Tokens only work with the client that issued them. Refresh tokens live in the Keychain; `gmail_accounts.token_ref` holds only the Keychain item name. Access tokens are kept in memory (`freshAccessToken`).
 - `llm.ts`: `chatCompletion` takes OpenAI chat-completions requests with a `slot`, `fast` (reading each email: `processFullEmail`, entities, todos, meetings) or `careful` (default: drafts, briefing, assistant, agent). `config.model` is the careful model and `config.fastModel` the fast one, which falls back to `model` when unset. It sends them in that model's `format`: `ollama` (Ollama's native `/api/chat`, so `num_ctx` can be set; no API key), `openai` (forwarded to any OpenAI-compatible endpoint, retrying once without `temperature` or with `max_completion_tokens` when a model rejects them), or `anthropic` (translated to the Messages API and back). Local models get longer timeouts and lower analysis concurrency (`isLocalModel`, `modelTimeoutMs`). Anthropic content blocks come back on the message as `_anthropic` and are replayed verbatim on later turns so thinking blocks stay intact; the agent persists them in `agent_turns.content.raw`.
 - `ai.ts` (prompts and AI helpers), `gmail.ts` (Gmail, Calendar, People API client), `agentLoop.ts` / `agentTools.ts` / `agentExecute.ts` (the agent), `analyzeEmails.ts`, `buildBriefing.ts`.
-- `setup.ts`: first-run setup shared by the window (`/api/setup/*`, routed in `server.ts` before `handleApi`) and `tabellar setup`: finding and saving the Google client file, installing and starting Ollama (its bundled `ollama serve`, not the menu bar app, whose first launch asks for an admin password), pulling models (with a direct registry download when Ollama can't reach it), and cloud provider key checks. Progress streams as NDJSON.
-- `config.ts`: paths, `config.json` (port, Google client id, model provider/format/base URL/model), Keychain helpers (`keychainGet/Set/Delete`), and `getEnv` for the few settings the backend reads.
+- `setup.ts`: first-run setup shared by the window (`/api/setup/*`, routed in `server.ts` before `handleApi`) and `tabellar setup`: finding and saving the user's own Google client file or going back to the built-in client, installing and starting Ollama (its bundled `ollama serve`, not the menu bar app, whose first launch asks for an admin password), pulling models (with a direct registry download when Ollama can't reach it), and cloud provider key checks. Progress streams as NDJSON.
+- `config.ts`: paths, `config.json` (port, the user's own Google client id if any, model provider/format/base URL/model), `BUILT_IN_GOOGLE`, Keychain helpers (`keychainGet/Set/Delete`), and `getEnv` for the few settings the backend reads.
 
 ### Interface (`frontend/`)
 
-- `src/main.tsx` loads `/session`, then renders `AppShell` + `EmailDashboard` when a Google account is connected, otherwise `Welcome` (the three-step onboarding). `ModelSetup.tsx` is the model picker shared by onboarding and Settings > AI.
+- `src/main.tsx` loads `/session`, then renders `AppShell` + `EmailDashboard` when a Google account is connected, otherwise `Welcome` (onboarding: model, then Gmail; the Google client step appears only for bringing your own, or first when no client is built in). `ModelSetup.tsx` is the model picker shared by onboarding and Settings > AI.
 - `src/lib/db.ts`: `createClient()` returns an object shaped like the supabase-js client the views were written against: `from()` posts the query to `/db`, `auth.getSession()` returns the local user and access token, `channel().on("postgres_changes", ...)` listens on `/events`. Views keep calling `supabase.from(...)`.
 - Global state lives in `AppShell.tsx` via React context (`useApp()`): `user`, `profile`, `view`, `addToast`, compose, agent state.
 - API calls are `fetch("/api/...")` with `Authorization: Bearer ${session.access_token}`.
@@ -74,4 +78,4 @@ One user per install. All tables keep a `user_id` column; the profile row is cre
 
 ### Secrets
 
-Never in files. Keychain items (service `tabellar`): `access-token`, `google-client-secret`, `model-api-key:<provider>` (one per cloud provider in use), and one `google:<hash>` item per connected Google account. Downloaded `client_secret*.json` files are gitignored; setup imports them and offers to trash them.
+Never in files, with one exception: the built-in Google client's id and secret are constants in `config.ts`, since Google does not treat a desktop app's client secret as confidential. Keychain items (service `tabellar`): `access-token`, `google-client-secret` (only with the user's own client), `model-api-key:<provider>` (one per cloud provider in use), and one `google:<hash>` item per connected Google account. Downloaded `client_secret*.json` files are gitignored; setup imports them and offers to trash them.

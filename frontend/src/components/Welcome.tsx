@@ -5,10 +5,12 @@ import type { Session } from "@/lib/db";
 import { setupPost, type SetupState } from "@/lib/setup";
 import ModelSetup, { ErrorLine, Icon, modelLabel, ui, useSetupState } from "./ModelSetup";
 
-// First run, shown until a Google account is connected: the Google sign-in
-// client, the model, then signing in to Gmail. Each step can be revisited
-// from the line of steps at the top; the model step can be skipped and
-// finished in Settings later.
+// First run, shown until a Google account is connected: the model, then
+// signing in to Gmail. Sign-in uses the Google client built into Tabellar; the
+// Google client step is for bringing your own instead, and comes first only
+// in a copy that has none built in. Each step can be revisited from the line
+// of steps at the top; the model step can be skipped and finished in Settings
+// later.
 
 const SKIP_AI = "tabellar_setup_skip_ai";
 
@@ -48,7 +50,7 @@ export default function Welcome({ error }: { session?: Session; error?: string }
   // Open at the first step that still needs doing.
   useEffect(() => {
     if (!state || step !== null) return;
-    setStep(!state.google.clientId ? 0 : !state.model?.ready && !skippedAi ? 1 : 2);
+    setStep(!state.google.clientId && !state.google.builtIn ? 0 : !state.model?.ready && !skippedAi ? 1 : 2);
   }, [state, step, skippedAi]);
 
   // While the Google step waits for its file, keep looking for the download.
@@ -70,13 +72,17 @@ export default function Welcome({ error }: { session?: Session; error?: string }
   };
 
   const failure = error ?? (!state ? stateError : "");
-  const googleDone = !!state?.google.clientId;
+  const ownClient = !!state?.google.clientId;
+  const builtIn = !!state?.google.builtIn;
+  const googleDone = ownClient || builtIn;
   const modelDone = !!state?.model?.ready;
+  // With the built-in client there is nothing to do for Google, so its step
+  // is listed only once the user has gone there to bring their own.
   const steps = [
-    { title: "Google client", done: googleDone },
-    { title: "Model", done: modelDone },
-    { title: "Gmail", done: false },
-  ];
+    { step: 0, title: "Google client", done: googleDone },
+    { step: 1, title: "Model", done: modelDone },
+    { step: 2, title: "Gmail", done: false },
+  ].filter((s) => s.step > 0 || !builtIn || ownClient || step === 0);
   const reachable = (i: number) => i === 0 || googleDone;
 
   return (
@@ -90,10 +96,10 @@ export default function Welcome({ error }: { session?: Session; error?: string }
               {i > 0 && <span aria-hidden className="h-px min-w-3 flex-1 bg-line" />}
               <button
                 type="button"
-                disabled={!reachable(i) || !!failure}
-                onClick={() => setStep(i)}
-                aria-current={step === i ? "step" : undefined}
-                className={`flex flex-none items-center gap-1.5 rounded-md py-0.5 transition-colors duration-150 ${step === i ? "font-semibold text-ink" : "text-ink3 enabled:hover:text-ink"}`}
+                disabled={!reachable(s.step) || !!failure}
+                onClick={() => setStep(s.step)}
+                aria-current={step === s.step ? "step" : undefined}
+                className={`flex flex-none items-center gap-1.5 rounded-md py-0.5 transition-colors duration-150 ${step === s.step ? "font-semibold text-ink" : "text-ink3 enabled:hover:text-ink"}`}
               >
                 {s.done ? <Glyph state="done" /> : <span className="w-4 text-center">{i + 1}</span>}
                 {s.title}
@@ -112,9 +118,9 @@ export default function Welcome({ error }: { session?: Session; error?: string }
               <span className="skel block h-3 w-4/5" />
             </div>
           ) : step === 0 ? (
-            <GoogleStep state={state} refresh={refresh} onNext={() => setStep(1)} />
+            <GoogleStep state={state} refresh={refresh} onNext={() => setStep(builtIn && (modelDone || skippedAi) ? 2 : 1)} onBuiltIn={builtIn ? () => setStep(2) : undefined} />
           ) : step === 1 ? (
-            <ModelStep state={state} refresh={refresh} onBack={() => setStep(0)} onNext={() => setStep(2)} onSkip={skipAi} />
+            <ModelStep state={state} refresh={refresh} onBack={builtIn && !ownClient ? undefined : () => setStep(0)} onNext={() => setStep(2)} onSkip={skipAi} />
           ) : (
             <GmailStep state={state} goTo={setStep} />
           )}
@@ -156,7 +162,8 @@ function Actions({ onBack, children }: { onBack?: () => void; children?: ReactNo
   );
 }
 
-// Step 1: the Google sign-in client
+// The Google sign-in client. onBuiltIn is set when Tabellar has a client
+// built in, and returns to it.
 
 const CONSOLE = "https://console.cloud.google.com";
 const GOOGLE_STEPS: { title: string; detail: string; href: string }[] = [
@@ -178,7 +185,7 @@ const GOOGLE_STEPS: { title: string; detail: string; href: string }[] = [
   },
 ];
 
-function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: () => Promise<void>; onNext: () => void }) {
+function GoogleStep({ state, refresh, onNext, onBuiltIn }: { state: SetupState; refresh: () => Promise<void>; onNext: () => void; onBuiltIn?: () => void }) {
   const configured = !!state.google.clientId;
   const [replacing, setReplacing] = useState(false);
   const [trash, setTrash] = useState(true);
@@ -206,6 +213,22 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
     }
   }
 
+  async function backToBuiltIn() {
+    setBusy(true);
+    setError("");
+    try {
+      if (configured) {
+        await setupPost("/google", { builtIn: true });
+        await refresh();
+      }
+      onBuiltIn!();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const readFile = async (f?: File | null) => {
     if (f) await save({ text: await f.text() });
   };
@@ -221,9 +244,15 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
 
   return (
     <>
-      <Heading title="Add your Google client">
-        Tabellar reaches Gmail through a sign-in client that you create in your own Google Cloud project, so your mail never passes through anyone else's app. It takes about five minutes, once.
-      </Heading>
+      {onBuiltIn ? (
+        <Heading title="Use your own Google client">
+          Tabellar signs in to Google through a client built into it, and nothing here needs doing. Bring your own instead if your organisation blocks apps that Google has not verified, or if you would rather sign in through a Google Cloud project you control. It takes about five minutes, once.
+        </Heading>
+      ) : (
+        <Heading title="Add your Google client">
+          Tabellar reaches Gmail through a sign-in client that you create in your own Google Cloud project, so your mail never passes through anyone else's app. It takes about five minutes, once.
+        </Heading>
+      )}
 
       {!showSetup ? (
         <>
@@ -245,6 +274,11 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
             <button type="button" className={ui.btnPrimary} onClick={onNext}>
               Continue
             </button>
+            {onBuiltIn && (
+              <button type="button" className="btn btn-plain h-8" disabled={busy} onClick={backToBuiltIn}>
+                Use Tabellar's client instead
+              </button>
+            )}
           </Actions>
         </>
       ) : (
@@ -274,7 +308,7 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
                   Move the file to the Trash once it is saved to the Keychain
                 </label>
               </div>
-              <Actions onBack={configured ? () => setReplacing(false) : undefined}>
+              <Actions onBack={configured ? () => setReplacing(false) : onBuiltIn && backToBuiltIn}>
                 <button type="button" className={ui.btnPrimary} disabled={busy} onClick={() => save({ path: found.path, trash })}>
                   {busy ? "Saving" : "Use this file"}
                 </button>
@@ -297,7 +331,7 @@ function GoogleStep({ state, refresh, onNext }: { state: SetupState; refresh: ()
                   </p>
                 </div>
               </div>
-              <Actions onBack={configured ? () => setReplacing(false) : undefined}>{chooseFile}</Actions>
+              <Actions onBack={configured ? () => setReplacing(false) : onBuiltIn && backToBuiltIn}>{chooseFile}</Actions>
             </>
           )}
         </div>
@@ -331,7 +365,7 @@ function GoogleList() {
 
 // Step 2: the model
 
-function ModelStep({ state, refresh, onBack, onNext, onSkip }: { state: SetupState; refresh: () => Promise<void>; onBack: () => void; onNext: () => void; onSkip: () => void }) {
+function ModelStep({ state, refresh, onBack, onNext, onSkip }: { state: SetupState; refresh: () => Promise<void>; onBack?: () => void; onNext: () => void; onSkip: () => void }) {
   return (
     <>
       <Heading title="Choose the model Tabellar uses">
@@ -357,13 +391,16 @@ function ModelStep({ state, refresh, onBack, onNext, onSkip }: { state: SetupSta
 
 function GmailStep({ state, goTo }: { state: SetupState; goTo: (i: number) => void }) {
   const [going, setGoing] = useState(false);
+  const own = !!state.google.clientId;
   const rows = [
-    { label: "Google client", value: "Saved to your Keychain", step: 0 },
+    { label: "Google client", value: own ? "Your own, saved to your Keychain" : "Built into Tabellar", step: 0 },
     { label: "Model", value: state.model?.ready ? modelLabel(state.model, state.providers) : "Not chosen yet. Mail syncs, sorting waits.", step: 1 },
   ];
   const notes = [
     "Pick the Google account whose mail Tabellar should handle.",
-    "Google will say it has not verified the app. That is expected, because the client is your own. Choose Advanced, then Go to Tabellar.",
+    own
+      ? "Google will say it has not verified the app. That is expected, because the client is your own. Choose Advanced, then Go to Tabellar."
+      : "Google will say it has not verified the app, because Tabellar has not been through Google's review yet. Choose Advanced, then Go to Tabellar.",
     "Allow access to Gmail and Calendar. Tabellar then fetches your recent mail, sorts it and writes your first briefing.",
   ];
   return (
@@ -392,6 +429,16 @@ function GmailStep({ state, goTo }: { state: SetupState; goTo: (i: number) => vo
           </li>
         ))}
       </ol>
+
+      {!own && (
+        <p className="mt-3 text-xs leading-normal text-ink2">
+          If Google blocks the sign-in instead, your organisation does not allow apps it has not verified.{" "}
+          <button type="button" onClick={() => goTo(0)} className="link">
+            Use your own Google client
+          </button>
+          .
+        </p>
+      )}
 
       <Actions onBack={() => goTo(1)}>
         <a href="/oauth/start" onClick={() => setGoing(true)} className={ui.btnPrimary} aria-busy={going}>
