@@ -70,3 +70,4 @@ client_secret*.json
 # Design mocks and review captures (local only)
 frontend/.impeccable/mocks/
 frontend/.impeccable/review/
+frontend/.impeccable/questions/
