@@ -27,9 +27,12 @@ export function sibling(name: string): string {
 // The Google sign-in client that ships with Tabellar, so nobody has to open
 // Google Cloud to sign in. Google does not treat the secret of a desktop app's
 // client as confidential: it identifies the app, and sign-in is still
-// protected by PKCE and the loopback redirect. Empty in a copy that has none,
-// in which case setup asks for the user's own client.
-export const BUILT_IN_GOOGLE = { clientId: "", clientSecret: "" };
+// protected by PKCE and the loopback redirect. When empty, setup asks for the
+// user's own client.
+export const BUILT_IN_GOOGLE = {
+  clientId: "128573573035-8c8cgs7na3dnndtm2k21tu7nb8hii2f0.apps.googleusercontent.com",
+  clientSecret: "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",
+};
 
 export type ModelConfig = {
   provider?: string; // "ollama", "openrouter", "anthropic", "openai", ... (setup's provider list)
