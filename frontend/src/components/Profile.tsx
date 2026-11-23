@@ -203,16 +203,15 @@ export function NotThis({
 // Which mail the user's preferences keep from becoming a `thing`: a sender,
 // its domain, or a topic the user is not interested in. The server applies
 // the same rules (server/profile.ts); this is for lists the window builds
-// itself, such as suggested todos and follow-ups.
+// itself, such as suggested todos and meetings.
 const PREFS_EVENT = "tabellar:preferences";
 const prefsChanged = () => window.dispatchEvent(new Event(PREFS_EVENT));
 
 const STOPPERS: Record<string, string[]> = {
   todo: ["quiet", "ignore", "never_todo"],
   meeting: ["quiet", "ignore", "never_meeting"],
-  followup: ["quiet", "ignore", "never_followup"],
 };
-export function usePrefStops(thing: "todo" | "meeting" | "followup") {
+export function usePrefStops(thing: "todo" | "meeting") {
   const { user } = useApp();
   const [rows, setRows] = useState<{ kind: string; subject: string; value: string }[]>([]);
   useEffect(() => {

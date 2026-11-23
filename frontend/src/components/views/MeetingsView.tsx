@@ -24,6 +24,7 @@ type Meeting = {
   end_time: string;
   attendees: string[] | null;
   location: string | null;
+  as_written?: string | null; // the time as the email wrote it, when its zone is not the user's
   calendar_event_id: string | null;
   status: "proposed" | "confirmed" | "cancelled";
 };
@@ -35,10 +36,10 @@ type SuggestedMeeting = {
   email_sender: string;
   title: string;
   attendees: string[];
-  suggested_time?: string;
   location?: string;
   dateTime?: string;
   duration?: number;
+  asWritten?: string;
 };
 
 type Source = { id: string; sender: string; sender_email: string; subject: string; received_at: string; summary?: string };
@@ -302,7 +303,7 @@ export default function MeetingsView() {
     const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
     const { data: processed } = await supabase
       .from("email_processed")
-      .select("email_id, quick_actions, emails!inner(subject, sender, sender_email, received_at, user_id)")
+      .select("email_id, quick_actions, calendar, emails!inner(subject, sender, sender_email, received_at, user_id)")
       .eq("emails.user_id", user.id)
       .filter("emails.received_at", "gte", threeDaysAgo)
       .not("quick_actions", "is", null)
@@ -313,7 +314,8 @@ export default function MeetingsView() {
       const email = p.emails;
       const actions = Array.isArray(p.quick_actions) ? p.quick_actions : [];
       const meetingAction = actions.find((a: any) => a.action === "schedule_meeting");
-      if (!meetingAction || stopped(email?.sender_email, `${email?.subject ?? ""} ${meetingAction.label ?? ""}`)) continue;
+      // Already on the calendar: nothing to suggest.
+      if (!meetingAction || p.calendar || stopped(email?.sender_email, `${email?.subject ?? ""} ${meetingAction.label ?? ""}`)) continue;
       const details = meetingAction.meetingDetails;
       suggestions.push({
         email_id: p.email_id,
@@ -325,10 +327,10 @@ export default function MeetingsView() {
           meetingAction.label?.replace(/^Schedule:\s*/i, "").replace(/^Add to Calendar:\s*/i, "") ||
           `Meeting about ${email?.subject?.slice(0, 40) || "an email"}`,
         attendees: details?.attendees || (email?.sender_email ? [email.sender_email] : []),
-        suggested_time: details?.dateTime || undefined,
         dateTime: details?.dateTime || undefined,
         location: details?.location || undefined,
         duration: details?.duration || undefined,
+        asWritten: details?.asWritten || undefined,
       });
     }
     setSuggestedMeetings(suggestions);
@@ -949,6 +951,7 @@ export default function MeetingsView() {
               <dt className="text-ink3">When</dt>
               <dd>
                 <b className="font-medium text-ink">{longDate(m.start_time)}</b>, {clock(m.start_time)} to {clock(m.end_time)}, {durationLabel(minutesOf(m))}
+                {m.as_written && <span className="text-ink3"> ({m.as_written} in the email)</span>}
               </dd>
               <dt className="text-ink3">Who</dt>
               <dd>{(m.attendees || []).join(", ") || (src ? `${nameOf(src.sender) || src.sender_email}, who wrote the email. Nobody is invited yet.` : "Nobody is invited")}</dd>
@@ -1046,9 +1049,10 @@ export default function MeetingsView() {
                   <>
                     <b className="font-medium text-ink">{longDate(s.dateTime)}</b>, {clock(s.dateTime)}
                     {s.duration ? `, ${durationLabel(s.duration)}` : ""}
+                    {s.asWritten && <span className="text-ink3"> ({s.asWritten} in the email)</span>}
                   </>
                 ) : (
-                  s.suggested_time || "The email gives no time"
+                  "No time given"
                 )}
               </dd>
               <dt className="text-ink3">Who</dt>
@@ -1148,7 +1152,7 @@ export default function MeetingsView() {
               const rowClass = "row2 group grid scroll-mt-[34px] grid-cols-[26px_minmax(0,1fr)_auto] gap-y-[3px]";
               if (item.suggestion) {
                 const s = item.suggestion;
-                const when = s.dateTime && !isNaN(new Date(s.dateTime).getTime()) ? `${longDate(s.dateTime)}, ${clock(s.dateTime)}` : s.suggested_time || "No time yet";
+                const when = s.dateTime && !isNaN(new Date(s.dateTime).getTime()) ? `${longDate(s.dateTime)}, ${clock(s.dateTime)}` : "No time given";
                 return (
                   <div key={item.key} role="option" aria-selected={isCursor} className={rowClass} onClick={() => select(item.key)} onDoubleClick={() => openSchedulerFromSuggestion(s)}>
                     <span className="row-span-2" />

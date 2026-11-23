@@ -9,7 +9,9 @@
  *   slow email never stalls the other 49. The only cap is AI_PROCESS_CONCURRENCY
  *   which is a safety ceiling against provider-side throttling.
  * - Bulk mail (senders.isBulk: promotions, or a mailing list's headers) is
- *   sorted from its headers alone; the model never reads it.
+ *   sorted from its headers alone; the model never reads it. Neither does
+ *   calendar mail (rules.ts): it is linked to its event on the user's Google
+ *   Calendar instead, and never becomes a todo or a meeting proposal.
  * - Each email is read with the user's profile (profile.ts). Only mail from
  *   people the user corresponds with also goes through extractEntities, in
  *   parallel, and only the people and companies it names are kept.
@@ -26,6 +28,23 @@ import { extractEntities, processFullEmail } from "./ai.ts";
 import { isLocalModel } from "./llm.ts";
 import { correspondents, profileContext } from "./profile.ts";
 import { isBulk, writtenTo } from "./senders.ts";
+import { findCalendarEvent, type LinkedEvent } from "./gmail.ts";
+import type { CalendarEvent } from "./rules.ts";
+
+// The event a calendar email is about: on the user's calendar when Google
+// Calendar has it, otherwise what its .ics says.
+async function linkCalendar(tokenRef: string | undefined, e: Record<string, unknown>): Promise<LinkedEvent | null> {
+  const ics = e.calendar_event as CalendarEvent | null;
+  try {
+    if (tokenRef && (ics?.uid || ics?.start)) {
+      const found = await findCalendarEvent(tokenRef, { uid: ics.uid, start: ics.start, people: [String(e.sender_email ?? "")] });
+      if (found) return { ...found, method: ics.method };
+    }
+  } catch (err) {
+    console.error("[analyzeEmailsForUser] calendar lookup:", (err as Error).message);
+  }
+  return ics?.start ? { id: null, title: ics.title, start: ics.start, end: ics.end, all_day: ics.all_day, link: null, on_calendar: false, method: ics.method } : null;
+}
 
 
 /**
@@ -44,7 +63,7 @@ export async function analyzeEmailsForUser(
 
   let unprocessedQuery = db
     .from("emails")
-    .select("id, subject, sender, sender_email, recipients, body_text, snippet, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, precedence_header, list_id")
+    .select("id, subject, sender, sender_email, recipients, body_text, snippet, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, precedence_header, list_id, is_calendar, calendar_event, gmail_account_id")
     .eq("user_id", userId)
     .not("label_ids", "cs", '{"SENT"}')
     .order("received_at", { ascending: false })
@@ -72,6 +91,7 @@ export async function analyzeEmailsForUser(
     userTagRowsRes,
     memRowsRes,
     profileRes,
+    accountsRes,
   ] = await Promise.all([
     db
       .from("delegation_rules")
@@ -98,7 +118,9 @@ export async function analyzeEmailsForUser(
       .select("working_hours")
       .eq("id", userId)
       .maybeSingle(),
+    db.from("gmail_accounts").select("id, token_ref").eq("user_id", userId),
   ]);
+  const tokenRefs = new Map<string, string>((accountsRes.data ?? []).map((a) => [String(a.id), String(a.token_ref)]));
 
   const [known, written] = await Promise.all([correspondents(userId, senderEmails as string[]), writtenTo(userId)]);
 
@@ -169,6 +191,20 @@ export async function analyzeEmailsForUser(
   const analyzeOne = async (email: Record<string, unknown>) => {
     try {
       const gmailLabels = (email.label_ids as string[]) ?? [];
+      if (email.is_calendar) {
+        rowBuffer.push({
+          user_id: userId,
+          email_id: email.id as string,
+          category: "updates",
+          urgency: "low",
+          summary: null,
+          quick_actions: [],
+          calendar: await linkCalendar(tokenRefs.get(String(email.gmail_account_id)), email),
+        });
+        processed += 1;
+        if (rowBuffer.length >= FLUSH_SIZE) await flushRows();
+        return;
+      }
       if (isBulk(email as Parameters<typeof isBulk>[0], written)) {
         rowBuffer.push({
           user_id: userId,

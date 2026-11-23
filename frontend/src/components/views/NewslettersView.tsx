@@ -3,10 +3,11 @@ import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { engineFetch } from "./ActivityView";
-import { Empty, KeyHints, Kbd, Seg, SkeletonRows, Tick, ViewBar, shortWhen } from "../ui";
+import { Empty, KeyHints, Kbd, Seg, SkeletonRows, Tick, ViewBar } from "../ui";
 import { NotThis } from "../Profile";
 
 // Newsletter cleanup: senders of bulk mail, the ones filling the inbox first.
+// Which senders are listed, and why, is decided on the server (newsletters.ts).
 // Unsubscribe follows the sender's own unsubscribe header (the server reads it
 // fresh from Gmail); an unsubscribe that sends an email shows the address and
 // is confirmed first, and one that needs the sender's web page hands over the
@@ -19,6 +20,7 @@ type Sender = {
   total: number;
   inbox: number;
   unread: number;
+  opened: number;
   last_at: string;
   can_unsubscribe: boolean;
   status: "kept" | "unsubscribed" | null;
@@ -33,6 +35,11 @@ const METHOD: Record<string, string> = { "one-click": "Unsubscribed by their lin
 
 function emails(n: number): string {
   return `${n.toLocaleString()} email${n === 1 ? "" : "s"}`;
+}
+
+// Why a sender is listed: "12 emails, 0 opened, has unsubscribe".
+function why(s: Sender): string {
+  return `${emails(s.total)}, ${s.opened.toLocaleString()} opened, ${s.can_unsubscribe ? "has unsubscribe" : "no unsubscribe link"}`;
 }
 
 export default function NewslettersView() {
@@ -416,7 +423,7 @@ export default function NewslettersView() {
                   <span className={`whitespace-nowrap text-right ${s.inbox > 0 ? "text-ink" : "text-ink3"}`}>{isBusy ? "Working" : s.inbox > 0 ? `${s.inbox.toLocaleString()} in inbox` : "None in inbox"}</span>
                   <span className="hidden min-w-0 items-center justify-end gap-1.5 md:flex">
                     <span className={`truncate text-xs text-ink3 ${isCursor ? "hidden" : "group-hover:hidden"}`}>
-                      {s.status === "unsubscribed" ? METHOD[s.method || ""] || "Unsubscribed" : `${s.total.toLocaleString()} in all${s.can_unsubscribe ? "" : ", no unsubscribe link"}`}, last {shortWhen(s.last_at)}
+                      {s.status === "unsubscribed" ? METHOD[s.method || ""] || "Unsubscribed" : why(s)}
                     </span>
                     <span className={`items-center gap-1.5 ${isCursor ? "flex" : "hidden group-hover:flex has-[[aria-expanded=true]]:flex"}`}>{actions(s)}</span>
                   </span>

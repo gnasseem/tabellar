@@ -139,7 +139,7 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
       .from("meetings")
       .insert({
         user_id: userId, email_id: p.emailId, title: d.title, description: d.description ?? null,
-        start_time: d.start_time, end_time: d.end_time, location: d.location ?? null, status: "proposed",
+        start_time: d.start_time, end_time: d.end_time, location: d.location ?? null, as_written: d.as_written ?? null, status: "proposed",
       })
       .select("id")
       .single();

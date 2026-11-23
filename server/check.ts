@@ -167,7 +167,7 @@ for (const [i, e] of PLANTED.entries()) {
   const { data } = await db
     .from("emails")
     .insert({
-      user_id: userId, gmail_id: `planted-${i}`, gmail_account_id: account!.id, subject: e.subject, body_text: e.body.replace(/<[^>]+>/g, " "),
+      user_id: userId, gmail_id: `planted-${i}`, gmail_account_id: account!.id, subject: e.subject, body_text: `${e.body.replace(/<[^>]+>/g, " ")}\n\nCall me tomorrow at 10:00am.`,
       body_html: e.body, sender: "Stranger <stranger@example.org>", sender_email: "stranger@example.org", received_at: new Date(now - i * 60_000).toISOString(), label_ids: ["INBOX"],
     })
     .select("id")
@@ -182,8 +182,8 @@ async function fooledAnalysis() {
     user_id: userId, email_id, category: "action-required", urgency: "critical", summary: "Do what it says",
     quick_actions: [
       { action: "reply", label: "Reply with the data", text: "Here is everything you asked for." },
-      { action: "add_todo", label: "Wire $500" },
-      { action: "schedule_meeting", label: "Call", meetingDetails: { title: "Call", dateTime: `${tomorrow}T10:00`, duration: 30 } },
+      { action: "add_todo", label: "Wire $500", quote: "Call me tomorrow at 10:00am." },
+      { action: "schedule_meeting", label: "Call", quote: "Call me tomorrow at 10:00am.", meetingDetails: { title: "Call", date: tomorrow, time: "10:00am", duration: 30 } },
     ],
   })));
 }
@@ -377,7 +377,7 @@ ok("stored HTML-only mail gets its text, and is read again", () => {
 });
 await db.from("email_processed").insert({
   user_id: userId, email_id: htmlOnly!.id, category: "important", summary: "Free tokens",
-  quick_actions: [{ action: "add_todo", label: "Use the free tokens" }],
+  quick_actions: [{ action: "add_todo", label: "Use the free tokens", quote: "You have 50M free tokens." }],
 });
 await planNew(userId);
 const { data: suggestLog } = await db.from("action_log").select("kind, status").eq("email_id", htmlOnly!.id);
@@ -412,14 +412,14 @@ async function mail(from: string, subject: string, todo: string | null) {
   const { data } = await db
     .from("emails")
     .insert({
-      user_id: userId, gmail_id: `p-${m}`, thread_id: `pt-${m}`, gmail_account_id: account!.id, subject, body_text: subject,
+      user_id: userId, gmail_id: `p-${m}`, thread_id: `pt-${m}`, gmail_account_id: account!.id, subject, body_text: `${subject}. Could you do this: ${todo}`,
       sender: from, sender_email: address, received_at: new Date().toISOString(), label_ids: ["INBOX"],
     })
     .select("id")
     .single();
   await db.from("email_processed").insert({
     user_id: userId, email_id: data!.id, category: "important", summary: subject,
-    quick_actions: todo ? [{ action: "add_todo", label: todo }] : [],
+    quick_actions: todo ? [{ action: "add_todo", label: todo, quote: `Could you do this: ${todo}` }] : [],
   });
   await planNew(userId);
   return data!.id as string;
@@ -505,12 +505,12 @@ ok("at most three questions are open; answering one moves the next up", () => {
 });
 
 const { listNewsletters } = await import("./newsletters.ts");
-for (const i of [1, 2]) {
-  await db.from("emails").insert({
-    user_id: userId, gmail_id: `nl-${i}`, gmail_account_id: account!.id, subject: `Issue ${i}`, sender: "Lab List <lab@lists.example>",
-    sender_email: "lab@lists.example", has_list_unsubscribe: true, received_at: new Date().toISOString(), label_ids: ["INBOX"],
-  });
-}
+const { indexMail, rebuildSenders } = await import("./senders.ts");
+await indexMail(userId, account!.id as string, [1, 2].map((i) => ({
+  gmail_id: `nl-${i}`, thread_id: `nl-${i}`, at: new Date().toISOString(), labels: ["INBOX"], from: "Lab List <lab@lists.example>", to: "me@example.com", cc: "",
+  list_unsubscribe: true, list_id: "<lab.lists.example>", precedence: "",
+})), new Set(["me@example.com"]));
+await rebuildSenders(userId);
 const listedBefore = (await listNewsletters(userId)).some((s) => s.sender_email === "lab@lists.example");
 await profile.feedback(userId, { thing: "newsletter", outcome: "not_this", sender: "lab@lists.example" });
 const listedAfter = (await listNewsletters(userId)).some((s) => s.sender_email === "lab@lists.example");
@@ -563,12 +563,194 @@ ok("bulk is told from headers: promotions, or List-Unsubscribe with List-Id or P
   assert.ok(senders.isBulk(m("a@shop.example", { has_list_unsubscribe: true, precedence_header: "bulk" }), written));
   assert.ok(!senders.isBulk(m("a@shop.example", { has_list_unsubscribe: true }), written), "List-Unsubscribe alone");
   assert.ok(!senders.isBulk(m("person@club.example", { precedence_header: "list" }), written), "a person posting to a list");
+  assert.ok(!senders.isBulk(m("person@club.example", { precedence_header: "list", has_list_unsubscribe: true, list_id: "<club.groups.example>" }), written), "a person posting to a group that adds List-Unsubscribe");
   assert.ok(!senders.isBulk(m("noreply@acme.example", { label_ids: ["CATEGORY_PROMOTIONS"], has_list_unsubscribe: true }), written), "a company the user wrote to");
   assert.ok(!senders.isBulk(m("lee@uni.example", { label_ids: ["CATEGORY_PROMOTIONS"] }), written), "someone the user wrote to");
+  for (const [address, name] of [["recruitment-no-reply@bank.example", "Bank Recruitment"], ["no-reply@ats.payroll.example", "Rabot Energy"], ["emea-earlycareers@video.example", "EMEA EarlyCareers"], ["no-reply@us.greenhouse-mail.io", "Acme"]]) {
+    assert.ok(!senders.isBulk(m(address, { sender: name, label_ids: ["CATEGORY_PROMOTIONS"] }), written), `a job application system: ${address}`);
+  }
 });
 const corr = await profile.correspondents(userId, ["lee@uni.example", "jobs@acme.example", "news@letter.example"]);
 ok("someone the user answered or wrote to is a correspondent; a newsletter is not", () => {
   assert.ok(corr.has("lee@uni.example") && corr.has("jobs@acme.example") && !corr.has("news@letter.example"));
 });
+
+// ── Rules for todos, meetings, follow-ups and newsletters ───────────────────
+// Each case is a failure seen on a real inbox, rebuilt with made-up names.
+console.log("\nRules");
+const rules = await import("./rules.ts");
+const NOW = new Date("2026-11-23T10:00:00Z"); // a Monday
+const TZ = "Asia/Dubai";
+
+ok("calendar mail is told from its headers", () => {
+  assert.ok(rules.calendarHeaders({ from: "Sam <sam@uni.example>", sender: "Google Calendar <calendar-notification@google.com>" }));
+  assert.ok(rules.calendarHeaders({ "content-class": "urn:content-classes:calendarmessage" }));
+  assert.ok(rules.calendarHeaders({ "x-ms-exchange-calendar-series-instance-id": "x" }));
+  assert.ok(!rules.calendarHeaders({ from: "Sam <sam@uni.example>" }));
+});
+const ICS_REPLY = "BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nBEGIN:VEVENT\r\nDTSTART;TZID=Asia/Dubai:20261124T131500\r\nDTEND;TZID=Asia/Dubai:20261124T140000\r\nUID:sam-1@google.com\r\nSUMMARY:Sam / Me\r\nEND:VEVENT\r\nEND:VCALENDAR";
+const ICS_OUTLOOK = "BEGIN:VCALENDAR\nMETHOD:REQUEST\nBEGIN:VTIMEZONE\nTZID:Arabian Standard Time\nBEGIN:STANDARD\nTZOFFSETFROM:+0400\nTZOFFSETTO:+0400\nEND:STANDARD\nEND:VTIMEZONE\nBEGIN:VEVENT\nDTSTART;TZID=Arabian Standard Time:20261124T105000\nRRULE:FREQ=WEEKLY;BYDAY=TU\nSUMMARY:Research upd\n ate\nUID:abc\nEND:VEVENT\nEND:VCALENDAR";
+ok("an acceptance's .ics reads 1:15pm in its own zone; an Outlook zone name falls back to its offset", () => {
+  assert.deepEqual(rules.parseIcs(ICS_REPLY, "UTC"), { method: "REPLY", uid: "sam-1@google.com", title: "Sam / Me", start: "2026-11-24T09:15:00.000Z", end: "2026-11-24T10:00:00.000Z", all_day: false, recurring: false });
+  const o = rules.parseIcs(ICS_OUTLOOK, "UTC")!;
+  assert.deepEqual([o.start, o.title, o.recurring], ["2026-11-24T06:50:00.000Z", "Research update", true]);
+});
+
+const mtg = (body: string, quote: string, d: Record<string, unknown>, subject = "Meeting") => rules.meetingOf({ action: "schedule_meeting", quote, meetingDetails: d }, { subject, body_text: body }, TZ, NOW);
+ok("a meeting at 1:15pm is 13:15, whatever time the model wrote", () => {
+  const body = "Could we meet on Tuesday, Nov 24 at 1:15pm? Room 204.";
+  assert.equal(mtg(body, "Could we meet on Tuesday, Nov 24 at 1:15pm?", { time: "1:15pm", date: "2026-11-24" }).dateTime, "2026-11-24T13:15");
+  assert.equal(mtg(body, "Could we meet on Tuesday, Nov 24 at 1:15pm?", { time: "19:15", date: "2026-11-24" }).dateTime, null, "a time that is not in the quote");
+});
+ok("an email that gives no time gets no time", () => {
+  const body = "Shivam would like to schedule an interview with you. Pick a slot on their page.";
+  assert.equal(mtg(body, "Shivam would like to schedule an interview with you.", { time: "9:00 AM", date: "2026-11-24" }).dateTime, null);
+  assert.equal(mtg(body, "Not a sentence from this email at all.", { time: "9:00 AM" }).quote, null);
+});
+ok("a stated zone is applied and shown; an unreadable one gives no time", () => {
+  const body = "Does Friday at 10am EST work for a call?";
+  const m = mtg(body, "Does Friday at 10am EST work for a call?", { time: "10am", timezone: "EST" });
+  assert.deepEqual([m.dateTime, m.asWritten], ["2026-11-27T19:00", "10am EST"]);
+  assert.equal(mtg("Call Friday at 10am Moon Standard Time?", "Call Friday at 10am Moon Standard Time?", { time: "10am", timezone: "Moon Standard Time" }).dateTime, null);
+  assert.equal(mtg("Lunch tomorrow at 12:30?", "Lunch tomorrow at 12:30?", { time: "12:30" }).dateTime, "2026-11-24T12:30");
+  assert.equal(mtg("Call at 3:00 on Friday?", "Call at 3:00 on Friday?", { time: "3:00" }).dateTime, null, "3:00 could be morning or afternoon");
+});
+ok("a todo needs a person's ask, quoted from the email, and never comes from calendar mail", () => {
+  const lease = { subject: "Lease", body_text: "Hi, could you sign the renewal and send it back by December 15? Thanks, Dana" };
+  const todo = { action: "add_todo", label: "Sign the lease renewal", quote: "could you sign the renewal and send it back by December 15?" };
+  assert.ok(rules.todoOf([todo], lease, "action-required"));
+  assert.equal(rules.todoOf([{ ...todo, quote: "Please sign everything today." }], lease, "action-required"), null, "a quote not in the email");
+  assert.equal(rules.todoOf([{ ...todo, quote: undefined }], lease, "action-required"), null, "no quote");
+  for (const c of ["promotions", "updates"]) assert.equal(rules.todoOf([todo], lease, c), null, c);
+  assert.equal(rules.todoOf([todo], { ...lease, is_calendar: true }, "important"), null, "calendar mail");
+});
+
+// Through the engine: calendar mail is linked, not proposed; sorted mail
+// makes no todo; a meeting without a time is not proposed.
+const ruleUser = randomUUID();
+await db.from("profiles").insert({ id: ruleUser, email: "me@example.com", notification_level: "none", autonomy_level: "assist", working_hours: { timezone: TZ } });
+const { data: ruleAccount } = await db.from("gmail_accounts").insert({ user_id: ruleUser, gmail_address: "me@example.com", token_ref: "check:none" }).select("id").single();
+let rn = 0;
+async function ruleMail(x: Record<string, unknown>) {
+  rn++;
+  const { data } = await db
+    .from("emails")
+    .insert({ user_id: ruleUser, gmail_id: `r-${rn}`, thread_id: `rt-${rn}`, gmail_account_id: ruleAccount!.id, received_at: new Date().toISOString(), label_ids: ["INBOX"], ...x })
+    .select("id")
+    .single();
+  return data!.id as string;
+}
+await db.from("contacts").insert({ user_id: ruleUser, email: "sam@uni.example", source: "contact" });
+const accepted = await ruleMail({
+  subject: "Accepted: Sam / Me @ Tue Nov 24, 2026 1:15pm - 2pm (GST)", sender: "Sam <sam@uni.example>", sender_email: "sam@uni.example",
+  body_text: "Sam has accepted this invitation. Sam / Me, Tuesday Nov 24, 2026 1:15pm to 2pm, Gulf Standard Time", is_calendar: true, calendar_event: rules.parseIcs(ICS_REPLY, "UTC"),
+});
+const { analyzeEmailsForUser } = await import("./analyzeEmails.ts");
+await analyzeEmailsForUser(ruleUser, db);
+const { data: acceptedRow } = await db.from("email_processed").select("category, quick_actions, calendar").eq("email_id", accepted).single();
+ok("calendar mail is sorted without the model, with its event and no actions", () => {
+  assert.equal(acceptedRow!.category, "updates");
+  assert.deepEqual(acceptedRow!.quick_actions, []);
+  assert.deepEqual([(acceptedRow!.calendar as { title: string }).title, (acceptedRow!.calendar as { start: string }).start], ["Sam / Me", "2026-11-24T09:15:00.000Z"]);
+});
+// What a fooled model might still say about it, and about mail it sorted as updates.
+await db.from("email_processed").update({
+  quick_actions: [
+    { action: "add_todo", label: "Add Sam / Me to calendar", quote: "Sam has accepted this invitation." },
+    { action: "schedule_meeting", label: "Sam / Me", quote: "Tuesday Nov 24, 2026 1:15pm to 2pm", meetingDetails: { time: "1:15pm", date: "2026-11-24" } },
+  ],
+}).eq("email_id", accepted);
+await db.from("contacts").insert({ user_id: ruleUser, email: "platform@cloud.example", source: "contact" });
+const shutdown = await ruleMail({ subject: "Your project has been shut down", sender: "Cloud <platform@cloud.example>", sender_email: "platform@cloud.example", body_text: "Your project was shut down. You can recover it within 30 days by following the instructions." });
+await db.from("email_processed").insert({ user_id: ruleUser, email_id: shutdown, category: "updates", summary: "Project shut down", quick_actions: [{ action: "add_todo", label: "Review recovery instructions", quote: "You can recover it within 30 days by following the instructions." }] });
+await ruleMail({ subject: "Your application was accepted", sender: "Jobs via Board <no-reply@board.example>", sender_email: "no-reply@board.example", body_text: "Good news.", is_read: true });
+const interview = await ruleMail({ subject: "Follow-up from your application", sender: "Jobs via Board <no-reply@board.example>", sender_email: "no-reply@board.example", body_text: "Shivam would like to schedule an interview with you. Pick a slot on their page." });
+await db.from("email_processed").insert({
+  user_id: ruleUser, email_id: interview, category: "action-required", summary: "Interview",
+  quick_actions: [
+    { action: "add_todo", label: "Schedule the interview", quote: "Shivam would like to schedule an interview with you." },
+    { action: "schedule_meeting", label: "Interview", quote: "Shivam would like to schedule an interview with you.", meetingDetails: { title: "Interview", time: "9:00 AM", date: "2026-11-24" } },
+  ],
+});
+await planNew(ruleUser);
+const made = async (table: string) => (await db.from(table).select("email_id").eq("user_id", ruleUser)).data ?? [];
+const [ruleTodos, ruleMeetings] = [await made("todos"), await made("meetings")];
+const { data: ruleLog } = await db.from("action_log").select("kind, email_id").eq("user_id", ruleUser).in("kind", ["todo", "meeting"]);
+const boardQuestions = await questionsAbout("no-reply@board.example");
+ok("no todo or meeting comes from calendar mail, from mail sorted as updates, or from an email with no time", () => {
+  assert.deepEqual([ruleTodos.length, ruleMeetings.length, ruleLog!.length], [0, 0, 0]);
+});
+ok("a todo from a no-reply address whose mail was opened is asked about, not made", () => assert.equal(boardQuestions.length, 1));
+
+// Newsletters: bulk by headers, two emails or more, never someone written to.
+const nlHdr = (id: string, from: string, x: Partial<gmail.HeaderRow> = {}): gmail.HeaderRow => ({ gmail_id: id, thread_id: id, at: new Date().toISOString(), labels: ["INBOX"], from, to: "me@example.com", cc: "", list_unsubscribe: false, list_id: "", precedence: "", ...x });
+await indexMail(ruleUser, ruleAccount!.id as string, [
+  nlHdr("n1", "Digest <digest@news.example>", { list_unsubscribe: true, list_id: "<d.news.example>" }),
+  nlHdr("n2", "Digest <digest@news.example>", { list_unsubscribe: true, list_id: "<d.news.example>" }),
+  nlHdr("n3", "Once <once@news.example>", { list_unsubscribe: true, list_id: "<o.news.example>" }),
+  nlHdr("n4", "Prof Kim <kim@uni.example>", { precedence: "list", list_id: "<cs.uni.example>", list_unsubscribe: true }),
+  nlHdr("n5", "Prof Kim <kim@uni.example>", { precedence: "list", list_id: "<cs.uni.example>", list_unsubscribe: true }),
+  nlHdr("n6", "Talent <no-reply@ats.example>", { labels: ["INBOX", "CATEGORY_PROMOTIONS"], list_unsubscribe: true }),
+  nlHdr("n7", "Talent <no-reply@ats.example>", { labels: ["INBOX", "CATEGORY_PROMOTIONS"], list_unsubscribe: true }),
+  nlHdr("n8", "me@example.com", { labels: ["SENT"], to: "Recruiting <jobs@ats.example>" }),
+  nlHdr("n9", "Office <office@example.com>", { precedence: "bulk", list_id: "<all.example.com>" }),
+  nlHdr("n10", "Office <office@example.com>", { precedence: "bulk", list_id: "<all.example.com>" }),
+], new Set(["me@example.com"]));
+await rebuildSenders(ruleUser);
+const newsletters = await listNewsletters(ruleUser);
+ok("Newsletters: list mail with an unsubscribe is listed, with why; a person on a list, one email, a company written to and the user's own domain are not", () => {
+  assert.deepEqual(newsletters.map((x) => x.sender_email), ["digest@news.example"]);
+  assert.deepEqual([newsletters[0].total, newsletters[0].opened, newsletters[0].can_unsubscribe], [2, 2, true]);
+});
+
+// Follow-ups: sent mail that waits on a person.
+const fu = await import("./followups.ts");
+const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+const sentMail = (thread: string, to: string, body: string, awaits: boolean | null, days = 3) =>
+  db.from("emails").insert({ user_id: ruleUser, gmail_id: `fu-${thread}`, thread_id: thread, gmail_account_id: ruleAccount!.id, subject: `About ${thread}`, recipients: to, body_text: body, label_ids: ["SENT"], received_at: ago(days), awaits_reply: awaits });
+await sentMail("asks", "Dana <dana@uni.example>", "Could you send me the dataset by Friday?", true);
+await sentMail("print", "Service Account <campus.mobileprint@uni.example>", "", null);
+await sentMail("thanks", "Lee <lee@uni.example>", "Thanks, sounds good!", false);
+await sentMail("fresh", "Ann <ann@uni.example>", "Can we talk tomorrow?", true, 1);
+await sentMail("answered", "Bo <bo@uni.example>", "Are you coming on Monday?", true);
+await db.from("emails").insert({ user_id: ruleUser, gmail_id: "fu-answer", thread_id: "answered", sender_email: "bo@uni.example", subject: "Re: About answered", label_ids: ["INBOX"], received_at: ago(1) });
+await sentMail("muted", "Cy <cy@uni.example>", "Did you get my form?", true);
+await sentMail("self", "me.alias@example.com", "Could you remind me to print this?", true);
+await indexMail(ruleUser, ruleAccount!.id as string, [nlHdr("fu-alias", "Me <me.alias@example.com>", { labels: ["SENT"], to: "dana@uni.example" })], new Set(["me@example.com"]));
+await profile.setPref(ruleUser, "sender", "cy@uni.example", "never_followup", "user");
+const suggested = (await fu.suggestedFollowups(ruleUser)).map((x) => x.thread_id);
+ok("Follow-ups: only what asks a person something, two days on, unanswered, not muted, and not to the user's own alias", () => assert.deepEqual(suggested, ["asks"]));
+
+// The same failures through the configured model: what it says is printed,
+// and what code allows of it is checked.
+if (modelConfigured()) {
+  console.log("Rules through the configured model (this can take a minute)");
+  const { processFullEmail, expectsAnswer } = await import("./ai.ts");
+  const CASES: { name: string; subject: string; from: string; body: string; todo?: boolean; time?: string | null }[] = [
+    { name: "award nominations sent to every student", subject: "Distinguished Teaching Award Nominations", from: "Office of Undergraduate Education <oue@uni.example>", body: "Dear students, nominations for the Distinguished Teaching Award are open. Nominate a faculty member who made a difference by submitting the form before December 7.", todo: false },
+    { name: "admissions webinar", subject: "MS Programs: Nov. 25 Admissions Webinar", from: "Graduate Admissions <gradadmissions@uni.example>", body: "Join us on November 25 for an online information session about our MS programs. Register now to save your spot.", todo: false },
+    { name: "cloud project shut down", subject: "Your project tabby-123 has been shut down", from: "Cloud Platform <platform-noreply@cloud.example>", body: "Your project tabby-123 has been shut down at your request. You can recover it within 30 days by following the instructions in the console.", todo: false },
+    { name: "payment failed", subject: "Your payment failed", from: "Billing <support@embeddings.example>", body: "We could not charge your card for this month's usage. Update your payment method in your account settings to keep using the API.", todo: false },
+    { name: "interview to schedule, no time given", subject: "Follow-up from your successful application", from: "Shivam via Board <no-reply@board.example>", body: "Shivam from Vats Robotics would like to schedule an interview with you. Choose a time that works for you on the Board app.", time: null },
+    { name: "meeting at 1:15pm", subject: "Research sync", from: "Sam Lee <sam@uni.example>", body: "Hi, could we meet on Tuesday, Nov 24 at 1:15pm in my office to go over the results?", time: "13:15" },
+    { name: "a person asks for a document", subject: "Signed form", from: "Dana Reyes <dana@uni.example>", body: "Hi, could you sign the attached consent form and send it back to me by Friday? Thanks, Dana", todo: true },
+  ];
+  const outcomes: string[] = [];
+  for (const c of CASES) {
+    const r = await processFullEmail(c.subject, c.from, c.body, undefined, undefined, undefined, TZ, "");
+    const todo = rules.todoOf(r.quick_actions as Record<string, unknown>[], { subject: c.subject, body_text: c.body }, r.category);
+    const meeting = (r.quick_actions as { action?: string; meetingDetails?: { dateTime?: string | null } }[]).find((a) => a.action === "schedule_meeting");
+    const time = meeting?.meetingDetails?.dateTime?.slice(11) ?? null;
+    console.log(`      ${c.name}: ${r.category}, todo ${todo ? `"${todo.label}"` : "none"}, meeting ${meeting ? time ?? "no time given" : "none"}`);
+    if (c.todo !== undefined && !!todo !== c.todo) outcomes.push(`${c.name}: todo ${todo ? "made" : "missing"}`);
+    if (c.time !== undefined && meeting && time !== c.time) outcomes.push(`${c.name}: meeting at ${time}`);
+  }
+  const judged = [await expectsAnswer("Dataset", "dana@uni.example", "Could you send me the dataset by Friday?"), await expectsAnswer("Re: plans", "lee@uni.example", "Thanks, sounds good!")];
+  console.log(`      sent mail that asks: ${judged[0]}, a thank-you: ${judged[1]}`);
+  if (judged[0] !== true || judged[1] !== false) outcomes.push("follow-up judging");
+  ok("the configured model's suggestions pass the rules on every case", () => assert.deepEqual(outcomes, []));
+} else {
+  console.log("Rules through a model: skipped, no model is set up.");
+}
 
 console.log(`\n${passed} checks passed.`);

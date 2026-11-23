@@ -37,10 +37,14 @@ const CATEGORY: Record<string, string> = {
   CATEGORY_FORUMS: "forums",
 };
 
-// The user's own addresses: every connected account.
+// The user's own addresses: every connected account, and every address
+// their sent mail went out from (an alias).
 export async function ownAddresses(userId: string): Promise<Set<string>> {
-  const { data } = await db.from("gmail_accounts").select("gmail_address").eq("user_id", userId);
-  return new Set((data ?? []).map((a) => lc(a.gmail_address)));
+  const [{ data }, { data: from }] = await Promise.all([
+    db.from("gmail_accounts").select("gmail_address").eq("user_id", userId),
+    db.from("mail_index").select("from_addr").eq("user_id", userId).eq("sent", true).limit(10_000),
+  ]);
+  return new Set([...(data ?? []).map((a) => lc(a.gmail_address)), ...(from ?? []).map((r) => lc(r.from_addr))].filter(Boolean));
 }
 
 // Add messages to mail_index; a message seen again updates its row.
@@ -213,14 +217,31 @@ export async function writtenTo(userId: string): Promise<Written> {
 // Bulk mail, from headers alone: Gmail's promotions category, or
 // List-Unsubscribe together with List-Id or Precedence: bulk. Never mail from
 // someone the user wrote to, or from a company they wrote to (the job
-// application system they applied through).
+// application system they applied through), and never a post to a discussion
+// list (Precedence: list), which is a person writing to a group.
 export function isBulk(
-  m: { sender_email?: string | null; label_ids?: string[] | null; has_list_unsubscribe?: boolean | null; list_id?: string | null; precedence_header?: string | null },
+  m: { sender_email?: string | null; sender?: string | null; label_ids?: string[] | null; has_list_unsubscribe?: boolean | null; list_id?: string | null; precedence_header?: string | null },
   written: Written,
 ): boolean {
   const address = lc(m.sender_email);
   const domain = address.split("@")[1] ?? "";
   if (written.addresses.has(address) || [...written.domains].some((d) => domain === d || domain.endsWith(`.${d}`))) return false;
+  if (jobSystem(address, m.sender)) return false;
   if ((m.label_ids ?? []).includes("CATEGORY_PROMOTIONS")) return true;
-  return !!m.has_list_unsubscribe && (!!m.list_id || /bulk/i.test(m.precedence_header ?? ""));
+  return bulkHeaders(!!m.has_list_unsubscribe, m.list_id, m.precedence_header);
+}
+
+// Job application systems and recruiting teams. Mail about an application
+// is never bulk, however it is sent: the model reads it.
+const ATS = /(^|[.@])(greenhouse|greenhouse-mail|lever|hire\.lever|myworkday|workday|smartrecruiters|ashbyhq|icims|jobvite|taleo|successfactors|bamboohr|breezy|rippling|workable|teamtailor|recruitee|personio|hackerrank|codesignal)\.|(^|[.@])ats\./i;
+const RECRUITING = /recruit|careers?\b|earlycareers|talent acquisition|hiring|\bjobs?\b/i;
+export function jobSystem(address: string, name?: string | null): boolean {
+  const local = address.split("@")[0] ?? "";
+  return ATS.test(address) || RECRUITING.test(local) || RECRUITING.test(String(name ?? "").split("<")[0]);
+}
+
+// The header half of isBulk, for one email or a sender's usual headers.
+export function bulkHeaders(listUnsubscribe: boolean, listId: string | null | undefined, precedence: string | null | undefined): boolean {
+  if (/^\s*list\s*$/i.test(precedence ?? "")) return false;
+  return listUnsubscribe && (!!listId || /bulk/i.test(precedence ?? ""));
 }

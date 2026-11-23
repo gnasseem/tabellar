@@ -91,6 +91,8 @@ export async function storeInbox(userId: string, account: Account, rawEmails: Em
       cc_recipients: e.cc_recipients,
       precedence_header: e.precedence_header,
       list_id: e.list_id ?? null,
+      is_calendar: e.is_calendar,
+      calendar_event: e.calendar_event,
     }));
     const { data } = await db.from("emails").insert(rows).select("id");
     inserted.push(...((data ?? []) as { id: string }[]).map((e) => e.id));
@@ -172,7 +174,7 @@ export function sentHeaderRow(e: Sent, account: Account): HeaderRow {
     thread_id: e.thread_id,
     at: isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString(),
     labels: ["SENT"],
-    from: account.gmail_address ?? "",
+    from: e.from || account.gmail_address || "",
     to: e.to,
     cc: e.cc,
     list_unsubscribe: false,
@@ -328,4 +330,37 @@ export async function fillMissingBodies(userId: string): Promise<number> {
     await db.from("action_log").delete().in("email_id", ids).eq("status", "proposed");
   }
   return rows.length;
+}
+
+// Fetch stored inbox mail of the last `days` again and update what is read
+// from its headers and parts: calendar mail and its event, list headers,
+// attachments. For mail stored before those were kept.
+export async function refreshStored(userId: string, days: number): Promise<number> {
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+  const { data: accounts } = await db.from("gmail_accounts").select("id, token_ref").eq("user_id", userId).eq("is_active", true);
+  let updated = 0;
+  for (const account of accounts ?? []) {
+    const { data: stored } = await db
+      .from("emails")
+      .select("id, gmail_id")
+      .eq("gmail_account_id", account.id)
+      .not("label_ids", "cs", '{"SENT"}')
+      .gte("received_at", since)
+      .limit(5000);
+    const byGmailId = new Map<string, string>((stored ?? []).map((e) => [String(e.gmail_id), String(e.id)]));
+    const ids = [...byGmailId.keys()];
+    for (let i = 0; i < ids.length; i += 50) {
+      for (const e of await fetchMessages(account.token_ref as string, ids.slice(i, i + 50))) {
+        await db
+          .from("emails")
+          .update({
+            is_calendar: e.is_calendar, calendar_event: e.calendar_event, list_id: e.list_id ?? null, precedence_header: e.precedence_header ?? null,
+            has_list_unsubscribe: e.has_list_unsubscribe, attachments: e.attachments ?? [], has_attachments: e.has_attachments,
+          })
+          .eq("id", byGmailId.get(e.gmail_id)!);
+        updated++;
+      }
+    }
+  }
+  return updated;
 }

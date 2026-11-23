@@ -4,44 +4,9 @@
 import { act, engineSettings } from "./actions.ts";
 import { chatCompletion, requireModel, modelTimeoutMs } from "./llm.ts";
 import type { Slot } from "./config.ts";
+import { checkActions } from "./rules.ts";
 
 const PROMPTS = {
-  categorize: `You are an expert email categorizer. Classify the email into exactly one category.
-
-STEP 1  -  HIGH-STAKES CHECK (run this before anything else):
-If this email concerns any of these life-event domains, it is NEVER "updates" or "promotions":
-- Career: job offer, offer letter, interview invitation, application update (hired/shortlisted/rejected/next steps/offer extended), onboarding, background check, recruiter asking for a reply, contract to sign
-- Academic: admission/acceptance/rejection, financial aid, scholarship offer, enrollment deadline
-- Legal: contract, agreement, legal notice, court filing, settlement, lease, terms requiring signature
-- Medical: appointment confirmation/change, lab or test results, prescription, diagnosis, referral
-- Financial decision: mortgage/loan approval or denial, credit application, account suspended, fraud alert requiring action
-ATS or HR system emails (Greenhouse, Workday, Lever, Taleo, SmartRecruiters, iCIMS, Jobvite, Breezy, BambooHR) about a job or interview are NOT updates.
-If STEP 1 triggers: use action-required when the email expects a reply/action from you; use important when it is status-only FYI.
-
-STEP 2  -  STANDARD PRIORITY ORDER (first rule that fits wins):
-
-1. action-required
-   The sender is a real human (or a human acting on behalf of an org) and is waiting on YOU to do something concrete with a clear "finish line": reply with an answer, approve, sign, pay, schedule, RSVP, review a doc, submit a form. If a human asked you a direct question, it is action-required.
-
-2. important
-   A real human wrote to you and the message is genuinely worth reading, but no response/action is required right now. Examples: status update from a colleague, personal note from a friend, intro/announcement from a known contact, meeting notes you were CC'd on, FYI from your boss. Do NOT use "important" as a safe default; only use it for person-to-person mail that matters.
-
-3. promotions
-   Bulk content sent to many recipients: marketing campaigns, sales emails, promotional announcements, brand newsletters, weekly content digests, product round-ups, sponsored content. If the writing pattern is marketing/editorial and the same email went to many people, it is promotions  -  even from a company you like.
-
-4. updates
-   Automated, transactional, or system-generated messages that are NOT marketing. Receipts, order confirmations, shipping updates, bank/card alerts, security alerts, password resets, calendar reminders, billing statements, service status pings, app notifications, no-reply automation.
-
-Tie-breakers:
-- An unsubscribe link alone does not make something promotions: transactional emails often include one. Judge by content and intent.
-- A direct question from a real person always beats "important" or "updates".
-- Balance matters: do NOT default to "important" for anything unclear. When unsure between important and updates, prefer updates for automated content and important only for human-to-human messages.
-
-Respond with ONLY the category slug, nothing else.`,
-  summarize:
-    "Summarize this email in 1-3 sentences. Lead with the single most important fact  -  if there is a specific dollar amount, deadline, decision, or named ask, state it first. Name the sender only if they are a real person (skip for no-reply/automated). Capture what is needed from the reader, if anything. Be direct and concrete; no vague filler like 'This email contains information about...'",
-  quick_actions:
-    'Look at this email and suggest 1-3 actions that would actually help the user clear it. Most real emails from people have at least one action (reply or todo). Return a JSON array of objects with "label" (descriptive phrase up to 12 words  -  for add_todo, include specific context: topic, sender name, deadline; for reply, state what the reply achieves; for schedule_meeting, name who and what to schedule OR what event to add to calendar), "action" (one of: "reply", "add_todo", "schedule_meeting"), and optionally "text" (the reply body for reply; meeting/event description for schedule_meeting) and optionally "meetingDetails" (for schedule_meeting only). Rules: include a reply action whenever a human asked a question or expects a response  -  the "text" must directly address the specific ask using actual details from the email, not a generic acknowledgment; include an add_todo whenever the email implies a task to track  -  label must be self-explanatory without re-reading; include schedule_meeting when the email mentions ANY of: meeting, call, zoom, teams, phone/video call, coffee chat, catch-up, sync, check-in, interview, office hours, OR any event/activity to attend such as recital, performance, concert, ceremony, presentation, lecture, seminar, orientation, graduation, show, class, workshop, webinar, or any event with a specific date/time. IMPORTANT: emails about jobs, interviews, medical appointments, legal matters, academic admissions, or financial decisions ALWAYS get at least one action even if the sender looks automated. Return [] only if the email is a promotions/marketing blast, shipping receipt, or automated notification with absolutely no personal ask from the user. For reply actions: if the reply text requires information the email does not contain  -  such as the recipient\'s name when the email says "my friend" or uses only pronouns, a specific preference, or a choice between options  -  include a "questions" array on that action. Each question entry: {"key":"snake_case_var","label":"Human-readable label","placeholder":"example value"}. Use {{key}} inside "text" wherever that answer should go. Only add questions when the info is truly absent from the email. Maximum 2 questions per action. Omit "questions" entirely when the email provides enough context. For schedule_meeting actions: include a "meetingDetails" object with: "title" (event name), "dateTime" (ISO local datetime "YYYY-MM-DDTHH:mm" if a specific date/time is mentioned, else null), "duration" (minutes as a number, estimate if not stated, else null), "location" (meeting link URL or physical address if mentioned, else null), "isVirtual" (true/false). Use the current year when resolving dates. Example: [{"label":"Confirm availability for Thursday interview with Acme","action":"reply","text":"Hi, Thursday works for me. I am available from 2-5pm EST. Please send a calendar invite."},{"label":"Prepare portfolio samples for Acme interview by Wed","action":"add_todo"},{"label":"Add semester recital to calendar  -  Fri 8 May 3pm","action":"schedule_meeting","text":"End of semester recital","meetingDetails":{"title":"End of Semester Recital","dateTime":"2026-05-08T15:00","duration":90,"location":null,"isVirtual":true}},{"label":"Reply to friend asking about weekend plans","action":"reply","text":"Hey {{friend_name}}, sounds great! I am free Saturday afternoon.","questions":[{"key":"friend_name","label":"Your friend\'s name","placeholder":"e.g. Alex"}]}]',
   process_email: `You are an email assistant. Analyze this email and return ONLY valid JSON with no markdown:
 {"reasoning":"...","category":"...","urgency":"...","summary":"...","actions":[...]}
 
@@ -73,22 +38,19 @@ reasoning: ONE sentence  -  name the sender type, what they want, why you chose 
 
 summary: Lead with the single most important fact  -  if there is a specific dollar amount, deadline, decision required, or named ask, state it first. Name the sender only if they are a real person. Use 1-3 sentences. Be concrete; skip filler like "This email informs you that...".
 
-actions: Suggest the actions that would actually help the user clear this email. Aim for 1-3 when urgency is medium or above OR when email is action-required/important. Return [] ONLY when urgency is low AND category is promotions or updates with no personal ask.
-Rules for picking actions:
-- If a human asked a question or requested something, include a "reply" action. The "text" field must directly address the specific question or request using actual details from the email  -  not a generic acknowledgment like "Thanks, will review."
-- If the email implies a task the user should track (review document, prepare presentation, follow up, pay invoice, submit form, complete application, book appointment, sign agreement), include an "add_todo" action. The label must name the specific task, include the sender name when relevant, and include the deadline if one is stated.
-- If the email mentions ANY of: meeting, call, zoom, teams, phone/video call, coffee chat, catch-up, sync, check-in, interview, office hours, or any event/activity to attend (recital, performance, concert, ceremony, presentation, lecture, seminar, orientation, graduation, show, class, workshop, webinar), or if it mentions a specific date/time for something to attend, include a "schedule_meeting" action. Put what to schedule and any details in "text". Also include a "meetingDetails" object: {"title": "event name", "dateTime": "YYYY-MM-DDTHH:mm or null", "duration": minutes_or_null, "location": "meeting URL or physical address or null", "isVirtual": true_or_false}. Use the current year when computing ISO dates from month/day references.
-- High-stakes emails (career/medical/legal/academic/financial) always get at least one action even if the sender looks automated.
-- Do not duplicate: one "reply" + one "add_todo" at most for the same intent.
-- Be concrete: todo labels and reply texts must be self-explanatory without re-reading the email.
+actions: what the user would do about this email. Most email needs nothing: return [] unless a rule below clearly applies. Never add an action just to have one.
+- "reply": a real person asked the user something or is waiting on an answer from them. "text" must answer the specific ask with details from the email, not a generic acknowledgment like "Thanks, will review."
+- "add_todo": only when the user is personally being asked to do something they would agree is theirs to do: someone they deal with needs them to sign, pay what they owe, submit, send, prepare or fix something. Not a todo: marketing or broadcast calls to action (register, sign up, nominate, apply, attend a webinar, buy), offers and options the user may take or leave, things that are done or happen on their own, receipts, notifications, reminders of something optional. "label" names the task, the person when relevant, and the deadline if one is stated. "quote" copies, word for word, the sentence of the email that asks for it.
+- "schedule_meeting": only when the email arranges or proposes a meeting, call, interview or appointment with the user. Not for events advertised to many people. "quote" copies, word for word, the sentence that gives the meeting's time, or else the one that proposes it. "meetingDetails": {"title": "short name", "date": "YYYY-MM-DD resolved against today, or null when the email names no day", "time": "the start time exactly as written in the email, e.g. 1:15pm, or null when the email gives none", "timezone": "the timezone exactly as written next to the time, e.g. EST, or null", "duration": minutes_or_null, "location": "meeting link or address, or null"}. Never supply a time or a timezone the email does not state.
+- At most one action of each kind.
 
 Each action MUST be an object:
-  {"label": "short descriptive phrase", "action": "reply"|"add_todo"|"schedule_meeting", "text": "optional content for reply or meeting", "questions": [optional array, reply only], "meetingDetails": {optional, schedule_meeting only}}
+  {"label": "short descriptive phrase", "action": "reply"|"add_todo"|"schedule_meeting", "text": "reply content, or what the meeting is about", "quote": "add_todo and schedule_meeting only", "questions": [optional array, reply only], "meetingDetails": {schedule_meeting only}}
 For reply actions: if the reply text requires information the email does not contain  -  such as the recipient's name when the email uses only "my friend" or pronouns, a specific preference, or a choice between options  -  include a "questions" array on that action. Each question: {"key":"snake_case_var","label":"Human-readable label","placeholder":"example value"}. Use {{key}} inside "text" wherever that answer should go. Only add questions when the info is truly absent from the email. Max 2 questions per action. Omit "questions" entirely when the email provides enough context.
 Examples:
   {"label": "Reply to John confirming Q3 budget review by Friday", "action": "reply", "text": "Hi John, I can have the Q3 budget review done by Friday. I will send over my comments then."}
-  {"label": "Submit reimbursement form by Dec 15 (Finance team request)", "action": "add_todo"}
-  {"label": "Add semester recital to calendar  -  Fri 8 May 3pm", "action": "schedule_meeting", "text": "End of semester recital", "meetingDetails": {"title": "End of Semester Recital", "dateTime": "2026-05-08T15:00", "duration": 90, "location": null, "isVirtual": true}}
+  {"label": "Sign the lease renewal for Dana by Dec 15", "action": "add_todo", "quote": "Could you sign the renewal and send it back by December 15?"}
+  {"label": "Call with Priya about the internship", "action": "schedule_meeting", "text": "Internship call", "quote": "Would Thursday at 4:30pm EST work for a quick call?", "meetingDetails": {"title": "Call with Priya", "date": "2026-05-07", "time": "4:30pm", "timezone": "EST", "duration": 30, "location": null}}
   {"label": "Reply to friend about weekend plans", "action": "reply", "text": "Hey {{friend_name}}, Saturday works for me!", "questions": [{"key": "friend_name", "label": "Your friend's name", "placeholder": "e.g. Alex"}]}
 Return raw JSON only. No explanation, no markdown.`,
   draft:
@@ -125,8 +87,6 @@ If the digest is thin, still write a calm overview of what the day looks like ba
     'Extract entities from this email that would be useful to remember for future reference. Return a JSON array of objects with "entity" (proper name or specific identifier), "entity_type" (person|company), and "info" (one concrete sentence about what was learned: their role, their relationship to the user, or what the user deals with them about). Rules: only include named people with a clear role or relationship; only include companies if a specific detail was learned (what they do, how the user deals with them); never include topics, places, projects or figures; skip generic words like "meeting", "email", "deadline", "invoice", "document"; skip entities where info would be trivially vague. Confidence bar: only include if you would recommend storing this fact for future drafts or decisions. Return an empty array if nothing clearly useful was found.',
   style_analysis:
     'Analyze the writing style of these sent emails (written BY the user). Return ONLY valid JSON with EXACTLY these four string keys and no extras: {"greeting_style":"<short>","closing_style":"<short>","tone":"formal|casual|mixed","avg_length":"short|medium|long"}. FIELD RULES  -  greeting_style: the exact most common opening word or phrase the user writes (e.g. "Hi", "Hey", "Hi {name}", "Hello", "Dear", "Good morning"). closing_style: the exact most common sign-off the user writes (e.g. "Best", "Thanks", "Cheers", "Best regards", "Talk soon", "Thanks,\\nGeorge"). NEVER return empty strings  -  if there is truly no greeting or closing, use "Hi" and "Thanks" as sensible defaults. tone: single word from formal/casual/mixed. avg_length: single word from short/medium/long. Do NOT wrap in markdown. Do NOT add commentary. Return JSON only.',
-  meeting_detect:
-    'Determine if this email contains or requests a meeting. Return JSON: {"has_meeting": boolean, "title": string, "suggested_duration": number (minutes), "attendees": string[], "suggested_date": string or null}.',
   agent_system: `You are Tabellar's Auto-Resolve executive agent. Your job is to completely clear the user's current briefing by producing a fully confirmed action plan: drafted replies, todos, calendar events, and a single bulk archive. At the end, the user reviews and executes approved actions with one click.
 
 You have tools. You MUST use them. You never speak in plain prose to the user. Every output from you is either tool calls or, when you truly have nothing to say, a single short line of status text (one sentence, max 12 words, no lists, no options in text).
@@ -614,7 +574,8 @@ export async function processFullEmail(
     category: finalCategory,
     urgency: finalUrgency,
     summary: (parsed?.summary || "").trim(),
-    quick_actions: Array.isArray(parsed?.actions) ? parsed.actions : [],
+    // What the model suggests, checked against the email itself.
+    quick_actions: checkActions(parsed?.actions, { subject, body_text: body }, finalCategory, timezone),
     tags: returnedTags,
   };
 }
@@ -897,6 +858,19 @@ export async function analyzeWritingStyle(sentEmails: string): Promise<{
   };
 }
 
+// Does an email the user sent wait on an answer: it asks something, asks
+// them to do something, or promises something? Fast model, once per email.
+export async function expectsAnswer(subject: string, to: string, body: string): Promise<boolean> {
+  const raw = await llm(
+    'The user sent the email below. Does it ask the recipient a question, ask them to do or send something, or promise something the user will do, so that an answer or a follow-up is expected? A thank-you, a "sounds good", a reaction, an FYI or a reply that closes the matter expects nothing. Return only JSON: {"expects": true} or {"expects": false}.',
+    `To: ${to}\nSubject: ${subject}\n\n${body.slice(0, 3000)}`,
+    0,
+    64,
+    "fast",
+  );
+  return (parseJson(raw) as { expects?: unknown } | null)?.expects === true;
+}
+
 // The first facts about the user, from what they wrote. Careful model, once.
 export async function factsFromSent(sample: string): Promise<string[]> {
   const raw = await llm(
@@ -911,35 +885,6 @@ export async function factsFromSent(sample: string): Promise<string[]> {
     .map((f) => String(f ?? "").replace(/\s+/g, " ").trim())
     .filter((f) => f.length > 3 && f.length < 200)
     .slice(0, 10);
-}
-
-export async function detectMeeting(
-  subject: string,
-  sender: string,
-  body: string,
-): Promise<{
-  has_meeting: boolean;
-  title: string;
-  suggested_duration: number;
-  attendees: string[];
-  suggested_date: string | null;
-}> {
-  const text = `Subject: ${subject}\nFrom: ${sender}\n\n${body}`;
-  const raw = await llm(PROMPTS.meeting_detect, text, 0.2, 512, "fast");
-  const parsed = parseJson(raw) as {
-    has_meeting?: boolean;
-    title?: string;
-    suggested_duration?: number;
-    attendees?: string[];
-    suggested_date?: string | null;
-  } | null;
-  return {
-    has_meeting: parsed?.has_meeting ?? false,
-    title: parsed?.title ?? subject,
-    suggested_duration: parsed?.suggested_duration ?? 30,
-    attendees: parsed?.attendees ?? [],
-    suggested_date: parsed?.suggested_date ?? null,
-  };
 }
 
 export async function extractTodos(
@@ -959,19 +904,6 @@ export async function extractTodos(
   return Array.isArray(parsed)
     ? parsed.filter((t: unknown) => typeof t === "string").slice(0, 6)
     : [];
-}
-
-export async function suggestTodosFromEmails(
-  emailsText: string,
-): Promise<{ task: string; source: string }[]> {
-  const raw = await llm(
-    'Based on these recent emails, suggest action items that need to be done. Return a JSON array of objects with "task" (concise task string) and "source" (email subject or sender, max 40 chars). Max 8 items. Return [] if nothing actionable.',
-    emailsText,
-    0.3,
-    1024,
-  );
-  const parsed = parseJson(raw);
-  return Array.isArray(parsed) ? parsed.slice(0, 8) : [];
 }
 
 // ─── Personal Assistant Chat ──────────────────────────────────────────────────

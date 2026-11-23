@@ -79,6 +79,9 @@ function when(iso: string): string {
   return sameDay ? t : `${d.toLocaleDateString([], { weekday: "short" })} ${t}`;
 }
 
+// A meeting's time, and the time as the email wrote it when its zone is not the user's.
+const meetingWhen = (m: any) => `${when(m.start_time)}${m.as_written ? ` (${m.as_written} in the email)` : ""}`;
+
 // The state and words for an inbox row, from an email's outcomes.
 export function rowStatus(outcomes: Outcome[] | undefined): { state: MailState; text: string; sendAt?: string } {
   const shown = (outcomes || []).filter((o) => o.short);
@@ -107,7 +110,24 @@ function draftWhy(draft: any, w: Why): string {
   return line + held;
 }
 
-function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: any[], w: Why): Map<string, Outcome[]> {
+// The calendar event an email is about, as the server linked it: on the
+// calendar, or only described by the invitation's .ics.
+function calendarOutcome(emailId: string, c: any, at: string): Outcome {
+  const cancelled = c.method === "CANCEL";
+  const time = c.start ? (c.all_day ? new Date(`${String(c.start).slice(0, 10)}T12:00`).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }) : when(c.start)) : "";
+  const short = cancelled ? "Cancelled" : c.on_calendar ? `On calendar${time ? `, ${time}` : ""}` : `Invitation${time ? `, ${time}` : ""}`;
+  return {
+    key: `cal:${emailId}`,
+    at,
+    state: "done",
+    short,
+    title: cancelled ? `Cancelled: ${c.title || "an event"}` : c.on_calendar ? `On your calendar: ${c.title || "an event"}` : `Invitation: ${c.title || "an event"}`,
+    why: c.on_calendar ? "Already on your Google Calendar, so Tabellar proposed nothing." : "Not on your Google Calendar. Answer the invitation in Google Calendar to add it.",
+    act: { kind: "view", view: "meetings" },
+  };
+}
+
+function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: any[], cal: any[], w: Why): Map<string, Outcome[]> {
   const map = new Map<string, Outcome[]>();
   const push = (emailId: string | null, o: Outcome) => {
     if (!emailId) return;
@@ -145,7 +165,7 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
     } else if (r.status === "done" && r.kind === "meeting") {
       const m = meetingById.get(d.meetingId);
       if (m) seenMeeting.add(m.id);
-      if (m && m.status === "proposed") push(r.email_id, { ...base, state: "need", short: "Meeting to confirm", title: `Proposed a meeting: ${m.title}`, why: `${when(m.start_time)}. It goes on your calendar when you confirm it.`, act: { kind: "view", view: "meetings" } });
+      if (m && m.status === "proposed") push(r.email_id, { ...base, state: "need", short: "Meeting to confirm", title: `Proposed a meeting: ${m.title}`, why: `${meetingWhen(m)}. It goes on your calendar when you confirm it.`, act: { kind: "view", view: "meetings" } });
       else if (m && m.status === "confirmed") push(r.email_id, { ...base, state: "done", short: `On calendar, ${when(m.start_time)}`, title: `On your calendar: ${m.title}`, why: when(m.start_time), act: { kind: "view", view: "meetings" } });
     } else if (r.status === "done" && r.kind === "archive") {
       push(r.email_id, { ...base, state: "done", short: "Archived", title: "Archived", act: { kind: "undo", id: r.id } });
@@ -164,9 +184,10 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
   for (const d of drafts) if (d.email_id && !seenDraft.has(d.id)) push(d.email_id, { key: d.id, at: d.created_at, state: "need", short: "Reply ready", title: "A reply is drafted, not sent", why: draftWhy(d, w), act: { kind: "review", draftId: d.id } });
   for (const m of meetings) {
     if (!m.email_id || seenMeeting.has(m.id)) continue;
-    if (m.status === "proposed") push(m.email_id, { key: m.id, at: m.created_at, state: "need", short: "Meeting to confirm", title: `Proposed a meeting: ${m.title}`, why: when(m.start_time), act: { kind: "view", view: "meetings" } });
+    if (m.status === "proposed") push(m.email_id, { key: m.id, at: m.created_at, state: "need", short: "Meeting to confirm", title: `Proposed a meeting: ${m.title}`, why: meetingWhen(m), act: { kind: "view", view: "meetings" } });
     else if (m.status === "confirmed") push(m.email_id, { key: m.id, at: m.created_at, state: "done", short: `On calendar, ${when(m.start_time)}`, title: `On your calendar: ${m.title}`, act: { kind: "view", view: "meetings" } });
   }
+  for (const c of cal) if (c.calendar) push(c.email_id, calendarOutcome(c.email_id, c.calendar, c.processed_at));
   for (const t of todos) if (t.email_id && !t.is_completed && !seenTodoText.has(`${t.email_id}:${t.text}`)) push(t.email_id, { key: t.id, at: t.created_at, state: "done", short: "Todo added", title: "Added a todo", why: t.text, act: { kind: "view", view: "todos" } });
 
   for (const list of map.values()) {
@@ -182,7 +203,7 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
 
 export function useOverview(userId: string, live: Record<string, number>, onError: (message: string) => void): Overview {
   const supabase = createClient();
-  const [raw, setRaw] = useState<{ log: any[]; drafts: any[]; meetings: any[]; todos: any[]; sched: any[]; followups: number; written: Set<string>; names: Map<string, string>; knownOnly: boolean; cap: number } | null>(null);
+  const [raw, setRaw] = useState<{ log: any[]; drafts: any[]; meetings: any[]; todos: any[]; sched: any[]; cal: any[]; followups: number; written: Set<string>; names: Map<string, string>; knownOnly: boolean; cap: number } | null>(null);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const loading = useRef(false);
 
@@ -190,12 +211,13 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
     if (loading.current) return;
     loading.current = true;
     try {
-      const [log, drafts, meetings, todos, sched, followups, sent, prof] = await Promise.all([
+      const [log, drafts, meetings, todos, sched, cal, followups, sent, prof] = await Promise.all([
         supabase.from("action_log").select("id, kind, status, source, email_id, summary, detail, hash, reason, error, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(4000),
         supabase.from("draft_emails").select("id, email_id, subject, to_addresses, body_html, created_at").eq("user_id", userId).order("created_at", { ascending: false }),
-        supabase.from("meetings").select("id, email_id, title, start_time, status, created_at").eq("user_id", userId),
+        supabase.from("meetings").select("id, email_id, title, start_time, as_written, status, created_at").eq("user_id", userId),
         supabase.from("todos").select("id, email_id, text, is_completed, created_at").eq("user_id", userId).eq("is_completed", false),
         supabase.from("scheduled_emails").select("id, email_id, action_id, send_at, source, to_addresses, subject").eq("user_id", userId).eq("status", "pending").order("send_at", { ascending: true }),
+        supabase.from("email_processed").select("email_id, calendar, processed_at").eq("user_id", userId).not("calendar", "is", null).order("processed_at", { ascending: false }).limit(2000),
         supabase.from("follow_up_reminders").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "waiting"),
         supabase.from("emails").select("recipients").eq("user_id", userId).contains("label_ids", ["SENT"]).order("received_at", { ascending: false }).limit(3000),
         supabase.from("profiles").select("autopilot_known_only, autopilot_daily_cap").eq("id", userId).maybeSingle(),
@@ -218,7 +240,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
         for (const e of (data || []) as any[]) pendingNames.set(e.id, String(e.sender || "").replace(/<.*>/, "").replace(/"/g, "").trim());
       }
       for (const x of (sched.data || []) as any[]) x.to_name = pendingNames.get(x.email_id) || "";
-      setRaw({ log: log.data || [], drafts: drafts.data || [], meetings: meetings.data || [], todos: todos.data || [], sched: sched.data || [], followups: followups.count ?? 0, written, names, knownOnly: prof.data?.autopilot_known_only !== false, cap: Number(prof.data?.autopilot_daily_cap ?? 5) });
+      setRaw({ log: log.data || [], drafts: drafts.data || [], meetings: meetings.data || [], todos: todos.data || [], sched: sched.data || [], cal: cal.data || [], followups: followups.count ?? 0, written, names, knownOnly: prof.data?.autopilot_known_only !== false, cap: Number(prof.data?.autopilot_daily_cap ?? 5) });
     } finally {
       loading.current = false;
     }
@@ -252,7 +274,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
     const auto = raw.sched.filter((s) => s.source === "autopilot");
     const today = new Date().toDateString();
     const sentToday = raw.log.filter((r) => r.kind === "send" && r.status === "done" && new Date(r.created_at).toDateString() === today).length;
-    const byEmail = build(raw.log, raw.drafts, raw.meetings, raw.todos, auto, { level: engine?.level ?? "observe", written: raw.written, names: raw.names, knownOnly: raw.knownOnly, cap: raw.cap, sentToday });
+    const byEmail = build(raw.log, raw.drafts, raw.meetings, raw.todos, auto, raw.cal, { level: engine?.level ?? "observe", written: raw.written, names: raw.names, knownOnly: raw.knownOnly, cap: raw.cap, sentToday });
     let need = 0;
     for (const list of byEmail.values()) if (list[0]?.state === "need") need++;
     return {

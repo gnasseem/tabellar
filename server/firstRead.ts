@@ -234,7 +234,7 @@ async function fetchDeep(userId: string, account: Account): Promise<void> {
   const since = new Date(Date.now() - DEEP_DAYS * DAY).toISOString();
   const { data } = await db
     .from("mail_index")
-    .select("gmail_id, from_addr, category, list_unsubscribe, list_id, precedence")
+    .select("gmail_id, from_addr, from_name, category, list_unsubscribe, list_id, precedence")
     .eq("user_id", userId)
     .eq("gmail_account_id", account.id)
     .eq("inbox", true)
@@ -250,6 +250,7 @@ async function fetchDeep(userId: string, account: Account): Promise<void> {
     isBulk(
       {
         sender_email: r.from_addr as string,
+        sender: r.from_name as string,
         label_ids: r.category === "promotions" ? ["CATEGORY_PROMOTIONS"] : [],
         has_list_unsubscribe: r.list_unsubscribe as boolean,
         list_id: r.list_id as string,

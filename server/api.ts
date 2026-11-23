@@ -15,19 +15,19 @@
 //   POST /calendar/update-event Update a Google Calendar event
 //   POST /rethink-email         Re-categorize one email
 //   POST /extract-todos         Todos from one email
-//   GET  /suggest-todos         Todo suggestions from recent mail
 //   GET  /contacts/search       Search contacts
 //   POST /contacts/sync         Import Google contacts
 //   POST /remove-gmail-account  Disconnect a Gmail account
 //   DELETE /delete-all-data     Wipe local mail data
 //   POST /chat                  Assistant chat with inbox tools
-//   GET|POST /follow-ups, PATCH|DELETE /follow-ups/:id
+//   GET|POST /follow-ups, PATCH|DELETE /follow-ups/:id, GET /follow-ups/suggested
 //   GET|POST /signatures, PATCH|DELETE /signatures/:id
 //   GET  /attachment            Fetch a Gmail attachment
 //   POST /agent/start|step|answer|execute|cancel   The agent
 //   GET  /engine/status, POST /engine/run, POST /engine/autostart
 //   POST /actions/approve|dismiss|undo   The action log
 
+import { judgeSent, suggestedFollowups } from "./followups.ts";
 import { listNewsletters, unsubscribe, archiveSender, keepSender } from "./newsletters.ts";
 import { db, type Db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
@@ -47,7 +47,6 @@ import {
   composeDraft,
   refineDraft,
   generateDraft,
-  suggestTodosFromEmails,
   processFullEmail,
   type ChatContext,
 } from "./ai.ts";
@@ -1373,32 +1372,6 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       );
     }
 
-    // ── GET /suggest-todos ─────────────────────────────────────────────────
-    if (path === "/suggest-todos" && req.method === "GET") {
-      const { data: recent } = await db
-        .from("emails")
-        .select("subject, sender, snippet, email_processed(category, summary)")
-        .eq("user_id", userId)
-        .order("received_at", { ascending: false })
-        .limit(15);
-
-      if (!recent?.length) {
-        return json({ suggestions: [] }, 200, corsHeaders);
-      }
-
-      const emailsText = recent
-        .map((e) => {
-          const proc = Array.isArray(e.email_processed)
-            ? e.email_processed[0]
-            : e.email_processed;
-          return `Subject: ${e.subject}\nFrom: ${e.sender}\nSummary: ${(proc as { summary?: string } | null)?.summary ?? e.snippet}`;
-        })
-        .join("\n\n");
-
-      const suggestions = await suggestTodosFromEmails(emailsText);
-      return json({ suggestions }, 200, corsHeaders);
-    }
-
     // ── GET /contacts/search ───────────────────────────────────────────────
     // Live contact search via Google People API (directory + personal contacts).
     if (path === "/contacts/search" && req.method === "GET") {
@@ -2110,6 +2083,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         .order("remind_at", { ascending: true });
       if (error) return json({ error: error.message }, 500, corsHeaders);
       return json({ followUps: data ?? [] }, 200, corsHeaders);
+    }
+
+    // ── GET /follow-ups/suggested: sent mail worth following up ──────────
+    if (path === "/follow-ups/suggested" && req.method === "GET") {
+      void judgeSent(userId).catch((e) => console.error("[follow-ups] judging:", e));
+      return json({ suggestions: await suggestedFollowups(userId) }, 200, corsHeaders);
     }
 
     // ── POST /follow-ups — create a follow-up reminder ────────────────────

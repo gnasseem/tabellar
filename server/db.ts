@@ -29,7 +29,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       notification_level: 'text ! ="important"', notification_preview: "bool ! =true",
       autonomy_level: 'text ! ="suggest"', engine_paused: "bool ! =false",
       autopilot_delay_min: "int ! =5", autopilot_daily_cap: "int ! =5", autopilot_known_only: "bool ! =true",
-      first_read: "json",
+      first_read: "json", rules_version: "int ! =0",
       created_at: "time ! =now", updated_at: "time ! =now",
     },
   },
@@ -51,6 +51,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       has_attachments: "bool ! =false", attachments: "json ! =[]",
       has_list_unsubscribe: "bool ! =false", is_reply: "bool ! =false",
       reply_to_email: "text", cc_recipients: "text", precedence_header: "text", list_id: "text",
+      is_calendar: "bool ! =false", calendar_event: "json", awaits_reply: "bool",
       resolved_at: "time", created_at: "time ! =now",
     },
     unique: [["user_id", "gmail_id"]],
@@ -59,7 +60,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", email_id: "uuid ! >emails:cascade",
       category: 'text ! ="updates"', extra_labels: "json", summary: "text", urgency: "text",
-      quick_actions: "json =[]", processed_at: "time ! =now", engine_at: "time",
+      quick_actions: "json =[]", calendar: "json", processed_at: "time ! =now", engine_at: "time",
     },
     unique: [["email_id"]],
   },
@@ -98,7 +99,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", email_id: "uuid >emails:null", title: "text !",
       description: "text", start_time: "time !", end_time: "time !", attendees: "json",
-      location: "text", calendar_event_id: "text", status: 'text ="proposed"', created_at: "time ! =now",
+      location: "text", as_written: "text", calendar_event_id: "text", status: 'text ="proposed"', created_at: "time ! =now",
     },
   },
   email_memory: {

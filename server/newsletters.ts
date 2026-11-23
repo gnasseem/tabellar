@@ -15,11 +15,13 @@ import { messageHeaders, sendEmail } from "./gmail.ts";
 import { act, engineSettings, record } from "./actions.ts";
 import { decide } from "./policy.ts";
 import { allPrefs, pick, stops } from "./profile.ts";
+import { bulkHeaders, jobSystem, ownAddresses, writtenTo } from "./senders.ts";
 
 type Sender = {
   sender_email: string;
   name: string;
   total: number;
+  opened: number;
   inbox: number;
   unread: number;
   last_at: string;
@@ -28,62 +30,62 @@ type Sender = {
   method: string | null;
 };
 
-const BULK_CATEGORIES = new Set(["promotions", "newsletter"]);
+type Stat = { address: string; name: string | null; domain: string; received: number; opened: number; list_unsubscribe: boolean; list_id: string | null; precedence: string | null; category: string | null; last_at: string };
 
-// Senders of bulk mail, noisiest in the inbox first.
+// Senders of bulk mail, noisiest in the inbox first. Bulk by the headers of
+// the mail they send (senders.isBulk's rule: promotions, or List-Unsubscribe
+// with List-Id or Precedence bulk, and not a post to a discussion list),
+// never what the model called it; never a job application system; never
+// someone or a company the user wrote to; at least two emails; an address on
+// the user's own domain only when its mail carries List-Unsubscribe.
 export async function listNewsletters(userId: string): Promise<Sender[]> {
-  const [{ data: rows }, { data: marks }, prefs] = await Promise.all([
-    db
-      .from("emails")
-      .select("sender, sender_email, recipients, received_at, is_read, is_archived, label_ids, has_list_unsubscribe, precedence_header, email_processed(category)")
-      .eq("user_id", userId)
-      .order("received_at", { ascending: false })
-      .limit(20000),
+  const [{ data: stats }, { data: marks }, prefs, written, own] = await Promise.all([
+    db.from("senders").select("address, name, domain, received, opened, list_unsubscribe, list_id, precedence, category, last_at").eq("user_id", userId).gte("received", 2).limit(20_000),
     db.from("newsletter_senders").select("sender_email, status, method").eq("user_id", userId),
     allPrefs(userId),
+    writtenTo(userId),
+    ownAddresses(userId),
   ]);
+  const ownDomains = new Set([...own].map((a) => a.split("@")[1]));
   const marked = new Map<string, { status?: unknown; method?: unknown }>((marks ?? []).map((m: Record<string, unknown>) => [String(m.sender_email), m]));
-  // People the user has written to are correspondents, even when their mail
-  // comes through a list.
-  const wroteTo = new Set<string>();
-  for (const e of rows ?? []) {
-    if (!((e.label_ids as string[] | null) ?? []).includes("SENT")) continue;
-    for (const m of String(e.recipients ?? "").matchAll(/[^\s<>,;"]+@[^\s<>,;"]+/g)) wroteTo.add(m[0].toLowerCase());
+  const listed = ((stats ?? []) as Stat[]).filter((s) => {
+    const bulk = s.category === "promotions" || bulkHeaders(s.list_unsubscribe, s.list_id, s.precedence);
+    if (!bulk || jobSystem(s.address, s.name) || stops(pick(prefs, s.address, ""), "newsletter")) return false;
+    if (written.addresses.has(s.address) || [...written.domains].some((d) => s.domain === d || s.domain.endsWith(`.${d}`))) return false;
+    return !ownDomains.has(s.domain) || s.list_unsubscribe;
+  });
+  if (!listed.length) return [];
+
+  // What is still in the inbox here, which is what Archive moves.
+  const inbox = new Map<string, { inbox: number; unread: number }>();
+  const addresses = listed.map((s) => s.address);
+  for (let i = 0; i < addresses.length; i += 300) {
+    const { data } = await db.from("emails").select("sender_email, is_read, is_archived, label_ids").eq("user_id", userId).in("sender_email", addresses.slice(i, i + 300)).limit(50_000);
+    for (const e of data ?? []) {
+      const c = inbox.get(String(e.sender_email).toLowerCase()) ?? { inbox: 0, unread: 0 };
+      if (!e.is_archived && ((e.label_ids as string[] | null) ?? []).includes("INBOX")) c.inbox++;
+      if (!e.is_read) c.unread++;
+      inbox.set(String(e.sender_email).toLowerCase(), c);
+    }
   }
-  const by = new Map<string, Sender & { bulk: number }>();
-  for (const e of rows ?? []) {
-    const labels = (e.label_ids as string[] | null) ?? [];
-    if (labels.includes("SENT") || !e.sender_email) continue;
-    const addr = String(e.sender_email).toLowerCase();
-    // Correspondents, and senders the user said are not newsletters, are left out.
-    if (wroteTo.has(addr) || stops(pick(prefs, addr, ""), "newsletter")) continue;
-    const processed = (Array.isArray(e.email_processed) ? e.email_processed[0] : e.email_processed) as { category?: string } | null;
-    const bulk = !!e.has_list_unsubscribe || BULK_CATEGORIES.has(String(processed?.category)) || /^(bulk|list)$/i.test(String(e.precedence_header ?? ""));
-    let s = by.get(addr);
-    if (!s) {
-      const m = marked.get(addr);
-      s = {
-        sender_email: addr,
-        name: String(e.sender ?? "").split("<")[0].replace(/"/g, "").trim() || addr,
-        total: 0, inbox: 0, unread: 0, bulk: 0,
-        last_at: String(e.received_at),
-        can_unsubscribe: false,
+  return listed
+    .map((s) => {
+      const m = marked.get(s.address);
+      return {
+        sender_email: s.address,
+        name: s.name || s.address,
+        total: s.received,
+        opened: s.opened,
+        inbox: inbox.get(s.address)?.inbox ?? 0,
+        unread: inbox.get(s.address)?.unread ?? 0,
+        last_at: s.last_at,
+        can_unsubscribe: s.list_unsubscribe,
         status: (m?.status as Sender["status"]) ?? null,
         method: (m?.method as string) ?? null,
       };
-      by.set(addr, s);
-    }
-    s.total++;
-    if (bulk) s.bulk++;
-    if (!e.is_archived && labels.includes("INBOX")) s.inbox++;
-    if (!e.is_read) s.unread++;
-    if (e.has_list_unsubscribe) s.can_unsubscribe = true;
-  }
-  return [...by.values()]
-    .filter((s) => s.bulk > 0 && s.bulk * 2 >= s.total)
+    })
     .sort((a, b) => b.inbox - a.inbox || b.total - a.total)
-    .slice(0, 300)
-    .map(({ bulk: _bulk, ...s }) => s);
+    .slice(0, 300);
 }
 
 async function mailFrom(userId: string, sender: string, inboxOnly: boolean) {
@@ -175,14 +177,22 @@ export async function unsubscribe(userId: string, sender: string, confirm?: stri
   const decision = decide({ kind: "unsubscribe", source: "user", level: "suggest", paused });
   if (decision.verdict !== "do") throw Object.assign(new Error(decision.reason), { status: 409 });
 
-  const latest = (await mailFrom(userId, sender, false)).find((e) => e.has_list_unsubscribe);
-  const tokenRef = (latest?.gmail_accounts as { token_ref?: string } | null)?.token_ref;
+  // The newest of their emails with List-Unsubscribe: stored here, or else
+  // only indexed by the first read.
+  let latest: { id: string | null; gmail_id: string; tokenRef?: string } | null = null;
+  const stored = (await mailFrom(userId, sender, false)).find((e) => e.has_list_unsubscribe);
+  if (stored) latest = { id: stored.id as string, gmail_id: stored.gmail_id as string, tokenRef: (stored.gmail_accounts as { token_ref?: string } | null)?.token_ref };
+  else {
+    const { data: seen } = await db.from("mail_index").select("gmail_id, gmail_accounts(token_ref)").eq("user_id", userId).eq("from_addr", sender.toLowerCase()).eq("list_unsubscribe", true).order("at", { ascending: false }).limit(1).maybeSingle();
+    if (seen) latest = { id: null, gmail_id: seen.gmail_id as string, tokenRef: (seen.gmail_accounts as { token_ref?: string } | null)?.token_ref };
+  }
+  const tokenRef = latest?.tokenRef;
   if (!latest || !tokenRef) throw Object.assign(new Error("This sender gives no way to unsubscribe. Archive their mail instead."), { status: 422 });
-  const h = await messageHeaders(tokenRef, latest.gmail_id as string, ["List-Unsubscribe", "List-Unsubscribe-Post"]);
+  const h = await messageHeaders(tokenRef, latest.gmail_id, ["List-Unsubscribe", "List-Unsubscribe-Post"]);
   const target = parseListUnsubscribe(h["list-unsubscribe"] ?? "", h["list-unsubscribe-post"] ?? "");
   if (!target) throw Object.assign(new Error("This sender gives no usable way to unsubscribe. Archive their mail instead."), { status: 422 });
   const log = (how: string) =>
-    record(userId, { kind: "unsubscribe", emailId: latest.id as string, summary: `Unsubscribe from ${sender} (${how})`, detail: { sender, ...target } }, "user");
+    record(userId, { kind: "unsubscribe", emailId: latest.id, summary: `Unsubscribe from ${sender} (${how})`, detail: { sender, ...target } }, "user");
 
   if (target.method === "one-click") {
     if (!publicHttps(target.url!)) throw Object.assign(new Error("The unsubscribe link points somewhere Tabellar will not post to"), { status: 422 });

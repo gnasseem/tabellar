@@ -4,6 +4,7 @@
  */
 
 import { loadTokens, saveTokens, refreshAccessToken, type TokenData } from "./google.ts";
+import { calendarHeaders, parseIcs, type CalendarEvent } from "./rules.ts";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -38,6 +39,8 @@ export interface EmailData {
   cc_recipients?: string;
   precedence_header?: string;
   list_id?: string;
+  is_calendar: boolean; // an invitation, an answer to one, a cancellation
+  calendar_event: CalendarEvent | null; // its .ics, read
 }
 
 
@@ -238,6 +241,7 @@ interface ExtractState {
     data?: string;
     attachmentId?: string;
   }[];
+  ics: { data?: string; attachmentId?: string } | null; // the first text/calendar part, with or without a filename
 }
 
 function extractBody(part: EmailPart, state: ExtractState) {
@@ -245,6 +249,10 @@ function extractBody(part: EmailPart, state: ExtractState) {
   const contentId = part.headers
     ?.find((h) => h.name.toLowerCase() === "content-id")
     ?.value?.replace(/[<>]/g, "");
+
+  if ((mime === "text/calendar" || mime === "application/ics") && !state.ics && (part.body?.data || part.body?.attachmentId)) {
+    state.ics = { data: part.body.data, attachmentId: part.body.attachmentId };
+  }
 
   if (mime === "text/plain" && part.body?.data) {
     state.bodyText = b64urlDecode(part.body.data);
@@ -303,8 +311,20 @@ async function fetchMessageById(
       hasAttachments: false,
       attachments: [],
       cidParts: [],
+      ics: null,
     };
     extractBody(msg.payload ?? {}, state);
+
+    // The event a calendar email is about, from its .ics.
+    let icsText = state.ics?.data ? b64urlDecode(state.ics.data) : "";
+    if (!icsText && state.ics?.attachmentId) {
+      try {
+        const res = await gmailRequest(accessToken, `/messages/${messageId}/attachments/${state.ics.attachmentId}`);
+        if (res.ok) icsText = b64urlDecode(((await res.json()).data as string) ?? "");
+      } catch {
+        // Still calendar mail, without the event's details.
+      }
+    }
 
     // Replace CID inline image references with embedded data URIs
     for (const cid of state.cidParts) {
@@ -365,6 +385,8 @@ async function fetchMessageById(
       cc_recipients: headers["cc"] ?? undefined,
       precedence_header: headers["precedence"] ?? undefined,
       list_id: headers["list-id"] ?? undefined,
+      is_calendar: !!state.ics || calendarHeaders(headers),
+      calendar_event: icsText ? parseIcs(icsText, Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC") : null,
     };
   } catch {
     return null;
@@ -695,6 +717,47 @@ export async function hasSentTo(tokenRef: string, address: string): Promise<bool
   return text ? (JSON.parse(text).messages ?? []).length > 0 : false;
 }
 
+// An event on the user's Google Calendar, as an email is linked to it.
+export type LinkedEvent = { id: string | null; title: string; start: string | null; end: string | null; all_day: boolean; link: string | null; on_calendar: boolean; method?: string };
+
+type GEvent = { id: string; summary?: string; status?: string; htmlLink?: string; start?: { dateTime?: string; date?: string }; end?: { dateTime?: string; date?: string }; attendees?: { email?: string }[]; organizer?: { email?: string } };
+
+const linked = (e: GEvent): LinkedEvent => ({
+  id: e.id,
+  title: e.summary ?? "",
+  start: e.start?.dateTime ?? e.start?.date ?? null,
+  end: e.end?.dateTime ?? e.end?.date ?? null,
+  all_day: !e.start?.dateTime,
+  link: e.htmlLink ?? null,
+  on_calendar: true,
+});
+
+// Is this event already on the user's calendar? By its iCalendar UID when an
+// .ics gave one; otherwise an event a day either side of `start` that starts
+// at the same moment or has one of `people` as a guest or organiser.
+export async function findCalendarEvent(tokenRef: string, q: { uid?: string; start?: string | null; people?: string[] }): Promise<LinkedEvent | null> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const get = async (params: Record<string, string>): Promise<GEvent[]> => {
+    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?${new URLSearchParams({ ...params, fields: "items(id,summary,status,htmlLink,start,end,attendees(email),organizer(email))" })}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${tokenData.token}` } });
+    if (!res.ok) throw new Error(`Calendar lookup failed (${res.status})`);
+    return (((await res.json()).items ?? []) as GEvent[]).filter((e) => e.status !== "cancelled");
+  };
+  if (q.uid) {
+    const [byUid] = await get({ iCalUID: q.uid, maxResults: "1" });
+    if (byUid) return linked(byUid);
+  }
+  const at = q.start ? new Date(q.start).getTime() : NaN;
+  if (isNaN(at)) return null;
+  const day = 86_400_000;
+  const near = await get({ timeMin: new Date(at - day).toISOString(), timeMax: new Date(at + day).toISOString(), singleEvents: "true", maxResults: "100" });
+  const people = new Set((q.people ?? []).map((p) => p.toLowerCase()));
+  const sameStart = near.find((e) => Math.abs(new Date(e.start?.dateTime ?? e.start?.date ?? 0).getTime() - at) < 60_000);
+  const samePeople = near.find((e) => [...(e.attendees ?? []), e.organizer ?? {}].some((a) => a.email && people.has(a.email.toLowerCase())));
+  const hit = sameStart ?? samePeople;
+  return hit ? linked(hit) : null;
+}
+
 export async function sendEmail(
   tokenRef: string,
   to: string[],
@@ -794,6 +857,7 @@ export async function fetchSentEmails(
     id: string;
     thread_id: string;
     subject: string;
+    from: string;
     to: string;
     cc: string;
     date: string;
@@ -818,6 +882,7 @@ export async function fetchSentEmails(
     id: string;
     thread_id: string;
     subject: string;
+    from: string;
     to: string;
     cc: string;
     date: string;
@@ -850,12 +915,14 @@ export async function fetchSentEmails(
             hasAttachments: false,
             attachments: [],
             cidParts: [],
+            ics: null,
           };
           extractBody(msg.payload ?? {}, state);
           return {
             id: msg.id as string,
             thread_id: msg.threadId as string,
             subject: headers["subject"] ?? "",
+            from: headers["from"] ?? "",
             to: headers["to"] ?? "",
             cc: headers["cc"] ?? "",
             date: headers["date"] ?? "",

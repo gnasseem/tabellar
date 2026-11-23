@@ -9,8 +9,8 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 - **Inbox**: one line per conversation, ending in what Tabellar did with it: reply ready, todo added, on your calendar, replying in 3:12. Only what needs you stands out. Filter to what needs you, group by day, sender or outcome, select many at once, and open the details panel to see each action with its reason and Undo.
 - **Briefing**: a daily summary sorted into Reply needed, Deadlines, Crucial and Non-essential.
 - **Replies**: answers written in your style wait here. Read, edit, send, send later or discard, one or several at once, with 15 seconds to undo a send. Replies Autopilot is about to send are listed with their countdown and a Cancel. Tone rephrasing is in the compose window.
-- **Todos and meetings**: pulled from mail, with Google Calendar free slots and event creation.
-- **Follow-ups**: mail you sent that got no reply, with reminders and suggested nudges.
+- **Todos and meetings**: a todo only when someone asks you for something, quoting the sentence that asks; a meeting only at the time the email states, in the timezone it states, and never for what is already on your Google Calendar (invitations and acceptances are linked to their event instead). Free slots and event creation from Google Calendar.
+- **Follow-ups**: mail you sent to a person that asks or promises something and got no reply, with reminders and suggested nudges.
 - **Assistant**: ask about your inbox ("what did the registrar say about fees?") or tell it to act.
 - **Agent**: give it your briefing and it proposes replies, todos, meetings and a bulk archive, asks when unsure, and runs only what you approve.
 - **Background engine**: checks Gmail every two minutes, even with the window closed, and labels, drafts and plans for new mail. You choose how far it goes: **Observe** (sorts and notifies, changes nothing), **Suggest** (labels mail; drafts, todos and meetings wait for your approval), **Assist** (labels, drafts, todos and meeting proposals happen on their own) or **Autopilot** (see below). It never deletes or archives on its own. Everything it does is listed under **Activity**, with Undo, and one Pause switch stops all actions at once.
@@ -78,9 +78,11 @@ server/
   sync.ts       bringing new mail in from Gmail, one sync and one analysis at a time
   engine.ts     the background engine: sync, analyse, plan, notify
   policy.ts     the rules: levels, pause, caps, who Autopilot may reply to, planted-instruction detection
+  rules.ts      what may be made from an email: quoted todos, meeting times read in code, calendar mail
+  followups.ts  sent mail worth following up
   actions.ts    carrying out, logging, approving and undoing actions
   outbox.ts     sending what is due: send later, undo send, Autopilot replies
-  newsletters.ts  bulk senders, unsubscribe, archiving a sender
+  newsletters.ts  bulk senders by their headers, unsubscribe, archiving a sender
   notify.ts     notifications (macOS)
   launchd.ts    start at login
   check.ts      the safety checks run by `tabellar check`

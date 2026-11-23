@@ -4,12 +4,13 @@ import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { Empty, Glyph, KeyHints, Kbd, Seg, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
-import { NotThis, usePrefStops } from "../Profile";
+import { NotThis } from "../Profile";
+import { api } from "@/lib/outcomes";
 
 // Follow-ups: mail the user sent that has had no answer. Each one carries a
 // reminder date; once that date has come it is due and set in wax red. Sent
-// mail that went unanswered but is not tracked yet is listed last, to track
-// or leave.
+// mail the server suggests (server/followups.ts) but that is not tracked yet
+// is listed last, to track or leave.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type FollowUp = {
@@ -149,8 +150,6 @@ export default function FollowupsView() {
   const goKey = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const stopped = usePrefStops("followup");
-
   const loadFollowUps = useCallback(async () => {
     const { data, error: failed } = await supabase.from("follow_up_reminders").select("*").eq("user_id", user.id).order("remind_at", { ascending: true });
     setError(failed ? "Could not load your follow-ups." : null);
@@ -164,49 +163,20 @@ export default function FollowupsView() {
     setSent(Object.fromEntries(((emails || []) as any[]).map((e) => [e.id, { snippet: e.snippet || "", received_at: e.received_at }])));
   }, [user.id]);
 
-  // Sent mail from the last 30 days with no reply in its thread and no reminder.
+  // Sent mail Tabellar thinks waits on an answer: it asks or promises
+  // something, went to a person, and has had no reply for two days.
   const loadSuggestions = useCallback(async () => {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * DAY).toISOString();
-    const { data: sentEmails } = await supabase
-      .from("emails")
-      .select("id, thread_id, recipients, subject, received_at, sender_email, sender, snippet")
-      .eq("user_id", user.id)
-      .contains("label_ids", ["SENT"])
-      .gte("received_at", thirtyDaysAgo)
-      .order("received_at", { ascending: false })
-      .limit(50);
-    if (!sentEmails?.length) return;
-
-    const { data: existing } = await supabase.from("follow_up_reminders").select("thread_id").eq("user_id", user.id);
-    const tracked = new Set((existing || []).map((r: any) => r.thread_id));
-
-    const threadIds = [...new Set(sentEmails.map((e: any) => e.thread_id).filter(Boolean))];
-    if (!threadIds.length) return;
-    const { data: replies } = await supabase.from("emails").select("thread_id, sender_email").eq("user_id", user.id).in("thread_id", threadIds).not("label_ids", "cs", '{"SENT"}');
-    const answered = new Set((replies || []).map((r: any) => r.thread_id));
-
-    const byThread = new Map<string, Suggested>();
-    const snippets: Record<string, { snippet: string; received_at: string }> = {};
-    for (const email of sentEmails as any[]) {
-      if (!email.thread_id || tracked.has(email.thread_id) || answered.has(email.thread_id) || byThread.has(email.thread_id)) continue;
-      const recipients = (email.recipients || "").split(",").map((s: string) => s.trim()).filter(Boolean);
-      const first = recipients[0] || email.recipients || "unknown";
-      const nameMatch = first.match(/^(.*?)\s*<[^>]+>/);
-      const emailMatch = first.match(/<([^>]+)>/);
-      const recipientEmail = emailMatch ? emailMatch[1] : first.replace(/<.*>/, "").trim();
-      byThread.set(email.thread_id, {
-        email_id: email.id,
-        thread_id: email.thread_id,
-        recipient_email: recipientEmail,
-        recipient_name: nameMatch ? nameMatch[1].replace(/"/g, "").trim() : recipientEmail.split("@")[0],
-        subject: email.subject || "(no subject)",
-        sent_at: email.received_at,
-        days_waiting: daysAgo(email.received_at),
-      });
-      snippets[email.id] = { snippet: email.snippet || "", received_at: email.received_at };
+    try {
+      const { suggestions: list } = (await api("/follow-ups/suggested")) as { suggestions: Suggested[] };
+      setSuggestions(list);
+      const ids = list.map((x) => x.email_id);
+      if (!ids.length) return;
+      const { data: emails } = await supabase.from("emails").select("id, snippet, received_at").in("id", ids);
+      const snippets = Object.fromEntries(((emails || []) as any[]).map((e) => [e.id, { snippet: e.snippet || "", received_at: e.received_at }]));
+      setSent((prev) => ({ ...snippets, ...prev }));
+    } catch {
+      setSuggestions([]);
     }
-    setSuggestions([...byThread.values()].filter((s) => s.days_waiting >= 2));
-    setSent((prev) => ({ ...snippets, ...prev }));
   }, [user.id]);
 
   useEffect(() => {
@@ -229,10 +199,10 @@ export default function FollowupsView() {
     }));
     const threads = new Set(followUps.map((f) => f.thread_id));
     const untracked: Item[] = suggestions
-      .filter((s) => !hidden.has(s.thread_id) && !threads.has(s.thread_id) && !stopped(s.recipient_email, s.subject))
+      .filter((s) => !hidden.has(s.thread_id) && !threads.has(s.thread_id))
       .map((s) => ({ key: `s:${s.thread_id}`, state: "untracked", f: null, s, name: s.recipient_name || s.recipient_email, email: s.recipient_email, subject: s.subject, threadId: s.thread_id, since: s.sent_at, wrote: sent[s.email_id]?.snippet || "" }));
     return [...tracked, ...untracked];
-  }, [followUps, suggestions, hidden, sent, stopped]);
+  }, [followUps, suggestions, hidden, sent]);
 
   const counts = useMemo(() => {
     const n = (s: State) => all.filter((i) => i.state === s).length;
@@ -474,7 +444,7 @@ export default function FollowupsView() {
               </Empty>
             ) : filter === "waiting" ? (
               <Empty icon="schedule_send" title="Nobody owes you an answer">
-                Mail you sent that goes two days without a reply is listed here. Track one and Tabellar reminds you when it is time to nudge.
+                Mail you sent that asks or promises something and goes two days without a reply is listed here. Track one and Tabellar reminds you when it is time to nudge.
               </Empty>
             ) : (
               <Empty icon="schedule_send" title={filter === "due" ? "No reminders are due" : filter === "snoozed" ? "Nothing is snoozed" : "Nothing here yet"}>
