@@ -262,6 +262,7 @@ A warm, almost colourless paper-and-ink palette with one sealing-wax red, define
 - **Body** (400, 13px, line-height 1.4, tracking -0.003em, tabular numerals): every row, control, menu item and panel paragraph. Panel prose loosens to line-height 1.625.
 - **Status** (12.5px, 400 to 600): the status column at the end of a row and panel notes; weight rises with urgency (600 for needs you, 500 for going out, held, failed).
 - **Label** (600, 12px, ink 3, sentence case): section labels such as "Going out", "Level", "The email". Plain 12px ink 3 carries meta lines.
+- **First run** (650, 26px, tracking -0.018em; 14px for its two lines of text, choices and examples): the first-run steps only, where one question fills the window.
 - **Key** (500, 10.5px): keyboard hints in the kbd chip.
 
 ### Named Rules
@@ -371,7 +372,15 @@ What mail turned into, each on one screen with no side panel and no filter segme
 ### Accounts
 - **Compose From:** a row above To, only when there is more than one address to send from: every address of every account (grouped by account when there are several), "Name <address>" where Gmail gives a name. A reply starts on the address the email was sent to; new mail on the account the switch shows, else the default account's From.
 - **Settings, Accounts:** one row per account: mark, address and "Default" in ink 3; the line under it names the provider and says "Paused" or which other addresses it sends as. At the right a From menu (only with aliases), a switch for reading its mail, and a more menu: Make default, Sign in again (Change the app password for an IMAP account), Remove (danger text, confirmed). "Add an account" sits on the group's label line and opens the add panel in place, above the rows.
-- **Adding a mailbox** (`AddMailbox.tsx`, in onboarding's Mail step and in Settings): the choices from the server's list as radio rows in two columns, each with a short hint ("No calendar" for IMAP ones), then the chosen one's step under them: a sign-in button for Google and Outlook (Outlook first asks for the Azure app's client ID in one mono field), or Address and App password fields with a "Make one at ..." link on the label line, plus servers, ports and user name for Other. One primary button ("Add iCloud", "Checking" while the servers are tried); errors in danger text under it.
+- **Adding a mailbox** (`AddMailbox.tsx`, in the first run's Mail step and in Settings): the choices from the server's list as tiles, three to a row (54px, 9px corners, raised with the control shadow; the chosen one fills with the selected tone and loses the shadow), each with its name and a short hint in ink 3. The chosen one's step sits under them: a sign-in button for Google and Outlook (Outlook first asks for the Azure app's client ID in one mono field), or Address and App password fields with a "Make one at ..." link on the label line, plus servers, ports and user name for Other. One primary button ("Add iCloud", "Checking" while the servers are tried); errors in danger text under it.
+
+### First run
+- **Frame** (`Step` in `SetupSteps.tsx`): the full window on paper. A 52px head with the logo and the step names at the right (done ones with the ink 3 check and clickable, the current in medium ink, the rest in ink 3); one column of 400px with the question (26px, weight 650), at most two lines in ink 2 at 14px, and the controls; what the question is about beside it; a 60px foot under a hairline with the live line at the left and Back, Skip and the one wax button at the right. Content is at most 1,320px wide; below 1,024px it is one column. The step content rises in once (420ms, ease-out), never again. The only screens in the window with a foot and with type above 15px.
+- **Live line:** what the server is doing meanwhile ("Reading the last 90 days", a 96px bar, "207 of 1,902 emails", the model download beside it), in 12.5px ink 2. A failure is a danger glyph and danger text; done is an ink 3 check.
+- **Welcome:** no foot and no step names; a title, two lines, one wax button and a picture of the Inbox drawn with the window's own rows.
+- **Model:** two radio blocks (9px corners, selected tone when on), each a name, its trade-off in ink 3 and one line of what it means here; what is chosen beside them (the pair with sizes, or the provider and key). The full model lists sit behind "Advanced".
+- **Examples and lists:** hairline-ruled rows, never cards: a question in 12px ink 3, the thing in 14px medium ink, where it came from in 12.5px ink 3, then Yes, No and "Never for <name>" as small buttons in fixed columns. An answered row keeps its place and shows the answer in words.
+- **People and labels:** ticks, with a label's name editable in place; a dropped label is struck through in ink 3.
 
 ### Empty and loading
 - **Empty:** centred column at most 380px wide, 22px ink 3 icon, 15px title, and at most one line under it: a link to the way out. No explaining paragraph.

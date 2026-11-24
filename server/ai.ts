@@ -685,19 +685,27 @@ export async function expectsAnswer(subject: string, to: string, body: string): 
 }
 
 // The first facts about the user, from what they wrote. Careful model, once.
-export async function factsFromSent(sample: string): Promise<string[]> {
+// What the user's sent mail shows about them: their role, what they work on
+// now, and other facts. The role and the work are kept as facts that start
+// "Role: " and "Works on: " (ROLE and WORK in profile.ts).
+export async function factsFromSent(sample: string): Promise<{ role: string; work: string; facts: string[] }> {
   const raw = await llm(
-    'These are emails the user wrote, newest first, and the people they write to most. Write what they show about the user as short facts that help someone handle their email: their role and organisation, what they are working on now, the languages they write in, how they sign off, who they write to most and about what. Only what the emails show; no guesses, no praise, no advice. Write about the user in the third person ("Studies computer science at NYU"), without their name. Return only JSON: {"facts": ["..."]}, 5 to 10 facts, each under 20 words.',
+    'These are emails the user wrote, newest first, and the people they write to most. Say what they show about the user, to help someone handle their email. "role": their role and organisation in a few words ("Computer science student at NYU", "Head of sales at Acme"). "work": what they are working on now, in one short line. "facts": other short facts: the languages they write in, how they sign off, who they write to most and about what. Only what the emails show; no guesses, no praise, no advice. Write about the user in the third person ("Studies computer science at NYU"), without their name. Leave a field empty when the emails do not show it. Return only JSON: {"role": "...", "work": "...", "facts": ["..."]}, 3 to 8 facts, each under 20 words.',
     sample,
     0.2,
     1024,
   );
-  const parsed = parseJson(raw) as { facts?: unknown } | null;
+  const parsed = parseJson(raw) as { role?: unknown; work?: unknown; facts?: unknown } | null;
+  const line = (v: unknown, max: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
   const facts = Array.isArray(parsed?.facts) ? parsed.facts : [];
-  return facts
-    .map((f) => String(f ?? "").replace(/\s+/g, " ").trim())
-    .filter((f) => f.length > 3 && f.length < 200)
-    .slice(0, 10);
+  return {
+    role: line(parsed?.role, 120),
+    work: line(parsed?.work, 200),
+    facts: facts
+      .map((f) => line(f, 400))
+      .filter((f) => f.length > 3 && f.length < 200)
+      .slice(0, 8),
+  };
 }
 
 // Labels the user would want, from who writes to them and about what. Each
@@ -707,9 +715,11 @@ export async function labelsFromMail(sample: string): Promise<{ name: string; de
     'Below are the people and services that email this person most, then recent subjects. Suggest the labels they would want to sort their mail into: groups that recur and matter to them, named the way they would name them ("Job applications", "NYU admin", "Receipts", "Course: Machine Learning"), not generic types like "Important" or "Updates", and not one label per sender. For each give a one-line description that tells a reader which emails belong in it, and the sender addresses from the list that belong in it. Return only JSON: {"labels": [{"name": "...", "description": "...", "senders": ["..."]}]}, 3 to 6 labels, names under 4 words.',
     sample,
     0.3,
-    1200,
+    2400,
   );
   const parsed = parseJson(raw) as { labels?: unknown } | null;
+  // Not "nothing to suggest": the caller may ask again.
+  if (!parsed) throw new Error("the label suggestions came back unreadable");
   const list = Array.isArray(parsed?.labels) ? (parsed.labels as Record<string, unknown>[]) : [];
   return list
     .map((l) => ({

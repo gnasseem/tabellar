@@ -29,7 +29,7 @@ import { syncMail, readBacklog, serial, fillMissingBodies, refreshStored } from 
 import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions.ts";
 import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
-import { ACT_WITHIN_MS, dueOf, meetingOf, todoOf } from "./rules.ts";
+import { ACT_WITHIN_MS, dueOf, meetingOf, RULES_VERSION, todoOf } from "./rules.ts";
 import { judgeSent } from "./followups.ts";
 import { notify } from "./notify.ts";
 import { firstReadState, startFirstRead } from "./firstRead.ts";
@@ -159,8 +159,12 @@ async function countsToday(userId: string): Promise<Record<string, number>> {
 // looked at yet. Runs one at a time.
 export const planNew = serial(async (userId: string): Promise<void> => {
   const settings = await engineSettings(userId);
-  // Paused: leave new mail unplanned (and unannounced) until resumed.
+  // Paused: leave new mail unplanned (and unannounced) until resumed. During
+  // the first run nothing is planned either: the user is still saying what
+  // they want, and the level is not chosen yet. Mail is read meanwhile.
   if (settings.paused) return;
+  const { data: me } = await db.from("profiles").select("onboarding").eq("id", userId).maybeSingle();
+  if (me && me.onboarding !== "done") return;
 
   const { data: rows } = await db
     .from("email_processed")
@@ -387,6 +391,13 @@ export const planNew = serial(async (userId: string): Promise<void> => {
   }
 });
 
+// Start or carry on the first read now (a mailbox was just connected, a
+// model was just chosen) instead of at the next cycle.
+export function readNow(userId: string): void {
+  void startFirstRead(userId, () => planNew(userId));
+  if (modelConfigured()) void readAll(userId).catch((e) => console.error("[engine] reading:", e));
+}
+
 // Plan right away after the window triggered an analysis.
 export function kickEngine(): void {
   localUser()
@@ -399,11 +410,9 @@ export function kickEngine(): void {
 // Once per start: fill in text for HTML-only mail stored earlier.
 let startedUp = false;
 
-// Raised when the rules for todos and meetings change: mail stored under
-// older rules is read again once, and what those rules made from it is taken
-// back. Completed todos and confirmed meetings stay.
-const RULES_VERSION = 1;
-
+// Mail stored under older rules (rules.ts RULES_VERSION) is read again once,
+// and what those rules made from it is taken back. Completed todos and
+// confirmed meetings stay.
 export async function rereadUnderNewRules(userId: string): Promise<void> {
   const { data: p } = await db.from("profiles").select("rules_version").eq("id", userId).maybeSingle();
   if (Number(p?.rules_version ?? 0) >= RULES_VERSION) return;

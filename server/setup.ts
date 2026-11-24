@@ -135,7 +135,8 @@ export async function addPasswordAccount(b: Record<string, unknown>): Promise<bo
 export const OLLAMA_URL = "http://127.0.0.1:11434";
 const OLLAMA_ZIP = "https://ollama.com/download/Ollama-darwin.zip";
 
-export type LocalModel = { name: string; size: number; about?: string };
+// firstRead: minutes to read the first 300 emails, where it was timed.
+export type LocalModel = { name: string; size: number; about?: string; firstRead?: number };
 
 // Models offered for download, smallest first, with their download size.
 // Chosen by running sorting, drafting and the assistant on 50 real emails
@@ -145,7 +146,7 @@ export type LocalModel = { name: string; size: number; about?: string };
 // What to expect from each, timed on an M1 Pro with 32 GB (2026-11): reading
 // an email with qwen3.5:4b, drafting a reply with gemma4:12b.
 export const LOCAL_CHOICES: LocalModel[] = [
-  { name: "qwen3.5:4b", size: 3_324_173_934, about: "Small and quick: reads an email in about 4 seconds, the first 300 in about 15 minutes. Plainer drafts" },
+  { name: "qwen3.5:4b", size: 3_324_173_934, about: "Small and quick: reads an email in about 4 seconds, the first 300 in about 15 minutes. Plainer drafts", firstRead: 15 },
   { name: "gemma4:12b", size: 8_021_618_941, about: "Drafts in your voice, 10 to 30 seconds a reply. Wants 24 GB of memory" },
   { name: "gemma4:26b", size: 18_731_025_629, about: "The best local drafts, slower than gemma4:12b. Wants 48 GB of memory" },
 ];
@@ -186,6 +187,12 @@ export async function ollamaModels(): Promise<LocalModel[] | null> {
   } catch {
     return null;
   }
+}
+
+// The offered models already downloaded, for when Ollama is not running to say.
+function modelsOnDisk(): LocalModel[] {
+  const root = join(process.env.OLLAMA_MODELS || join(homedir(), ".ollama", "models"), "manifests", "registry.ollama.ai", "library");
+  return LOCAL_CHOICES.filter((m) => existsSync(join(root, ...m.name.split(":")))).map(({ name, size }) => ({ name, size }));
 }
 
 async function waitForOllama(seconds: number): Promise<boolean> {
@@ -351,6 +358,64 @@ async function* fetchModelFiles(model: string): AsyncGenerator<Progress> {
   yield { status: "success" };
 }
 
+// ── Setting up local models in the background ───────────────────────────────
+
+// The window starts this and moves on: the download can take a while, and the
+// first-run steps after the model are answered meanwhile. Ollama is installed
+// and started when needed, each model downloaded, and only then saved to its
+// slot, which lets the first read carry on. `fast` null puts the fast slot
+// back to following the careful model; a slot left out is not changed.
+export type LocalJob = { careful?: string; fast?: string | null; label: string; completed?: number; total?: number; done: boolean; error: string | null };
+let localJob: LocalJob | null = null;
+
+export const localJobState = () => localJob;
+
+// Ollama's pull statuses ("pulling 3a2f...", "verifying sha256 digest") in plain words.
+function pullLabel(model: string, status: string): string {
+  if (status === "pulling manifest") return `Preparing ${model}`;
+  if (status.startsWith("pulling")) return `Downloading ${model}`;
+  if (status.startsWith("verifying")) return `Checking ${model}`;
+  return `Finishing ${model}`;
+}
+
+export function startLocalModels(models: { careful?: string; fast?: string | null }): LocalJob {
+  if (localJob && !localJob.done) return localJob;
+  const job: LocalJob = { ...models, label: "Starting", done: false, error: null };
+  localJob = job;
+  const set = (patch: Partial<LocalJob>) => Object.assign(job, { completed: undefined, total: undefined }, patch);
+  void (async () => {
+    try {
+      if ((await ollamaModels()) === null) {
+        if (!ollamaInstalled()) {
+          for await (const p of installOllama()) set({ label: p.status === "success" ? "Ollama is ready" : p.status, completed: p.completed, total: p.total });
+        }
+        set({ label: "Starting Ollama" });
+        if (!(await startOllama())) throw new Error("Ollama did not start. Open it from your Applications folder, then try again.");
+      }
+      const have = new Set(((await ollamaModels()) ?? []).map((m) => m.name));
+      for (const name of new Set([models.careful, models.fast])) {
+        if (!name || have.has(name)) continue;
+        for await (const p of pullOllamaModel(name)) set({ label: pullLabel(name, p.status), completed: p.completed, total: p.total });
+      }
+      const local = (model: string): ModelConfig => ({ provider: "ollama", format: "ollama", baseUrl: OLLAMA_URL, model });
+      if (models.careful) saveModel("careful", local(models.careful));
+      if (models.fast !== undefined) saveModel("fast", models.fast ? local(models.fast) : null);
+      set({ label: "Ready", done: true });
+      await modelChosen();
+    } catch (e) {
+      set({ done: true, error: (e as Error).message });
+    }
+  })();
+  return job;
+}
+
+// A model was saved: the first read can go past the headers now.
+async function modelChosen(): Promise<void> {
+  const { db } = await import("./db.ts");
+  const { data } = await db.from("profiles").select("id").limit(1).maybeSingle();
+  if (data) (await import("./engine.ts")).readNow(data.id as string);
+}
+
 // ── Cloud providers ─────────────────────────────────────────────────────────
 
 export type Provider = { id: string; name: string; format: ModelConfig["format"]; baseUrl: string; keyUrl: string; suggested?: string };
@@ -419,22 +484,6 @@ function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 }
 
-// Progress as one JSON object per line; a failure ends the stream with {error}.
-function stream(steps: AsyncGenerator<Progress>): Response {
-  const encoder = new TextEncoder();
-  const body = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for await (const p of steps) controller.enqueue(encoder.encode(JSON.stringify(p) + "\n"));
-      } catch (e) {
-        controller.enqueue(encoder.encode(JSON.stringify({ error: (e as Error).message }) + "\n"));
-      }
-      controller.close();
-    },
-  });
-  return new Response(body, { headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" } });
-}
-
 async function state() {
   const config = loadConfig();
   const file = (await findClientFiles())[0];
@@ -451,7 +500,7 @@ async function state() {
     model: withReady(config.model),
     // null when the fast slot uses the careful model.
     fastModel: withReady(config.fastModel),
-    ollama: { installed: models !== null || ollamaInstalled(), running: models !== null, models: models ?? [] },
+    ollama: { installed: models !== null || ollamaInstalled(), running: models !== null, models: models ?? modelsOnDisk() },
     local: { choices: LOCAL_CHOICES, recommended: recommendedLocalModel("careful"), recommendedFast: recommendedLocalModel("fast"), memoryGb: memoryGb(), small: memoryGb() < SMALL_MAC_GB },
     providers: PROVIDERS.map(({ id, name, keyUrl, suggested }) => ({ id, name, keyUrl, suggested, hasKey: !!savedKeyFor(id) })),
     // What can be added as a mailbox, and whether it can be now.
@@ -491,13 +540,17 @@ export async function handleSetup(req: Request, path: string): Promise<Response>
     }
     if (path === "/mailbox" && req.method === "POST") return json({ first: await addPasswordAccount(body) });
 
-    if (path === "/ollama/install" && req.method === "POST") return stream(installOllama());
-    if (path === "/ollama/start" && req.method === "POST") return json({ running: await startOllama() });
-    if (path === "/ollama/pull" && req.method === "POST") {
-      const model = String(body.model ?? "").trim();
-      if (!/^[\w.:/-]+$/.test(model)) return json({ error: "That is not an Ollama model name." }, 400);
-      return stream(pullOllamaModel(model));
+    // POST /local {careful?, fast?}: download and use local models, in the
+    // background. GET /local: how far it is.
+    if (path === "/local" && req.method === "POST") {
+      const name = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+      const careful = name(body.careful) ?? undefined;
+      const fast = "fast" in body ? name(body.fast) : undefined;
+      if (!careful && fast === undefined) return json({ error: "Choose a model." }, 400);
+      if ([careful, fast].some((n) => n && !/^[\w.:/-]+$/.test(n))) return json({ error: "That is not an Ollama model name." }, 400);
+      return json(startLocalModels({ careful, fast }));
     }
+    if (path === "/local" && req.method === "GET") return json(localJob);
 
     if (path === "/cloud/models" && req.method === "POST") {
       const p = PROVIDERS.find((x) => x.id === body.provider);
@@ -523,6 +576,7 @@ export async function handleSetup(req: Request, path: string): Promise<Response>
       if (!model) return json({ error: "Choose a model." }, 400);
       if (body.provider === "ollama") {
         saveModel(slot, { provider: "ollama", format: "ollama", baseUrl: OLLAMA_URL, model });
+        if (slot === "careful") await modelChosen();
         return json({ ok: true });
       }
       const p = PROVIDERS.find((x) => x.id === body.provider);
@@ -531,6 +585,7 @@ export async function handleSetup(req: Request, path: string): Promise<Response>
       const key = String(body.key ?? "").trim() || savedKeyFor(p.id) || "";
       if (!key) return json({ error: "Paste your API key." }, 400);
       saveModel(slot, { provider: p.id, format: p.format, baseUrl: base, model }, key);
+      if (slot === "careful") await modelChosen();
       return json({ ok: true });
     }
 

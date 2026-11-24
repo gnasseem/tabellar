@@ -16,6 +16,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "./db.ts";
 import { mail, type SendAs } from "./providers.ts";
 import { addressesIn } from "./senders.ts";
+import { RULES_VERSION } from "./rules.ts";
 import { keychainDelete } from "./config.ts";
 
 export type { SendAs };
@@ -173,14 +174,15 @@ export async function removeAccount(userId: string, id: string): Promise<void> {
 }
 
 // Keep a mailbox that was just signed in to: the profile is made with the
-// first one, an account signed in to again keeps its row and settings, and
-// one more mailbox gets its own first read. Returns whether nothing is
-// stored yet, so the window shows the first fetch.
+// first one (and the window's first run carries on from its mailbox step),
+// an account signed in to again keeps its row and settings. A new mailbox is
+// read straight away: the first read for the first one, its own read for one
+// more. Returns whether nothing is stored yet.
 export async function connectAccount(a: { provider: string; address: string; name: string; picture?: string | null; tokenRef: string; server?: ImapServer | null }): Promise<boolean> {
   const address = a.address.toLowerCase();
   let { data: profile } = await db.from("profiles").select("id").limit(1).maybeSingle();
   if (!profile) {
-    const created = await db.from("profiles").insert({ id: randomUUID(), email: address, display_name: a.name, avatar_url: a.picture ?? null }).select("id").single();
+    const created = await db.from("profiles").insert({ id: randomUUID(), email: address, display_name: a.name, avatar_url: a.picture ?? null, onboarding: "mailboxes", rules_version: RULES_VERSION }).select("id").single();
     if (created.error) throw new Error(created.error.message);
     profile = created.data;
   }
@@ -199,7 +201,7 @@ export async function connectAccount(a: { provider: string; address: string; nam
   if (saved.error) throw new Error(saved.error.message);
   // The addresses it sends from, before the window first offers them.
   await refreshSendAs(saved.data as unknown as Account).catch((e) => console.error("[accounts] send-as list:", (e as Error).message));
-  if (!existing && others) void import("./engine.ts").then((m) => m.kickEngine());
+  if (!existing) void import("./engine.ts").then((m) => m.readNow(userId));
   const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId);
   return (count ?? 0) === 0;
 }

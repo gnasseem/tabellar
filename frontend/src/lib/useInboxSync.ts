@@ -1,5 +1,7 @@
-// The window's first fetch, with its progress overlay. After that the server
-// watches Gmail itself and new mail reaches the window over /events.
+// A fetch when nothing is stored yet (the first read normally has mail in
+// before the first run is over; the Inbox shows skeleton rows meanwhile).
+// After that the server watches the mailboxes itself and new mail reaches
+// the window over /events.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/db";
 import { useApp } from "@/components/AppShell";
@@ -8,7 +10,7 @@ export function useInboxSync(reload: () => Promise<void> | void) {
   const { user, profile, invalidateViewCache } = useApp();
   const supabase = createClient();
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [initialPhase, setInitialPhase] = useState(-1);
+  const [fetching, setFetching] = useState(false);
   const [noAccountsConnected, setNoAccountsConnected] = useState(false);
   // Whether this user has ever synced emails (a database count, not React state).
   const [isFirstEver, setIsFirstEver] = useState<boolean | null>(null);
@@ -31,7 +33,7 @@ export function useInboxSync(reload: () => Promise<void> | void) {
     if (busy.current) return;
     busy.current = true;
     setSyncError(null);
-    setInitialPhase(1);
+    setFetching(true);
     try {
       const {
         data: { session },
@@ -60,20 +62,15 @@ export function useInboxSync(reload: () => Promise<void> | void) {
     } catch {
       setSyncError("Network error. Check your connection.");
     } finally {
-      setInitialPhase(-1);
+      setFetching(false);
       busy.current = false;
     }
   }, [user.id, reload]);
 
   useEffect(() => {
-    const url = new URL(window.location.href);
-    if (url.searchParams.has("initial")) {
-      url.searchParams.delete("initial");
-      window.history.replaceState({}, "", url.toString());
-    }
     if (isFirstEver && profile) syncInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFirstEver]);
 
-  return { syncInbox, syncError, initialPhase, noAccountsConnected, isFirstEver };
+  return { syncInbox, syncError, fetching, noAccountsConnected, isFirstEver };
 }

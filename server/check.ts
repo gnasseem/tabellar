@@ -1059,6 +1059,65 @@ imapServer.close();
 smtpServer.close();
 for (const s of idling) s.destroy();
 
+// ── The first run ───────────────────────────────────────────────────────────
+console.log("\nFirst run");
+const onboarding = await import("./onboarding.ts");
+const runUser = randomUUID();
+await db.from("profiles").insert({ id: runUser, email: "new@fake.example", notification_level: "none", autonomy_level: "suggest", onboarding: "examples" });
+const { data: runAccount } = await db.from("accounts").insert({ user_id: runUser, provider: "fake", address: "new@fake.example", token_ref: "check:none" }).select("id").single();
+async function runMail(n: number, from: string, todo: string) {
+  const address = from.match(/<([^>]+)>/)![1];
+  const { data } = await db
+    .from("emails")
+    .insert({
+      user_id: runUser, gmail_id: `run-${n}`, thread_id: `run-t-${n}`, account_id: runAccount!.id, subject: `Request ${n}`, body_text: `Hello. Could you do this: ${todo}`,
+      sender: from, sender_email: address, received_at: new Date(Date.now() - n * 60_000).toISOString(), label_ids: ["INBOX"],
+    })
+    .select("id")
+    .single();
+  await db.from("email_processed").insert({ user_id: runUser, email_id: data!.id, category: "action-required", summary: `Request ${n}`, quick_actions: [{ action: "add_todo", label: todo, quote: `Could you do this: ${todo}` }] });
+  return data!.id as string;
+}
+const r1 = await runMail(1, "Ana Silva <ana@work.example>", "Send the signed lease");
+const r2 = await runMail(2, "Promo Desk <deals@shop.example>", "Claim your coupon");
+const r3 = await runMail(3, "Ben Ode <ben@work.example>", "Review the slides");
+await planNew(runUser);
+const { count: plannedEarly } = await db.from("action_log").select("id", { count: "exact", head: true }).eq("user_id", runUser);
+ok("nothing is planned while the first run is on", () => assert.equal(plannedEarly, 0));
+const shown = await onboarding.examples(runUser);
+ok("examples are the todos the rules allow, one per sender", () => assert.deepEqual(shown.map((e) => e.what).sort(), ["Claim your coupon", "Review the slides", "Send the signed lease"]));
+await onboarding.answerExample(runUser, { kind: "todo", address: "ana@work.example", emailId: r1, answer: "yes" });
+await onboarding.answerExample(runUser, { kind: "todo", address: "deals@shop.example", emailId: r2, answer: "never" });
+await onboarding.answerExample(runUser, { kind: "todo", address: "ben@work.example", emailId: r3, answer: "no" });
+const { data: r3Proc } = await db.from("email_processed").select("quick_actions").eq("email_id", r3).single();
+const runPrefs = ((await db.from("preferences").select("subject, value").eq("user_id", runUser)).data ?? []).map((r) => `${r.subject} ${r.value}`).sort();
+const shownAfter = await onboarding.examples(runUser);
+ok("Yes, Never and No become a sender, a preference and a todo taken out", () => {
+  assert.deepEqual(runPrefs, ["ana@work.example normal", "deals@shop.example never_todo"]);
+  assert.deepEqual(r3Proc!.quick_actions, []);
+  assert.equal(shownAfter.length, 0);
+});
+await onboarding.saveAboutYou(runUser, { role: "Founder at Fake Co", work: "The seed round", never: ["Webinars", "crypto"] });
+const about = await onboarding.aboutYou(runUser);
+ok("About you is kept as facts and topics, and read back", () => {
+  assert.equal(about.role?.value, "Founder at Fake Co");
+  assert.equal(about.work?.value, "The seed round");
+  assert.deepEqual(about.never.sort(), ["crypto", "webinars"]);
+});
+await onboarding.finish(runUser, { level: "assist" });
+for (let i = 0; i < 50; i++) {
+  const { count } = await db.from("email_processed").select("id", { count: "exact", head: true }).eq("user_id", runUser).is("engine_at", null);
+  if (!count) break;
+  await new Promise((r) => setTimeout(r, 50));
+}
+await planNew(runUser);
+const runTodos = ((await db.from("todos").select("text").eq("user_id", runUser)).data ?? []).map((t) => t.text);
+const { data: runProfile } = await db.from("profiles").select("onboarding, autonomy_level").eq("id", runUser).single();
+ok("finishing sets the level and plans under the answers", () => {
+  assert.deepEqual(runProfile, { onboarding: "done", autonomy_level: "assist" });
+  assert.deepEqual(runTodos, ["Send the signed lease"]);
+});
+
 if (modelConfigured()) {
   console.log("Rules through the configured model (this can take a minute)");
   const { processFullEmail, expectsAnswer } = await import("./ai.ts");

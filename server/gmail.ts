@@ -28,8 +28,10 @@ async function overQuota(res: Response): Promise<boolean> {
   return /rateLimitExceeded|quota exceeded/i.test(await res.clone().text().catch(() => ""));
 }
 
-// One Gmail API call, paced, and asked again after a growing pause (up to
-// about a minute in all) while Gmail says it is over quota or busy.
+// One Gmail API call, paced, and asked again after a growing pause (over a
+// minute in all, as the quota is per minute) while Gmail says it is over
+// quota or busy. Every other call waits a moment too: more of them would
+// only be refused.
 async function gmailRequest(
   accessToken: string,
   path: string,
@@ -53,9 +55,10 @@ async function gmailRequest(
     } finally {
       clearTimeout(timeout);
     }
-    if (attempt >= 6 || !(await overQuota(res))) return res;
+    if (attempt >= 8 || !(await overQuota(res))) return res;
     await res.body?.cancel().catch(() => {});
-    await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt + Math.random() * 500));
+    nextStart = Math.max(nextStart, Date.now() + 1500);
+    await new Promise((r) => setTimeout(r, Math.min(12_000, 1500 * 2 ** attempt) + Math.random() * 500));
   }
 }
 

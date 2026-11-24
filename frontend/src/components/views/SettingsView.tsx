@@ -1036,6 +1036,20 @@ export default function SettingsView() {
                   </Row>
                 </Group>
 
+                <Group title="Setup">
+                  <Row name="First-run steps" text="Mail, model, About you, examples from your mail, people and labels, level">
+                    <button
+                      className="btn"
+                      onClick={() => {
+                        window.location.hash = "setup";
+                        window.location.reload();
+                      }}
+                    >
+                      Go through them again
+                    </button>
+                  </Row>
+                </Group>
+
                 <Group title="Your data" note="All of it is in one file on this Mac. Keys and tokens are in the Keychain.">
                   <Row name="Knowledge" text="People and facts noted from your mail">
                     <button className="btn" onClick={() => setView("relationships")}>

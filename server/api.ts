@@ -45,6 +45,7 @@ import { accountById, accountFor, accountsForWindow, defaultAccount, fromLine, l
 import { saveUserDraft } from "./drafts.ts";
 import { kickEngine, draftReply, engineStatus, planNew } from "./engine.ts";
 import { learnFromSent, startFirstRead } from "./firstRead.ts";
+import * as onboarding from "./onboarding.ts";
 import { approve, dismiss, undo, record, engineSettings, setMailState } from "./actions.ts";
 import { answer, applyPref, feedback, profileContext, setPref, type Feedback } from "./profile.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
@@ -240,6 +241,51 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
       }
       return json({ ok: true });
+    }
+
+    // ── The first run (onboarding.ts) ───────────────────────────────────────
+    //   GET  /onboarding                       step, first read, model, local download
+    //   POST /onboarding/step {step}
+    //   GET  /onboarding/about                 POST {role, work, never, removed}
+    //   GET  /onboarding/examples              POST /onboarding/examples/answer {kind, address, emailId, answer}
+    //   GET  /onboarding/people                POST {address, vip}
+    //   GET  /onboarding/labels                suggestions once the sent mail is read, else null
+    //   POST /onboarding/finish {level, theme}
+    if (path.startsWith("/onboarding")) {
+      try {
+        if (path === "/onboarding" && req.method === "GET") return json(await onboarding.onboardingState(userId));
+        if (path === "/onboarding/step" && req.method === "POST") {
+          await onboarding.setStep(userId, String((await req.json()).step ?? ""));
+          return json({ ok: true });
+        }
+        if (path === "/onboarding/about" && req.method === "GET") return json(await onboarding.aboutYou(userId));
+        if (path === "/onboarding/about" && req.method === "POST") {
+          await onboarding.saveAboutYou(userId, await req.json());
+          return json({ ok: true });
+        }
+        if (path === "/onboarding/examples" && req.method === "GET") return json({ examples: await onboarding.examples(userId) });
+        if (path === "/onboarding/examples/answer" && req.method === "POST") {
+          await onboarding.answerExample(userId, await req.json());
+          return json({ ok: true });
+        }
+        if (path === "/onboarding/people" && req.method === "GET") return json({ people: await onboarding.people(userId) });
+        if (path === "/onboarding/people" && req.method === "POST") {
+          const { address, vip } = await req.json();
+          await onboarding.setVip(userId, String(address ?? ""), vip === true);
+          return json({ ok: true });
+        }
+        if (path === "/onboarding/labels" && req.method === "GET") {
+          const { data } = await db.from("profiles").select("label_suggestions").eq("id", userId).maybeSingle();
+          return json({ suggestions: Array.isArray(data?.label_suggestions) ? data.label_suggestions : null });
+        }
+        if (path === "/onboarding/finish" && req.method === "POST") {
+          await onboarding.finish(userId, await req.json());
+          return json({ ok: true });
+        }
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
+      return json({ error: "Not found" }, 404);
     }
 
     // ── Newsletter cleanup ──────────────────────────────────────────────────

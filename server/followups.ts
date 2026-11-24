@@ -22,8 +22,8 @@ const WINDOW_DAYS = 30;
 const WAIT_DAYS = 2;
 
 const NO_REPLY = /no.?reply|donotreply|do-not-reply|notifications?@|mailer-daemon|postmaster|bounce/i;
-const SERVICE = /print|scan|mailer|daemon|robot/i;
-const SERVICE_NAME = /\b(service account|no.?reply|notifications?|printer)\b/i;
+export const SERVICE = /print|scan|mailer|daemon|robot/i;
+export const SERVICE_NAME = /\b(service account|no.?reply|notifications?|printer)\b/i;
 
 // One line of the Follow-ups list: a reminder the user set, or sent mail
 // Tabellar suggests; `reminder_id` tells them apart.

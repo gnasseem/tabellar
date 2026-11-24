@@ -9,7 +9,6 @@ import { addressesIn } from "@/lib/accounts";
 import { useApp } from "../AppShell";
 import EmailBody from "../EmailBody";
 import EmailDetail from "../EmailDetail";
-import InitialFetchOverlay from "../InitialFetchOverlay";
 import { Questions } from "../Profile";
 import { AccountMark, Countdown, Empty, Glyph, Menu, OutcomeLines, Seg, SkeletonRows, Tick, ViewBar, VirtualList, dayLabel, shortWhen, type MailState } from "../ui";
 
@@ -201,7 +200,7 @@ export default function InboxView() {
       live = false;
     };
   }, [mail.byEmail, emails, search, only]);
-  const { syncInbox, syncError, initialPhase, noAccountsConnected } = useInboxSync(reload);
+  const { syncInbox, syncError, fetching, noAccountsConnected } = useInboxSync(reload);
 
   useEffect(() => {
     loaded.current = 0;
@@ -559,7 +558,6 @@ export default function InboxView() {
 
   return (
     <>
-      {initialPhase >= 0 && <InitialFetchOverlay phaseIndex={initialPhase} />}
       {picked.size ? (
         <header className="bar">
           <b className="bar-title mr-1.5">{picked.size} selected</b>
@@ -623,7 +621,7 @@ export default function InboxView() {
         <div className="flex min-w-0 flex-1 flex-col">
           <Questions />
           <div className="flex min-h-0 min-w-0 flex-1 flex-col" role="listbox" aria-label="Inbox">
-          {loading && !emails.length ? (
+          {(loading || fetching) && !emails.length ? (
             <div className="pt-9">
               <SkeletonRows count={22} />
             </div>

@@ -1,23 +1,22 @@
 import { useState, type ChangeEvent, type InputHTMLAttributes, type ReactNode } from "react";
 import { setupPost, type MailboxChoice, type SetupState } from "@/lib/setup";
-import { Choice, ErrorLine, ui } from "./ModelSetup";
+import { ErrorLine, ui } from "./ModelSetup";
 
-// Adding a mailbox, in onboarding and in Settings > Accounts. The choices
+// Adding a mailbox, in the first run and in Settings > Accounts. The choices
 // come from the server's list (server/providers.ts), so a new provider shows
-// up in both. Google and Outlook sign in on their own page; the rest take
-// the address and an app password, checked against the servers before the
-// account is kept.
+// up in both, as a row of tiles. Google and Outlook sign in on their own
+// page; the rest take the address and an app password, checked against the
+// servers before the account is kept.
 
 const HINTS: Record<string, string> = {
-  gmail: "Gmail, Google Workspace",
-  microsoft: "Outlook.com, Microsoft 365",
-  imap: "Any IMAP mailbox",
+  gmail: "Gmail, Workspace",
+  microsoft: "Microsoft 365",
+  imap: "Any IMAP server",
 };
 
 const hintOf = (c: MailboxChoice) => {
-  const calendar = c.calendar ? "" : "no calendar";
-  if (!HINTS[c.id]) return calendar ? "No calendar" : undefined;
-  return calendar ? `${HINTS[c.id]}, ${calendar}` : HINTS[c.id];
+  if (c.provider === "microsoft" && !c.ready) return "Needs setup";
+  return HINTS[c.id] ?? "App password";
 };
 
 export default function AddMailbox({ state, refresh, google, beforeSignIn, onAdded }: {
@@ -32,24 +31,36 @@ export default function AddMailbox({ state, refresh, google, beforeSignIn, onAdd
   const [id, setId] = useState(state.mailboxes[0]?.id ?? "gmail");
   const choice = state.mailboxes.find((c) => c.id === id) ?? state.mailboxes[0];
   return (
-    <div className="space-y-4">
-      <div role="radiogroup" aria-label="Mailbox" className="-mx-2 grid sm:grid-cols-2">
+    <div className="space-y-5">
+      <div role="radiogroup" aria-label="Mailbox" className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
         {state.mailboxes.map((c) => (
-          <Choice key={c.id} on={c.id === id} onClick={() => setId(c.id)} title={c.name} hint={hintOf(c)} />
+          <button
+            key={c.id}
+            type="button"
+            role="radio"
+            aria-checked={c.id === id}
+            onClick={() => setId(c.id)}
+            className={`flex h-[54px] min-w-0 flex-col justify-center rounded-[9px] px-3 text-left transition-[background-color,box-shadow] duration-150 ${c.id === id ? "bg-sel" : "bg-raised shadow-control hover:bg-hover"}`}
+          >
+            <span className="truncate font-medium text-ink">{c.name}</span>
+            <span className="truncate text-xs text-ink3">{hintOf(c)}</span>
+          </button>
         ))}
       </div>
-      {choice.provider === "gmail" ? (
-        (google ?? <SignIn href="/oauth/start" label="Sign in with Google" before={beforeSignIn} />)
-      ) : choice.provider === "microsoft" ? (
-        <Outlook choice={choice} state={state} refresh={refresh} before={beforeSignIn} />
-      ) : (
-        <PasswordForm key={choice.id} choice={choice} onAdded={onAdded} />
-      )}
+      <div key={choice.id} className="ob-enter">
+        {choice.provider === "gmail" ? (
+          (google ?? <SignIn href="/oauth/start" label="Sign in with Google" before={beforeSignIn} />)
+        ) : choice.provider === "microsoft" ? (
+          <Outlook choice={choice} state={state} refresh={refresh} before={beforeSignIn} />
+        ) : (
+          <PasswordForm choice={choice} onAdded={onAdded} />
+        )}
+      </div>
     </div>
   );
 }
 
-function SignIn({ href, label, before }: { href: string; label: string; before?: () => void }) {
+export function SignIn({ href, label, before }: { href: string; label: string; before?: () => void }) {
   const [going, setGoing] = useState(false);
   return (
     <a
@@ -169,7 +180,7 @@ function PasswordForm({ choice, onAdded }: { choice: MailboxChoice; onAdded: (fi
         <button type="submit" className={ui.btnPrimary} disabled={busy || !f.address.trim() || !f.password}>
           {busy ? "Checking" : `Add ${choice.id === "imap" ? "mailbox" : choice.name}`}
         </button>
-        <span className="text-xs text-ink2">Kept in the macOS Keychain. Nothing is sent to check it.</span>
+        <span className="text-xs text-ink2">Kept in the macOS Keychain.{choice.calendar ? "" : " Mail only: no calendar."}</span>
       </div>
       <ErrorLine text={error} />
     </form>

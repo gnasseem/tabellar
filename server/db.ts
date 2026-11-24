@@ -29,6 +29,8 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       autonomy_level: 'text ! ="suggest"', engine_paused: "bool ! =false",
       autopilot_delay_min: "int ! =5", autopilot_daily_cap: "int ! =5", autopilot_known_only: "bool ! =true",
       first_read: "json", rules_version: "int ! =0", label_suggestions: "json",
+      // The first-run step the window is on (onboarding.ts); "done" after it.
+      onboarding: 'text ! ="done"',
       created_at: "time ! =now", updated_at: "time ! =now",
     },
   },

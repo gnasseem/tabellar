@@ -202,16 +202,17 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
         const err = url.searchParams.get("error");
         const home = `http://127.0.0.1:${port}/`;
         if (err) return send(res, 400, page("Sign-in cancelled", `<p>The sign-in said: ${err.replace(/[<>&]/g, "")}. <a href="${home}">Back to Tabellar</a></p>`), "text/html; charset=utf-8");
-        let first: boolean;
         try {
-          first = await completeSignIn(url.searchParams.get("code") ?? "", url.searchParams.get("state") ?? "");
+          await completeSignIn(url.searchParams.get("code") ?? "", url.searchParams.get("state") ?? "");
         } catch (e) {
           const msg = (e as Error).message.replace(/[<>&]/g, "");
           return send(res, 400, page("Sign-in failed", `<p>${msg}</p><p><a href="${home}">Back to Tabellar</a></p>`), "text/html; charset=utf-8");
         }
-        // A second account is added from Settings, so the window goes back
-        // there, on 127.0.0.1 where its session cookie is.
-        res.writeHead(302, { Location: first ? `${home}?initial=1` : `${home}#settings` });
+        // During the first run the window goes back to its mailbox step;
+        // after it, an account is added from Settings, so it goes back
+        // there. Either way on 127.0.0.1, where its session cookie is.
+        const { data: me } = await db.from("profiles").select("onboarding").limit(1).maybeSingle();
+        res.writeHead(302, { Location: me?.onboarding === "done" ? `${home}#settings` : home });
         return res.end();
       }
 

@@ -49,6 +49,10 @@ const DESCRIBE: Record<string, string> = {
   not_newsletter: "not a newsletter",
 };
 
+// Two facts have a fixed start, so About you can show and edit them as fields.
+export const ROLE = "Role: ";
+export const WORK = "Works on: ";
+
 const MAX_OPEN = 3;
 const CONTEXT_CHARS = 1600; // about 400 tokens
 

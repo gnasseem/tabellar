@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { api } from "@/lib/outcomes";
-import { LABEL_COLORS, labelColor } from "@/lib/labelColors";
+import { LABEL_COLORS, labelColor, slugOf } from "@/lib/labelColors";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { Empty, SkeletonRows, ViewBar } from "../ui";
@@ -22,13 +22,6 @@ const COLUMNS = "!grid grid-cols-[26px_minmax(0,180px)_minmax(0,1fr)_64px] md:gr
 
 function Dot({ color }: { color: string }) {
   return <span aria-hidden className="block h-2 w-2 flex-none rounded-full" style={{ background: labelColor(color) }} />;
-}
-
-// A slug never used before, so mail tagged with a deleted label's slug does
-// not land in a new one of the same name.
-function slugOf(name: string): string {
-  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "label";
-  return `${base}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 const mappedTo = (l: { display_name: string; gmail_label: string | null }) => l.gmail_label?.trim() || `Tabellar/${l.display_name}`;

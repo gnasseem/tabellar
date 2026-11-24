@@ -1,7 +1,10 @@
-// Calls to the server's /api/setup routes, used by the first-run onboarding
-// and by Settings > Models.
+// Calls to the server's /api/setup and /api/onboarding routes, used by the
+// first run and by Settings > Models and Accounts.
 
-export type LocalModel = { name: string; size: number; about?: string };
+export type LocalModel = { name: string; size: number; about?: string; firstRead?: number };
+
+// The local models being downloaded in the background (server/setup.ts).
+export type LocalJob = { careful?: string; fast?: string | null; label: string; completed?: number; total?: number; done: boolean; error: string | null };
 
 export type Slot = "careful" | "fast";
 
@@ -39,8 +42,6 @@ export type MailboxChoice = {
   ready: boolean;
 };
 
-export type Progress = { status: string; completed?: number; total?: number };
-
 function headers(): HeadersInit {
   return { "Content-Type": "application/json", Authorization: `Bearer ${window.__TABELLAR_TOKEN__ ?? ""}` };
 }
@@ -58,32 +59,34 @@ export async function setupPost<T = Record<string, unknown>>(path: string, body:
   return data as T;
 }
 
-// Routes that report progress send one JSON object per line.
-export async function setupStream(path: string, body: unknown, onProgress: (p: Progress) => void): Promise<void> {
-  const r = await fetch(`/api/setup${path}`, { method: "POST", headers: headers(), body: JSON.stringify(body) });
-  if (!r.ok || !r.body) {
-    const data = await r.json().catch(() => ({}));
-    throw new Error(data.error ?? `Tabellar answered ${r.status}`);
-  }
-  const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += value;
-    let nl;
-    while ((nl = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (!line) continue;
-      const p = JSON.parse(line) as Progress & { error?: string };
-      if (p.error) throw new Error(p.error);
-      onProgress(p);
-    }
-  }
+export async function getLocalJob(): Promise<LocalJob | null> {
+  const r = await fetch("/api/setup/local", { headers: headers() });
+  return r.ok ? r.json() : null;
 }
 
 export function formatBytes(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
   return `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+}
+
+// The first run's state, from /api/onboarding (server/onboarding.ts).
+export type FirstRead = {
+  step: "headers" | "sent" | "deep" | "done";
+  headers: number;
+  headers_total: number;
+  senders: number;
+  sent: number;
+  facts: number;
+  learned: boolean;
+  deep: number;
+  deep_total: number;
+  error: string | null;
+};
+export type Onboarding = { step: string; read: FirstRead; emails: number; sorted: number; model: boolean; local: LocalJob | null };
+
+export async function api<T = Record<string, unknown>>(path: string, body?: unknown): Promise<T> {
+  const r = await fetch(`/api${path}`, body === undefined ? { headers: headers() } : { method: "POST", headers: headers(), body: JSON.stringify(body) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.error) throw new Error(data.error ?? `Tabellar answered ${r.status}`);
+  return data as T;
 }

@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/Icon";
 import { Glyph, Seg } from "@/components/ui";
-import { formatBytes, getSetupState, setupPost, setupStream, type ModelInfo, type Progress, type SetupState, type Slot } from "@/lib/setup";
+import { formatBytes, getLocalJob, getSetupState, setupPost, type LocalJob, type ModelInfo, type SetupState, type Slot } from "@/lib/setup";
 
-// Choosing a model: on this Mac through Ollama (installing Ollama and
-// downloading a model if needed) or a cloud provider with the user's own key.
-// There are two slots: the careful model writes and plans, the fast model
-// reads each email. Onboarding sets the careful one, which the fast slot
-// follows until Settings, under Models, gives it its own.
+// Choosing a model: on this Mac through Ollama, or a cloud provider with the
+// user's own key. There are two slots: the careful model writes and plans,
+// the fast model reads each email. The first run offers the two plain
+// choices (ModelStep in Welcome.tsx) with these panels behind Advanced;
+// Settings, under Models, shows the panels for each slot. Local models are
+// downloaded by the server in the background (POST /api/setup/local), so the
+// window can move on while they arrive.
 
 export function useSetupState() {
   const [state, setState] = useState<SetupState | null>(null);
@@ -26,11 +28,72 @@ export function useSetupState() {
   return { state, error, refresh };
 }
 
+// The background download, checked every second while it runs.
+export function useLocalJob(onDone?: () => void) {
+  const [job, setJob] = useState<LocalJob | null>(null);
+  const done = useRef(onDone);
+  done.current = onDone;
+  const poll = useCallback(async () => {
+    const j = await getLocalJob().catch(() => null);
+    setJob((prev) => {
+      if (prev && !prev.done && j?.done && !j.error) done.current?.();
+      return j;
+    });
+  }, []);
+  useEffect(() => {
+    poll();
+  }, [poll]);
+  const running = !!job && !job.done;
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(poll, 1000);
+    return () => clearInterval(id);
+  }, [running, poll]);
+  const start = useCallback(async (models: { careful?: string; fast?: string | null }) => {
+    setJob(await setupPost<LocalJob>("/local", models));
+  }, []);
+  return { job, running, start };
+}
+
+// "About 4 minutes left", from how fast the bytes have been arriving.
+export function useTimeLeft(p?: { completed?: number; total?: number; label?: string }): string {
+  const samples = useRef<{ label?: string; t: number; n: number }[]>([]);
+  const [text, setText] = useState("");
+  useEffect(() => {
+    if (!p?.total || p.completed === undefined) return setText("");
+    const now = Date.now();
+    const list = samples.current.filter((s) => s.label === p.label && now - s.t < 20_000);
+    list.push({ label: p.label, t: now, n: p.completed });
+    samples.current = list;
+    const first = list[0];
+    const rate = (p.completed - first.n) / Math.max(1, (now - first.t) / 1000);
+    if (list.length < 3 || rate <= 0) return setText("");
+    const min = Math.round((p.total - p.completed) / rate / 60);
+    setText(min < 1 ? "under a minute left" : `about ${min} minute${min === 1 ? "" : "s"} left`);
+  }, [p?.completed, p?.total, p?.label]);
+  return text;
+}
+
 export function modelLabel(m: ModelInfo | null, providers: SetupState["providers"]): string {
   if (!m) return "";
   if (m.format === "ollama") return `${m.model} on this Mac`;
   const name = providers.find((p) => p.id === m.provider)?.name ?? "the cloud";
   return `${m.model} through ${m.provider === "custom" ? "your endpoint" : name}`;
+}
+
+// The pair recommended for this Mac's memory: the careful model, the fast one
+// (null when one model does both), what is still to download, and how long
+// the first read takes where that was timed.
+export function localPair(state: SetupState) {
+  const { local, ollama } = state;
+  const careful = local.recommended;
+  const fast = local.recommendedFast !== careful ? local.recommendedFast : null;
+  const installed = new Set(ollama.models.map((m) => m.name));
+  const size = (name: string) => local.choices.find((c) => c.name === name)?.size ?? 0;
+  const missing = [careful, fast].filter((n): n is string => !!n && !installed.has(n));
+  const download = missing.reduce((n, m) => n + size(m), 0) + (ollama.installed ? 0 : 230e6);
+  const reader = local.choices.find((c) => c.name === (fast ?? careful));
+  return { careful, fast, download, missing, minutes: reader?.firstRead ?? null };
 }
 
 // Buttons and fields at the size used during setup, a little larger than in
@@ -42,10 +105,6 @@ const input = "input h-8";
 export const ui = { btnPrimary, btnSecondary, input };
 
 export { Icon };
-
-export function Spinner({ size = 16 }: { size?: number }) {
-  return <Icon name="progress_activity" size={size} className="animate-spin" />;
-}
 
 export function ErrorLine({ text }: { text: string }) {
   if (!text) return null;
@@ -98,7 +157,7 @@ function InUse({ name }: { name: string }) {
 
 // A thin bar with the numbers beside it. Without a total it shows only that
 // work is going on.
-export function ProgressBar({ label, p }: { label: string; p?: Progress }) {
+export function ProgressBar({ label, p, note }: { label: string; p?: { completed?: number; total?: number }; note?: string }) {
   const pct = p?.total && p.completed !== undefined ? Math.min(100, (p.completed / p.total) * 100) : null;
   return (
     <div role="status" aria-live="polite">
@@ -106,28 +165,26 @@ export function ProgressBar({ label, p }: { label: string; p?: Progress }) {
         <span className="text-ink">{label}</span>
         {pct !== null && (
           <span className="text-xs text-ink3">
-            {formatBytes(p!.completed!)} of {formatBytes(p!.total!)}, {Math.round(pct)}%
+            {formatBytes(p!.completed!)} of {formatBytes(p!.total!)}
+            {note ? `, ${note}` : ""}
           </span>
         )}
       </div>
-      <div className="relative mt-1.5 h-[3px] overflow-hidden rounded-full bg-field">
-        {pct !== null ? (
-          <div className="h-full rounded-full bg-ink2 transition-[width] duration-300 ease-out" style={{ width: `${Math.max(2, pct)}%` }} />
-        ) : (
-          <div className="ob-indeterminate absolute inset-y-0 w-2/5 rounded-full bg-ink2" />
-        )}
-      </div>
+      <Bar pct={pct} className="mt-1.5" />
     </div>
   );
 }
 
-// Ollama's pull statuses ("pulling 3a2f...", "verifying sha256 digest") in plain words.
-function pullLabel(model: string, status: string): string {
-  if (status === "pulling manifest") return `Preparing ${model}`;
-  if (status.startsWith("pulling")) return `Downloading ${model}`;
-  if (status.startsWith("verifying")) return "Checking the download";
-  if (status === "writing manifest" || status === "success") return "Finishing up";
-  return status;
+export function Bar({ pct, className = "" }: { pct: number | null; className?: string }) {
+  return (
+    <div className={`relative h-[3px] overflow-hidden rounded-full bg-field ${className}`}>
+      {pct !== null ? (
+        <div className="h-full rounded-full bg-ink2 transition-[width] duration-300 ease-out" style={{ width: `${Math.max(2, pct)}%` }} />
+      ) : (
+        <div className="ob-indeterminate absolute inset-y-0 w-2/5 rounded-full bg-ink2" />
+      )}
+    </div>
+  );
 }
 
 type PanelProps = { state: SetupState; slot: Slot; current: ModelInfo | null; refresh: () => Promise<void>; onSaved?: () => void };
@@ -138,8 +195,8 @@ export default function ModelSetup({ state, refresh, onSaved, slot = "careful" }
   return (
     <div className="space-y-5">
       <div role="radiogroup" aria-label="Where the model runs" className="-mx-2">
-        <Choice on={where === "local"} onClick={() => setWhere("local")} title="On this Mac" hint="Free and private: nothing is sent to a model provider. Runs with Ollama; slower on long threads." />
-        <Choice on={where === "cloud"} onClick={() => setWhere("cloud")} title="Cloud provider" hint="Faster and sharper. Your own API key, billed by the provider; the mail being read is sent to it." />
+        <Choice on={where === "local"} onClick={() => setWhere("local")} title="On this Mac" hint="Private: nothing is sent to a model provider. Runs with Ollama; slower on long threads." />
+        <Choice on={where === "cloud"} onClick={() => setWhere("cloud")} title="Cloud" hint="Faster. Your own API key, billed by the provider; the mail being read is sent to it." />
       </div>
       {where === "local" ? (
         <LocalPanel state={state} slot={slot} current={current} refresh={refresh} onSaved={onSaved} />
@@ -150,16 +207,21 @@ export default function ModelSetup({ state, refresh, onSaved, slot = "careful" }
   );
 }
 
-// On this Mac
+// On this Mac: every curated model and those already in Ollama, or any other
+// by name. Using one downloads it in the background.
 
-function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProps) {
+export function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProps) {
   const { ollama, local } = state;
   const current = model?.format === "ollama" ? model.model : null;
   const recommendedName = slot === "fast" ? local.recommendedFast : local.recommended;
   const [selected, setSelected] = useState(current ?? recommendedName);
   const [other, setOther] = useState("");
-  const [busy, setBusy] = useState<{ label: string; p?: Progress } | null>(null);
   const [error, setError] = useState("");
+  const { job, running, start } = useLocalJob(async () => {
+    await refresh();
+    onSaved?.();
+  });
+  const left = useTimeLeft(job ?? undefined);
 
   const installed = useMemo(() => new Map(ollama.models.map((m) => [m.name, m.size])), [ollama.models]);
   const about = useMemo(() => new Map(local.choices.map((c) => [c.name, c.about])), [local.choices]);
@@ -172,69 +234,15 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
   // it also sets up the recommended fast model, so mail is read quickly.
   const pairFast = slot === "careful" && !state.fastModel && choice === local.recommended && local.recommendedFast !== choice ? local.recommendedFast : null;
 
-  async function run(work: () => Promise<void>) {
+  const use = async () => {
     setError("");
     try {
-      await work();
+      if (!choice) throw new Error("Type the name of an Ollama model.");
+      await start(slot === "fast" ? { fast: choice } : { careful: choice, ...(pairFast ? { fast: pairFast } : {}) });
     } catch (e) {
       setError((e as Error).message);
-    } finally {
-      setBusy(null);
     }
-  }
-
-  const install = () =>
-    run(async () => {
-      setBusy({ label: "Downloading Ollama" });
-      await setupStream("/ollama/install", {}, (p) => setBusy({ label: p.status === "success" ? "Ollama is ready" : p.status, p: p.total ? p : undefined }));
-      await refresh();
-    });
-
-  const start = () =>
-    run(async () => {
-      setBusy({ label: "Starting Ollama" });
-      const { running } = await setupPost<{ running: boolean }>("/ollama/start");
-      if (!running) throw new Error("Ollama did not start. Open it from your Applications folder, then try again.");
-      await refresh();
-    });
-
-  const use = () =>
-    run(async () => {
-      if (!choice) throw new Error("Type the name of an Ollama model.");
-      for (const name of [choice, pairFast].filter((n): n is string => !!n && !installed.has(n))) {
-        setBusy({ label: `Preparing ${name}` });
-        await setupStream("/ollama/pull", { model: name }, (p) => setBusy({ label: pullLabel(name, p.status), p: p.total ? p : undefined }));
-      }
-      setBusy({ label: "Saving" });
-      await setupPost("/model", { slot, provider: "ollama", model: choice });
-      if (pairFast) await setupPost("/model", { slot: "fast", provider: "ollama", model: pairFast });
-      await refresh();
-      onSaved?.();
-    });
-
-  if (!ollama.installed || !ollama.running) {
-    const missing = !ollama.installed;
-    return (
-      <div className="space-y-3">
-        <div>
-          <p className="font-medium text-ink">{busy ? "Setting up Ollama" : missing ? "Ollama is not installed yet" : "Ollama is not running"}</p>
-          <p className="mt-0.5 text-xs leading-normal text-ink2">
-            {missing
-              ? "Ollama is the free app that runs models on your Mac. Tabellar downloads it from ollama.com, checks its signature and puts it in Applications."
-              : "Ollama is installed. Start it and Tabellar will list your models."}
-          </p>
-        </div>
-        {busy ? (
-          <ProgressBar label={busy.label} p={busy.p} />
-        ) : (
-          <button type="button" className={btnPrimary} onClick={missing ? install : start}>
-            {missing ? "Install Ollama, about 230 MB" : "Start Ollama"}
-          </button>
-        )}
-        <ErrorLine text={error} />
-      </div>
-    );
-  }
+  };
 
   const inUse = current === choice && !!model?.ready;
   return (
@@ -247,20 +255,20 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
               key={m.name}
               mono
               on={selected === m.name}
-              disabled={!!busy}
+              disabled={running}
               onClick={() => setSelected(m.name)}
               title={m.name}
               hint={[m.name === recommendedName && `Recommended for this Mac's ${local.memoryGb} GB of memory`, about.get(m.name) ?? (m.name !== recommendedName && "Already on this Mac")].filter(Boolean).join(". ")}
               right={current === m.name && model?.ready ? "In use" : installed.has(m.name) ? "On this Mac" : formatBytes(m.size)}
             />
           ))}
-          <div className={`flex items-center gap-2.5 rounded-md px-2 py-1 transition-colors duration-150 ${selected === "__other" ? "bg-sel" : "hover:bg-hover"}`} onClick={() => !busy && setSelected("__other")}>
-            <button type="button" role="radio" aria-checked={selected === "__other"} aria-label="Another model" disabled={!!busy} onClick={() => setSelected("__other")} className="flex">
+          <div className={`flex items-center gap-2.5 rounded-md px-2 py-1 transition-colors duration-150 ${selected === "__other" ? "bg-sel" : "hover:bg-hover"}`} onClick={() => !running && setSelected("__other")}>
+            <button type="button" role="radio" aria-checked={selected === "__other"} aria-label="Another model" disabled={running} onClick={() => setSelected("__other")} className="flex">
               <RadioDot on={selected === "__other"} />
             </button>
             <input
               value={other}
-              disabled={!!busy}
+              disabled={running}
               onFocus={() => setSelected("__other")}
               onChange={(e) => setOther(e.target.value)}
               placeholder="Another model from ollama.com/library, such as qwen3.5:9b"
@@ -276,33 +284,33 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
           With {local.memoryGb} GB of memory one small model does everything here, and its drafts are plainer. A cloud model writes drafts faster and closer to your voice.
         </p>
       )}
-      {busy ? (
-        <ProgressBar label={busy.label} p={busy.p} />
+      {running ? (
+        <ProgressBar label={job!.label} p={job!.total ? job! : undefined} note={left} />
       ) : (
         <div className="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1.5">
           {inUse ? (
             <InUse name={choice} />
           ) : (
             <button type="button" className={btnPrimary} disabled={!choice} onClick={use}>
-              {installed.has(choice) ? `Use ${choice}` : choice ? `Download and use ${choice}` : "Download and use"}
+              {installed.has(choice) && (!pairFast || installed.has(pairFast)) ? `Use ${choice}` : choice ? `Download and use ${choice}` : "Download and use"}
             </button>
           )}
           {!inUse && pairFast && (
             <span className="text-xs text-ink2">
-              {installed.has(pairFast) ? "Also uses" : "Also downloads"} <span className="font-mono">{pairFast}</span> to read new mail quickly{installed.has(pairFast) && installed.has(choice) ? "." : "; downloads once, then runs offline."}
+              {installed.has(pairFast) ? "Also uses" : "Also downloads"} <span className="font-mono">{pairFast}</span> to read new mail quickly.
             </span>
           )}
-          {!installed.has(choice) && choice && !inUse && !pairFast && <span className="text-xs text-ink2">Downloads once, then runs offline.</span>}
+          {!inUse && !ollama.installed && <span className="text-xs text-ink2">Installs Ollama first, the free app that runs models on this Mac.</span>}
         </div>
       )}
-      <ErrorLine text={error} />
+      <ErrorLine text={error || job?.error || ""} />
     </div>
   );
 }
 
 // Cloud provider
 
-function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProps) {
+export function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProps) {
   const current = model && model.format !== "ollama" ? model : null;
   const [providerId, setProviderId] = useState(current?.provider ?? "openrouter");
   const provider = state.providers.find((p) => p.id === providerId) ?? state.providers[0];

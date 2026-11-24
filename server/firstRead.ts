@@ -7,7 +7,10 @@
 //   sent     The last 200 sent emails: kept for Follow-ups, the writing style
 //            learned from all of them, and one careful-model call that writes
 //            the first facts about the user; then one more that suggests
-//            labels from the senders and subjects (labels.ts).
+//            labels from the senders and subjects (labels.ts). The sent mail
+//            is read as soon as there is a model, beside the headers, so
+//            About you fills in early; labels are suggested once there are
+//            a few hundred headers.
 //   deep     Inbox mail from the last 30 days, real people before bulk, newest
 //            first, 300 in all: bodies fetched, then sorted. Bulk mail is
 //            sorted from its headers alone (analyzeEmails.ts).
@@ -26,14 +29,16 @@ import { analyzeWritingStyle, factsFromSent } from "./ai.ts";
 import { mail } from "./providers.ts";
 import { notStored, readBacklog, sentHeaderRow, storeInbox, storeSent, syncMail, type Account } from "./sync.ts";
 import { indexMail, isBulk, ownAddresses, rebuildSenders, writtenTo } from "./senders.ts";
-import { setPref } from "./profile.ts";
+import { ROLE, WORK, setPref } from "./profile.ts";
 import { suggestLabels } from "./labels.ts";
+import { judgeSent } from "./followups.ts";
 
 const HEADER_DAYS = 90;
 const HEADER_CAP = 5000;
 const DEEP_DAYS = 30;
 const DEEP_CAP = 300;
 const SENT_CAP = 200;
+const LABELS_FROM = 300;
 const DAY = 86_400_000;
 
 export type FirstRead = {
@@ -43,6 +48,7 @@ export type FirstRead = {
   senders: number;
   sent: number; // sent emails read for style and facts
   facts: number; // facts about the user written from them
+  learned: boolean; // the sent mail has been read for style and facts
   deep: number; // inbox mail of the last 30 days sorted
   deep_total: number;
   started_at: string | null;
@@ -50,7 +56,7 @@ export type FirstRead = {
   error: string | null;
 };
 
-const FRESH: FirstRead = { step: "headers", headers: 0, headers_total: 0, senders: 0, sent: 0, facts: 0, deep: 0, deep_total: 0, started_at: null, finished_at: null, error: null };
+const FRESH: FirstRead = { step: "headers", headers: 0, headers_total: 0, senders: 0, sent: 0, facts: 0, learned: false, deep: 0, deep_total: 0, started_at: null, finished_at: null, error: null };
 
 export async function firstReadState(userId: string): Promise<FirstRead> {
   const { data } = await db.from("profiles").select("first_read").eq("id", userId).maybeSingle();
@@ -65,6 +71,7 @@ let failures = 0;
 // appear as the read goes. After a failure (Google busy, the Mac offline) it
 // tries again on its own, a minute later, then less and less often.
 export function startFirstRead(userId: string, plan: () => unknown): Promise<void> {
+  if (modelConfigured()) void learnOnce(userId).catch((e) => console.error("[first read] sent mail:", (e as Error).message));
   running ??= firstRead(userId, plan)
     .then(() => {
       failures = 0;
@@ -81,10 +88,40 @@ export function startFirstRead(userId: string, plan: () => unknown): Promise<voi
   return running;
 }
 
-async function save(userId: string, patch: Partial<FirstRead>): Promise<FirstRead> {
-  const state = { ...(await firstReadState(userId)), ...patch };
-  await db.from("profiles").update({ first_read: state }).eq("id", userId);
-  return state;
+// One change at a time: the headers and the sent mail are read side by side.
+let saving: Promise<unknown> = Promise.resolve();
+function save(userId: string, patch: Partial<FirstRead>): Promise<FirstRead> {
+  const next = saving.then(async () => {
+    const state = { ...(await firstReadState(userId)), ...patch };
+    await db.from("profiles").update({ first_read: state }).eq("id", userId);
+    return state;
+  });
+  saving = next.catch(() => {});
+  return next;
+}
+
+// The sent mail being fetched; indexing the headers waits for it.
+let sentFetch: Promise<unknown> = Promise.resolve();
+
+// The style and the facts from the first mailbox's sent mail, once.
+let learning: Promise<void> | null = null;
+function learnOnce(userId: string): Promise<void> {
+  learning ??= (async () => {
+    const state = await firstReadState(userId);
+    if (state.learned || state.step === "deep" || state.step === "done") return;
+    const { data } = await db.from("accounts").select("*").eq("user_id", userId).eq("paused", false).order("created_at", { ascending: true }).limit(1);
+    const account = (data ?? [])[0] as unknown as Account | undefined;
+    if (!account) return;
+    const read = await learnFromSent(userId, account, { facts: true });
+    await save(userId, { sent: read.sent, facts: read.facts, learned: true });
+    // Enough senders to suggest labels from already: the headers come newest first.
+    if ((await firstReadState(userId)).headers >= LABELS_FROM) await suggestLabels(userId).catch((e) => console.error("[first read] labels:", e));
+    // Which of it waits on an answer, for Follow-ups.
+    await judgeSent(userId).catch((e) => console.error("[first read] follow-ups:", (e as Error).message));
+  })().finally(() => {
+    learning = null;
+  });
+  return learning;
 }
 
 async function firstRead(userId: string, plan: () => unknown): Promise<void> {
@@ -114,10 +151,11 @@ async function firstRead(userId: string, plan: () => unknown): Promise<void> {
   if (!modelConfigured()) return;
 
   if (state.step === "sent") {
-    const read = await learnFromSent(userId, accounts[0], { facts: true });
+    await learnOnce(userId);
     // Labels to offer, from who writes and about what.
-    await suggestLabels(userId).catch((e) => console.error("[first read] labels:", e));
-    state = await save(userId, { step: "deep", sent: read.sent, facts: read.facts });
+    const { data: me } = await db.from("profiles").select("label_suggestions").eq("id", userId).maybeSingle();
+    if (!Array.isArray(me?.label_suggestions)) await suggestLabels(userId).catch((e) => console.error("[first read] labels:", e));
+    state = await save(userId, { step: "deep", learned: true });
   }
 
   if (state.step === "deep") {
@@ -161,10 +199,13 @@ async function indexHeaders(userId: string, accounts: Account[], progress = true
   }
   if (progress) await save(userId, { headers: done, headers_total: total });
   for (const { account, ids } of todo) {
-    for (let i = 0; i < ids.length; i += 200) {
-      const rows = await mail(account).headerRows(account, ids.slice(i, i + 200));
+    for (let i = 0; i < ids.length; i += 50) {
+      // Both draw on the same quota; the sent mail goes first, since About
+      // you waits for it.
+      await sentFetch.catch(() => {});
+      const rows = await mail(account).headerRows(account, ids.slice(i, i + 50));
       await indexMail(userId, account.id, rows, own);
-      done += Math.min(200, ids.length - i);
+      done += Math.min(50, ids.length - i);
       if (progress) await save(userId, { headers: done });
     }
   }
@@ -197,7 +238,9 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}...` : s
 // Read the last 200 sent emails: keep them, learn the writing style from all
 // of them, and with `facts` write the first facts about the user.
 export async function learnFromSent(userId: string, account: Account, opts: { facts: boolean }): Promise<{ sent: number; facts: number }> {
-  const sent = await mail(account).sent(account, SENT_CAP);
+  const fetching = mail(account).sent(account, SENT_CAP);
+  sentFetch = fetching;
+  const sent = await fetching;
   await storeSent(userId, account, sent);
   await indexMail(userId, account.id, sent.map((e) => sentHeaderRow(e, account)), await ownAddresses(userId));
   const mine = sent.map((e) => ({ ...e, own: ownWords(e.body || e.snippet || "") })).filter((e) => e.own);
@@ -241,7 +284,8 @@ export async function learnFromSent(userId: string, account: Account, opts: { fa
     "The newest sent emails:",
     ...mine.slice(0, 20).map((e) => `To: ${clip(e.to, 80)}\nSubject: ${e.subject}\n${clip(e.own, 500)}\n---`),
   ].join("\n");
-  const facts = await factsFromSent(sample);
+  const read = await factsFromSent(sample);
+  const facts = [read.role && `${ROLE}${read.role}`, read.work && `${WORK}${read.work}`, ...read.facts].filter((f): f is string => !!f);
   for (const f of facts) await setPref(userId, "fact", "", f, "learned", "From your sent mail");
   return { sent: sent.length, facts: facts.length };
 }

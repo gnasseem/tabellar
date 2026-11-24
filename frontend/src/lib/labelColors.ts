@@ -48,3 +48,10 @@ export function labelColor(stored: string | null | undefined): string {
   if (LABEL_COLORS.some((c) => c.hex === hex)) return hex;
   return OLDER[hex] ?? C.stone;
 }
+
+// A slug never used before, so mail tagged with a deleted label's slug does
+// not land in a new one of the same name.
+export function slugOf(name: string): string {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "label";
+  return `${base}-${Math.random().toString(36).slice(2, 7)}`;
+}
