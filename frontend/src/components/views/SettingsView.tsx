@@ -7,7 +7,7 @@ import { LevelControl } from "../Sidebar";
 import { api } from "@/lib/outcomes";
 import { EmailField, useContacts } from "../EmailAutocomplete";
 import { ModelSettings, RadioDot } from "../ModelSetup";
-import { Seg, ViewBar } from "../ui";
+import { Menu, Seg, ViewBar } from "../ui";
 import { AboutYou } from "../Profile";
 
 // Settings, laid out like the Mac's own: the sections on the left, the chosen
@@ -37,10 +37,11 @@ type DelegationRule = {
   weight: number;
 };
 
-type TabId = "account" | "about" | "background" | "ai" | "style" | "signatures" | "templates" | "schedule" | "calendar" | "automation";
+type TabId = "account" | "accounts" | "about" | "background" | "ai" | "style" | "signatures" | "templates" | "schedule" | "calendar" | "automation";
 
 const SECTIONS: { id: TabId; label: string }[] = [
   { id: "account", label: "General" },
+  { id: "accounts", label: "Accounts" },
   { id: "about", label: "About you" },
   { id: "background", label: "Engine" },
   { id: "ai", label: "Models" },
@@ -64,7 +65,7 @@ interface EmailSignature {
   name: string;
   html: string;
   is_default: boolean;
-  gmail_account_id: string | null;
+  account_id: string | null;
   created_at: string;
 }
 
@@ -362,12 +363,141 @@ function SignatureBody({ initial, onChange }: { initial: string; onChange: (html
   );
 }
 
+// Where Settings opens after Google sends the window back from adding an account.
+const RETURN_TAB = "tabellar_settings_tab";
+
+function addAccount() {
+  try {
+    sessionStorage.setItem(RETURN_TAB, "accounts");
+  } catch {
+    // the window then opens on General
+  }
+  window.location.assign("/oauth/start");
+}
+
+// Settings > Accounts: each mailbox, its default From, whether it is read,
+// which one is the default, and adding or removing one.
+function AccountsSettings() {
+  const { accounts, addToast } = useApp();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [menu, setMenu] = useState<string | null>(null);
+  const several = accounts.list.length > 1;
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: MouseEvent) => !(e.target as HTMLElement).closest("[data-account-menu]") && setMenu(null);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setMenu(null);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [menu]);
+
+  const change = async (id: string, patch: { paused?: boolean; is_default?: boolean; default_from?: string }) => {
+    setBusy(id);
+    try {
+      await api("/accounts/update", { id, ...patch });
+      await accounts.reload();
+    } catch (e) {
+      addToast("error", `Could not save that. ${(e as Error).message}`);
+    }
+    setBusy(null);
+  };
+
+  const remove = async (id: string, address: string) => {
+    setMenu(null);
+    const last = accounts.list.length === 1;
+    if (!window.confirm(`Remove ${address} from Tabellar?\n\nIts mail leaves Tabellar; Gmail is not changed.${last ? " It is the only account, so this window signs out." : ""}`)) return;
+    setBusy(id);
+    try {
+      await api("/accounts/remove", { id });
+      if (last) window.location.href = "/";
+      else await accounts.reload();
+    } catch (e) {
+      addToast("error", `Could not remove the account. ${(e as Error).message}`);
+    }
+    setBusy(null);
+  };
+
+  return (
+    <Group
+      title="Accounts"
+      right={
+        <button className="btn btn-sm" onClick={addAccount}>
+          Add an account
+        </button>
+      }
+      note="Addresses to send from come from each Gmail account's Send mail as list."
+    >
+      {!accounts.loaded ? (
+        <div className="space-y-3 py-4" aria-busy="true" aria-label="Loading">
+          <span className="skel block h-2.5 w-48" />
+          <span className="skel block h-2.5 w-72" />
+        </div>
+      ) : !accounts.list.length ? (
+        <p className="py-3 text-ink3">No account connected</p>
+      ) : (
+        accounts.list.map((a) => (
+          <Row
+            key={a.id}
+            name={
+              <span className="flex min-w-0 items-center gap-2">
+                {several && <span className="mark">{accounts.mark(a.id)}</span>}
+                <span className="truncate">{a.address}</span>
+                {several && a.is_default && <span className="flex-none text-xs text-ink3">Default</span>}
+              </span>
+            }
+            text={a.paused ? "Paused" : a.from.length > 1 ? `Also sends as ${a.from.filter((f) => f.address !== a.address.toLowerCase()).map((f) => f.address).join(", ")}` : undefined}
+          >
+            {a.from.length > 1 && (
+              <Menu label="From" value={a.default_from} onChange={(v) => change(a.id, { default_from: v })} options={a.from.map((f) => ({ id: f.address, label: f.address }))} />
+            )}
+            <Switch label={`Read mail from ${a.address}`} on={!a.paused} disabled={busy === a.id} onChange={(on) => change(a.id, { paused: !on })} />
+            <div className="relative" data-account-menu>
+              <button className="iconbtn" title="More" aria-label={`More for ${a.address}`} aria-haspopup="menu" aria-expanded={menu === a.id} onClick={() => setMenu(menu === a.id ? null : a.id)}>
+                <Icon name="more" size={16} />
+              </button>
+              {menu === a.id && (
+                <div className="pop absolute right-0 top-8 z-10 min-w-[160px]" role="menu">
+                  {several && !a.is_default && (
+                    <button role="menuitem" className="pop-item" onClick={() => (setMenu(null), change(a.id, { is_default: true }))}>
+                      Make default
+                    </button>
+                  )}
+                  <button role="menuitem" className="pop-item" onClick={addAccount}>
+                    Sign in again
+                  </button>
+                  <button role="menuitem" className="pop-item text-danger" onClick={() => remove(a.id, a.address)}>
+                    Remove
+                  </button>
+                </div>
+              )}
+            </div>
+          </Row>
+        ))
+      )}
+    </Group>
+  );
+}
+
 export default function SettingsView() {
-  const { user, profile, updateProfile, addToast, theme, setTheme, setView } = useApp();
+  const { user, profile, updateProfile, addToast, theme, setTheme, setView, accounts } = useApp();
   const supabase = createClient();
   const { contacts } = useContacts(user.id);
+  const gmailAccounts = accounts.list;
 
-  const [activeTab, setActiveTab] = useState<TabId>("account");
+  // Back from adding an account, the window opens on Accounts.
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    try {
+      const back = sessionStorage.getItem(RETURN_TAB) as TabId | null;
+      sessionStorage.removeItem(RETURN_TAB);
+      return back && SECTIONS.some((x) => x.id === back) ? back : "account";
+    } catch {
+      return "account";
+    }
+  });
   // Below md the section list and the chosen section show one at a time.
   const [listOpen, setListOpen] = useState(false);
 
@@ -380,9 +510,6 @@ export default function SettingsView() {
   const [saved, setSaved] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialLoadRef = useRef(true);
-  const [gmailAccounts, setGmailAccounts] = useState<{ id: string; gmail_address: string }[]>([]);
-  const [accountsLoaded, setAccountsLoaded] = useState(false);
-  const [removingAccount, setRemovingAccount] = useState<string | null>(null);
   const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([]);
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(null);
@@ -394,7 +521,7 @@ export default function SettingsView() {
   const [signatures, setSignatures] = useState<EmailSignature[]>([]);
   const [signaturesLoaded, setSignaturesLoaded] = useState(false);
   const [editingSignature, setEditingSignature] = useState<EmailSignature | null>(null);
-  const [sigForm, setSigForm] = useState<{ name: string; html: string; is_default: boolean; gmail_account_id: string }>({ name: "", html: "", is_default: false, gmail_account_id: "" });
+  const [sigForm, setSigForm] = useState<{ name: string; html: string; is_default: boolean; account_id: string }>({ name: "", html: "", is_default: false, account_id: "" });
   const [savingSignature, setSavingSignature] = useState(false);
   const [showSigEditor, setShowSigEditor] = useState(false);
 
@@ -457,18 +584,6 @@ export default function SettingsView() {
 
   // Calendar invites
   const [calendarSendInvites, setCalendarSendInvites] = useState(profile?.calendar_send_invites !== false);
-
-  const loadGmailAccounts = () => {
-    supabase
-      .from("gmail_accounts")
-      .select("id, gmail_address")
-      .eq("user_id", user.id)
-      .eq("is_active", true)
-      .then(({ data }) => {
-        setGmailAccounts((data || []) as { id: string; gmail_address: string }[]);
-        setAccountsLoaded(true);
-      });
-  };
 
   const loadDelegations = async () => {
     const { data } = await supabase.from("delegation_rules").select("*").eq("user_id", user.id).order("weight", { ascending: false }).limit(200);
@@ -556,18 +671,18 @@ export default function SettingsView() {
       name: "",
       html: `<p><strong>${displayName}</strong><br />Your title<br />Your company</p>`,
       is_default: signatures.length === 0,
-      gmail_account_id: gmailAccounts[0]?.id || "",
+      account_id: gmailAccounts[0]?.id || "",
     });
     setShowSigEditor(true);
   };
 
   const openEditSignature = (sig: EmailSignature) => {
     setEditingSignature(sig);
-    setSigForm({ name: sig.name, html: sig.html, is_default: sig.is_default, gmail_account_id: sig.gmail_account_id || "" });
+    setSigForm({ name: sig.name, html: sig.html, is_default: sig.is_default, account_id: sig.account_id || "" });
     setShowSigEditor(true);
   };
 
-  const postSignature = async (body: { name: string; html: string; is_default: boolean; gmail_account_id: string | null }, id?: string) => {
+  const postSignature = async (body: { name: string; html: string; is_default: boolean; account_id: string | null }, id?: string) => {
     const {
       data: { session },
     } = await supabase.auth.getSession();
@@ -585,7 +700,7 @@ export default function SettingsView() {
     setSavingSignature(true);
     try {
       const json = await postSignature(
-        { name: sigForm.name, html: sanitizeSignatureHtml(sigForm.html), is_default: sigForm.is_default, gmail_account_id: sigForm.gmail_account_id || null },
+        { name: sigForm.name, html: sanitizeSignatureHtml(sigForm.html), is_default: sigForm.is_default, account_id: sigForm.account_id || null },
         editingSignature?.id,
       );
       if (json.signature) {
@@ -612,7 +727,7 @@ export default function SettingsView() {
     setSignatures((prev) => prev.filter((s) => s.id !== sig.id));
     if (editingSignature?.id === sig.id) setShowSigEditor(false);
     const undo = async () => {
-      const json = await postSignature({ name: sig.name, html: sig.html, is_default: sig.is_default, gmail_account_id: sig.gmail_account_id }).catch(() => ({}) as { signature?: EmailSignature });
+      const json = await postSignature({ name: sig.name, html: sig.html, is_default: sig.is_default, account_id: sig.account_id }).catch(() => ({}) as { signature?: EmailSignature });
       if (json.signature) setSignatures((prev) => [...prev, json.signature]);
     };
     addToast("info", `Signature "${sig.name}" deleted`, { action: { label: "Undo", onClick: undo } });
@@ -642,32 +757,6 @@ export default function SettingsView() {
     addToast("info", "Forwarding rule removed", { action: { label: "Undo", onClick: undo } });
   };
 
-  const removeGmailAccount = async (accountId: string, address: string) => {
-    const last = gmailAccounts.length === 1;
-    if (!window.confirm(`Remove ${address || "this account"} from Tabellar?\n\nIts mail stays in Gmail and Tabellar stops reading it.${last ? " It is the only account, so this window signs out." : ""}`)) return;
-    setRemovingAccount(accountId);
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      await fetch(`/api/remove-gmail-account`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token}` },
-        body: JSON.stringify({ account_id: accountId }),
-      });
-      const remaining = gmailAccounts.filter((a) => a.id !== accountId);
-      if (remaining.length === 0) {
-        await supabase.auth.signOut();
-        window.location.href = "/";
-      } else {
-        loadGmailAccounts();
-      }
-    } catch {
-      addToast("error", "Could not remove the account. Check that Tabellar is running, then try again.");
-    }
-    setRemovingAccount(null);
-  };
-
   // Wipes what Tabellar stored and learned; Gmail and the connected accounts stay.
 
 
@@ -679,7 +768,6 @@ export default function SettingsView() {
   };
 
   useEffect(() => {
-    loadGmailAccounts();
 
     supabase
       .from("style_profiles")
@@ -769,21 +857,6 @@ export default function SettingsView() {
     [0, "Sun"],
   ];
 
-  const connectGmail = async (addAccount = false) => {
-    if (addAccount) {
-      window.location.assign("/oauth/start");
-    } else {
-      await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          scopes:
-            "https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.compose https://www.googleapis.com/auth/calendar https://www.googleapis.com/auth/calendar.events",
-          queryParams: { access_type: "offline", prompt: "consent" },
-        },
-      });
-    }
-  };
-
   const emptyLine = (text: string) => <p className="py-3 text-ink3">{text}</p>;
   const loadingLines = (
     <div className="space-y-3 py-4" aria-busy="true" aria-label="Loading">
@@ -841,11 +914,11 @@ export default function SettingsView() {
       </Field>
       {gmailAccounts.length > 1 && (
         <Field label="Account">
-          <select className="input" value={sigForm.gmail_account_id} onChange={(e) => setSigForm((f) => ({ ...f, gmail_account_id: e.target.value }))}>
+          <select className="input" value={sigForm.account_id} onChange={(e) => setSigForm((f) => ({ ...f, account_id: e.target.value }))}>
             <option value="">All accounts</option>
             {gmailAccounts.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.gmail_address}
+                {a.address}
               </option>
             ))}
           </select>
@@ -916,32 +989,10 @@ export default function SettingsView() {
 
             {activeTab === "about" && <AboutYou />}
 
+            {activeTab === "accounts" && <AccountsSettings />}
+
             {activeTab === "account" && (
               <>
-                <Group
-                  title="Gmail accounts"
-                  right={
-                    <button className="btn btn-sm" onClick={() => connectGmail(gmailAccounts.length > 0)}>
-                      {gmailAccounts.length === 0 ? "Connect Gmail" : "Add an account"}
-                    </button>
-                  }
-                >
-                  {!accountsLoaded
-                    ? loadingLines
-                    : gmailAccounts.length === 0
-                      ? emptyLine("No Gmail account connected")
-                      : gmailAccounts.map((acc) => (
-                          <Row key={acc.id} name={acc.gmail_address || "Connected account"}>
-                            <button className="btn" onClick={() => connectGmail(false)}>
-                              Reconnect
-                            </button>
-                            <button className="btn btn-danger" disabled={removingAccount === acc.id} onClick={() => removeGmailAccount(acc.id, acc.gmail_address)}>
-                              {removingAccount === acc.id ? "Removing" : "Remove"}
-                            </button>
-                          </Row>
-                        ))}
-                </Group>
-
                 <Group title="Appearance">
                   <Row name="Theme">
                     <Seg
@@ -1039,7 +1090,7 @@ export default function SettingsView() {
                             }
                             text={
                               <span className="block truncate">
-                                {sig.gmail_account_id ? (gmailAccounts.find((a) => a.id === sig.gmail_account_id)?.gmail_address ?? "One account") : "All accounts"}, {plainText(sig.html).slice(0, 100) || "empty"}
+                                {sig.account_id ? (gmailAccounts.find((a) => a.id === sig.account_id)?.address ?? "One account") : "All accounts"}, {plainText(sig.html).slice(0, 100) || "empty"}
                               </span>
                             }
                           >

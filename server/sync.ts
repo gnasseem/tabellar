@@ -24,6 +24,7 @@ import {
 } from "./gmail.ts";
 import { analyzeEmailsForUser } from "./analyzeEmails.ts";
 import { addressesIn, indexMail, ownAddresses, rebuildSenders } from "./senders.ts";
+import type { Account } from "./accounts.ts";
 
 // Run fn after every earlier call on the same queue has finished.
 export function serial<A extends unknown[], R>(fn: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
@@ -35,7 +36,7 @@ export function serial<A extends unknown[], R>(fn: (...args: A) => Promise<R>): 
   };
 }
 
-export type Account = { id: string; token_ref: string; gmail_address: string | null; history_id: string | null };
+export type { Account };
 type Sent = Awaited<ReturnType<typeof fetchSentEmails>>[number];
 
 const RECENT_DAYS = 30;
@@ -61,10 +62,12 @@ export async function notStored(userId: string, gmailIds: string[]): Promise<str
 // Store fetched inbox mail (sent mail and mail already stored are skipped)
 // and count it in email_memory. Returns the ids of the emails inserted.
 export async function storeInbox(userId: string, account: Account, rawEmails: EmailData[]): Promise<string[]> {
-  const own = (account.gmail_address ?? "").toLowerCase();
+  if (!rawEmails.length) return [];
+  // Mail from any of the user's own addresses (another account, an alias) is theirs, not inbox mail.
+  const own = await ownAddresses(userId);
   const fresh = new Set(await notStored(userId, rawEmails.map((e) => e.gmail_id)));
   const emails = rawEmails.filter(
-    (e) => fresh.has(e.gmail_id) && !e.label_ids.includes("SENT") && e.label_ids.includes("INBOX") && !(own && e.sender_email?.toLowerCase() === own),
+    (e) => fresh.has(e.gmail_id) && !e.label_ids.includes("SENT") && e.label_ids.includes("INBOX") && !own.has(e.sender_email?.toLowerCase() ?? ""),
   );
   if (!emails.length) return [];
 
@@ -74,7 +77,7 @@ export async function storeInbox(userId: string, account: Account, rawEmails: Em
       user_id: userId,
       gmail_id: e.gmail_id,
       thread_id: e.thread_id,
-      gmail_account_id: account.id,
+      account_id: account.id,
       subject: e.subject,
       sender: e.sender,
       sender_email: e.sender_email,
@@ -149,7 +152,7 @@ export async function storeSent(userId: string, account: Account, sent: Sent[]):
         user_id: userId,
         gmail_id: e.id,
         thread_id: e.thread_id,
-        gmail_account_id: account.id,
+        account_id: account.id,
         subject: e.subject,
         recipients: e.to,
         cc_recipients: e.cc || null,
@@ -176,7 +179,7 @@ export function sentHeaderRow(e: Sent, account: Account): HeaderRow {
     thread_id: e.thread_id,
     at: isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString(),
     labels: ["SENT"],
-    from: e.from || account.gmail_address || "",
+    from: e.from || account.address || "",
     to: e.to,
     cc: e.cc,
     list_unsubscribe: false,
@@ -245,10 +248,10 @@ const lastContacts = new Map<string, number>();
 // statistics (senders.ts). Returns the ids of the emails inserted.
 export const syncMail = serial(async (userId: string, isInitialFetch = false): Promise<string[]> => {
   const { data: accounts } = await db
-    .from("gmail_accounts")
+    .from("accounts")
     .select("*")
     .eq("user_id", userId)
-    .eq("is_active", true);
+    .eq("paused", false);
   if (!accounts?.length) return [];
 
   const allNew: string[] = [];
@@ -261,7 +264,7 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
       const startOver = async () => {
         try {
           const historyId = await currentHistoryId(account.token_ref);
-          await db.from("gmail_accounts").update({ history_id: historyId }).eq("id", account.id);
+          await db.from("accounts").update({ history_id: historyId }).eq("id", account.id);
         } catch (err) {
           console.warn("[sync] could not read the mailbox history id:", err);
         }
@@ -283,7 +286,7 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
           const back = await applyChanges(userId, changes);
           rawEmails = await fetchMessages(account.token_ref, await notStored(userId, [...new Set([...changes.added, ...back])]));
           sentArrived = changes.sentAdded;
-          if (changes.historyId) await db.from("gmail_accounts").update({ history_id: changes.historyId }).eq("id", account.id);
+          if (changes.historyId) await db.from("accounts").update({ history_id: changes.historyId }).eq("id", account.id);
         }
       } else {
         await startOver();
@@ -343,7 +346,7 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
           .from("emails")
           .select("id, gmail_id")
           .eq("user_id", userId)
-          .eq("gmail_account_id", account.id)
+          .eq("account_id", account.id)
           .contains("label_ids", ["SENT"])
           .is("thread_id", null)
           .limit(50);
@@ -416,13 +419,13 @@ export async function fillMissingBodies(userId: string): Promise<number> {
 // attachments. For mail stored before those were kept.
 export async function refreshStored(userId: string, days: number): Promise<number> {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
-  const { data: accounts } = await db.from("gmail_accounts").select("id, token_ref").eq("user_id", userId).eq("is_active", true);
+  const { data: accounts } = await db.from("accounts").select("id, token_ref").eq("user_id", userId);
   let updated = 0;
   for (const account of accounts ?? []) {
     const { data: stored } = await db
       .from("emails")
       .select("id, gmail_id")
-      .eq("gmail_account_id", account.id)
+      .eq("account_id", account.id)
       .not("label_ids", "cs", '{"SENT"}')
       .gte("received_at", since)
       .limit(5000);

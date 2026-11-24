@@ -18,7 +18,7 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 - **Newsletters**: senders of bulk mail, the ones filling your inbox first, each with why it is listed. Unsubscribe in one click (through the sender's own unsubscribe link; when that means sending an email, you see the address first) and archive everything a sender left in your inbox, with Undo.
 - **What it knows about you**: before it makes a todo or a draft from someone you have never written to or read mail from, Tabellar asks ("Do you deal with Voyage AI?") at the top of the Inbox. Every todo, meeting, follow-up and newsletter has a menu for "Not this", "Never for this sender" and "Not interested in this topic", and turning down the same kind of thing twice from one sender is remembered. All of it is listed in Settings, under About you, where you can change or delete it, and every prompt Tabellar writes reads it.
 - **Notifications**: macOS notifications for important new mail.
-- **Also**: search operators, full keyboard use (press `?` for the keys), light and dark, phishing warnings, signatures, templates, scheduled send and undo send, several Gmail accounts.
+- **Also**: search operators, full keyboard use (press `?` for the keys), light and dark, phishing warnings, signatures, templates, scheduled send and undo send, several Gmail accounts in one inbox, and sending from your Gmail aliases (replies go out from the address the mail was sent to).
 
 ## Requirements
 

@@ -96,7 +96,7 @@ export function useContacts(userId: string): {
         memoryRes,
         cachedRes,
       ] = await Promise.all([
-        supabase.from("gmail_accounts").select("id").eq("user_id", userId).eq("is_active", true),
+        supabase.from("accounts").select("id").eq("user_id", userId),
         supabase.from("scheduled_emails").select("to_addresses, cc_addresses, bcc_addresses").eq("user_id", userId).limit(200),
         supabase.from("meetings").select("attendees").eq("user_id", userId).limit(200),
         supabase.from("email_memory").select("sender_email, sender_name").eq("user_id", userId).order("interaction_count", { ascending: false }).limit(500),
@@ -128,8 +128,8 @@ export function useContacts(userId: string): {
       // Senders from received emails  -  use `sender` field (RFC 2822) to extract name
       if (accountIds.length > 0) {
         const [emailsRes, recipientsRes] = await Promise.all([
-          supabase.from("emails").select("sender_email, sender").in("gmail_account_id", accountIds).not("sender_email", "is", null).limit(1000),
-          supabase.from("emails").select("recipients").in("gmail_account_id", accountIds).not("recipients", "is", null).limit(500),
+          supabase.from("emails").select("sender_email, sender").in("account_id", accountIds).not("sender_email", "is", null).limit(1000),
+          supabase.from("emails").select("recipients").in("account_id", accountIds).not("recipients", "is", null).limit(500),
         ]);
 
         for (const row of emailsRes.data ?? []) {

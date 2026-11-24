@@ -113,11 +113,16 @@ export async function wroteTo(userId: string, address: string, tokenRef: string 
     .ilike("recipients", `%${like(address)}%`);
   if (count) return true;
   if (!tokenRef || !/^[^\s@"]+@[^\s@"]+$/.test(address)) return false;
-  try {
-    return await hasSentTo(tokenRef, address);
-  } catch {
-    return false;
+  // That mailbox first, then the user's other mailboxes.
+  const { data: accounts } = await db.from("accounts").select("token_ref").eq("user_id", userId);
+  for (const ref of new Set([tokenRef, ...(accounts ?? []).map((a) => String(a.token_ref))])) {
+    try {
+      if (await hasSentTo(ref, address)) return true;
+    } catch {
+      // A mailbox that cannot be asked counts as not written to.
+    }
   }
+  return false;
 }
 
 // Of these addresses, the ones the user corresponds with: in their Google
@@ -175,10 +180,13 @@ export async function profileContext(
   userId: string,
   email?: { sender_email?: string | null; subject?: string | null; text?: string | null },
 ): Promise<string> {
-  const [{ data: me }, rows] = await Promise.all([
+  const [{ data: me }, rows, { data: accounts }] = await Promise.all([
     db.from("profiles").select("display_name, email").eq("id", userId).maybeSingle(),
     allPrefs(userId),
+    db.from("accounts").select("address, send_as").eq("user_id", userId),
   ]);
+  // Every address the user writes from: their accounts and their aliases.
+  const mine = [...new Set([me?.email, ...(accounts ?? []).flatMap((a) => [a.address, ...((a.send_as as { address: string }[] | null) ?? []).map((x) => x.address)])].map(lc).filter(Boolean))];
   // What is said about this email's sender and topics goes last, so the
   // block before it is the same for every email and a local model can reuse
   // the work it did on it. It is also kept first when the block runs long.
@@ -195,7 +203,7 @@ export async function profileContext(
     }
   }
   const lines: string[] = [];
-  const who = [me?.display_name, me?.email ? `<${me.email}>` : ""].filter(Boolean).join(" ");
+  const who = [me?.display_name, mine.length ? mine.map((a) => `<${a}>`).join(", ") : ""].filter(Boolean).join(" ");
   if (who) lines.push(`The user is ${who}.`);
   for (const f of rows.filter((r) => r.kind === "fact")) lines.push(`- ${f.value}`);
   const rules = rows.filter((r) => r.kind === "rule");

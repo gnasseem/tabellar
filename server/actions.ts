@@ -39,11 +39,11 @@ async function log(userId: string, p: Planned, row: Record<string, unknown>, id:
 async function emailWithToken(emailId: string) {
   const { data, error } = await db
     .from("emails")
-    .select("id, gmail_id, label_ids, gmail_account_id, gmail_accounts(token_ref)")
+    .select("id, gmail_id, label_ids, account_id, accounts(token_ref)")
     .eq("id", emailId)
     .single();
   if (error || !data) throw new Error("The email is no longer in Tabellar");
-  const tokenRef = (data.gmail_accounts as { token_ref?: string } | null)?.token_ref;
+  const tokenRef = (data.accounts as { token_ref?: string } | null)?.token_ref;
   if (!tokenRef) throw new Error("The Gmail account for this email is no longer connected");
   return { ...data, tokenRef, labelIds: (data.label_ids as string[] | null) ?? [] };
 }
@@ -59,7 +59,7 @@ function textToHtml(text: string): string {
 export async function setMailState(userId: string, emailIds: string[], state: { archived?: boolean; read?: boolean }) {
   const { data } = await db
     .from("emails")
-    .select("id, gmail_id, label_ids, gmail_accounts(token_ref)")
+    .select("id, gmail_id, label_ids, accounts(token_ref)")
     .eq("user_id", userId)
     .in("id", emailIds);
   const add: string[] = [];
@@ -69,7 +69,7 @@ export async function setMailState(userId: string, emailIds: string[], state: { 
   if (!add.length && !drop.length) return;
   const byAccount = new Map<string, typeof data>();
   for (const e of data ?? []) {
-    const ref = (e.gmail_accounts as { token_ref?: string } | null)?.token_ref;
+    const ref = (e.accounts as { token_ref?: string } | null)?.token_ref;
     if (!ref) continue;
     byAccount.set(ref, [...(byAccount.get(ref) ?? []), e]);
   }
@@ -100,7 +100,7 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
     const { data, error } = await db
       .from("scheduled_emails")
       .insert({
-        user_id: userId, gmail_account_id: d.accountId, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body)),
+        user_id: userId, account_id: d.accountId, from_address: d.from ?? null, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body)),
         body_text: d.body, in_reply_to: d.inReplyTo ?? null, thread_id: d.threadId, send_at: sendAt,
         source: "autopilot", email_id: p.emailId, action_id: actionId,
       })
@@ -124,7 +124,7 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
   if (p.kind === "draft") {
     const { data, error } = await db
       .from("draft_emails")
-      .insert({ user_id: userId, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body)), email_id: p.emailId, source: "tabellar" })
+      .insert({ user_id: userId, account_id: d.accountId ?? null, from_address: d.from ?? null, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body)), email_id: p.emailId, source: "tabellar" })
       .select("id")
       .single();
     if (error) throw new Error(error.message);

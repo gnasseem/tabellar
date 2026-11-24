@@ -15,6 +15,10 @@
 // Progress is kept in profiles.first_read for the window. Every step can be
 // cut off and carries on where it was after a restart: the engine starts the
 // first read again until it is done.
+//
+// An account connected after that gets the same read of its own mailbox
+// (readAccount): headers, its sent mail, the last 30 days. The style and the
+// facts stay those learned from the first. accounts.read_at marks it done.
 
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
@@ -85,10 +89,18 @@ async function save(userId: string, patch: Partial<FirstRead>): Promise<FirstRea
 
 async function firstRead(userId: string, plan: () => unknown): Promise<void> {
   let state = await firstReadState(userId);
-  if (state.step === "done") return;
-  const { data } = await db.from("gmail_accounts").select("*").eq("user_id", userId).eq("is_active", true);
+  const { data } = await db.from("accounts").select("*").eq("user_id", userId).eq("paused", false);
   const accounts = (data ?? []) as unknown as Account[];
   if (!accounts.length) return;
+  if (state.step === "done") {
+    for (const account of accounts.filter((a) => !a.read_at)) {
+      // Connected before the first read finished: that read covered it.
+      if (state.finished_at && account.created_at <= state.finished_at) {
+        await db.from("accounts").update({ read_at: state.finished_at }).eq("id", account.id);
+      } else if (modelConfigured()) await readAccount(userId, account, plan);
+    }
+    return;
+  }
   state = await save(userId, { started_at: state.started_at ?? new Date().toISOString(), error: null });
 
   // The newest mail first, so the inbox is never empty while the rest is read.
@@ -111,13 +123,27 @@ async function firstRead(userId: string, plan: () => unknown): Promise<void> {
   if (state.step === "deep") {
     for (const account of accounts) await fetchDeep(userId, account);
     await sortDeep(userId, plan);
-    await save(userId, { step: "done", finished_at: new Date().toISOString() });
+    const at = new Date().toISOString();
+    await db.from("accounts").update({ read_at: at }).in("id", accounts.map((a) => a.id));
+    await save(userId, { step: "done", finished_at: at });
   }
+}
+
+// The first read of one more account.
+async function readAccount(userId: string, account: Account, plan: () => unknown): Promise<void> {
+  await indexHeaders(userId, [account], false);
+  const sent = await fetchSentEmails(account.token_ref, SENT_CAP);
+  await storeSent(userId, account, sent);
+  await indexMail(userId, account.id, sent.map((e) => sentHeaderRow(e, account)), await ownAddresses(userId));
+  await rebuildSenders(userId);
+  await fetchDeep(userId, account);
+  await readBacklog(userId, plan);
+  await db.from("accounts").update({ read_at: new Date().toISOString() }).eq("id", account.id);
 }
 
 // ── Headers ─────────────────────────────────────────────────────────────────
 
-async function indexHeaders(userId: string, accounts: Account[]): Promise<void> {
+async function indexHeaders(userId: string, accounts: Account[], progress = true): Promise<void> {
   const own = await ownAddresses(userId);
   const todo: { account: Account; ids: string[] }[] = [];
   let total = 0;
@@ -133,13 +159,13 @@ async function indexHeaders(userId: string, accounts: Account[]): Promise<void> 
     done += have.size;
     todo.push({ account, ids: ids.filter((id) => !have.has(id)) });
   }
-  await save(userId, { headers: done, headers_total: total });
+  if (progress) await save(userId, { headers: done, headers_total: total });
   for (const { account, ids } of todo) {
     for (let i = 0; i < ids.length; i += 200) {
       const rows = await fetchHeaderRows(account.token_ref, ids.slice(i, i + 200));
       await indexMail(userId, account.id, rows, own);
       done += Math.min(200, ids.length - i);
-      await save(userId, { headers: done });
+      if (progress) await save(userId, { headers: done });
     }
   }
 }
@@ -230,7 +256,7 @@ async function fetchDeep(userId: string, account: Account): Promise<void> {
     .from("mail_index")
     .select("gmail_id, from_addr, from_name, category, list_unsubscribe, list_id, precedence")
     .eq("user_id", userId)
-    .eq("gmail_account_id", account.id)
+    .eq("account_id", account.id)
     .eq("inbox", true)
     .eq("sent", false)
     .gte("at", since)

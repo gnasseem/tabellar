@@ -74,7 +74,7 @@ export async function analyzeEmailsForUser(
 
   let unprocessedQuery = db
     .from("emails")
-    .select("id, subject, sender, sender_email, recipients, body_text, snippet, received_at, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, precedence_header, list_id, is_calendar, calendar_event, gmail_account_id")
+    .select("id, subject, sender, sender_email, recipients, body_text, snippet, received_at, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, precedence_header, list_id, is_calendar, calendar_event, account_id")
     .eq("user_id", userId)
     .not("label_ids", "cs", '{"SENT"}')
     .order("received_at", { ascending: false })
@@ -121,7 +121,7 @@ export async function analyzeEmailsForUser(
       .select("working_hours")
       .eq("id", userId)
       .maybeSingle(),
-    db.from("gmail_accounts").select("id, token_ref").eq("user_id", userId),
+    db.from("accounts").select("id, token_ref").eq("user_id", userId),
   ]);
   const tokenRefs = new Map<string, string>((accountsRes.data ?? []).map((a) => [String(a.id), String(a.token_ref)]));
 
@@ -200,7 +200,7 @@ export async function analyzeEmailsForUser(
           summary: null,
           quick_actions: [],
           extra_labels: extra(bySender(email)),
-          calendar: await linkCalendar(tokenRefs.get(String(email.gmail_account_id)), email),
+          calendar: await linkCalendar(tokenRefs.get(String(email.account_id)), email),
         });
         processed += 1;
         if (rowBuffer.length >= FLUSH_SIZE) await flushRows();

@@ -24,6 +24,18 @@ export function Glyph({ state, className = "" }: { state: MailState; className?:
 }
 
 // Search field bound to the window's one search string. "/" focuses it.
+// Which account an email belongs to, once there is more than one.
+export function AccountMark({ id, className = "" }: { id: string | null | undefined; className?: string }) {
+  const { accounts } = useApp();
+  const a = accounts.byId.get(id ?? "");
+  if (accounts.list.length < 2 || !a) return null;
+  return (
+    <span className={`mark ${className}`} title={a.address} aria-label={a.address}>
+      {accounts.mark(a.id)}
+    </span>
+  );
+}
+
 export function SearchBox({ placeholder = "Search" }: { placeholder?: string }) {
   const { search, setSearch } = useApp();
   const [open, setOpen] = useState(false);

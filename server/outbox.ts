@@ -8,13 +8,14 @@
 // checkAutoSend, it is not sent and is kept as a draft instead.
 
 import { db } from "./db.ts";
-import { sendEmail } from "./gmail.ts";
+import { sendDraft, sendEmail } from "./gmail.ts";
 import { checkAutoSend } from "./policy.ts";
 import { engineSettings } from "./actions.ts";
 import { notify } from "./notify.ts";
+import { fromLine, type Account } from "./accounts.ts";
 
-// `tabellar check` swaps this for a recorder so nothing reaches Gmail.
-export const transport = { send: sendEmail };
+// `tabellar check` swaps these for recorders so nothing reaches Gmail.
+export const transport = { send: sendEmail, sendDraft };
 
 type Row = Record<string, any>;
 
@@ -39,7 +40,7 @@ async function autopilotRefusal(row: Row): Promise<string | null> {
 async function holdBack(row: Row, reason: string) {
   await db.from("scheduled_emails").update({ status: "cancelled", error_message: reason }).eq("id", row.id);
   await db.from("draft_emails").insert({
-    user_id: row.user_id, to_addresses: row.to_addresses, subject: row.subject, body_html: row.body_html, email_id: row.email_id, source: "tabellar",
+    user_id: row.user_id, account_id: row.account_id, from_address: row.from_address, to_addresses: row.to_addresses, subject: row.subject, body_html: row.body_html, email_id: row.email_id, source: "tabellar",
   });
   if (row.action_id) {
     await db.from("action_log").update({ status: "blocked", reason: `${reason}; kept as a draft`, decided_at: new Date().toISOString() }).eq("id", row.action_id);
@@ -49,7 +50,7 @@ async function holdBack(row: Row, reason: string) {
 export async function sendDueEmails(): Promise<void> {
   const { data: due } = await db
     .from("scheduled_emails")
-    .select("*, gmail_accounts(token_ref)")
+    .select("*, accounts(*)")
     .eq("status", "pending")
     .lte("send_at", new Date().toISOString());
   for (const row of (due ?? []) as Row[]) {
@@ -63,17 +64,26 @@ export async function sendDueEmails(): Promise<void> {
         continue;
       }
     }
-    const tokenRef = (row.gmail_accounts as { token_ref?: string } | null)?.token_ref;
+    const account = row.accounts as Account | null;
     try {
-      if (!tokenRef) throw new Error("The Gmail account for this email is no longer connected");
-      const result = await transport.send(tokenRef, row.to_addresses, row.subject, row.body_html, row.in_reply_to ?? undefined, row.thread_id ?? undefined, undefined, row.cc_addresses ?? undefined, row.bcc_addresses ?? undefined);
+      if (!account?.token_ref) throw new Error("The account for this email is no longer connected");
+      const from = await fromLine(row.user_id, account, row.from_address);
+      // A draft that is also in Gmail's Drafts is sent from there, so it leaves Drafts.
+      const result = row.gmail_draft_id
+        ? await transport.sendDraft(
+            account.token_ref,
+            row.gmail_draft_id,
+            { from, to: row.to_addresses, cc: row.cc_addresses ?? undefined, bcc: row.bcc_addresses ?? undefined, subject: row.subject, html: row.body_html, inReplyTo: row.in_reply_to ?? undefined },
+            row.thread_id ?? undefined,
+          )
+        : await transport.send(account.token_ref, row.to_addresses, row.subject, row.body_html, row.in_reply_to ?? undefined, row.thread_id ?? undefined, undefined, row.cc_addresses ?? undefined, row.bcc_addresses ?? undefined, from);
       await db.from("scheduled_emails").update({ status: "sent" }).eq("id", row.id);
       await db.from("emails").upsert(
         {
           user_id: row.user_id,
           gmail_id: result.id,
           thread_id: row.thread_id,
-          gmail_account_id: row.gmail_account_id,
+          account_id: row.account_id,
           subject: row.subject,
           recipients: (row.to_addresses as string[]).join(", "),
           body_html: row.body_html,

@@ -96,15 +96,15 @@ export default function BriefingView() {
 
   // A follow-up in the same thread, drafted from what was asked.
   const nudge = async (w: Waiting) => {
-    const { data } = await supabase.from("emails").select("gmail_id, gmail_account_id, body_text").eq("id", w.email_id).maybeSingle();
-    const e = (data || {}) as { gmail_id?: string; gmail_account_id?: string; body_text?: string };
+    const { data } = await supabase.from("emails").select("gmail_id, account_id, body_text").eq("id", w.email_id).maybeSingle();
+    const e = (data || {}) as { gmail_id?: string; account_id?: string; body_text?: string };
     const since = ago(w.sent_at);
     openCompose({
       sender_email: w.address,
       subject: w.subject,
       thread_id: w.thread_id,
       gmail_id: e.gmail_id,
-      gmail_account_id: e.gmail_account_id,
+      account_id: e.account_id,
       body_text: e.body_text || w.text,
       _autoGenerate: true,
       _prefillBody: `I sent this ${since === "Today" ? "earlier today" : `${since} ago`} and have had no answer. Write a short, friendly follow-up that asks again${w.text ? `: ${w.text}` : "."}`,

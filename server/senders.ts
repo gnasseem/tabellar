@@ -37,14 +37,16 @@ const CATEGORY: Record<string, string> = {
   CATEGORY_FORUMS: "forums",
 };
 
-// The user's own addresses: every connected account, and every address
-// their sent mail went out from (an alias).
+// The user's own addresses: every connected account, every address it can
+// send as (Gmail's "Send mail as" list), and every address their sent mail
+// went out from.
 export async function ownAddresses(userId: string): Promise<Set<string>> {
   const [{ data }, { data: from }] = await Promise.all([
-    db.from("gmail_accounts").select("gmail_address").eq("user_id", userId),
+    db.from("accounts").select("address, send_as").eq("user_id", userId),
     db.from("mail_index").select("from_addr").eq("user_id", userId).eq("sent", true).limit(10_000),
   ]);
-  return new Set([...(data ?? []).map((a) => lc(a.gmail_address)), ...(from ?? []).map((r) => lc(r.from_addr))].filter(Boolean));
+  const aliases = (data ?? []).flatMap((a) => ((a.send_as as { address: string }[] | null) ?? []).map((s) => lc(s.address)));
+  return new Set([...(data ?? []).map((a) => lc(a.address)), ...aliases, ...(from ?? []).map((r) => lc(r.from_addr))].filter(Boolean));
 }
 
 // Add messages to mail_index; a message seen again updates its row.
@@ -54,7 +56,7 @@ export async function indexMail(userId: string, accountId: string, rows: HeaderR
     const category = r.labels.map((l) => CATEGORY[l]).find(Boolean) ?? null;
     return {
       user_id: userId,
-      gmail_account_id: accountId,
+      account_id: accountId,
       gmail_id: r.gmail_id,
       thread_id: r.thread_id || null,
       at: r.at,

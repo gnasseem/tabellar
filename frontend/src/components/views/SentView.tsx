@@ -115,7 +115,7 @@ function SentEmailFrame({ html, isDark }: { html: string; isDark: boolean }) {
 }
 
 export default function SentView() {
-  const { user, pendingSentEmail, search, liveChanges, theme, setView } = useApp();
+  const { user, pendingSentEmail, search, liveChanges, theme, setView, accounts } = useApp();
   const supabase = createClient();
   const [emails, setEmails] = useState<Sent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -139,6 +139,7 @@ export default function SentView() {
         // The search matches the recipient as well as the words of the email.
         const q = search.trim().replace(/[,()"\\%]/g, " ").trim();
         if (q) query = query.or(`search_vector.fts.${q},recipients.ilike.%${q}%`);
+        if (accounts.only) query = query.eq("account_id", accounts.only);
         const { data, error: dbError } = await query;
         if (dbError) throw dbError;
         let rows = (data || []) as Sent[];
@@ -155,7 +156,7 @@ export default function SentView() {
         setLoading(false);
       }
     },
-    [user.id, search],
+    [user.id, search, accounts.only],
   );
 
   useEffect(() => {

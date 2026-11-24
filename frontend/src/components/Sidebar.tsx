@@ -125,6 +125,61 @@ function Engine() {
   );
 }
 
+// With several accounts: which one the mail lists show, or all of them merged.
+function AccountSwitch() {
+  const { accounts } = useApp();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [open]);
+  if (accounts.list.length < 2) return null;
+  const current = accounts.byId.get(accounts.only);
+  const choose = (id: string) => {
+    accounts.setOnly(id);
+    setOpen(false);
+  };
+  return (
+    <div ref={ref} className="relative">
+      <button
+        className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-ink2 transition-colors duration-150 hover:bg-sel/55"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Account"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="grid w-4 flex-none place-items-center">{current ? <span className="mark">{accounts.mark(current.id)}</span> : <Icon name="email" size={16} className="text-ink3" />}</span>
+        <span className="flex-1 truncate">{current ? current.address : "All accounts"}</span>
+        <Icon name="expand_more" size={12} className="text-ink3" />
+      </button>
+      {open && (
+        <div className="pop absolute left-0 top-8 z-50 w-max min-w-full max-w-[320px]" role="menu">
+          <button role="menuitemradio" aria-checked={!current} className="pop-item" onClick={() => choose("")}>
+            <Icon name="check" size={13} className={!current ? "text-ink" : "invisible"} />
+            All accounts
+          </button>
+          {accounts.list.map((a) => (
+            <button key={a.id} role="menuitemradio" aria-checked={current?.id === a.id} className="pop-item" onClick={() => choose(a.id)}>
+              <Icon name="check" size={13} className={current?.id === a.id ? "text-ink" : "invisible"} />
+              <span className="mark">{accounts.mark(a.id)}</span>
+              <span className="min-w-0 flex-1 truncate">{a.address}</span>
+              {a.paused && <span className="text-xs text-ink3">Paused</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Replies Autopilot is about to send, each with its countdown and a way to stop it.
 function GoingOut() {
   const { mail, setView } = useApp();
@@ -172,6 +227,7 @@ export default function Sidebar() {
           </button>
         </div>
         <nav className="flex flex-1 flex-col gap-3 overflow-y-auto px-2 pb-2 pt-0.5">
+          <AccountSwitch />
           <div>
             <NavItem id="inbox" icon="inbox" label="Inbox" count={c.need} need />
             <NavItem id="replies" icon="reply" label="Replies" count={c.replies} />

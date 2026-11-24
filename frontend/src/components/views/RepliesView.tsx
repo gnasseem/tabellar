@@ -4,6 +4,7 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
+import { replyFrom } from "@/lib/accounts";
 import { Countdown, Empty, Glyph, Menu, SearchBox, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
 
 // Replies: every answer Tabellar has written, ready to read and send, and the
@@ -11,7 +12,7 @@ import { Countdown, Empty, Glyph, Menu, SearchBox, SkeletonRows, Tick, ViewBar, 
 // one after another or several at once.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-type Source = { id: string; gmail_id: string; thread_id: string | null; gmail_account_id: string | null; sender: string; sender_email: string; subject: string; snippet: string; received_at: string; summary?: string };
+type Source = { id: string; gmail_id: string; thread_id: string | null; account_id: string | null; recipients?: string | null; cc_recipients?: string | null; sender: string; sender_email: string; subject: string; snippet: string; received_at: string; summary?: string };
 type Reply = {
   id: string;
   going: boolean;
@@ -52,7 +53,7 @@ function later(choice: "hour" | "evening" | "morning"): string {
 }
 
 export default function RepliesView() {
-  const { user, search, liveChanges, mail, addToast, openCompose, getViewCache, setViewCache, notifyDraftChange, draftVersion } = useApp();
+  const { user, search, liveChanges, mail, addToast, openCompose, getViewCache, setViewCache, notifyDraftChange, draftVersion, accounts } = useApp();
   const supabase = createClient();
   const [replies, setReplies] = useState<Reply[] | null>(null);
   const [cursorId, setCursorId] = useState<string | null>(null);
@@ -61,21 +62,16 @@ export default function RepliesView() {
   const [showSource, setShowSource] = useState(false);
   const [laterOpen, setLaterOpen] = useState(false);
   const [sending, setSending] = useState(false);
-  const account = useRef<string | null>(null);
-  const [accounts, setAccounts] = useState<Record<string, string>>({});
   // A reply to someone the user has never written to is marked New sender.
   const isNew = (r: Reply) => mail.written.size > 0 && !!r.to[0] && !mail.written.has(r.to[0].toLowerCase());
   const anchor = useRef<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
-    const [d, s, a] = await Promise.all([
+    const [d, s] = await Promise.all([
       supabase.from("draft_emails").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("scheduled_emails").select("*").eq("user_id", user.id).eq("status", "pending").eq("source", "autopilot").order("send_at", { ascending: true }),
-      supabase.from("gmail_accounts").select("id, gmail_address").eq("user_id", user.id).eq("is_active", true),
     ]);
-    account.current = a.data?.[0]?.id ?? null;
-    setAccounts(Object.fromEntries(((a.data || []) as any[]).map((x) => [x.id, x.gmail_address])));
 
     const drafts = (d.data || []) as any[];
     const sched = (s.data || []) as any[];
@@ -83,7 +79,7 @@ export default function RepliesView() {
     const sources = new Map<string, Source>();
     if (ids.length) {
       const [e, p] = await Promise.all([
-        supabase.from("emails").select("id, gmail_id, thread_id, gmail_account_id, sender, sender_email, subject, snippet, received_at").in("id", ids),
+        supabase.from("emails").select("id, gmail_id, thread_id, account_id, sender, sender_email, recipients, cc_recipients, subject, snippet, received_at").in("id", ids),
         supabase.from("email_processed").select("email_id, summary").in("email_id", ids),
       ]);
       const summary = new Map(((p.data || []) as any[]).map((x) => [x.email_id, x.summary]));
@@ -188,11 +184,13 @@ export default function RepliesView() {
     const queued: string[] = [];
     try {
       for (const r of list) {
-        const gmailAccount = r.source?.gmail_account_id || account.current;
-        if (!gmailAccount) throw new Error("No Gmail account is connected");
+        const { account, from } = sender(r);
+        if (!account) throw new Error("No Gmail account is connected");
+        // A draft that is also in Gmail's Drafts is sent from there.
+        const gmailDraftId = r.raw.gmail_draft_id && r.raw.account_id === account.id ? r.raw.gmail_draft_id : null;
         const { data, error } = await supabase
           .from("scheduled_emails")
-          .insert({ user_id: user.id, gmail_account_id: gmailAccount, to_addresses: r.to, subject: r.subject, body_html: r.html, in_reply_to: r.source?.gmail_id, thread_id: r.source?.thread_id, send_at: sendAt, email_id: r.source?.id })
+          .insert({ user_id: user.id, account_id: account.id, from_address: from, gmail_draft_id: gmailDraftId, to_addresses: r.to, subject: r.subject, body_html: r.html, in_reply_to: r.source?.gmail_id, thread_id: r.source?.thread_id, send_at: sendAt, email_id: r.source?.id })
           .select("id")
           .single();
         if (error || !data?.id) throw new Error(error?.message || "Could not queue the reply");
@@ -217,7 +215,7 @@ export default function RepliesView() {
       const { data } = await supabase.from("scheduled_emails").update({ status: "cancelled" }).in("id", queued).eq("status", "pending").select("id");
       const stopped = new Set(((data || []) as any[]).map((x) => x.id));
       const back = done.filter((_, i) => stopped.has(queued[i]));
-      for (const r of back) await supabase.from("draft_emails").insert({ user_id: user.id, to_addresses: r.to, subject: r.subject, body_html: r.html, email_id: r.raw.email_id, source: r.raw.source });
+      for (const r of back) await supabase.from("draft_emails").insert(restore(r));
       notifyDraftChange();
       mail.reload();
       await load();
@@ -228,6 +226,19 @@ export default function RepliesView() {
     else addToast("info", `Sending ${who} in 15 seconds`, { duration: 15_000, action: { label: "Undo", onClick: undo } });
   };
 
+  // The account a reply goes out from, and which of its addresses: the draft's
+  // own, else the address the email was sent to, else the default.
+  const sender = (r: Reply) => {
+    const account = accounts.byId.get(r.raw.account_id || r.source?.account_id || "") ?? accounts.list.find((a) => a.is_default) ?? accounts.list[0];
+    if (!account) return { account: null, from: null };
+    const own = account.from.find((f) => f.address === r.raw.from_address)?.address;
+    return { account, from: own ?? (r.source ? replyFrom(account, r.source) : account.default_from) };
+  };
+  const restore = (r: Reply) => ({
+    user_id: user.id, account_id: r.raw.account_id ?? null, from_address: r.raw.from_address ?? null, gmail_draft_id: r.raw.gmail_draft_id ?? null,
+    to_addresses: r.to, subject: r.subject, body_html: r.html, email_id: r.raw.email_id, source: r.raw.source,
+  });
+
   const discard = async (list: Reply[]) => {
     list = list.filter((r) => !r.going);
     if (!list.length) return;
@@ -237,7 +248,7 @@ export default function RepliesView() {
     mail.reload();
     await load();
     const undo = async () => {
-      for (const r of list) await supabase.from("draft_emails").insert({ user_id: user.id, to_addresses: r.to, subject: r.subject, body_html: r.html, email_id: r.raw.email_id, source: r.raw.source });
+      for (const r of list) await supabase.from("draft_emails").insert(restore(r));
       notifyDraftChange();
       mail.reload();
       await load();
@@ -384,10 +395,10 @@ export default function RepliesView() {
                   </dd>
                   <dt className="text-ink3">Subject</dt>
                   <dd>{cursor.subject || "(no subject)"}</dd>
-                  {(accounts[cursor.source?.gmail_account_id || ""] || Object.values(accounts)[0]) && (
+                  {sender(cursor).from && accounts.mine.size > 1 && (
                     <>
                       <dt className="text-ink3">From</dt>
-                      <dd>{accounts[cursor.source?.gmail_account_id || ""] || Object.values(accounts)[0]}</dd>
+                      <dd>{sender(cursor).from}</dd>
                     </>
                   )}
                 </dl>

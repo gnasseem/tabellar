@@ -23,7 +23,8 @@ import { handleSetup, startOllama } from "./setup.ts";
 import { signInUrl, finishSignIn, forgetTokens } from "./google.ts";
 import { sendDueEmails } from "./outbox.ts";
 import { modelConfigured } from "./llm.ts";
-import { startEngine, windowClosed, windowOpened } from "./engine.ts";
+import { kickEngine, startEngine, windowClosed, windowOpened } from "./engine.ts";
+import { refreshSendAs, type Account } from "./accounts.ts";
 
 const DIST = fileURLToPath(new URL("../frontend/dist/", import.meta.url));
 const MAX_BODY = 50 * 1024 * 1024; // attachments arrive base64-encoded in JSON
@@ -112,16 +113,23 @@ async function completeSignIn(code: string, state: string): Promise<boolean> {
   }
   const userId = profile.id as string;
   const { data: existing } = await db
-    .from("gmail_accounts")
+    .from("accounts")
     .select("id, token_ref")
     .eq("user_id", userId)
-    .eq("gmail_address", g.email)
+    .eq("address", g.email)
     .maybeSingle();
   if (existing && existing.token_ref !== g.tokenRef) forgetTokens(existing.token_ref as string);
+  const { count: others } = await db.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", userId).neq("address", g.email);
   const saved = await db
-    .from("gmail_accounts")
-    .upsert({ user_id: userId, gmail_address: g.email, token_ref: g.tokenRef, is_active: true }, { onConflict: "user_id,gmail_address" });
+    .from("accounts")
+    .upsert({ user_id: userId, provider: "gmail", address: g.email, token_ref: g.tokenRef, ...(existing ? {} : { is_default: !others }) }, { onConflict: "user_id,address" })
+    .select("*")
+    .single();
   if (saved.error) throw new Error(saved.error.message);
+  // The addresses it sends from, before the window first offers them.
+  await refreshSendAs(saved.data as unknown as Account).catch((e) => console.error("[sign-in] send-as list:", (e as Error).message));
+  // One more mailbox: the engine gives it its own first read.
+  if (!existing && others) kickEngine();
   const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId);
   return (count ?? 0) === 0;
 }
@@ -217,7 +225,8 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
           const msg = (e as Error).message.replace(/[<>&]/g, "");
           return send(res, 400, page("Sign-in failed", `<p>${msg}</p><p><a href="/">Back to Tabellar</a></p>`), "text/html; charset=utf-8");
         }
-        res.writeHead(302, { Location: first ? "/?initial=1" : "/" });
+        // A second account is added from Settings, so the window goes back there.
+        res.writeHead(302, { Location: first ? "/?initial=1" : "/#settings" });
         return res.end();
       }
 
@@ -281,7 +290,7 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
 async function sessionInfo() {
   const { data: profile } = await db.from("profiles").select("*").limit(1).maybeSingle();
   const { count } = profile
-    ? await db.from("gmail_accounts").select("id", { count: "exact", head: true }).eq("user_id", profile.id).eq("is_active", true)
+    ? await db.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", profile.id)
     : { count: 0 };
   return {
     user: profile ? { id: profile.id, email: profile.email } : null,

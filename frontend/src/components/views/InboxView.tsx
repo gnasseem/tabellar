@@ -5,12 +5,13 @@ import { parseSearch } from "@/lib/searchQuery";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { rowStatus, setMailState, type Outcome } from "@/lib/outcomes";
 import { useInboxSync } from "@/lib/useInboxSync";
+import { addressesIn } from "@/lib/accounts";
 import { useApp } from "../AppShell";
 import EmailBody from "../EmailBody";
 import EmailDetail from "../EmailDetail";
 import InitialFetchOverlay from "../InitialFetchOverlay";
 import { Questions } from "../Profile";
-import { Countdown, Empty, Glyph, Menu, OutcomeLines, Seg, SkeletonRows, Tick, ViewBar, VirtualList, dayLabel, shortWhen, type MailState } from "../ui";
+import { AccountMark, Countdown, Empty, Glyph, Menu, OutcomeLines, Seg, SkeletonRows, Tick, ViewBar, VirtualList, dayLabel, shortWhen, type MailState } from "../ui";
 
 // The inbox: every email on one quiet line that ends in what Tabellar did
 // with it. Only mail that needs the user is set in strong type and wax red.
@@ -29,6 +30,9 @@ type Email = {
   is_starred: boolean;
   is_archived: boolean;
   has_attachments: boolean;
+  account_id?: string | null;
+  recipients?: string | null;
+  cc_recipients?: string | null;
   resolved_at?: string | null;
   email_processed: { category: string; summary: string; quick_actions: any[]; extra_labels: string[] | null } | null;
 };
@@ -42,8 +46,10 @@ type Group = "priority" | "day" | "sender";
 const CHUNK = 300;
 // Narrow windows drop the subject column; the status stays.
 const COLUMNS = "!grid grid-cols-[26px_minmax(0,1fr)_minmax(0,auto)_44px] md:grid-cols-[26px_164px_minmax(0,1fr)_172px_46px]";
+// With several accounts the last column also holds the account's mark.
+const COLUMNS_MARKED = "!grid grid-cols-[26px_minmax(0,1fr)_minmax(0,auto)_66px] md:grid-cols-[26px_164px_minmax(0,1fr)_172px_68px]";
 const SELECT =
-  "id, user_id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, snippet, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed(*)";
+  "id, user_id, gmail_id, thread_id, account_id, subject, sender, sender_email, recipients, snippet, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed(*)";
 const CATEGORY: Record<string, string> = { important: "Important", "action-required": "Action required", promotions: "Promotions", updates: "Updates" };
 // Priority grouping: what waits on the user, then the user's own labels in
 // the order set in Labels, then mail from people, updates and promotions
@@ -83,7 +89,10 @@ function senderName(e: Email): string {
 }
 
 export default function InboxView() {
-  const { user, openCompose, addToast, search, getViewCache, setViewCache, invalidateViewCache, liveChanges, mail, setView } = useApp();
+  const { user, openCompose, addToast, search, getViewCache, setViewCache, invalidateViewCache, liveChanges, mail, setView, accounts } = useApp();
+  // The sidebar's account switch: one account, or every account merged.
+  const only = accounts.only;
+  const columns = accounts.list.length > 1 ? COLUMNS_MARKED : COLUMNS;
   const supabase = createClient();
   const [emails, setEmails] = useState<Email[]>(() => getViewCache("inbox")?.emails ?? []);
   const [loading, setLoading] = useState(() => !getViewCache("inbox"));
@@ -126,6 +135,7 @@ export default function InboxView() {
           .or("is_snoozed.eq.false,snooze_until.lt." + new Date().toISOString())
           .order("received_at", { ascending: false })
           .range(0, want);
+        if (only) query = query.eq("account_id", only);
         if (search) {
           const q = parseSearch(search);
           if (q.text) query = query.textSearch("search_vector", q.text, { type: "websearch", config: "english" });
@@ -149,7 +159,7 @@ export default function InboxView() {
         loaded.current = rows.length;
         setHasMore(extra);
         setEmails(rows);
-        if (!search) setViewCache("inbox", { emails: rows });
+        if (!search && !only) setViewCache("inbox", { emails: rows });
       } finally {
         busy.current = false;
         setLoading(false);
@@ -159,7 +169,7 @@ export default function InboxView() {
         }
       }
     },
-    [user.id, search],
+    [user.id, search, only],
   );
 
   const reload = useCallback(() => {
@@ -180,7 +190,9 @@ export default function InboxView() {
     (async () => {
       const found: Email[] = [];
       for (let i = 0; i < ids.length; i += 200) {
-        const { data } = await supabase.from("emails").select(SELECT).in("id", ids.slice(i, i + 200)).eq("is_archived", false).not("label_ids", "cs", '{"SENT"}');
+        let q = supabase.from("emails").select(SELECT).in("id", ids.slice(i, i + 200)).eq("is_archived", false).not("label_ids", "cs", '{"SENT"}');
+        if (only) q = q.eq("account_id", only);
+        const { data } = await q;
         found.push(...((data || []) as any[]).map((e) => ({ ...e, email_processed: Array.isArray(e.email_processed) ? e.email_processed[0] : e.email_processed })));
       }
       if (live) setAttention(found);
@@ -188,7 +200,7 @@ export default function InboxView() {
     return () => {
       live = false;
     };
-  }, [mail.byEmail, emails, search]);
+  }, [mail.byEmail, emails, search, only]);
   const { syncInbox, syncError, initialPhase, noAccountsConnected } = useInboxSync(reload);
 
   useEffect(() => {
@@ -495,7 +507,7 @@ export default function InboxView() {
         key={t.key}
         role="option"
         aria-selected={isCursor}
-        className={`row group relative ${COLUMNS} ${isPicked && !isCursor ? "bg-hover" : ""}`}
+        className={`row group relative ${columns} ${isPicked && !isCursor ? "bg-hover" : ""}`}
         onClick={(ev) => (ev.shiftKey ? pick(t, true) : setCursorKey(t.key))}
         onDoubleClick={() => open(t)}
       >
@@ -524,7 +536,10 @@ export default function InboxView() {
             </>
           )}
         </span>
-        <time className="text-right text-xs text-ink3">{shortWhen(e.received_at)}</time>
+        <span className="flex items-center justify-end gap-2">
+          <AccountMark id={e.account_id} />
+          <time className="min-w-[30px] text-right text-xs text-ink3">{shortWhen(e.received_at)}</time>
+        </span>
         <span className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 gap-0.5 rounded-md bg-hover pl-1 group-hover:flex group-aria-selected:bg-sel">
           <button className="iconbtn h-6 w-6" title="Archive" aria-label="Archive" onClick={(ev) => (ev.stopPropagation(), archive([t]))}>
             <Icon name="archive" size={15} />
@@ -689,6 +704,7 @@ function readPanelWidth(): number {
 }
 
 function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thread; primary: { label: string; run: () => void }; onOpen: () => void; onReply: () => void; onArchive: () => void }) {
+  const { accounts } = useApp();
   const e = thread.latest;
   const [width, setWidth] = useState(readPanelWidth);
   const [room, setRoom] = useState(Infinity);
@@ -741,6 +757,10 @@ function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thre
   };
 
   const waiting = primary.label !== "Open email";
+  // Which of the user's addresses it came to, once they have more than one.
+  const account = accounts.byId.get(e.account_id ?? "");
+  const hit = account?.from.find((f) => addressesIn(`${e.recipients ?? ""}, ${e.cc_recipients ?? ""}`).includes(f.address))?.address;
+  const to = accounts.mine.size > 1 ? (hit ?? (accounts.list.length > 1 ? account?.address : "")) : "";
   const noreply = /no.?reply|do.?not.?reply|mailer-daemon|postmaster/i.test(e.sender_email || "");
   return (
     <aside ref={aside} className="relative hidden flex-none flex-col border-l border-line md:flex" style={{ width: shown }} aria-label="Details">
@@ -769,6 +789,7 @@ function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thre
               <h2 className="truncate text-[15px] font-[650] leading-tight tracking-[-0.01em]">{senderName(e)}</h2>
               <p className="mt-0.5 truncate text-xs text-ink3">
                 {e.sender_email}, {dayLabel(e.received_at).name.toLowerCase()} {shortWhen(e.received_at)}
+                {to && <>, to {to}</>}
               </p>
             </div>
             <button className="iconbtn -mr-1.5" title="Open" aria-label="Open email" onClick={onOpen}>

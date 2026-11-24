@@ -12,6 +12,7 @@
 
 import { db } from "./db.ts";
 import { messageHeaders, sendEmail } from "./gmail.ts";
+import { fromLine, replyFrom, type Account } from "./accounts.ts";
 import { act, engineSettings, record } from "./actions.ts";
 import { decide } from "./policy.ts";
 import { allPrefs, pick, stops } from "./profile.ts";
@@ -100,7 +101,7 @@ export async function listNewsletters(userId: string): Promise<Sender[]> {
 async function mailFrom(userId: string, sender: string, inboxOnly: boolean) {
   let q = db
     .from("emails")
-    .select("id, gmail_id, has_list_unsubscribe, label_ids, is_archived, gmail_accounts(token_ref)")
+    .select("id, gmail_id, has_list_unsubscribe, label_ids, is_archived, accounts(token_ref)")
     .eq("user_id", userId)
     .ilike("sender_email", sender.replace(/[%_]/g, ""))
     .order("received_at", { ascending: false });
@@ -190,14 +191,14 @@ export async function unsubscribe(userId: string, sender: string, confirm?: stri
   // only indexed by the first read.
   let latest: { id: string | null; gmail_id: string; tokenRef?: string } | null = null;
   const stored = (await mailFrom(userId, sender, false)).find((e) => e.has_list_unsubscribe);
-  if (stored) latest = { id: stored.id as string, gmail_id: stored.gmail_id as string, tokenRef: (stored.gmail_accounts as { token_ref?: string } | null)?.token_ref };
+  if (stored) latest = { id: stored.id as string, gmail_id: stored.gmail_id as string, tokenRef: (stored.accounts as { token_ref?: string } | null)?.token_ref };
   else {
-    const { data: seen } = await db.from("mail_index").select("gmail_id, gmail_accounts(token_ref)").eq("user_id", userId).eq("from_addr", sender.toLowerCase()).eq("list_unsubscribe", true).order("at", { ascending: false }).limit(1).maybeSingle();
-    if (seen) latest = { id: null, gmail_id: seen.gmail_id as string, tokenRef: (seen.gmail_accounts as { token_ref?: string } | null)?.token_ref };
+    const { data: seen } = await db.from("mail_index").select("gmail_id, accounts(token_ref)").eq("user_id", userId).eq("from_addr", sender.toLowerCase()).eq("list_unsubscribe", true).order("at", { ascending: false }).limit(1).maybeSingle();
+    if (seen) latest = { id: null, gmail_id: seen.gmail_id as string, tokenRef: (seen.accounts as { token_ref?: string } | null)?.token_ref };
   }
   const tokenRef = latest?.tokenRef;
   if (!latest || !tokenRef) throw Object.assign(new Error("This sender gives no way to unsubscribe. Archive their mail instead."), { status: 422 });
-  const h = await messageHeaders(tokenRef, latest.gmail_id, ["List-Unsubscribe", "List-Unsubscribe-Post"]);
+  const h = await messageHeaders(tokenRef, latest.gmail_id, ["List-Unsubscribe", "List-Unsubscribe-Post", "To", "Cc"]);
   const target = parseListUnsubscribe(h["list-unsubscribe"] ?? "", h["list-unsubscribe-post"] ?? "");
   if (!target) throw Object.assign(new Error("This sender gives no usable way to unsubscribe. Archive their mail instead."), { status: 422 });
   const log = (how: string) =>
@@ -219,7 +220,11 @@ export async function unsubscribe(userId: string, sender: string, confirm?: stri
   }
   if (target.method === "mailto") {
     if (!confirm || confirm.toLowerCase() !== target.to!.toLowerCase()) return { confirm: { to: target.to!, subject: target.subject! } };
-    await sendEmail(tokenRef, [target.to!], target.subject!, textToHtml(target.body!));
+    // From the address that is subscribed, so the list takes that one off.
+    const { data: acct } = await db.from("accounts").select("*").eq("user_id", userId).eq("token_ref", tokenRef).maybeSingle();
+    const account = acct as unknown as Account | null;
+    const from = account ? await fromLine(userId, account, replyFrom(account, { recipients: h.to, cc_recipients: h.cc })) : undefined;
+    await sendEmail(tokenRef, [target.to!], target.subject!, textToHtml(target.body!), undefined, undefined, undefined, undefined, undefined, from);
     await mark(userId, sender, "unsubscribed", "mailto");
     await log(`email to ${target.to}`);
     return { done: true, method: "mailto" };

@@ -32,6 +32,7 @@ import { ACT_WITHIN_MS, dueOf, meetingOf, todoOf } from "./rules.ts";
 import { judgeSent } from "./followups.ts";
 import { notify } from "./notify.ts";
 import { firstReadState, startFirstRead } from "./firstRead.ts";
+import { listAccounts, refreshStaleSendAs, replyFrom } from "./accounts.ts";
 import { gmailLabelOf, userLabels } from "./labels.ts";
 import { ask, covers, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
 
@@ -73,7 +74,9 @@ type EmailRow = {
   received_at: string | null;
   thread_id?: string | null;
   gmail_id?: string | null;
-  gmail_account_id?: string | null;
+  account_id?: string | null;
+  recipients?: string | null;
+  cc_recipients?: string | null;
   is_calendar?: boolean | null;
 };
 
@@ -160,7 +163,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
 
   const { data: rows } = await db
     .from("email_processed")
-    .select("id, category, urgency, summary, quick_actions, calendar, extra_labels, emails!inner(id, subject, sender, sender_email, reply_to_email, body_text, body_html, snippet, received_at, thread_id, gmail_id, gmail_account_id, is_calendar)")
+    .select("id, category, urgency, summary, quick_actions, calendar, extra_labels, emails!inner(id, subject, sender, sender_email, reply_to_email, recipients, cc_recipients, body_text, body_html, snippet, received_at, thread_id, gmail_id, account_id, is_calendar)")
     .eq("user_id", userId)
     .is("engine_at", null)
     .limit(100);
@@ -179,15 +182,8 @@ export const planNew = serial(async (userId: string): Promise<void> => {
   let cycleCount = 0;
   const notes: { sender: string; summary: string; drafted: boolean; replying?: boolean }[] = [];
 
-  const tokens = new Map<string, string | null>();
-  const tokenFor = async (accountId: string | null | undefined): Promise<string | null> => {
-    if (!accountId) return null;
-    if (!tokens.has(accountId)) {
-      const { data: acct } = await db.from("gmail_accounts").select("token_ref").eq("id", accountId).maybeSingle();
-      tokens.set(accountId, (acct?.token_ref as string | undefined) ?? null);
-    }
-    return tokens.get(accountId)!;
-  };
+  const accounts = new Map((await listAccounts(userId)).map((a) => [a.id, a]));
+  const tokenFor = async (accountId: string | null | undefined): Promise<string | null> => accounts.get(accountId ?? "")?.token_ref ?? null;
 
   const sorted = [...rows].sort((a, b) =>
     String((a.emails as EmailRow).received_at).localeCompare(String((b.emails as EmailRow).received_at)),
@@ -249,7 +245,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     if ((wantsDraft || wantsTodo) && sender && !covers(prefs)) {
       const kind = wantsDraft ? "draft" : "todo";
       const would = decide({ kind, ...settings, source: "engine", suspicious, todayCount: today[kind] ?? 0, cycleCount }).verdict !== "refuse";
-      if (would && (NO_REPLY.test(sender) || !(await knowsSender(userId, sender, { exceptEmailId: email.id, tokenRef: await tokenFor(email.gmail_account_id) })))) {
+      if (would && (NO_REPLY.test(sender) || !(await knowsSender(userId, sender, { exceptEmailId: email.id, tokenRef: await tokenFor(email.account_id) })))) {
         const plan = [wantsDraft && `draft a reply to "${email.subject ?? ""}"`, wantsTodo && `add the todo "${todo!.label}"`].filter(Boolean).join(" and ");
         await ask(userId, senderQuestion(email.sender, sender, `Tabellar would ${plan}.`, email.id));
         asked = true;
@@ -262,10 +258,13 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     let replying = false;
     if (wantsDraft && !asked && reply) {
       const subject = /^re:/i.test(email.subject ?? "") ? email.subject! : `Re: ${email.subject ?? ""}`;
-      const base: Planned = { kind: "draft", emailId: email.id, summary: `Draft a reply to ${from}`, detail: { to: [replyTo], subject } };
+      // From the address the email was sent to (an alias, another account).
+      const account = accounts.get(email.account_id ?? "");
+      const fromAddress = account ? replyFrom(account, email) : null;
+      const base: Planned = { kind: "draft", emailId: email.id, summary: `Draft a reply to ${from}`, detail: { to: [replyTo], subject, accountId: email.account_id, from: fromAddress } };
       const autoSend: AutoSend = { to: [replyTo], threadId: email.thread_id, writer: replyTo };
       const sendCtx = { ...settings, source: "engine" as const, suspicious, todayCount: today.send ?? 0, cycleCount, send: autoSend, sendCap };
-      const tokenRef = settings.level === "autopilot" ? await tokenFor(email.gmail_account_id) : null;
+      const tokenRef = settings.level === "autopilot" ? await tokenFor(email.account_id) : null;
       const trySend =
         settings.level === "autopilot" &&
         decide({ kind: "send", ...sendCtx }).verdict === "do" &&
@@ -292,7 +291,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
                 kind: "send",
                 emailId: email.id,
                 summary: `Reply to ${from}`,
-                detail: { to: [replyTo], subject, body, threadId: email.thread_id, accountId: email.gmail_account_id, inReplyTo, delayMinutes },
+                detail: { to: [replyTo], subject, body, threadId: email.thread_id, accountId: email.account_id, from: fromAddress, inReplyTo, delayMinutes },
               },
               autoSend,
             );
@@ -324,7 +323,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     if (meeting && wall !== null && !row.calendar) {
       const start = wallClockToUtc(wall, timezone);
       const minutes = Math.min(Math.max(meeting.duration || 60, 5), 24 * 60);
-      const tokenRef = start.getTime() > Date.now() ? await tokenFor(email.gmail_account_id) : null;
+      const tokenRef = start.getTime() > Date.now() ? await tokenFor(email.account_id) : null;
       // Ask the calendar only when a proposal could follow; a refusal is logged by act().
       const allowed = decide({ kind: "meeting", ...settings, source: "engine", suspicious, todayCount: today.meeting ?? 0, cycleCount }).verdict !== "refuse";
       let onCalendar: LinkedEvent | null = null;
@@ -453,7 +452,7 @@ export async function runCycle(): Promise<void> {
   if (engineStatus.running) return;
   const userId = await localUser();
   if (!userId) return;
-  const { count } = await db.from("gmail_accounts").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("is_active", true);
+  const { count } = await db.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", userId);
   if (!count) return;
   engineStatus.running = true;
   try {
@@ -463,8 +462,10 @@ export async function runCycle(): Promise<void> {
       await rereadUnderNewRules(userId);
       startedUp = true;
     }
-    // Until the first read of the mailbox is done, carry it on in the background.
-    if ((await firstReadState(userId)).step !== "done") void startFirstRead(userId, () => planNew(userId));
+    // Until the first read of every mailbox is done, carry it on in the background.
+    const unread = await db.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("paused", false).is("read_at", null);
+    if ((await firstReadState(userId)).step !== "done" || unread.count) void startFirstRead(userId, () => planNew(userId));
+    await refreshStaleSendAs(userId);
     await applyWaitingLabels(userId);
     await syncMail(userId);
     if (modelConfigured()) {
@@ -503,7 +504,7 @@ export function windowClosed(): void {
 }
 
 async function mailboxChanged(userId: string): Promise<boolean> {
-  const { data } = await db.from("gmail_accounts").select("token_ref, history_id").eq("user_id", userId).eq("is_active", true);
+  const { data } = await db.from("accounts").select("token_ref, history_id").eq("user_id", userId).eq("paused", false);
   for (const a of data ?? []) {
     if (a.history_id && (await currentHistoryId(a.token_ref as string)) !== a.history_id) return true;
   }

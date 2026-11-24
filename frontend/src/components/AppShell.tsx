@@ -17,6 +17,7 @@ import type { User } from "@/lib/db";
 import { createClient } from "@/lib/db";
 import { useLiveUpdates, type LiveChangeCounters } from "@/lib/useLiveUpdates";
 import { useOverview, type Overview } from "@/lib/outcomes";
+import { useAccounts, type Accounts } from "@/lib/accounts";
 import {
   stepAgent as apiStepAgent,
   answerAgent as apiAnswerAgent,
@@ -112,6 +113,8 @@ export type AppContextType = {
   liveChanges: LiveChangeCounters;
   // What Tabellar made of the mail: outcomes per email, counts, outgoing replies, engine state
   mail: Overview;
+  // The connected accounts, their From addresses, and the sidebar's account switch
+  accounts: Accounts;
   // Solve-Everything agent session (survives navigation)
   agentSession: AgentSessionState | null;
   agentTurns: AgentTurnRow[];
@@ -317,6 +320,7 @@ export default function AppShell({
   );
   const reportError = useCallback((m: string) => addToast("error", m), [addToast]);
   const mail = useOverview(user.id, liveChanges, reportError);
+  const accounts = useAccounts();
   // The theme class sits on the root element so menus and the page ground follow it too.
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
@@ -751,6 +755,7 @@ export default function AppShell({
         invalidateViewCache,
         liveChanges,
         mail,
+        accounts,
         agentSession,
         agentTurns,
         adoptSolveAgent,

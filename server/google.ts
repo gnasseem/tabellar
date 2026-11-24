@@ -31,7 +31,7 @@ export interface TokenData {
 
 const accessTokens = new Map<string, { token: string; expiry: string }>();
 
-// Store tokens and return the reference saved in gmail_accounts.token_ref.
+// Store tokens and return the reference saved in accounts.token_ref.
 // The reference is derived from the refresh token, so refreshing an access
 // token keeps the same reference and touches only memory.
 export async function saveTokens(t: TokenData): Promise<string> {

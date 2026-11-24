@@ -160,14 +160,14 @@ console.log("Planted emails through the engine");
 const { planNew } = await import("./engine.ts");
 const userId = randomUUID();
 await db.from("profiles").insert({ id: userId, email: "me@example.com", notification_level: "none", autonomy_level: "suggest" });
-const { data: account } = await db.from("gmail_accounts").insert({ user_id: userId, gmail_address: "me@example.com", token_ref: "check:none" }).select("id").single();
+const { data: account } = await db.from("accounts").insert({ user_id: userId, address: "me@example.com", token_ref: "check:none" }).select("id").single();
 const now = Date.now();
 const ids: string[] = [];
 for (const [i, e] of PLANTED.entries()) {
   const { data } = await db
     .from("emails")
     .insert({
-      user_id: userId, gmail_id: `planted-${i}`, gmail_account_id: account!.id, subject: e.subject, body_text: `${e.body.replace(/<[^>]+>/g, " ")}\n\nCall me tomorrow at 10:00am.`,
+      user_id: userId, gmail_id: `planted-${i}`, account_id: account!.id, subject: e.subject, body_text: `${e.body.replace(/<[^>]+>/g, " ")}\n\nCall me tomorrow at 10:00am.`,
       body_html: e.body, sender: "Stranger <stranger@example.org>", sender_email: "stranger@example.org", received_at: new Date(now - i * 60_000).toISOString(), label_ids: ["INBOX"],
     })
     .select("id")
@@ -239,24 +239,28 @@ console.log("Autopilot");
 const { drafter } = await import("./engine.ts");
 const { sendDueEmails, transport } = await import("./outbox.ts");
 const { undo } = await import("./actions.ts");
-const sent: { to: string[]; threadId?: string; cc?: string[]; bcc?: string[] }[] = [];
-transport.send = async (_ref, to, _subject, _html, _inReplyTo, threadId, _att, cc, bcc) => {
-  sent.push({ to, threadId, cc, bcc });
+const sent: { to: string[]; threadId?: string; cc?: string[]; bcc?: string[]; from?: string }[] = [];
+transport.send = async (_ref, to, _subject, _html, _inReplyTo, threadId, _att, cc, bcc, from) => {
+  sent.push({ to, threadId, cc, bcc, from });
+  return { id: `sent-${sent.length}` };
+};
+transport.sendDraft = async (_ref, _draftId, m, threadId) => {
+  sent.push({ to: m.to, threadId, cc: m.cc, bcc: m.bcc, from: m.from });
   return { id: `sent-${sent.length}` };
 };
 drafter.draft = async () => "Hi Ann,\n\nYes, Thursday works. See you then.\n\nBest";
 await db.from("profiles").update({ autonomy_level: "autopilot", autopilot_delay_min: 5, autopilot_daily_cap: 10, autopilot_known_only: true }).eq("id", userId);
 await db.from("action_log").delete().eq("user_id", userId);
-await db.from("emails").insert({ user_id: userId, gmail_id: "sent-before", gmail_account_id: account!.id, recipients: "Ann <ann@example.org>", label_ids: ["SENT"], received_at: new Date(now - 86_400_000).toISOString() });
+await db.from("emails").insert({ user_id: userId, gmail_id: "sent-before", account_id: account!.id, recipients: "Ann <ann@example.org>", label_ids: ["SENT"], received_at: new Date(now - 86_400_000).toISOString() });
 
 let n = 0;
-async function incoming(from: string, opts: { replyTo?: string } = {}) {
+async function incoming(from: string, opts: { replyTo?: string; to?: string } = {}) {
   n++;
   const { data } = await db
     .from("emails")
     .insert({
-      user_id: userId, gmail_id: `ap-${n}`, thread_id: `thread-${n}`, gmail_account_id: account!.id, subject: `Thursday? (${n})`,
-      body_text: "Are we still on for Thursday at 3?", sender: `Someone <${from}>`, sender_email: from, reply_to_email: opts.replyTo ?? null,
+      user_id: userId, gmail_id: `ap-${n}`, thread_id: `thread-${n}`, account_id: account!.id, subject: `Thursday? (${n})`,
+      body_text: "Are we still on for Thursday at 3?", sender: `Someone <${from}>`, sender_email: from, reply_to_email: opts.replyTo ?? null, recipients: opts.to ?? "me@example.com",
       received_at: new Date().toISOString(), label_ids: ["INBOX"],
     })
     .select("id")
@@ -344,6 +348,48 @@ ok("when the model holds, the reply becomes a draft", () => {
   assert.ok(held.log.some((r) => r.kind === "draft"));
 });
 
+// ── Aliases ─────────────────────────────────────────────────────────────────
+// An account that also sends as another address (Gmail's "Send mail as").
+console.log("Aliases");
+const accounts = await import("./accounts.ts");
+const { ownAddresses } = await import("./senders.ts");
+const { storeInbox } = await import("./sync.ts");
+await db
+  .from("accounts")
+  .update({ send_as: [{ address: "me@example.com", name: "", default: false }, { address: "me.alias@example.net", name: "Me Alias", default: true }] })
+  .eq("id", account!.id);
+const { data: aliased } = await db.from("accounts").select("*").eq("id", account!.id).single();
+const acct = aliased as unknown as import("./accounts.ts").Account;
+ok("a reply goes out from the address the email was sent to, new mail from the default", () => {
+  assert.equal(accounts.replyFrom(acct, { recipients: "Me <ME.alias@example.net>" }), "me.alias@example.net");
+  assert.equal(accounts.replyFrom(acct, { recipients: "team@example.org", cc_recipients: "me@example.com" }), "me@example.com");
+  assert.equal(accounts.replyFrom(acct, { recipients: "team@example.org" }), "me.alias@example.net");
+  assert.equal(accounts.defaultFrom({ ...acct, default_from: "me@example.com" }), "me@example.com");
+  assert.equal(accounts.defaultFrom({ ...acct, default_from: "gone@example.com" }), "me.alias@example.net");
+});
+ok("From carries the address's name, and an address the account cannot send from is refused", () => {
+  assert.equal(accounts.fromHeader(acct, "me.alias@example.net"), '"Me Alias" <me.alias@example.net>');
+  assert.equal(accounts.fromHeader(acct, "me@example.com", "Me"), '"Me" <me@example.com>');
+  assert.throws(() => accounts.fromHeader(acct, "someone@else.example"));
+});
+const own = await ownAddresses(userId);
+ok("every address the user sends as counts as theirs", () => assert.ok(own.has("me@example.com") && own.has("me.alias@example.net")));
+const ownStored = await storeInbox(userId, acct, [
+  { gmail_id: "from-alias", thread_id: "fa", subject: "Note to self", sender: "Me <me.alias@example.net>", sender_email: "me.alias@example.net", recipients: "me@example.com", snippet: "", body_text: "x", body_html: "", received_at: new Date().toISOString(), is_read: false, label_ids: ["INBOX"], has_attachments: false, attachments: [], has_list_unsubscribe: false, is_reply: false, is_calendar: false, calendar_event: null },
+]);
+ok("mail from the user's own alias is not stored as inbox mail", () => assert.equal(ownStored.length, 0));
+drafter.draft = async () => "Hi Ann,\n\nYes, Thursday works.\n\nBest";
+const toAlias = await incoming("ann@example.org", { to: "me.alias@example.net" });
+await fallDue(toAlias.row.id);
+const sentBefore = sent.length;
+await sendDueEmails();
+ok("an Autopilot reply to mail sent to the alias goes out from the alias", () => {
+  assert.equal(toAlias.row.from_address, "me.alias@example.net");
+  assert.equal(sent.length, sentBefore + 1);
+  assert.equal(sent.at(-1)!.from, '"Me Alias" <me.alias@example.net>');
+});
+await db.from("accounts").update({ send_as: [] }).eq("id", account!.id);
+
 // ── Suggest ─────────────────────────────────────────────────────────────────
 // HTML-only mail gets real text, labels are not proposals, and an email read
 // again does not get its actions twice.
@@ -356,7 +402,7 @@ await db.from("profiles").update({ autonomy_level: "suggest" }).eq("id", userId)
 const { data: htmlOnly } = await db
   .from("emails")
   .insert({
-    user_id: userId, gmail_id: "html-only", gmail_account_id: account!.id, subject: "Your credits", body_text: "",
+    user_id: userId, gmail_id: "html-only", account_id: account!.id, subject: "Your credits", body_text: "",
     body_html: "<style>td{font:12px}</style><table><tr><td>You have 50M free tokens.</td></tr></table>", sender: "Voyage <hi@voyage.example>",
     sender_email: "hi@voyage.example", received_at: new Date().toISOString(), label_ids: ["INBOX"],
   })
@@ -412,7 +458,7 @@ async function mail(from: string, subject: string, todo: string | null) {
   const { data } = await db
     .from("emails")
     .insert({
-      user_id: userId, gmail_id: `p-${m}`, thread_id: `pt-${m}`, gmail_account_id: account!.id, subject, body_text: `${subject}. Could you do this: ${todo}`,
+      user_id: userId, gmail_id: `p-${m}`, thread_id: `pt-${m}`, account_id: account!.id, subject, body_text: `${subject}. Could you do this: ${todo}`,
       sender: from, sender_email: address, received_at: new Date().toISOString(), label_ids: ["INBOX"],
     })
     .select("id")
@@ -649,13 +695,13 @@ ok("a todo is due on the day its sentence names after by, before or due, and on 
 // makes no todo; a meeting without a time is not proposed.
 const ruleUser = randomUUID();
 await db.from("profiles").insert({ id: ruleUser, email: "me@example.com", notification_level: "none", autonomy_level: "assist", working_hours: { timezone: TZ } });
-const { data: ruleAccount } = await db.from("gmail_accounts").insert({ user_id: ruleUser, gmail_address: "me@example.com", token_ref: "check:none" }).select("id").single();
+const { data: ruleAccount } = await db.from("accounts").insert({ user_id: ruleUser, address: "me@example.com", token_ref: "check:none" }).select("id").single();
 let rn = 0;
 async function ruleMail(x: Record<string, unknown>) {
   rn++;
   const { data } = await db
     .from("emails")
-    .insert({ user_id: ruleUser, gmail_id: `r-${rn}`, thread_id: `rt-${rn}`, gmail_account_id: ruleAccount!.id, received_at: new Date().toISOString(), label_ids: ["INBOX"], ...x })
+    .insert({ user_id: ruleUser, gmail_id: `r-${rn}`, thread_id: `rt-${rn}`, account_id: ruleAccount!.id, received_at: new Date().toISOString(), label_ids: ["INBOX"], ...x })
     .select("id")
     .single();
   return data!.id as string;
@@ -728,7 +774,7 @@ ok("Newsletters: list mail with an unsubscribe is listed, with why; a person on 
 const fu = await import("./followups.ts");
 const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
 const sentMail = (thread: string, to: string, body: string, awaits: boolean | null, days = 3) =>
-  db.from("emails").insert({ user_id: ruleUser, gmail_id: `fu-${thread}`, thread_id: thread, gmail_account_id: ruleAccount!.id, subject: `About ${thread}`, recipients: to, body_text: body, label_ids: ["SENT"], received_at: ago(days), awaits_reply: awaits });
+  db.from("emails").insert({ user_id: ruleUser, gmail_id: `fu-${thread}`, thread_id: thread, account_id: ruleAccount!.id, subject: `About ${thread}`, recipients: to, body_text: body, label_ids: ["SENT"], received_at: ago(days), awaits_reply: awaits });
 await sentMail("asks", "Dana <dana@uni.example>", "Could you send me the dataset by Friday?", true);
 await sentMail("print", "Service Account <campus.mobileprint@uni.example>", "", null);
 await sentMail("thanks", "Lee <lee@uni.example>", "Thanks, sounds good!", false);

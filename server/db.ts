@@ -32,17 +32,21 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       created_at: "time ! =now", updated_at: "time ! =now",
     },
   },
-  gmail_accounts: {
+  // One row per connected mailbox. send_as is the addresses it can send
+  // from ({address, name, default}), as Gmail lists them; default_from is the
+  // user's pick among them. See accounts.ts.
+  accounts: {
     cols: {
-      id: "uuid pk =uuid", user_id: "uuid !", gmail_address: "text !", token_ref: "text !",
-      is_active: "bool ! =true", history_id: "text", created_at: "time ! =now",
+      id: "uuid pk =uuid", user_id: "uuid !", provider: 'text ! ="gmail"', address: "text !", token_ref: "text !",
+      history_id: "text", send_as: "json ! =[]", send_as_at: "time", default_from: "text",
+      is_default: "bool ! =false", paused: "bool ! =false", read_at: "time", created_at: "time ! =now",
     },
-    unique: [["user_id", "gmail_address"]],
+    unique: [["user_id", "address"]],
   },
   emails: {
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", gmail_id: "text !", thread_id: "text",
-      gmail_account_id: "uuid >gmail_accounts:cascade",
+      account_id: "uuid >accounts:cascade",
       subject: "text", sender: "text", sender_email: "text", recipients: "text",
       snippet: "text", body_text: "text", body_html: "text", received_at: "time",
       is_read: "bool ! =false", is_starred: "bool ! =false", is_archived: "bool ! =false",
@@ -81,12 +85,13 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
   },
   scheduled_emails: {
     cols: {
-      id: "uuid pk =uuid", user_id: "uuid !", gmail_account_id: "uuid ! >gmail_accounts:cascade",
+      id: "uuid pk =uuid", user_id: "uuid !", account_id: "uuid ! >accounts:cascade",
       to_addresses: "json !", cc_addresses: "json", bcc_addresses: "json", subject: "text !",
-      body_html: "text !", body_text: "text", in_reply_to: "text", thread_id: "text",
+      from_address: "text", body_html: "text !", body_text: "text", in_reply_to: "text", thread_id: "text",
       send_at: "time !", status: 'text ! ="pending"', error_message: "text", created_at: "time ! =now",
       // "autopilot" rows are Tabellar's own replies, re-checked when they fall due.
       source: 'text ! ="user"', email_id: "uuid >emails:null", action_id: "uuid",
+      gmail_draft_id: "text", // sent through Gmail's Drafts, which it then leaves
     },
   },
   // Senders the user dealt with in Newsletters: kept, or unsubscribed from.
@@ -114,7 +119,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
   },
   contacts: {
     cols: {
-      id: "uuid pk =uuid", user_id: "uuid !", gmail_account_id: "uuid >gmail_accounts:cascade",
+      id: "uuid pk =uuid", user_id: "uuid !", account_id: "uuid >accounts:cascade",
       email: "text !", name: "text", source: "text", created_at: "time ! =now", updated_at: "time ! =now",
     },
     unique: [["user_id", "email"]],
@@ -149,15 +154,17 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
   },
   draft_emails: {
     cols: {
-      id: "uuid pk =uuid", user_id: "uuid !", to_addresses: "json ! =[]", subject: "text",
-      body_html: "text", email_id: "uuid >emails:null", source: "text", created_at: "time ! =now",
+      id: "uuid pk =uuid", user_id: "uuid !", account_id: "uuid >accounts:cascade", from_address: "text",
+      to_addresses: "json ! =[]", subject: "text", body_html: "text", email_id: "uuid >emails:null", source: "text",
+      gmail_draft_id: "text", // the same draft in Gmail's Drafts, when the user saved it
+      created_at: "time ! =now",
     },
   },
   // The headers of every message the first read and later syncs saw, inbox
   // and sent, and what they add up to per address. See senders.ts.
   mail_index: {
     cols: {
-      id: "uuid pk =uuid", user_id: "uuid !", gmail_account_id: "uuid >gmail_accounts:cascade",
+      id: "uuid pk =uuid", user_id: "uuid !", account_id: "uuid >accounts:cascade",
       gmail_id: "text !", thread_id: "text", at: "time !", from_addr: "text", from_name: "text",
       to_addrs: "json ! =[]", sent: "bool ! =false", inbox: "bool ! =false", unread: "bool ! =false",
       category: "text", list_unsubscribe: "bool ! =false", list_id: "text", precedence: "text",
@@ -201,7 +208,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
   },
   email_signatures: {
     cols: {
-      id: "uuid pk =uuid", user_id: "uuid !", gmail_account_id: "uuid >gmail_accounts:cascade",
+      id: "uuid pk =uuid", user_id: "uuid !", account_id: "uuid >accounts:cascade",
       name: "text !", html: 'text ! =""', is_default: "bool ! =false", created_at: "time ! =now",
     },
   },
@@ -243,7 +250,7 @@ const INDEXES = [
   "CREATE INDEX IF NOT EXISTS emails_received ON emails(user_id, received_at DESC)",
   "CREATE INDEX IF NOT EXISTS emails_thread ON emails(user_id, thread_id)",
   "CREATE INDEX IF NOT EXISTS emails_sender ON emails(user_id, sender_email)",
-  "CREATE INDEX IF NOT EXISTS emails_account ON emails(gmail_account_id)",
+  "CREATE INDEX IF NOT EXISTS emails_account ON emails(account_id)",
   "CREATE INDEX IF NOT EXISTS processed_category ON email_processed(user_id, category)",
   "CREATE INDEX IF NOT EXISTS todos_user ON todos(user_id, is_completed)",
   "CREATE INDEX IF NOT EXISTS meetings_start ON meetings(user_id, start_time)",
@@ -254,7 +261,7 @@ const INDEXES = [
   "CREATE INDEX IF NOT EXISTS action_log_user ON action_log(user_id, created_at DESC)",
   "CREATE INDEX IF NOT EXISTS action_log_status ON action_log(user_id, status)",
   // At most one default signature per account (or per user, for global ones).
-  "CREATE UNIQUE INDEX IF NOT EXISTS signatures_one_default ON email_signatures(user_id, coalesce(gmail_account_id, '')) WHERE is_default = 1",
+  "CREATE UNIQUE INDEX IF NOT EXISTS signatures_one_default ON email_signatures(user_id, coalesce(account_id, '')) WHERE is_default = 1",
 ];
 
 function parseSchema(): Map<string, Table> {
@@ -316,6 +323,29 @@ function ddlDefault(c: Col): string {
   return typeof v === "number" ? String(v) : `'${String(v).replace(/'/g, "''")}'`;
 }
 
+// Tables and columns a newer schema renamed or dropped, applied once each
+// before createSchema. Mailboxes were Gmail only; they are accounts now.
+const RENAMES: [string, string, string?][] = [
+  ["gmail_accounts", "accounts"],
+  ["accounts", "gmail_address", "address"],
+  ...["emails", "scheduled_emails", "contacts", "mail_index", "email_signatures"].map((t): [string, string, string] => [t, "gmail_account_id", "account_id"]),
+];
+
+function migrate() {
+  const cols = (t: string) => (sqlite.prepare(`PRAGMA table_info("${t}")`).all() as { name: string }[]).map((r) => r.name);
+  for (const [t, from, to] of RENAMES) {
+    if (to === undefined) {
+      if (cols(t).length && !cols(from).length) sqlite.exec(`ALTER TABLE "${t}" RENAME TO "${from}"`);
+    } else if (cols(t).includes(from) && !cols(t).includes(to)) sqlite.exec(`ALTER TABLE "${t}" RENAME COLUMN "${from}" TO "${to}"`);
+  }
+  // A removed account used to stay as is_active = 0; it is deleted now.
+  if (cols("accounts").includes("is_active")) {
+    sqlite.exec(`DELETE FROM accounts WHERE is_active = 0`);
+    sqlite.exec(`ALTER TABLE accounts DROP COLUMN is_active`);
+  }
+}
+
+migrate();
 createSchema();
 
 // ── Encoding ────────────────────────────────────────────────────────────────

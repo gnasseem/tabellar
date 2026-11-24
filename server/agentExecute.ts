@@ -17,6 +17,7 @@
 
 import type { Db } from "./db.ts";
 import { sendEmail } from "./gmail.ts";
+import { accountById, defaultAccount, fromLine, replyFrom } from "./accounts.ts";
 import { freshAccessToken } from "./google.ts";
 import { decide } from "./policy.ts";
 import { act, record, engineSettings } from "./actions.ts";
@@ -90,19 +91,15 @@ export function wallClockToUtc(wallMs: number, tz: string): Date {
   return new Date(instant);
 }
 
+// The default account's calendar.
 async function getCalendarAccessToken(
-  db: Db,
+  _db: Db,
   userId: string,
 ): Promise<string | null> {
-  const { data: accounts } = await db
-    .from("gmail_accounts")
-    .select("token_ref")
-    .eq("user_id", userId)
-    .eq("is_active", true)
-    .limit(1);
-  if (!accounts?.length) return null;
+  const account = await defaultAccount(userId);
+  if (!account) return null;
   try {
-    return await freshAccessToken(accounts[0].token_ref as string);
+    return await freshAccessToken(account.token_ref);
   } catch {
     return null;
   }
@@ -174,25 +171,29 @@ export async function executeAgentPlan(
           throw new Error("Reply missing to/subject/body");
         }
         if (sendNow) {
-          // Look up the Gmail account and send.
-          const { data: accounts } = await db
-            .from("gmail_accounts")
-            .select("id, token_ref")
-            .eq("user_id", userId)
-            .eq("is_active", true)
-            .limit(1);
-          const account = accounts?.[0];
-          if (!account) throw new Error("No Gmail account connected");
+          // From the account and address the email it answers was sent to.
+          const { data: linked } = action.linked_email_id
+            ? await db.from("emails").select("account_id, recipients, cc_recipients").eq("id", action.linked_email_id).eq("user_id", userId).maybeSingle()
+            : { data: null };
+          const account = (await accountById(userId, linked?.account_id as string | undefined)) ?? (await defaultAccount(userId));
+          if (!account) throw new Error("No account connected");
+          const from = linked ? replyFrom(account, linked) : null;
           const result = await sendEmail(
-            account.token_ref as string,
+            account.token_ref,
             [to],
             subject,
             plainToHtml(body),
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            await fromLine(userId, account, from),
           );
           await db.from("emails").insert({
             user_id: userId,
             gmail_id: result.id,
-            gmail_account_id: account.id,
+            account_id: account.id,
             subject,
             recipients: to,
             body_html: plainToHtml(body),

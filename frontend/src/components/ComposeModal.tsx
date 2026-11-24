@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
+import { api } from "@/lib/outcomes";
+import { replyFrom } from "@/lib/accounts";
 import { EmailField, useContacts } from "./EmailAutocomplete";
 import DateTimePicker from "./DateTimePicker";
 
@@ -126,14 +128,15 @@ export default function ComposeModal({
     addToast,
     notifyDraftChange,
     notifySent,
+    accounts,
   } = useApp();
   const supabase = createClient();
   const draftId = useRef(draft?.id ?? crypto.randomUUID());
   // Helper: extract bare email addresses from a comma-separated RFC 2822 string,
-  // excluding the user's own address.
+  // excluding the user's own addresses.
   const extractReplyAddresses = (
     raw: string,
-    excludeEmail: string,
+    exclude: Set<string>,
   ): string[] => {
     return (raw || "")
       .split(",")
@@ -145,10 +148,11 @@ export default function ComposeModal({
           : trimmed.toLowerCase();
         return addr;
       })
-      .filter((e) => e.includes("@") && e !== excludeEmail);
+      .filter((e) => e.includes("@") && !exclude.has(e));
   };
 
-  const userEmail = (profile?.email || user?.email || "").toLowerCase();
+  // Every address of every account, and the aliases each sends as.
+  const mine = new Set([...accounts.mine, (profile?.email || user?.email || "").toLowerCase()]);
 
   const [to, setTo] = useState(() => {
     if (draft) return (draft.to_addresses || []).join(", ");
@@ -158,11 +162,11 @@ export default function ComposeModal({
         const raw = replyTo.sender_email.trim();
         const angleMatch = raw.match(/^.*?<([^>]+)>\s*$/);
         const addr = (angleMatch ? angleMatch[1] : raw).toLowerCase();
-        if (addr.includes("@") && addr !== userEmail) addrs.add(addr);
+        if (addr.includes("@") && !mine.has(addr)) addrs.add(addr);
       }
       for (const addr of extractReplyAddresses(
         replyTo.recipients || "",
-        userEmail,
+        mine,
       ))
         addrs.add(addr);
       return Array.from(addrs).join(", ");
@@ -173,7 +177,7 @@ export default function ComposeModal({
     if (draft?.cc_addresses?.length)
       return (draft.cc_addresses as string[]).join(", ");
     if (replyTo?._replyAll && replyTo.cc_recipients) {
-      return extractReplyAddresses(replyTo.cc_recipients, userEmail).join(", ");
+      return extractReplyAddresses(replyTo.cc_recipients, mine).join(", ");
     }
     return "";
   });
@@ -330,12 +334,27 @@ export default function ComposeModal({
   const [meetingDuration, setMeetingDuration] = useState("");
   const [meetingLocation, setMeetingLocation] = useState("");
 
-  const [gmailAccounts, setGmailAccounts] = useState<
-    { id: string; gmail_address: string }[]
-  >([]);
-  const [selectedAccountId, setSelectedAccountId] = useState<string>(
-    replyTo?.gmail_account_id || "",
-  );
+  // From: an account and one of the addresses it sends as. A draft keeps its
+  // own; a reply goes from the address the email was sent to; new mail from
+  // the account the sidebar shows, else the default account.
+  const initialFrom = (): { accountId: string; address: string } => {
+    if (draft?.account_id && accounts.byId.has(draft.account_id)) {
+      const a = accounts.byId.get(draft.account_id)!;
+      return { accountId: a.id, address: a.from.some((f) => f.address === draft.from_address) ? draft.from_address : a.default_from };
+    }
+    const own = accounts.byId.get(replyTo?.account_id || "");
+    if (own) return { accountId: own.id, address: replyFrom(own, replyTo) };
+    const a = accounts.byId.get(accounts.only) ?? accounts.list.find((x) => x.is_default) ?? accounts.list[0];
+    return a ? { accountId: a.id, address: a.default_from } : { accountId: "", address: "" };
+  };
+  const [from, setFrom] = useState(initialFrom);
+  // The accounts arrive after the window opens only on a cold start.
+  useEffect(() => {
+    if (!from.accountId && accounts.list.length) setFrom(initialFrom());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accounts.list]);
+  const selectedAccountId = from.accountId;
+  const fromChoices = accounts.list.flatMap((a) => a.from.map((f) => ({ accountId: a.id, account: a.address, ...f })));
   const { contacts, addContacts, primaryAccountId } = useContacts(user.id);
 
   // Signatures
@@ -345,7 +364,7 @@ export default function ComposeModal({
       name: string;
       html: string;
       is_default: boolean;
-      gmail_account_id: string | null;
+      account_id: string | null;
     }[]
   >([]);
   const [appliedSignatureId, setAppliedSignatureId] = useState<string | null>(
@@ -360,8 +379,8 @@ export default function ComposeModal({
   ) => {
     // First try exact account match, then fall back to global (null account), then first default
     return (
-      sigs.find((s) => s.is_default && s.gmail_account_id === accountId) ??
-      sigs.find((s) => s.is_default && !s.gmail_account_id) ??
+      sigs.find((s) => s.is_default && s.account_id === accountId) ??
+      sigs.find((s) => s.is_default && !s.account_id) ??
       null
     );
   };
@@ -385,19 +404,6 @@ export default function ComposeModal({
         .eq("user_id", user.id)
         .order("created_at", { ascending: false });
       if (data) setTemplates(data);
-    })();
-    (async () => {
-      const { data } = await supabase
-        .from("gmail_accounts")
-        .select("id, gmail_address")
-        .eq("user_id", user.id)
-        .eq("is_active", true);
-      if (data) {
-        setGmailAccounts(data as { id: string; gmail_address: string }[]);
-        if (!selectedAccountId && data.length > 0) {
-          setSelectedAccountId((data[0] as { id: string }).id);
-        }
-      }
     })();
     // Load signatures (only for new emails, not replies/drafts)
     if (!replyTo && !draft) {
@@ -426,7 +432,7 @@ export default function ComposeModal({
   // Apply default signature when account or signatures change (new compose only)
   useEffect(() => {
     if (replyTo || draft || allSignatures.length === 0) return;
-    const effectiveAccountId = selectedAccountId || gmailAccounts[0]?.id || "";
+    const effectiveAccountId = selectedAccountId;
     const sig = getDefaultSignatureForAccount(
       effectiveAccountId,
       allSignatures,
@@ -438,7 +444,7 @@ export default function ComposeModal({
       setBody((prev) => stripSignature(prev));
       setAppliedSignatureId(null);
     }
-  }, [selectedAccountId, allSignatures, gmailAccounts]);
+  }, [selectedAccountId, allSignatures]);
 
   const applyTemplate = (t: Template) => {
     const newSubject = t.subject || t.name;
@@ -639,25 +645,31 @@ export default function ComposeModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Kept here and in that mailbox's Gmail Drafts, From the address chosen.
   const saveDraft = async () => {
     if (!body) return;
-    const toAddresses = to
-      .split(",")
-      .map((s: string) => s.trim())
-      .filter(Boolean);
-    await supabase.from("draft_emails").upsert(
-      {
+    const split = (v: string) => v.split(",").map((s: string) => s.trim()).filter(Boolean);
+    const html = /<br|<p|<div/.test(body) ? body : body.replace(/\n/g, "<br>");
+    try {
+      const { inGmail } = await api("/drafts/save", {
         id: draftId.current,
-        user_id: user.id,
-        to_addresses: toAddresses,
+        account_id: from.accountId || undefined,
+        from_address: from.address || undefined,
+        to: split(to),
+        cc: split(cc),
+        bcc: split(bcc),
         subject,
-        body_html: body,
-      },
-      { onConflict: "id" },
-    );
-    notifyDraftChange();
-    addToast("success", "Draft saved");
-    onClose();
+        body_html: html,
+        email_id: draft?.email_id ?? replyTo?.id ?? null,
+        in_reply_to: replyTo?.gmail_id,
+        thread_id: replyTo?.thread_id,
+      });
+      notifyDraftChange();
+      addToast(inGmail ? "success" : "info", inGmail ? "Draft saved" : "Draft saved here. Gmail could not be reached, so it is not in Gmail's Drafts.");
+      onClose();
+    } catch (e) {
+      addToast("error", `Could not save the draft. ${(e as Error).message}`);
+    }
   };
 
   const createMeetingRecord = async () => {
@@ -788,22 +800,14 @@ export default function ComposeModal({
         return;
       }
 
-      let effectiveAccountId = selectedAccountId;
+      const effectiveAccountId = selectedAccountId;
       if (!effectiveAccountId) {
-        const { data: accounts } = await supabase
-          .from("gmail_accounts")
-          .select("id")
-          .eq("user_id", user.id)
-          .eq("is_active", true)
-          .order("created_at", { ascending: true })
-          .limit(1);
-        if (!accounts?.length) {
-          addToast("error", "Connect a Gmail account first");
-          setSending(false);
-          return;
-        }
-        effectiveAccountId = accounts[0].id;
+        addToast("error", "Connect a Gmail account first");
+        setSending(false);
+        return;
       }
+      // A saved draft that is in that mailbox's Gmail Drafts is sent from there.
+      const gmailDraftId = draft?.gmail_draft_id && draft.account_id === effectiveAccountId ? draft.gmail_draft_id : null;
 
       if (showMeetingPanel && meetingDate && meetingDuration) {
         await createMeetingRecord();
@@ -827,7 +831,8 @@ export default function ComposeModal({
           const { error: upErr } = await supabase
             .from("scheduled_emails")
             .update({
-              gmail_account_id: effectiveAccountId,
+              account_id: effectiveAccountId,
+              from_address: from.address || null,
               to_addresses: parsedTo,
               cc_addresses: parsedCc.length ? parsedCc : null,
               bcc_addresses: parsedBcc.length ? parsedBcc : null,
@@ -847,7 +852,9 @@ export default function ComposeModal({
             .from("scheduled_emails")
             .insert({
               user_id: user.id,
-              gmail_account_id: effectiveAccountId,
+              account_id: effectiveAccountId,
+              from_address: from.address || null,
+              gmail_draft_id: gmailDraftId,
               to_addresses: parsedTo,
               cc_addresses: parsedCc.length ? parsedCc : null,
               bcc_addresses: parsedBcc.length ? parsedBcc : null,
@@ -869,7 +876,9 @@ export default function ComposeModal({
           .from("scheduled_emails")
           .insert({
             user_id: user.id,
-            gmail_account_id: effectiveAccountId,
+            account_id: effectiveAccountId,
+            from_address: from.address || null,
+            gmail_draft_id: gmailDraftId,
             to_addresses: parsedTo,
             cc_addresses: parsedCc.length ? parsedCc : null,
             bcc_addresses: parsedBcc.length ? parsedBcc : null,
@@ -944,7 +953,9 @@ export default function ComposeModal({
               body_html: sendBody,
               in_reply_to: replyTo?.gmail_id,
               thread_id: replyTo?.thread_id,
-              gmail_account_id: effectiveAccountId,
+              account_id: effectiveAccountId,
+              from_address: from.address || undefined,
+              gmail_draft_id: gmailDraftId ?? undefined,
               attachments: attachmentData.length ? attachmentData : undefined,
             }),
           });
@@ -1093,19 +1104,32 @@ export default function ComposeModal({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4">
-        {gmailAccounts.length > 1 && (
+        {fromChoices.length > 1 && (
           <label className={row}>
             <span className={rowLabel}>From</span>
             <select
-              value={selectedAccountId}
-              onChange={(e) => setSelectedAccountId(e.target.value)}
+              value={`${from.accountId}|${from.address}`}
+              onChange={(e) => {
+                const [accountId, address] = e.target.value.split("|");
+                setFrom({ accountId, address });
+              }}
               className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
             >
-              {gmailAccounts.map((acc) => (
-                <option key={acc.id} value={acc.id}>
-                  {acc.gmail_address}
-                </option>
-              ))}
+              {accounts.list.length > 1
+                ? accounts.list.map((a) => (
+                    <optgroup key={a.id} label={a.address}>
+                      {a.from.map((f) => (
+                        <option key={f.address} value={`${a.id}|${f.address}`}>
+                          {f.name ? `${f.name} <${f.address}>` : f.address}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))
+                : fromChoices.map((f) => (
+                    <option key={f.address} value={`${f.accountId}|${f.address}`}>
+                      {f.name ? `${f.name} <${f.address}>` : f.address}
+                    </option>
+                  ))}
             </select>
           </label>
         )}

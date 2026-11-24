@@ -122,7 +122,7 @@ async function resolveTokens(
     updatedTokenRef = await saveTokens(tokenData);
     if (db && accountId) {
       // deno-lint-ignore no-explicit-any
-      await (db.from("gmail_accounts") as any)
+      await (db.from("accounts") as any)
         .update({ token_ref: updatedTokenRef })
         .eq("id", accountId);
     }
@@ -516,7 +516,7 @@ export async function fetchEmails(
       updatedTokenRef = await saveTokens(tokenData);
       if (db && accountId) {
         // deno-lint-ignore no-explicit-any
-        await (db.from("gmail_accounts") as any)
+        await (db.from("accounts") as any)
           .update({ token_ref: updatedTokenRef })
           .eq("id", accountId);
       }
@@ -756,6 +756,56 @@ export async function findCalendarEvent(tokenRef: string, q: { uid?: string; sta
   return hit ? linked(hit) : null;
 }
 
+export type Outgoing = {
+  from?: string; // a From header ("Name" <address>); Gmail's default send-as address when left out
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  html: string;
+  inReplyTo?: string;
+  attachments?: { name: string; contentType: string; data: string }[];
+};
+
+// A header value with anything outside ASCII as an RFC 2047 word.
+function headerText(v: string): string {
+  return /^[\x20-\x7e]*$/.test(v) ? v : `=?UTF-8?B?${Buffer.from(v, "utf8").toString("base64")}?=`;
+}
+
+// The message as Gmail's API takes it: base64url of the whole MIME text.
+function mimeRaw(m: Outgoing): string {
+  // A draft may have no recipient yet.
+  const headers = m.to.length ? [`To: ${m.to.join(", ")}`] : [];
+  if (m.from) headers.unshift(`From: ${m.from}`);
+  if (m.cc?.length) headers.push(`Cc: ${m.cc.join(", ")}`);
+  // Gmail delivers to Bcc recipients and strips the header before sending.
+  if (m.bcc?.length) headers.push(`Bcc: ${m.bcc.join(", ")}`);
+  headers.push(`Subject: ${headerText(m.subject)}`, "MIME-Version: 1.0");
+  if (m.inReplyTo) headers.push(`In-Reply-To: ${m.inReplyTo}`, `References: ${m.inReplyTo}`);
+
+  let mime: string;
+  if (m.attachments?.length) {
+    const boundary = `tabellar_${crypto.randomUUID().replace(/-/g, "")}`;
+    mime = headers.join("\r\n");
+    mime += `\r\nContent-Type: multipart/mixed; boundary="${boundary}"\r\n`;
+    mime += `\r\n--${boundary}\r\n`;
+    mime += `Content-Type: text/html; charset=UTF-8\r\n`;
+    mime += `Content-Transfer-Encoding: base64\r\n\r\n`;
+    mime += Buffer.from(m.html, "utf8").toString("base64") + `\r\n`;
+    for (const att of m.attachments) {
+      mime += `\r\n--${boundary}\r\n`;
+      mime += `Content-Type: ${att.contentType || "application/octet-stream"}; name="${att.name}"\r\n`;
+      mime += `Content-Disposition: attachment; filename="${att.name}"\r\n`;
+      mime += `Content-Transfer-Encoding: base64\r\n\r\n`;
+      mime += att.data + `\r\n`;
+    }
+    mime += `\r\n--${boundary}--`;
+  } else {
+    mime = `${[...headers, "Content-Type: text/html; charset=UTF-8"].join("\r\n")}\r\n\r\n${m.html}`;
+  }
+  return Buffer.from(mime, "utf8").toString("base64url");
+}
+
 export async function sendEmail(
   tokenRef: string,
   to: string[],
@@ -766,58 +816,10 @@ export async function sendEmail(
   attachments?: { name: string; contentType: string; data: string }[],
   cc?: string[],
   bcc?: string[],
+  from?: string,
 ): Promise<{ id: string }> {
   const { tokenData } = await resolveTokens(tokenRef);
-
-  const html = bodyHtml;
-
-  const baseHeaders = [`To: ${to.join(", ")}`];
-  if (cc?.length) baseHeaders.push(`Cc: ${cc.join(", ")}`);
-  // Gmail delivers to Bcc recipients and strips the header before sending.
-  if (bcc?.length) baseHeaders.push(`Bcc: ${bcc.join(", ")}`);
-  baseHeaders.push(`Subject: ${subject}`, "MIME-Version: 1.0");
-  if (inReplyTo) {
-    baseHeaders.push(`In-Reply-To: ${inReplyTo}`, `References: ${inReplyTo}`);
-  }
-
-  let mimeMessage: string;
-
-  if (attachments && attachments.length > 0) {
-    // Multipart/mixed for emails with attachments
-    const boundary = `tabellar_${crypto.randomUUID().replace(/-/g, "")}`;
-    const htmlB64 = btoa(unescape(encodeURIComponent(html)));
-
-    let body = baseHeaders.join("\r\n");
-    body += `\r\nContent-Type: multipart/mixed; boundary="${boundary}"\r\n`;
-    body += `\r\n--${boundary}\r\n`;
-    body += `Content-Type: text/html; charset=UTF-8\r\n`;
-    body += `Content-Transfer-Encoding: base64\r\n\r\n`;
-    body += htmlB64 + `\r\n`;
-
-    for (const att of attachments) {
-      body += `\r\n--${boundary}\r\n`;
-      body += `Content-Type: ${att.contentType || "application/octet-stream"}; name="${att.name}"\r\n`;
-      body += `Content-Disposition: attachment; filename="${att.name}"\r\n`;
-      body += `Content-Transfer-Encoding: base64\r\n\r\n`;
-      body += att.data + `\r\n`;
-    }
-
-    body += `\r\n--${boundary}--`;
-    mimeMessage = body;
-  } else {
-    // Simple HTML email
-    const headerLines = [
-      ...baseHeaders,
-      "Content-Type: text/html; charset=UTF-8",
-    ];
-    mimeMessage = `${headerLines.join("\r\n")}\r\n\r\n${html}`;
-  }
-
-  const raw = btoa(unescape(encodeURIComponent(mimeMessage)))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_");
-
-  const body: Record<string, string> = { raw };
+  const body: Record<string, string> = { raw: mimeRaw({ from, to, cc, bcc, subject, html: bodyHtml, inReplyTo, attachments }) };
   if (threadId) body.threadId = threadId;
 
   const { result } = await withTokenRefresh(
@@ -828,13 +830,7 @@ export async function sendEmail(
         body: JSON.stringify(body),
       });
       if (!res.ok) {
-        try {
-          console.error(
-            `[gmail] send failed status=${res.status} body=${await res.text()}`,
-          );
-        } catch {
-          /* ignore */
-        }
+        console.error(`[gmail] send failed status=${res.status} body=${await res.text().catch(() => "")}`);
         const err = new Error("Gmail send failed");
         (err as unknown as { status: number }).status = res.status;
         throw err;
@@ -845,6 +841,52 @@ export async function sendEmail(
   );
 
   return result as { id: string };
+}
+
+// ── Drafts and send-as addresses ────────────────────────────────────────────
+// Tabellar puts drafts into Gmail's Drafts and sends them from there; it never
+// deletes one, so a draft discarded here stays in Gmail.
+
+// Put a draft in the mailbox's Drafts, or replace the one already there.
+// Returns the Gmail draft id. Nothing is sent.
+export async function saveDraft(tokenRef: string, draftId: string | null, m: Outgoing, threadId?: string): Promise<string> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const message: Record<string, string> = { raw: mimeRaw(m) };
+  if (threadId) message.threadId = threadId;
+  let res = draftId
+    ? await gmailRequest(tokenData.token, `/drafts/${encodeURIComponent(draftId)}`, { method: "PUT", body: JSON.stringify({ id: draftId, message }) })
+    : null;
+  // A draft sent or deleted in Gmail meanwhile is made again.
+  if (!res || res.status === 404) res = await gmailRequest(tokenData.token, "/drafts", { method: "POST", body: JSON.stringify({ message }) });
+  if (!res.ok) throw new Error(`Gmail draft save failed (${res.status}): ${await res.text().catch(() => "")}`);
+  return (await res.json()).id as string;
+}
+
+// Send a draft that is in Gmail's Drafts, with its final text: Gmail sends
+// it and takes it out of Drafts. One gone from Drafts meanwhile is made again.
+export async function sendDraft(tokenRef: string, draftId: string, m: Outgoing, threadId?: string): Promise<{ id: string }> {
+  const id = await saveDraft(tokenRef, draftId, m, threadId);
+  const { tokenData } = await resolveTokens(tokenRef);
+  const res = await gmailRequest(tokenData.token, "/drafts/send", { method: "POST", body: JSON.stringify({ id }) });
+  if (!res.ok) {
+    console.error(`[gmail] draft send failed status=${res.status} body=${await res.text().catch(() => "")}`);
+    throw Object.assign(new Error("Gmail send failed"), { status: res.status });
+  }
+  return { id: (await res.json()).id as string };
+}
+
+export type SendAs = { address: string; name: string; default: boolean };
+
+// The addresses this mailbox may send from: its own and every alias Gmail
+// has verified, from Settings, Accounts, "Send mail as".
+export async function listSendAs(tokenRef: string): Promise<SendAs[]> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const res = await gmailRequest(tokenData.token, "/settings/sendAs");
+  if (!res.ok) throw new Error(`Gmail send-as list failed (${res.status})`);
+  const list = ((await res.json()).sendAs ?? []) as { sendAsEmail: string; displayName?: string; isDefault?: boolean; isPrimary?: boolean; verificationStatus?: string }[];
+  return list
+    .filter((s) => s.isPrimary || s.verificationStatus === "accepted")
+    .map((s) => ({ address: s.sendAsEmail.toLowerCase(), name: s.displayName ?? "", default: !!s.isDefault }));
 }
 
 export async function fetchSentEmails(

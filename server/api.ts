@@ -30,12 +30,13 @@ import { followupList, judgeSent } from "./followups.ts";
 import { listNewsletters, unsubscribe, archiveSender, keepSender } from "./newsletters.ts";
 import { db, type Db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
-import { freshAccessToken, revokeGoogleTokens } from "./google.ts";
+import { freshAccessToken } from "./google.ts";
 import {
   searchGoogleContacts,
   listAllGoogleContacts,
   fetchAttachment,
   sendEmail,
+  sendDraft,
   userLabelNames,
 } from "./gmail.ts";
 import {
@@ -46,7 +47,9 @@ import {
   processFullEmail,
   type ChatContext,
 } from "./ai.ts";
-import { syncMail, analyzeInbox, type Account } from "./sync.ts";
+import { syncMail, analyzeInbox } from "./sync.ts";
+import { accountById, accountFor, accountsForWindow, defaultAccount, fromLine, listAccounts, removeAccount, replyFrom, updateAccount } from "./accounts.ts";
+import { saveUserDraft } from "./drafts.ts";
 import { kickEngine, draftReply, engineStatus, planNew } from "./engine.ts";
 import { learnFromSent, startFirstRead } from "./firstRead.ts";
 import { approve, dismiss, undo, record, engineSettings, setMailState } from "./actions.ts";
@@ -118,20 +121,15 @@ async function getUserId(_req: Request): Promise<string> {
   return data.id as string;
 }
 
-// An access token for Calendar calls, from the first active account.
+// An access token for Calendar calls: the default account's calendar.
 async function getCalendarAccessTokenSafe(
-  db: Db,
+  _db: Db,
   userId: string,
 ): Promise<string | null> {
-  const { data: accounts } = await db
-    .from("gmail_accounts")
-    .select("token_ref")
-    .eq("user_id", userId)
-    .eq("is_active", true)
-    .limit(1);
-  if (!accounts?.length) return null;
+  const account = await defaultAccount(userId);
+  if (!account) return null;
   try {
-    return await freshAccessToken(accounts[0].token_ref as string);
+    return await freshAccessToken(account.token_ref);
   } catch (err) {
     console.error("[calendar] token refresh failed:", err);
     return null;
@@ -163,10 +161,9 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       const isInitialFetch = body.initial === true;
 
       const { count: accountCount } = await db
-        .from("gmail_accounts")
+        .from("accounts")
         .select("id", { count: "exact", head: true })
-        .eq("user_id", userId)
-        .eq("is_active", true);
+        .eq("user_id", userId);
       if (!accountCount) {
         return json({ error: "No Gmail account connected" }, 400, corsHeaders);
       }
@@ -308,7 +305,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       }
     }
     if (path === "/labels/gmail" && req.method === "GET") {
-      const { data: accounts } = await db.from("gmail_accounts").select("token_ref").eq("user_id", userId).eq("is_active", true);
+      const { data: accounts } = await db.from("accounts").select("token_ref").eq("user_id", userId);
       const names = new Set<string>();
       for (const a of accounts ?? []) for (const n of await userLabelNames(String(a.token_ref)).catch(() => [])) names.add(n);
       return json({ labels: [...names].sort((x, y) => x.localeCompare(y)) });
@@ -328,18 +325,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
     // ── POST /learn-style ───────────────────────────────────────────────────
     if (path === "/learn-style" && req.method === "POST") {
-      const { data: accounts } = await db
-        .from("gmail_accounts")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("is_active", true)
-        .limit(1);
-
-      if (!accounts?.length) {
-        return json({ error: "No Gmail account connected" }, 400, corsHeaders);
+      const account = await defaultAccount(userId);
+      if (!account) {
+        return json({ error: "No account connected" }, 400, corsHeaders);
       }
 
-      const { sent } = await learnFromSent(userId, accounts[0] as unknown as Account, { facts: false });
+      const { sent } = await learnFromSent(userId, account, { facts: false });
       if (sent < 3) return json({ error: "Need at least 3 sent emails to analyze" }, 400, corsHeaders);
       const { data: style } = await db.from("style_profiles").select("greeting_style, closing_style, tone, avg_length").eq("user_id", userId).maybeSingle();
       return json({ learned: true, sample_count: sent, style }, 200, corsHeaders);
@@ -386,48 +377,36 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         );
       }
 
-      // Pick the right Gmail account: prefer explicit account_id, then
-      // match by gmail_address (for replies), then fall back to first account.
-      let accountQuery = db
-        .from("gmail_accounts")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("is_active", true);
-
-      if (body.gmail_account_id) {
-        accountQuery = accountQuery.eq("id", body.gmail_account_id);
-      } else if (body.from_address) {
-        accountQuery = accountQuery.eq("gmail_address", body.from_address);
-      }
-
-      const { data: accounts } = await accountQuery.limit(1);
-
-      // If specific account not found, fall back to any active account
-      const { data: fallbackAccounts } = !accounts?.length
-        ? await db
-            .from("gmail_accounts")
-            .select("*")
-            .eq("user_id", userId)
-            .eq("is_active", true)
-            .limit(1)
-        : { data: accounts };
-
-      const account = (accounts?.length ? accounts : fallbackAccounts)?.[0];
+      // The account sends from the address chosen (or its default); an
+      // address alone picks the account that owns it.
+      const all = await listAccounts(userId);
+      const account = all.find((a) => a.id === body.account_id) ?? accountFor(all, body.from_address) ?? (await defaultAccount(userId));
       if (!account) {
-        return json({ error: "No Gmail account connected" }, 400, corsHeaders);
+        return json({ error: "No account connected" }, 400, corsHeaders);
       }
 
-      const result = await sendEmail(
-        account.token_ref as string,
-        body.to ?? [],
-        body.subject ?? "",
-        body.body_html ?? "",
-        body.in_reply_to,
-        body.thread_id,
-        body.attachments ?? undefined,
-        body.cc,
-        body.bcc,
-      );
+      const from = await fromLine(userId, account, body.from_address);
+      // A saved draft in that mailbox's Gmail Drafts is sent from there, so it leaves Drafts.
+      const result =
+        typeof body.gmail_draft_id === "string"
+          ? await sendDraft(
+              account.token_ref,
+              body.gmail_draft_id,
+              { from, to: body.to ?? [], cc: body.cc, bcc: body.bcc, subject: body.subject ?? "", html: body.body_html ?? "", inReplyTo: body.in_reply_to, attachments: body.attachments ?? undefined },
+              body.thread_id,
+            )
+          : await sendEmail(
+              account.token_ref,
+              body.to ?? [],
+              body.subject ?? "",
+              body.body_html ?? "",
+              body.in_reply_to,
+              body.thread_id,
+              body.attachments ?? undefined,
+              body.cc,
+              body.bcc,
+              from,
+            );
 
       // Persist sent email to DB so SentView reads from local storage
       {
@@ -437,7 +416,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
             {
               user_id: userId,
               gmail_id: result.id,
-              gmail_account_id: account.id,
+              account_id: account.id,
               subject: body.subject ?? "",
               recipients: (body.to as string[]).join(", "),
               body_html: body.body_html ?? "",
@@ -1175,7 +1154,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return json({ contacts: [] }, 200, corsHeaders);
       }
       const { data: account } = await db
-        .from("gmail_accounts")
+        .from("accounts")
         .select("token_ref")
         .eq("id", accountId)
         .eq("user_id", userId)
@@ -1195,10 +1174,9 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     // accounts and upserts them into the contacts table.
     if (path === "/contacts/sync" && req.method === "POST") {
       const { data: accounts } = await db
-        .from("gmail_accounts")
+        .from("accounts")
         .select("id, token_ref")
-        .eq("user_id", userId)
-        .eq("is_active", true);
+        .eq("user_id", userId);
 
       if (!accounts?.length) {
         return json({ synced: 0 }, 200, corsHeaders);
@@ -1219,7 +1197,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           for (let i = 0; i < all.length; i += chunkSize) {
             const chunk = all.slice(i, i + chunkSize).map((c) => ({
               user_id: userId,
-              gmail_account_id: account.id,
+              account_id: account.id,
               email: c.email,
               name: c.name,
               source: c.source,
@@ -1237,32 +1215,30 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ synced: totalSynced, needs_reauth: needsReauth && totalSynced === 0 }, 200, corsHeaders);
     }
 
-    // ── POST /remove-gmail-account ─────────────────────────────────────────
-    if (path === "/remove-gmail-account" && req.method === "POST") {
+    // ── Accounts ───────────────────────────────────────────────────────────
+    //   GET  /accounts                                   each with its From addresses
+    //   POST /accounts/update {id, paused?, is_default?, default_from?}
+    //   POST /accounts/remove {id}                       revoke and forget its mail
+    if (path === "/accounts" && req.method === "GET") {
+      return json({ accounts: await accountsForWindow(userId) });
+    }
+    if (path === "/accounts/update" && req.method === "POST") {
       const body = await req.json();
-      const accountId = body.account_id as string;
-      if (!accountId)
-        return json({ error: "Missing account_id" }, 400, corsHeaders);
-      // Best-effort Google token revocation. Ignoring failures is intentional;
-      // the user-visible effect is the row being deactivated regardless.
-      try {
-        const { data: acct } = await db
-          .from("gmail_accounts")
-          .select("token_ref")
-          .eq("id", accountId)
-          .eq("user_id", userId)
-          .maybeSingle();
-        if (acct?.token_ref) await revokeGoogleTokens(acct.token_ref as string);
-      } catch (err) {
-        console.error("[remove-gmail-account] revoke error:", err);
-      }
-      // Soft-delete: mark inactive so data is preserved and can be restored on re-link
-      await db
-        .from("gmail_accounts")
-        .update({ is_active: false })
-        .eq("id", accountId)
-        .eq("user_id", userId);
-      return json({ removed: true }, 200, corsHeaders);
+      await updateAccount(userId, String(body.id ?? ""), body);
+      if (body.paused === false) kickEngine();
+      return json({ accounts: await accountsForWindow(userId) });
+    }
+    if (path === "/accounts/remove" && req.method === "POST") {
+      const { id } = await req.json();
+      if (typeof id !== "string") return json({ error: "id is required" }, 400);
+      await removeAccount(userId, id);
+      return json({ accounts: await accountsForWindow(userId) });
+    }
+
+    // ── POST /drafts/save ──────────────────────────────────────────────────
+    // A draft from compose, kept here and in the mailbox's Drafts.
+    if (path === "/drafts/save" && req.method === "POST") {
+      return json(await saveUserDraft(userId, await req.json()));
     }
 
     // ── DELETE /delete-all-data ────────────────────────────────────────────
@@ -1275,7 +1251,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         const { error } = await db.from(t).delete().eq("user_id", userId);
         if (error) return json({ error: "Failed to delete data: " + error.message }, 500, corsHeaders);
       }
-      await db.from("gmail_accounts").update({ history_id: null }).eq("user_id", userId);
+      await db.from("accounts").update({ history_id: null }).eq("user_id", userId);
       await db.from("profiles").update({ style_notes: null }).eq("id", userId);
       return json({ deleted: true }, 200, corsHeaders);
     }
@@ -1528,25 +1504,20 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
             continue;
           }
           try {
-            const { data: accounts, error: accountErr } = await db
-              .from("gmail_accounts")
-              .select("*")
-              .eq("user_id", userId)
-              .eq("is_active", true)
-              .limit(1);
-            if (accountErr)
-              console.error(
-                "[chat/send_email] account lookup error:",
-                accountErr,
-              );
-            const account = accounts?.[0];
+            const account = await defaultAccount(userId);
             if (account) {
               const bodyHtml = (args.body ?? "").replace(/\n/g, "<br>");
               const result = await sendEmail(
-                account.token_ref as string,
+                account.token_ref,
                 toCheck.emails!,
                 args.subject,
                 bodyHtml,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                await fromLine(userId, account, null),
               );
               console.log("[chat/send_email] sent OK, message_id:", result.id);
               await record(userId, { kind: "send", emailId: null, summary: `Sent "${args.subject}" to ${toCheck.emails!.join(", ")} (asked in chat)`, detail: { to: toCheck.emails, subject: args.subject } }, "assistant");
@@ -1556,7 +1527,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
                 await db.from("emails").insert({
                   user_id: userId,
                   gmail_id: result.id,
-                  gmail_account_id: account.id,
+                  account_id: account.id,
                   subject: args.subject,
                   recipients: toCheck.emails!.join(", "),
                   body_html: bodyHtml,
@@ -1596,26 +1567,21 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         } else if (tc.name === "reply_to_email") {
           const args = tc.arguments as { email_id: string; body: string };
           try {
-            const { data: accounts } = await db
-              .from("gmail_accounts")
-              .select("*")
+            // Fetch original email for threading headers; the reply goes out
+            // from its account, from the address it was sent to.
+            const { data: original } = await db
+              .from("emails")
+              .select("subject, sender_email, gmail_id, thread_id, account_id, recipients, cc_recipients")
+              .eq("id", args.email_id)
               .eq("user_id", userId)
-              .eq("is_active", true)
-              .limit(1);
-            const account = accounts?.[0];
+              .maybeSingle();
+            const account = (await accountById(userId, original?.account_id as string)) ?? (await defaultAccount(userId));
             if (!account) {
               actions.push({
                 type: "send_email_failed",
-                data: { error: "No Gmail account connected" },
+                data: { error: "No account connected" },
               });
             } else {
-              // Fetch original email for threading headers
-              const { data: original } = await db
-                .from("emails")
-                .select("subject, sender_email, gmail_id, thread_id")
-                .eq("id", args.email_id)
-                .eq("user_id", userId)
-                .maybeSingle();
               if (!original) {
                 actions.push({
                   type: "send_email_failed",
@@ -1626,12 +1592,16 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
                   ? (original as any).subject
                   : `Re: ${(original as any).subject}`;
                 const result = await sendEmail(
-                  account.token_ref as string,
+                  account.token_ref,
                   [(original as any).sender_email],
                   subject,
                   args.body.replace(/\n/g, "<br>"),
                   (original as any).gmail_id,
                   (original as any).thread_id,
+                  undefined,
+                  undefined,
+                  undefined,
+                  await fromLine(userId, account, replyFrom(account, original as any)),
                 );
                 actions.push({
                   type: "send_email",
@@ -1993,7 +1963,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     if (path === "/signatures" && req.method === "GET") {
       const { data, error } = await db
         .from("email_signatures")
-        .select("id, name, html, is_default, gmail_account_id, created_at")
+        .select("id, name, html, is_default, account_id, created_at")
         .eq("user_id", userId)
         .order("created_at", { ascending: false });
       if (error) return json({ error: error.message }, 500, corsHeaders);
@@ -2002,7 +1972,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
     // ── POST /signatures — create a new signature ─────────────────────────
     if (path === "/signatures" && req.method === "POST") {
-      const { name, html, is_default, gmail_account_id } = await req.json();
+      const { name, html, is_default, account_id } = await req.json();
       if (!name?.trim())
         return json({ error: "Name is required" }, 400, corsHeaders);
       // If setting as default, clear existing default for this account scope first
@@ -2014,9 +1984,9 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           .eq("is_default", true);
         // A global signature has a null account scope, and eq never matches
         // NULL in PostgREST, so it must be matched with is().
-        await (gmail_account_id
-          ? clear.eq("gmail_account_id", gmail_account_id)
-          : clear.is("gmail_account_id", null));
+        await (account_id
+          ? clear.eq("account_id", account_id)
+          : clear.is("account_id", null));
       }
       const { data, error } = await db
         .from("email_signatures")
@@ -2025,9 +1995,9 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           name: name.trim(),
           html: html ?? "",
           is_default: !!is_default,
-          gmail_account_id: gmail_account_id ?? null,
+          account_id: account_id ?? null,
         })
-        .select("id, name, html, is_default, gmail_account_id, created_at")
+        .select("id, name, html, is_default, account_id, created_at")
         .single();
       if (error) return json({ error: error.message }, 500, corsHeaders);
       return json({ signature: data }, 200, corsHeaders);
@@ -2038,18 +2008,18 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       const sigId = path.replace("/signatures/", "");
       if (!UUID_RE.test(sigId))
         return json({ error: "Invalid id" }, 400, corsHeaders);
-      const { name, html, is_default, gmail_account_id } = await req.json();
+      const { name, html, is_default, account_id } = await req.json();
       // Fetch current row to get its account scope
       const { data: existing } = await db
         .from("email_signatures")
-        .select("gmail_account_id")
+        .select("account_id")
         .eq("id", sigId)
         .eq("user_id", userId)
         .maybeSingle();
       if (!existing) return json({ error: "Not found" }, 404, corsHeaders);
       if (is_default) {
         const accountScope =
-          gmail_account_id ?? existing.gmail_account_id ?? null;
+          account_id ?? existing.account_id ?? null;
         const clear = db
           .from("email_signatures")
           .update({ is_default: false })
@@ -2059,21 +2029,21 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         // See the POST handler: eq never matches NULL, so a global signature's
         // scope has to be matched with is().
         await (accountScope
-          ? clear.eq("gmail_account_id", accountScope)
-          : clear.is("gmail_account_id", null));
+          ? clear.eq("account_id", accountScope)
+          : clear.is("account_id", null));
       }
       const patch: Record<string, unknown> = {};
       if (name !== undefined) patch.name = name.trim();
       if (html !== undefined) patch.html = html;
       if (is_default !== undefined) patch.is_default = is_default;
-      if (gmail_account_id !== undefined)
-        patch.gmail_account_id = gmail_account_id;
+      if (account_id !== undefined)
+        patch.account_id = account_id;
       const { data, error } = await db
         .from("email_signatures")
         .update(patch)
         .eq("id", sigId)
         .eq("user_id", userId)
-        .select("id, name, html, is_default, gmail_account_id, created_at")
+        .select("id, name, html, is_default, account_id, created_at")
         .single();
       if (error) return json({ error: error.message }, 500, corsHeaders);
       return json({ signature: data }, 200, corsHeaders);
@@ -2107,18 +2077,18 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
       const { data: emailRow } = await db
         .from("emails")
-        .select("gmail_account_id")
+        .select("account_id")
         .eq("user_id", userId)
         .eq("gmail_id", gmailId)
         .maybeSingle();
-      if (!emailRow?.gmail_account_id) {
+      if (!emailRow?.account_id) {
         return json({ error: "Email not found" }, 404, corsHeaders);
       }
 
       const { data: account } = await db
-        .from("gmail_accounts")
+        .from("accounts")
         .select("token_ref")
-        .eq("id", emailRow.gmail_account_id)
+        .eq("id", emailRow.account_id)
         .eq("user_id", userId)
         .maybeSingle();
       if (!account) {

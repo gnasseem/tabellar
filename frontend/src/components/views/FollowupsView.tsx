@@ -111,14 +111,14 @@ export default function FollowupsView() {
 
   // A reply in the same thread, drafted by Tabellar from what was asked.
   const nudge = async (f: Followup) => {
-    const { data } = await supabase.from("emails").select("gmail_id, gmail_account_id, body_text").eq("id", f.email_id).maybeSingle();
+    const { data } = await supabase.from("emails").select("gmail_id, account_id, body_text").eq("id", f.email_id).maybeSingle();
     const e = (data || {}) as any;
     openCompose({
       sender_email: f.recipient_email,
       subject: f.subject,
       thread_id: f.thread_id,
       gmail_id: e.gmail_id,
-      gmail_account_id: e.gmail_account_id,
+      account_id: e.account_id,
       body_text: e.body_text || f.asked,
       _autoGenerate: true,
       _prefillBody: `I sent this ${ago(f.sent_at) === "Today" ? "earlier today" : `${ago(f.sent_at)} ago`} and have had no answer. Write a short, friendly follow-up that asks again${f.asked ? `: ${f.asked}` : "."}`,

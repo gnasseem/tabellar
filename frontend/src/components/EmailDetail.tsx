@@ -93,7 +93,7 @@ const SNOOZE: [string, number][] = [
 ];
 
 const MESSAGE_FIELDS =
-  "id, gmail_id, thread_id, gmail_account_id, subject, sender, sender_email, recipients, cc_recipients, received_at, body_html, body_text, snippet, has_attachments, attachments, reply_to_email";
+  "id, gmail_id, thread_id, account_id, subject, sender, sender_email, recipients, cc_recipients, received_at, body_html, body_text, snippet, has_attachments, attachments, reply_to_email";
 
 // A caution about the sender or its links, on one line; the reasons open below it.
 function SuspicionBanner({ verdict }: { verdict: SuspicionVerdict }) {
@@ -134,7 +134,7 @@ type EmailDetailProps = {
 };
 
 export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkUnread, onSnooze, onRethink, onResolvedChange }: EmailDetailProps) {
-  const { user, openCompose, addToast, setView, mail, liveChanges, draftVersion, notifyDraftChange } = useApp();
+  const { user, openCompose, addToast, setView, mail, liveChanges, draftVersion, notifyDraftChange, accounts } = useApp();
   const supabase = createClient();
   const [proc, setProc] = useState<any>(Array.isArray(email.email_processed) ? email.email_processed[0] : email.email_processed);
   const [messages, setMessages] = useState<any[] | null>(null);
@@ -544,7 +544,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
             <div className={outcomes.length || resolvedAt || tracked ? "mt-3 border-t border-line-soft pt-2" : ""}>
               {messages.length > 1 && <p className="label mb-1 mt-2">{messages.length} messages</p>}
               {messages.map((m) => {
-                const me = !!user.email && String(m.sender_email || "").toLowerCase() === user.email.toLowerCase();
+                const me = accounts.mine.has(String(m.sender_email || "").toLowerCase()) || (!!user.email && String(m.sender_email || "").toLowerCase() === user.email.toLowerCase());
                 const name = me ? "You" : nameOf(m.sender, m.sender_email);
                 if (!open.has(m.id))
                   return (
