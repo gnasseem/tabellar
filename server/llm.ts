@@ -238,7 +238,8 @@ async function ollama(baseUrl: string, model: string, req: ChatRequest, signal?:
     type: "function",
     function: {
       name: tc.function.name,
-      arguments: typeof tc.function.arguments === "string" ? tc.function.arguments : JSON.stringify(tc.function.arguments ?? {}),
+      // Small models write a line break as the two characters \n, which JSON then escapes.
+      arguments: (typeof tc.function.arguments === "string" ? tc.function.arguments : JSON.stringify(tc.function.arguments ?? {})).replaceAll("\\\\n", "\\n"),
     },
   }));
   const message = {

@@ -517,7 +517,6 @@ function ActionLine({ action, setView, onSelectOption }: { action: Action; setVi
   else if (action.type === "send_email_failed") [text, failed] = [`The email was not sent${d.error ? `: ${String(d.error)}` : "."}`, true];
   else if (action.type === "create_meeting") [text, view, viewName] = [`Proposed a meeting: ${String(d.title ?? "")}${d.start_time ? `, ${when(d.start_time)}` : ""}`, "meetings", "Meetings"];
   else if (action.type === "create_meeting_failed") [text, failed] = ["The meeting could not be created.", true];
-  else if (action.type === "paused") [text, failed] = ["Nothing was done: Tabellar is paused.", true];
   else if (action.type === "update_todo") [text, view, viewName] = [d.is_completed === true ? "Marked a todo done" : "Changed a todo", "todos", "Todos"];
   else if (action.type === "delete_todo") text = "Deleted a todo";
   else if (action.type === "update_meeting") [text, view, viewName] = ["Changed a meeting", "meetings", "Meetings"];

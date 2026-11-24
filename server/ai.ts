@@ -9,6 +9,7 @@ import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
 import { chatCompletion, modelFailure, modelTimeoutMs, requireModel } from "./llm.ts";
 import type { Slot } from "./config.ts";
 import { checkActions, wording } from "./rules.ts";
+import { realAttendees } from "./senders.ts";
 
 const PROMPTS = {
   process_email: `You sort one email for the user. Return only JSON, no markdown:
@@ -1890,6 +1891,7 @@ export async function chatWithAssistant(
         // changed there, where its guests are told.
         const updates: Record<string, unknown> = {};
         for (const k of ["title", "attendees", "description"]) if (args[k] !== undefined) updates[k] = args[k];
+        if (updates.attendees !== undefined) updates.attendees = await realAttendees(userId, updates.attendees, [message, ...history.filter((h) => h.role === "user").map((h) => h.content)].join(" "));
         for (const k of ["start_time", "end_time"]) if (args[k]) updates[k] = localToUtc(String(args[k]), context.timezone || "UTC");
         const { data: changed } = paused || !Object.keys(updates).length ? { data: [] } : await db.from("meetings").update(updates).eq("id", String(args.id ?? "")).eq("user_id", userId).eq("status", "proposed").select("id");
         toolCall.done = !!changed?.length;

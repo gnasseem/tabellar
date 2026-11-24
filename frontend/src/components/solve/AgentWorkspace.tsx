@@ -156,23 +156,26 @@ export default function AgentWorkspace() {
   const { steps, assistantStatusLine } = useMemo(() => {
     const items: ProgressStep[] = [];
     const resolved = new Set<string>();
+    // Refused by the server, so nothing was staged: not a step worth showing.
+    const refused = new Set<string>();
     const sessionDone =
       agentSession?.status === "ready" || agentSession?.status === "done";
 
     (agentTurns ?? []).forEach((t) => {
       if (t.role === "tool" && t.tool_call_id) resolved.add(t.tool_call_id);
+      if (t.role === "tool" && t.tool_call_id && /^\w+ rejected/.test(String(t.content.output ?? ""))) refused.add(t.tool_call_id);
     });
 
     let lastStatus = "";
 
     (agentTurns ?? []).forEach((t) => {
+      // The server keeps as a status only what is worth reading.
+      if (t.role === "status") lastStatus = String(t.content.text ?? "").trim();
       if (t.role !== "assistant") return;
       const tools = t.content.tool_calls ?? [];
-      const text = (t.content.content ?? "").trim();
-      if (text && !tools.length) lastStatus = text;
       const bucket = (t as AgentTurnRow & { bucket?: AgentBucket | null })
         .bucket as AgentBucket | undefined;
-      tools.forEach((tc) => {
+      tools.filter((tc) => !refused.has(tc.id)).forEach((tc) => {
         const label = TOOL_LABEL[tc.function.name] ?? tc.function.name;
         const args = parseArgs(tc.function.arguments || "{}");
         let suffix = "";
@@ -185,7 +188,8 @@ export default function AgentWorkspace() {
         } else if (tc.function.name === "search_emails") {
           suffix = String(args.query ?? "").slice(0, 28);
         } else if (tc.function.name === "propose_action") {
-          const type = String(args.type ?? "");
+          // A model may leave the type out; its fields say it (the server reads them the same way).
+          const type = String(args.type ?? (args.meeting_title ? "meeting" : args.body ? "reply" : Array.isArray(args.email_ids) ? "archive" : "todo"));
           if (type === "reply")
             detail = `Reply to ${shortAddress(String(args.to ?? ""))}`;
           else if (type === "meeting")
@@ -467,7 +471,7 @@ export default function AgentWorkspace() {
             <ol>{lane(showAdvanced ? visibleSteps : visibleSteps.slice(-6))}</ol>
           )}
 
-          {assistantStatusLine && <p className={`${pad} pt-2 leading-normal text-ink2`}>{assistantStatusLine}</p>}
+          {assistantStatusLine && !reviewing && <p className={`${pad} pt-2 leading-normal text-ink2`}>{assistantStatusLine}</p>}
 
           {showThinking && (
             <p className={`flex items-center gap-1.5 ${pad} pt-2 text-xs text-ink3`} role="status">
@@ -558,7 +562,8 @@ export default function AgentWorkspace() {
 
       {reviewing && (
         <div className="pt-4">
-          {agentSession.summary && <p className={`${pad} leading-[1.6] text-ink`}>{agentSession.summary}</p>}
+          {/* What the plan does is the list; the model's account of it can say more than is there. */}
+          {agentSession.summary && !localActions.length && <p className={`${pad} leading-[1.6] text-ink`}>{agentSession.summary}</p>}
           {finalReasoning && status === "ready" && (
             <details className={`${pad} pt-2`}>
               <summary className="link inline cursor-default">Why this plan</summary>

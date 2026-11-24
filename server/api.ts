@@ -48,6 +48,7 @@ import { accountById, accountFor, accountsForWindow, defaultAccount, fromLine, l
 import { discardDrafts, saveUserDraft } from "./drafts.ts";
 import { messageIdOf, withForward } from "./forward.ts";
 import { escapeHtml, htmlToText } from "./mime.ts";
+import { realAttendees } from "./senders.ts";
 import { answered, snooze, unsnooze } from "./snooze.ts";
 import { prepFor } from "./prep.ts";
 import { filesInMailboxes } from "./files.ts";
@@ -1125,7 +1126,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         style: stylePrompt(writing),
       };
 
-      const { reply, tool_calls } = await chatWithAssistant(
+      const { reply: said, tool_calls } = await chatWithAssistant(
         context,
         message,
         history,
@@ -1316,8 +1317,9 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           try {
             const start = localToUtc(String(args.start_time), timezone as string);
             const end = args.end_time ? localToUtc(String(args.end_time), timezone as string) : new Date(new Date(start).getTime() + 30 * 60_000).toISOString();
-            await db.from("meetings").insert({ user_id: userId, title: String(args.title || "Meeting"), start_time: start, end_time: end, attendees: args.attendees ?? [], description: args.description || "", status: "proposed" });
-            actions.push({ type: "create_meeting", data: { title: args.title, start_time: start, attendees: args.attendees } });
+            const attendees = await realAttendees(userId, args.attendees, [message, ...(history as { role: string; content: string }[]).filter((h) => h.role === "user").map((h) => h.content)].join(" "));
+            await db.from("meetings").insert({ user_id: userId, title: String(args.title || "Meeting"), start_time: start, end_time: end, attendees, description: args.description || "", status: "proposed" });
+            actions.push({ type: "create_meeting", data: { title: args.title, start_time: start, attendees } });
           } catch {
             actions.push({ type: "create_meeting_failed", data: { error: "The time could not be read" } });
           }
@@ -1327,7 +1329,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       // Note: knowledge use_count is incremented by the search_knowledge_base tool
       // inside chatWithAssistant when entries are explicitly searched and returned.
 
-      if (paused && tool_calls.some((t) => ACTS.has(t.name))) actions.push({ type: "paused", data: { message: "Tabellar is paused, so nothing was done. Resume it with the play button above Settings." } });
+      // What the model says it did is not taken on its word: paused, nothing was.
+      const reply = paused && tool_calls.some((t) => ACTS.has(t.name)) ? "Tabellar is paused, so I did nothing. Resume it with the play button above Settings, then ask again." : said;
       await keep(reply, actions);
       return json({ reply, actions }, 200, corsHeaders);
     }

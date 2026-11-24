@@ -153,3 +153,7 @@ export function looksLikeInstructions(...parts: (string | null | undefined)[]): 
   const text = raw.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ");
   return INSTRUCTION_PATTERNS.some((re) => re.test(text) || re.test(raw));
 }
+
+// A gap the model left for the user to fill in ("[Venue name]"). Such a
+// reply is never sent on its own.
+export const GAP = /\[[a-z][a-z0-9 ,.:/&'’-]{1,60}\](?!\()/i;

@@ -18,10 +18,11 @@
 import { db, type Db } from "./db.ts";
 import { mail, userCalendar } from "./providers.ts";
 import { accountById, defaultAccount, fromLine, replyFrom } from "./accounts.ts";
-import { decide } from "./policy.ts";
+import { decide, GAP } from "./policy.ts";
 import { act, record, engineSettings } from "./actions.ts";
 import { messageIdOf } from "./forward.ts";
 import { answered } from "./snooze.ts";
+import { BY_PLAN } from "./profile.ts";
 
 
 interface ApprovedAction {
@@ -113,6 +114,13 @@ async function dueDay(userId: string, action: ApprovedAction, tz: string): Promi
   return (e && dueOf(e.body_text, tz, new Date(String(e.received_at)))) || given;
 }
 
+// The engine's own proposal of what the plan has just done for that email.
+async function replaced(userId: string, emailId: string | null | undefined, kind: "draft" | "todo" | "meeting"): Promise<void> {
+  if (!emailId) return;
+  await db.from("action_log").update({ status: "dismissed", decided_at: new Date().toISOString(), reason: BY_PLAN })
+    .eq("user_id", userId).eq("email_id", emailId).eq("kind", kind).eq("status", "proposed");
+}
+
 export async function executeAgentPlan(
   db: Db,
   userId: string,
@@ -168,7 +176,8 @@ export async function executeAgentPlan(
         }
         // Default to sending when send_now is undefined/null/true; only fall
         // back to draft when explicitly false.
-        const sendNow = action.payload.send_now !== false;
+        // With a gap still to fill in it is a draft too.
+        const sendNow = action.payload.send_now !== false && !GAP.test(body);
         if (!to || !subject || !body) {
           throw new Error("Reply missing to/subject/body");
         }
@@ -186,6 +195,7 @@ export async function executeAgentPlan(
           const threadId = (answers?.thread_id as string | null) ?? undefined;
           const result = await mail(account).send(account, { from: await fromLine(userId, account, from), to: [to], subject, html: plainToHtml(body), inReplyTo }, threadId);
           await answered(userId, threadId, new Date().toISOString());
+          await replaced(userId, action.linked_email_id, "draft");
           await db.from("emails").insert({
             user_id: userId,
             gmail_id: result.id,
@@ -250,6 +260,7 @@ export async function executeAgentPlan(
           row.email_id = action.linked_email_id;
         }
         await db.from("todos").insert(row);
+        await replaced(userId, action.linked_email_id, "todo");
         if (action.linked_email_id) {
           await db
             .from("emails")
@@ -301,6 +312,7 @@ export async function executeAgentPlan(
           calendar_event_id: ev?.id ?? null,
           status: ev ? "confirmed" : "proposed",
         });
+        await replaced(userId, action.linked_email_id, "meeting");
 
         if (action.linked_email_id) {
           await db

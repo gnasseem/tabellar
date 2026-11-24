@@ -50,6 +50,27 @@ export async function ownAddresses(userId: string): Promise<Set<string>> {
   return new Set([...(data ?? []).map((a) => lc(a.address)), ...aliases, ...(from ?? []).map((r) => lc(r.from_addr))].filter(Boolean));
 }
 
+// Someone the mailbox or the address book has seen. Models make up an address
+// for a name they were given, and an invitation must not go to one.
+export async function metAddress(userId: string, address: string): Promise<boolean> {
+  const a = lc(address);
+  const [{ count: seen }, { count: contact }] = await Promise.all([
+    db.from("senders").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("address", a),
+    db.from("contacts").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("email", a),
+  ]);
+  return !!seen || !!contact;
+}
+
+// Of these, the ones that are real: met before, or written out in the text.
+export async function realAttendees(userId: string, given: unknown, text: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const x of Array.isArray(given) ? given : []) {
+    const a = lc(addressOf(String(x)));
+    if (a.includes("@") && !out.includes(a) && (lc(text).includes(a) || (await metAddress(userId, a)))) out.push(a);
+  }
+  return out;
+}
+
 // Add messages to mail_index; a message seen again updates its row.
 export async function indexMail(userId: string, accountId: string, rows: HeaderRow[], own: Set<string>): Promise<void> {
   const out = rows.map((r) => {

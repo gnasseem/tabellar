@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { decide, normalizeLevel, proposalHash, looksLikeInstructions, checkAutoSend, CAP_PER_CYCLE, CAP_PER_DAY, type AutoSend } from "./policy.ts";
+import { decide, normalizeLevel, proposalHash, looksLikeInstructions, checkAutoSend, GAP, CAP_PER_CYCLE, CAP_PER_DAY, type AutoSend } from "./policy.ts";
 import * as gmail from "./gmail.ts";
 import { htmlToText } from "./mime.ts";
 import { MAILBOXES, mail as mailbox, type HeaderRow, type Mail, type Outgoing } from "./providers.ts";
@@ -114,6 +114,10 @@ ok("caps per cycle and per day hold", () => {
   assert.equal(decide({ kind: "send", level: "autopilot", send: reply, sendCap: 3, todayCount: 3, ...engine }).verdict, "refuse");
   assert.equal(decide({ kind: "send", level: "autopilot", send: reply, sendCap: 3, todayCount: 2, ...engine }).verdict, "do");
   assert.equal(decide({ kind: "send", level: "autopilot", send: reply, sendCap: 999, todayCount: CAP_PER_DAY.send, ...engine }).verdict, "refuse");
+});
+ok("a gap left to fill in is seen, a link and a footnote are not one", () => {
+  for (const t of ["[Insert Venue Name]", "I use [Font Name].", "on [date]", "[your name]"]) assert.ok(GAP.test(t), t);
+  for (const t of ["see [the doc](https://x.org)", "as in [1]", "rows[0]"]) assert.ok(!GAP.test(t), t);
 });
 ok("an approval is bound to the exact text", () => {
   const a = proposalHash("draft", "e1", { to: ["a@b.c"], subject: "Re: x", body: "Hello there" });
@@ -734,6 +738,8 @@ ok("senders add up received, opened, replied, wrote first and archived unread fr
   assert.deepEqual([weekly.received, weekly.opened, weekly.archived_unread, weekly.category, weekly.list_id], [2, 0, 2, "promotions", "<weekly.letter.example>"]);
   assert.equal(weekly.list_unsubscribe, true);
 });
+const invited = await senders.realAttendees(userId, ["Lee <LEE@uni.example>", "lee.smith@example.com", "Lee", "new@typed.example"], "invite new@typed.example to it");
+ok("nobody is invited at an address that was made up", () => assert.deepEqual(invited, ["lee@uni.example", "new@typed.example"]));
 const written = await senders.writtenTo(userId);
 ok("bulk is told from headers: promotions, or List-Unsubscribe with List-Id or Precedence bulk", () => {
   const m = (sender_email: string, x: Record<string, unknown> = {}) => ({ sender_email, label_ids: ["INBOX"], has_list_unsubscribe: false, list_id: null, precedence_header: null, ...x });

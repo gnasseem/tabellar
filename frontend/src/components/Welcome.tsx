@@ -98,7 +98,8 @@ export default function Welcome({ session, error, again = false }: { session?: S
   const profile = session?.profile ?? null;
   const userId = session?.user?.id ?? null;
   const [step, setStep] = useState<StepId>(() => firstStep(session, again));
-  const [reached, setReached] = useState(() => ORDER.indexOf(step));
+  // Opened again, every step was already done.
+  const [reached, setReached] = useState(() => (again ? ORDER.length : ORDER.indexOf(step)));
   const accounts = useAccounts(!!profile);
   const onboarding = useOnboarding(!!profile && step !== "welcome");
 

@@ -34,8 +34,8 @@ type Head = { head: true; key: string; name: string };
 function plain(html: string): string {
   return (html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>\s*<p[^>]*>/gi, "\n\n").replace(/<\/?(div|p|tr|table|li)\b[^>]*>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"').trim();
 }
-// A gap the model left for the user to fill in (GAP in server/engine.ts).
-const GAP = /\[(?:insert|your|add|enter|fill|name|date|time|venue|place|location|address|phone|link|number|amount|company|recipient|details?|tbd|to be|x{2,})\b[^\]\n]{0,60}\]/i;
+// A gap the model left for the user to fill in (GAP in server/policy.ts).
+const GAP = /\[[a-z][a-z0-9 ,.:/&'’-]{1,60}\](?!\()/i;
 function nameOf(s: string): string {
   return (s || "").replace(/<.*>/, "").replace(/"/g, "").trim();
 }

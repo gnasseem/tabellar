@@ -100,7 +100,7 @@ function undoNote(r: LogRow): string {
 function stateOf(r: LogRow): MailState {
   if (r.status === "blocked") return "held";
   if (r.status === "failed") return "failed";
-  if (r.status === "running" || (r.kind === "send" && r.status === "done" && !r.detail.sentAt)) return "going";
+  if (r.status === "running" || (r.kind === "send" && r.status === "done" && r.detail.sendAt && !r.detail.sentAt)) return "going";
   if (r.status === "done") return "done";
   return "filed";
 }
@@ -307,7 +307,7 @@ export default function HistoryView() {
                 Undo
               </button>
             ) : r.status === "done" && r.kind === "send" ? (
-              <span className="text-ink3">{r.detail.sentAt ? `Sent ${shortWhen(String(r.detail.sentAt))}` : "Sending"}</span>
+              <span className="text-ink3">{r.detail.sendAt && !r.detail.sentAt ? "Sending" : `Sent ${shortWhen(String(r.detail.sentAt ?? r.created_at))}`}</span>
             ) : r.status === "blocked" ? (
               <span className="font-medium text-warn">Not allowed</span>
             ) : r.status === "failed" ? (

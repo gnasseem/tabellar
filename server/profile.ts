@@ -59,6 +59,8 @@ export const WORK = "Works on: ";
 export const PASSED = "Its time passed";
 // Why a reply that was never sent is gone.
 export const MOVED_ON = "The conversation went on";
+// Why a proposal the user's own cleanup plan did instead is gone.
+export const BY_PLAN = "Done by a plan";
 
 const MAX_OPEN = 3;
 const CONTEXT_CHARS = 1600; // about 400 tokens
@@ -365,7 +367,7 @@ export async function learn(userId: string, s: Signal): Promise<void> {
     .in("status", ["dismissed", "undone"])
     .in("email_id", ids);
   // What a preference took back on its own, or time did, is not the user's choice.
-  const count = (turnedDown ?? []).filter((r) => r.reason !== "Your preference" && r.reason !== PASSED && r.reason !== MOVED_ON && r.reason !== "Read again").length;
+  const count = (turnedDown ?? []).filter((r) => r.reason !== "Your preference" && r.reason !== PASSED && r.reason !== MOVED_ON && r.reason !== BY_PLAN && r.reason !== "Read again").length;
   if (count < 2) return;
   await setPref(userId, "sender", sender, value, "learned", `Turned down ${count} ${s.thing}s from their mail`);
   await applyPref(userId, "sender", sender, value);

@@ -17,9 +17,10 @@
 
 import type { Db } from "./db.ts";
 import { dateContextFor, LEAKED_CALL, llmWithTools, PROMPTS } from "./ai.ts";
-import { looksLikeInstructions } from "./policy.ts";
+import { GAP, looksLikeInstructions } from "./policy.ts";
 import { parseWallClock } from "./agentExecute.ts";
 import { addressOf } from "./mime.ts";
+import { metAddress } from "./senders.ts";
 import { allPrefs, pick, stops } from "./profile.ts";
 import { isLocalModel } from "./llm.ts";
 import {
@@ -307,22 +308,28 @@ export async function getOrCreateBriefingSnapshot(
 }> {
   const briefingAt = at || new Date().toISOString();
   const weekAgo = new Date(new Date(briefingAt).getTime() - 7 * 86_400_000).toISOString();
-  const [{ data: mail }, { data: drafts }, { data: todos }] = await Promise.all([
+  const [{ data: mail }, { data: drafts }, { data: todos }, { data: meetings }, { data: sent }] = await Promise.all([
     db
       .from("emails")
-      .select("id, subject, sender, sender_email, snippet, body_text, body_html, label_ids, is_archived, email_processed(category, urgency, summary, quick_actions)")
+      .select("id, thread_id, received_at, subject, sender, sender_email, snippet, body_text, body_html, label_ids, is_archived, email_processed(category, urgency, summary, quick_actions)")
       .eq("user_id", userId)
       .eq("is_archived", false)
+      .is("resolved_at", null)
       .contains("label_ids", ["INBOX"])
       .gte("received_at", weekAgo)
       .lte("received_at", briefingAt)
       .order("received_at", { ascending: false })
       .limit(80),
     db.from("draft_emails").select("email_id").eq("user_id", userId),
-    db.from("todos").select("email_id, due").eq("user_id", userId).eq("is_completed", false),
+    db.from("todos").select("email_id, due").eq("user_id", userId).eq("is_completed", false).not("email_id", "is", null),
+    db.from("meetings").select("email_id").eq("user_id", userId).not("email_id", "is", null),
+    db.from("emails").select("thread_id, received_at").eq("user_id", userId).contains("label_ids", ["SENT"]).gte("received_at", weekAgo).order("received_at"),
   ]);
+  const lastSent = new Map((sent ?? []).filter((s: Record<string, unknown>) => s.thread_id).map((s: Record<string, unknown>) => [String(s.thread_id), String(s.received_at)]));
+  const hasTodo = new Set((todos ?? []).map((t: Record<string, unknown>) => String(t.email_id)));
+  const hasMeeting = new Set((meetings ?? []).map((m: Record<string, unknown>) => String(m.email_id)));
   const drafted = new Set((drafts ?? []).map((d: Record<string, unknown>) => String(d.email_id ?? "")));
-  const due = new Map((todos ?? []).filter((t: Record<string, unknown>) => t.email_id && t.due).map((t: Record<string, unknown>) => [String(t.email_id), String(t.due)]));
+  const due = new Map((todos ?? []).filter((t: Record<string, unknown>) => t.due).map((t: Record<string, unknown>) => [String(t.email_id), String(t.due)]));
   const prefs = await allPrefs(userId);
   const cards: AgentToolContext["briefingCards"] = { crucial: [], replyNeeded: [], deadlines: [], nonEssential: [] };
   for (const e of (mail ?? []) as Record<string, unknown>[]) {
@@ -335,6 +342,7 @@ export async function getOrCreateBriefingSnapshot(
     const category = String(p.category ?? "");
     const suggests = (action: string) => Array.isArray(p.quick_actions) && (p.quick_actions as { action?: string }[]).some((q) => q?.action === action);
     const asksReply = suggests("reply");
+    const replied = (lastSent.get(String(e.thread_id)) ?? "") > String(e.received_at);
     const card: BriefingCard = {
       email_id: id,
       subject: String(e.subject ?? ""),
@@ -343,14 +351,16 @@ export async function getOrCreateBriefingSnapshot(
       summary: String(p.summary || e.snippet || ""),
       urgency: String(p.urgency ?? "medium"),
       deadline: (due.get(id) as string | undefined) ?? null,
-      waitingForReply: drafted.has(id) || (category === "action-required" && asksReply),
+      waitingForReply: !replied && (drafted.has(id) || (category === "action-required" && asksReply)),
       tags: [],
       // The lane that takes it (bucketSnapshot).
       suggestedAction: suggests("schedule_meeting") ? "meeting" : suggests("add_todo") || (category === "action-required" && !asksReply) ? "todo" : undefined,
+      has: [replied && "reply", hasTodo.has(id) && "todo", hasMeeting.has(id) && "meeting"].filter((x): x is string => !!x),
     };
     // What the user said about the sender and the topic.
     const said = pick(prefs, String(e.sender_email ?? ""), `${e.subject ?? ""} ${card.summary}`);
     card.never = [stops(said, "todo") && "todo", stops(said, "meeting") && "meeting", stops(said, "draft") && "reply"].filter((x): x is string => !!x);
+    if ([...(card.has ?? []), ...card.never].includes(String(card.suggestedAction))) card.suggestedAction = undefined;
     if (said.some((r) => r.value === "quiet" || r.value === "ignore")) cards.nonEssential.push(card);
     else if (card.waitingForReply) cards.replyNeeded.push(card);
     else if (card.deadline) cards.deadlines.push(card);
@@ -445,7 +455,7 @@ function bucketSnapshot(
     scoped = {
       crucial: cards.crucial.filter((c) => suggest(c) === "todo"),
       replyNeeded: [],
-      deadlines: cards.deadlines.filter((c) => suggest(c) !== "meeting"),
+      deadlines: cards.deadlines.filter((c) => suggest(c) !== "meeting" && !c.has?.includes("todo")),
       nonEssential: [],
     };
   } else {
@@ -538,16 +548,19 @@ function validateAndApplyPropose(
   }
   const all = Object.values(ctx.briefingCards).flat();
   let linkedId = args.linked_email_id ? String(args.linked_email_id) : "";
-  // A reply goes into the thread of the email it answers, so it has to say
-  // which; with one email from that address it can only be that one.
-  if (type === "reply" && !all.some((c) => c.email_id === linkedId)) {
-    const from = all.filter((c) => addressOf(String(c.sender ?? "")) === String(args.to ?? "").trim().toLowerCase());
-    if (from.length !== 1) return { actions: existing, error: "propose_action rejected: a reply needs linked_email_id, the id of the email it answers." };
+  // Every one of them is about one email, and has to say which: a reply goes
+  // into its thread, and what the user wants none of, or already has, is known
+  // by it. With one email from that address it can only be that one.
+  if (type !== "archive" && !all.some((c) => c.email_id === linkedId)) {
+    const people = [args.to, ...(Array.isArray(args.attendees) ? args.attendees : [])].map((x) => addressOf(String(x ?? "")).toLowerCase());
+    const from = all.filter((c) => people.includes(addressOf(String(c.sender ?? ""))) && (type !== "meeting" || c.suggestedAction === "meeting"));
+    if (from.length !== 1) return { actions: existing, error: `propose_action rejected: a ${type} needs linked_email_id, the id of the email it is about.` };
     linkedId = String(from[0].email_id);
     args.linked_email_id = linkedId;
   }
   const card = all.find((c) => c.email_id === linkedId);
   if (card?.never?.includes(type)) return { actions: existing, error: `propose_action rejected: the user wants no ${type} from this sender. Leave this email.` };
+  if (card?.has?.includes(type)) return { actions: existing, error: `propose_action rejected: there is already a ${type} from this email. Leave this email.` };
 
   if (type === "todo" || type === "reply" || type === "meeting") {
     if (linkedId) {
@@ -641,6 +654,27 @@ function validateAndApplyPropose(
     updated_at: new Date().toISOString(),
   };
   return { actions: [...existing, action] };
+}
+
+// An address that is not on the email, not someone the user has met and not in
+// what was read or answered in this session becomes the writer of the email.
+async function realAddresses(ctx: AgentToolContext, sessionId: string, args: Record<string, unknown>, emailId: string): Promise<void> {
+  const given = [args.to, ...(Array.isArray(args.attendees) ? args.attendees : [])].map((x) => addressOf(String(x ?? "")).toLowerCase()).filter((x) => x.includes("@"));
+  if (!given.length) return;
+  const { data: e } = await ctx.db.from("emails").select("sender_email, reply_to_email, recipients, cc_recipients, body_text").eq("id", emailId).eq("user_id", ctx.userId).maybeSingle();
+  const onEmail = e ? Object.values(e).join(" ").toLowerCase() : "";
+  const writer = e ? addressOf(String(e.reply_to_email || e.sender_email || "")).toLowerCase() : "";
+  const real = new Map<string, string>();
+  for (const a of given) {
+    const { count: read } = await ctx.db.from("agent_turns").select("id", { count: "exact", head: true }).eq("session_id", sessionId).in("role", ["tool", "user"]).ilike("content", `%${a}%`);
+    real.set(a, onEmail.includes(a) || read || (await metAddress(ctx.userId, a)) ? a : writer);
+  }
+  const fix = (x: unknown) => {
+    const a = addressOf(String(x ?? "")).toLowerCase();
+    return a.includes("@") && real.get(a) !== a ? real.get(a) ?? "" : x;
+  };
+  if (args.to !== undefined) args.to = fix(args.to);
+  if (Array.isArray(args.attendees)) args.attendees = [...new Set(args.attendees.map(fix).filter((x) => String(x).includes("@")))];
 }
 
 function applyReviseAction(
@@ -935,6 +969,9 @@ export async function runAgentStep(
         const args = argsJson(tc.function?.arguments ?? "{}");
 
         if (name === "propose_action") {
+          await realAddresses(ctx, sessionId, args, String(args.linked_email_id ?? ""));
+          // Something is left to fill in, so it is not sent as it is.
+          if (GAP.test(String(args.body ?? ""))) args.send_now = false;
           const result = validateAndApplyPropose(
             draftActions,
             args,
@@ -960,6 +997,9 @@ export async function runAgentStep(
             );
           }
         } else if (name === "revise_action") {
+          const patch = (args.patch ?? {}) as Record<string, unknown>;
+          await realAddresses(ctx, sessionId, patch, String(draftActions.find((a) => a.id === String(args.id ?? ""))?.linked_email_id ?? ""));
+          if (GAP.test(String(patch.body ?? ""))) patch.send_now = false;
           draftActions = applyReviseAction(draftActions, args);
           await pushToolOutput(tc, `Revised action ${args.id}.`);
         } else if (name === "discard_action") {

@@ -29,7 +29,7 @@ import { isBulk, writtenTo } from "./senders.ts";
 import { calendarAccount, mail, type LinkedEvent } from "./providers.ts";
 import { syncMail, syncErrors, readBacklog, serial, fillMissingBodies, refreshStored } from "./sync.ts";
 import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions.ts";
-import { CAP_PER_CYCLE, decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
+import { CAP_PER_CYCLE, decide, GAP, looksLikeInstructions, type AutoSend } from "./policy.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
 import { ACT_WITHIN_MS, dueOf, meetingOf, RULES_VERSION, todoOf } from "./rules.ts";
 import { judgeSent } from "./followups.ts";
@@ -94,10 +94,6 @@ const AUTOPILOT_INSTRUCTIONS =
   "If a good reply needs a decision, a commitment (money, a date, attending something, agreeing to something), an attachment, or facts you do not have, write only the word HOLD and nothing else.";
 
 const HOLD = /^\W*HOLD\W*$/;
-
-// A gap the model left for the user to fill in ("[Insert venue]"). Such a
-// reply is never sent on its own.
-export const GAP = /\[(?:insert|your|add|enter|fill|name|date|time|venue|place|location|address|phone|link|number|amount|company|recipient|details?|tbd|to be|x{2,})\b[^\]\n]{0,60}\]/i;
 
 // A draft the model failed to write is tried again, this often in all.
 const DRAFT_TRIES = 3;

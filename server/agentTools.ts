@@ -266,7 +266,7 @@ export const AGENT_TOOLS = [
           linked_email_id: {
             type: "string",
             description:
-              "The email this action is based on, if applicable.",
+              "The id of the email this action is about. Required for a reply, todo or meeting.",
           },
           // reply payload
           to: {
@@ -413,6 +413,7 @@ export interface BriefingCard {
   tags?: string[];
   suggestedAction?: string;
   never?: string[]; // what the user wants none of from this sender
+  has?: string[]; // what was already made from this email
 }
 
 export interface AgentToolContext {
