@@ -16,8 +16,7 @@
 //   POST /rethink-email         Re-categorize one email
 //   GET  /contacts/search       Search contacts
 //   POST /contacts/sync         Import Google contacts
-//   POST /remove-gmail-account  Disconnect a Gmail account
-//   DELETE /delete-all-data     Wipe local mail data
+//   POST /accounts/remove       Disconnect a mailbox
 //   POST /chat                  Assistant chat with inbox tools
 //   GET|POST /follow-ups, PATCH|DELETE /follow-ups/:id, GET /follow-ups/list
 //   GET|POST /signatures, PATCH|DELETE /signatures/:id
@@ -38,23 +37,25 @@ import { mail, userCalendar } from "./providers.ts";
 import {
   chatWithAssistant,
   composeDraft,
+  localToUtc,
   refineDraft,
   processFullEmail,
   type ChatContext,
 } from "./ai.ts";
 import { syncMail, analyzeInbox } from "./sync.ts";
+import { modelStatus } from "./analyzeEmails.ts";
 import { accountById, accountFor, accountsForWindow, defaultAccount, fromLine, listAccounts, removeAccount, replyFrom, updateAccount } from "./accounts.ts";
-import { saveUserDraft } from "./drafts.ts";
+import { discardDrafts, saveUserDraft } from "./drafts.ts";
 import { messageIdOf, withForward } from "./forward.ts";
-import { htmlToText } from "./mime.ts";
-import { answered, snooze, unsnooze, unsnoozeAll } from "./snooze.ts";
+import { escapeHtml, htmlToText } from "./mime.ts";
+import { answered, snooze, unsnooze } from "./snooze.ts";
 import { prepFor } from "./prep.ts";
 import { filesInMailboxes } from "./files.ts";
 import { kickEngine, draftReply, engineStatus, planNew, sampleReply } from "./engine.ts";
 import { displayNameOf, isRule, keepRules, learnFromEdit, RECIPIENTS, setAvoid, setLine, stylePrompt, writingFor } from "./writing.ts";
 import { learnFromSent, startFirstRead } from "./firstRead.ts";
 import * as onboarding from "./onboarding.ts";
-import { approve, dismiss, undo, record, engineSettings, setMailState } from "./actions.ts";
+import { approve, dismiss, undo, engineSettings, setMailState } from "./actions.ts";
 import { answer, applyPref, feedback, profileContext, reopen, setPref, type Feedback } from "./profile.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
 import { brief, prepareBrief } from "./brief.ts";
@@ -119,7 +120,7 @@ function json(
 // has already checked the request's access token before it gets here.
 async function getUserId(_req: Request): Promise<string> {
   const { data } = await db.from("profiles").select("id").limit(1).maybeSingle();
-  if (!data) throw Object.assign(new Error("Not signed in. Connect a Google account first."), { status: 401 });
+  if (!data) throw Object.assign(new Error("No mailbox is connected yet."), { status: 401 });
   return data.id as string;
 }
 
@@ -180,7 +181,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     //   POST /actions/dismiss {id}
     //   POST /actions/undo {id}
     if (path === "/engine/status" && req.method === "GET") {
-      return json({ ...(await engineSettings(userId)), ...engineStatus, model: modelConfigured(), autostart: autostartInstalled() });
+      return json({ ...(await engineSettings(userId)), ...engineStatus, model: modelConfigured(), modelError: modelStatus.error, autostart: autostartInstalled() });
     }
     // Archive or return to the inbox, mark read or unread: in Gmail and here.
     if (path === "/mail/state" && req.method === "POST") {
@@ -858,6 +859,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       }
       const { data: m } = await db.from("meetings").select("*").eq("id", meetingId).eq("user_id", userId).maybeSingle();
       if (!m) return json({ error: "That meeting is gone" }, 404);
+      if (m.status === "confirmed" && m.calendar_event_id) return json({ ok: true, meetingId: m.id, link: null });
       const changes: Record<string, unknown> = {};
       for (const k of ["title", "start_time", "end_time", "location"]) if (typeof body[k] === "string" && body[k]) changes[k] = body[k];
       if (Array.isArray(body.attendees)) changes.attendees = body.attendees.map(String).filter(Boolean);
@@ -912,7 +914,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
       const { data: emails } = await db
         .from("emails")
-        .select("id, subject, sender, sender_email, body_text, snippet")
+        .select("id, subject, sender, sender_email, body_text, snippet, received_at")
         .eq("id", emailId)
         .eq("user_id", userId);
 
@@ -934,7 +936,11 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         undefined,
         labelsForPrompt(labels),
         ((rethinkProfile?.working_hours as { timezone?: string } | null)
-          ?.timezone) || "UTC",
+          ?.timezone) || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        await profileContext(userId, { sender_email: email.sender_email as string, subject: email.subject as string, text: email.body_text as string }),
+        false,
+        true,
+        new Date(String(email.received_at)),
       );
 
       await db.from("email_processed").upsert(
@@ -1051,21 +1057,11 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json(await saveUserDraft(userId, await req.json()));
     }
 
-    // ── DELETE /delete-all-data ────────────────────────────────────────────
-    if (path === "/delete-all-data" && req.method === "DELETE") {
-      // Wipe everything Tabellar learned or stored. The profile and the
-      // connected accounts stay, so the user remains signed in. What was
-      // snoozed goes back to its inbox first.
-      await unsnoozeAll(userId).catch((e) => console.error("[delete-all-data] returning snoozed mail:", (e as Error).message));
-      for (const t of ["agent_sessions", "email_processed", "todos", "meetings", "follow_up_reminders",
-        "scheduled_emails", "draft_emails", "email_memory", "contacts", "knowledge_base", "categories", "preferences", "questions", "conversations",
-        "style_profiles", "email_templates", "email_signatures", "newsletter_senders", "emails"]) {
-        const { error } = await db.from(t).delete().eq("user_id", userId);
-        if (error) return json({ error: "Failed to delete data: " + error.message }, 500, corsHeaders);
-      }
-      await db.from("accounts").update({ history_id: null }).eq("user_id", userId);
-      await db.from("profiles").update({ brief_summary: null, brief_told: null, meetings_told: [] }).eq("id", userId);
-      return json({ deleted: true }, 200, corsHeaders);
+    // Discarded here, and in the mailbox's Drafts where Tabellar saved it.
+    if (path === "/drafts/discard" && req.method === "POST") {
+      const { ids } = await req.json();
+      if (!Array.isArray(ids) || !ids.length) return json({ error: "ids required" }, 400);
+      return json({ discarded: await discardDrafts(userId, ids.map(String)) });
     }
 
     // ── POST /chat ───────────────────────────────────────────────────────────
@@ -1145,53 +1141,6 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       // Execute tool calls (search_emails is handled in-memory by chatWithAssistant)
       const actions: { type: string; data: Record<string, unknown> }[] = [];
 
-      // Convert a local-time ISO (no offset) + IANA timezone to a UTC ISO
-      // string so stored timestamps match what Google Calendar records.
-      const userTimezone = (timezone as string) || "UTC";
-      const hasOffset = (s: string) => /Z$|[+-]\d{2}:?\d{2}$/.test(s.trim());
-      const toUtcIso = (local: string, tz: string): string => {
-        if (hasOffset(local)) return new Date(local).toISOString();
-        try {
-          const m = local.match(
-            /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/,
-          );
-          if (!m) return new Date(local).toISOString();
-          const [, y, mo, d, h, mi, s] = m;
-          let utc = Date.UTC(
-            Number(y),
-            Number(mo) - 1,
-            Number(d),
-            Number(h),
-            Number(mi),
-            s ? Number(s) : 0,
-          );
-          const parts = new Intl.DateTimeFormat("en-US", {
-            timeZone: tz,
-            year: "numeric",
-            month: "2-digit",
-            day: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-            hour12: false,
-          }).formatToParts(new Date(utc));
-          const pick = (t: string) =>
-            Number(parts.find((p) => p.type === t)?.value);
-          const zoned = Date.UTC(
-            pick("year"),
-            pick("month") - 1,
-            pick("day"),
-            pick("hour") % 24,
-            pick("minute"),
-            pick("second"),
-          );
-          utc += utc - zoned;
-          return new Date(utc).toISOString();
-        } catch {
-          return new Date(local).toISOString();
-        }
-      };
-
       // Pause stops these too; the assistant is told and nothing runs.
       const { paused } = await engineSettings(userId);
       // Paused: nothing is done, but reading and planning go on.
@@ -1211,31 +1160,21 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
               type: "create_todo",
               data: { text: args.text, id: (todo as { id: string }).id },
             });
-        } else if (tc.name === "save_draft") {
-          const args = tc.arguments as {
-            to: string;
-            subject: string;
-            body: string;
-          };
+        } else if (tc.name === "save_draft" || tc.name === "send_email") {
+          // Ask never sends: what it writes waits in Replies. It reads mail,
+          // and nothing an email says may make it write to anyone unseen.
+          const args = tc.arguments as { to: string | string[]; subject: string; body: string };
+          const check = validateRecipients(typeof args.to === "string" ? args.to.split(",").map((x) => x.trim()).filter(Boolean) : args.to);
+          if (!check.ok) {
+            actions.push({ type: "send_email_failed", data: { error: check.error ?? "Invalid recipient" } });
+            continue;
+          }
           const { data: draft } = await db
             .from("draft_emails")
-            .insert({
-              user_id: userId,
-              to_addresses: [args.to],
-              subject: args.subject,
-              body_html: args.body.replace(/\n/g, "<br>"),
-            })
+            .insert({ user_id: userId, source: "tabellar", to_addresses: check.emails, subject: String(args.subject ?? ""), body_html: escapeHtml(String(args.body ?? "")).replace(/\n/g, "<br>") })
             .select("id")
             .single();
-          if (draft)
-            actions.push({
-              type: "save_draft",
-              data: {
-                subject: args.subject,
-                to: args.to,
-                id: (draft as { id: string }).id,
-              },
-            });
+          if (draft) actions.push({ type: "save_draft", data: { subject: args.subject, to: check.emails!.join(", "), id: draft.id } });
         } else if (tc.name === "add_knowledge") {
           const args = tc.arguments as {
             entity: string;
@@ -1282,204 +1221,28 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
                 id: (tag as { id: string }).id,
               },
             });
-        } else if (tc.name === "send_email") {
-          const args = tc.arguments as {
-            to: string;
-            subject: string;
-            body: string;
-          };
-          console.log(
-            "[chat/send_email] attempting to send to:",
-            args.to,
-            "subject:",
-            args.subject,
-          );
-          const toCheck = validateRecipients(
-            typeof args.to === "string" ? [args.to] : args.to,
-          );
-          if (!toCheck.ok) {
-            actions.push({
-              type: "send_email_failed",
-              data: { error: toCheck.error ?? "Invalid recipient" },
-            });
-            continue;
-          }
-          if (!args.subject || typeof args.subject !== "string") {
-            actions.push({
-              type: "send_email_failed",
-              data: { error: "Missing subject" },
-            });
-            continue;
-          }
-          try {
-            const account = await defaultAccount(userId);
-            if (account) {
-              const bodyHtml = (args.body ?? "").replace(/\n/g, "<br>");
-              const result = await mail(account).send(account, { from: await fromLine(userId, account, null), to: toCheck.emails!, subject: args.subject, html: bodyHtml });
-              console.log("[chat/send_email] sent OK, message_id:", result.id);
-              await record(userId, { kind: "send", emailId: null, summary: `Sent "${args.subject}" to ${toCheck.emails!.join(", ")} (asked in chat)`, detail: { to: toCheck.emails, subject: args.subject } }, "assistant");
-
-              // Save to emails table so SentView can display it
-              try {
-                await db.from("emails").insert({
-                  user_id: userId,
-                  gmail_id: result.id,
-                  account_id: account.id,
-                  subject: args.subject,
-                  recipients: toCheck.emails!.join(", "),
-                  body_html: bodyHtml,
-                  received_at: new Date().toISOString(),
-                  is_read: true,
-                  label_ids: ["SENT"],
-                });
-              } catch (e) {
-                console.warn("[chat/send_email] failed to save to emails:", e);
-              }
-
-              actions.push({
-                type: "send_email",
-                data: {
-                  to: args.to,
-                  subject: args.subject,
-                  message_id: result.id,
-                },
-              });
-            } else {
-              console.error(
-                "[chat/send_email] no account found for userId:",
-                userId,
-              );
-              actions.push({
-                type: "send_email_failed",
-                data: { error: "No mailbox connected" },
-              });
-            }
-          } catch (err) {
-            console.error("[chat/send_email] error:", err);
-            actions.push({
-              type: "send_email_failed",
-              data: { error: String(err) },
-            });
-          }
         } else if (tc.name === "reply_to_email") {
           const args = tc.arguments as { email_id: string; body: string };
-          try {
-            // Fetch original email for threading headers; the reply goes out
-            // from its account, from the address it was sent to.
-            const { data: original } = await db
-              .from("emails")
-              .select("subject, sender_email, gmail_id, thread_id, account_id, recipients, cc_recipients")
-              .eq("id", args.email_id)
-              .eq("user_id", userId)
-              .maybeSingle();
-            const account = (await accountById(userId, original?.account_id as string)) ?? (await defaultAccount(userId));
-            if (!account) {
-              actions.push({
-                type: "send_email_failed",
-                data: { error: "No account connected" },
-              });
-            } else {
-              if (!original) {
-                actions.push({
-                  type: "send_email_failed",
-                  data: { error: "Original email not found" },
-                });
-              } else {
-                const subject = (original as any).subject?.startsWith("Re:")
-                  ? (original as any).subject
-                  : `Re: ${(original as any).subject}`;
-                const result = await mail(account).send(
-                  account,
-                  {
-                    from: await fromLine(userId, account, replyFrom(account, original as any)),
-                    to: [(original as any).sender_email],
-                    subject,
-                    html: args.body.replace(/\n/g, "<br>"),
-                    inReplyTo: (original as any).gmail_id,
-                  },
-                  (original as any).thread_id,
-                );
-                actions.push({
-                  type: "send_email",
-                  data: {
-                    to: (original as any).sender_email,
-                    subject,
-                    message_id: result.id,
-                  },
-                });
-              }
-            }
-          } catch (err) {
-            actions.push({
-              type: "send_email_failed",
-              data: { error: String(err) },
-            });
+          const { data: original } = await db.from("emails").select("id, subject, sender_email, reply_to_email, account_id, recipients, cc_recipients").eq("id", String(args.email_id ?? "")).eq("user_id", userId).maybeSingle();
+          const to = String(original?.reply_to_email || original?.sender_email || "");
+          if (!original || !to) {
+            actions.push({ type: "send_email_failed", data: { error: "Original email not found" } });
+            continue;
           }
-        } else if (tc.name === "update_todo") {
-          const args = tc.arguments as {
-            id: string;
-            text?: string;
-            is_completed?: boolean;
-          };
-          const updates: Record<string, unknown> = {};
-          if (args.text !== undefined) updates.text = args.text;
-          if (args.is_completed !== undefined)
-            updates.is_completed = args.is_completed;
-          await db
-            .from("todos")
-            .update(updates)
-            .eq("id", args.id)
-            .eq("user_id", userId);
-          actions.push({ type: "update_todo", data: tc.arguments });
-        } else if (tc.name === "delete_todo") {
-          const args = tc.arguments as { id: string };
-          await db
-            .from("todos")
-            .delete()
-            .eq("id", args.id)
-            .eq("user_id", userId);
-          actions.push({ type: "delete_todo", data: tc.arguments });
-        } else if (tc.name === "update_meeting") {
-          const args = tc.arguments as {
-            id: string;
-            title?: string;
-            start_time?: string;
-            end_time?: string;
-            attendees?: string[];
-          };
-          const updates: Record<string, unknown> = {};
-          if (args.title) updates.title = args.title;
-          if (args.start_time)
-            updates.start_time = toUtcIso(args.start_time, userTimezone);
-          if (args.end_time)
-            updates.end_time = toUtcIso(args.end_time, userTimezone);
-          if (args.attendees) updates.attendees = args.attendees;
-          await db
-            .from("meetings")
-            .update(updates)
-            .eq("id", args.id)
-            .eq("user_id", userId);
-          actions.push({ type: "update_meeting", data: tc.arguments });
-        } else if (tc.name === "delete_meeting") {
-          const args = tc.arguments as { id: string };
-          await db
-            .from("meetings")
-            .delete()
-            .eq("id", args.id)
-            .eq("user_id", userId);
-          actions.push({ type: "delete_meeting", data: tc.arguments });
-        } else if (tc.name === "delete_draft") {
-          const args = tc.arguments as { id: string };
-          await db
+          const account = await accountById(userId, original.account_id as string);
+          const subject = /^re:/i.test(String(original.subject ?? "")) ? String(original.subject) : `Re: ${original.subject ?? ""}`;
+          const { data: draft } = await db
             .from("draft_emails")
-            .delete()
-            .eq("id", args.id)
-            .eq("user_id", userId);
-          actions.push({ type: "delete_draft", data: tc.arguments });
-        } else if (tc.name === "archive_email") {
-          const args = tc.arguments as { email_id: string };
-          await setMailState(userId, [args.email_id], { archived: true });
-          actions.push({ type: "archive_email", data: tc.arguments });
+            .insert({
+              user_id: userId, source: "tabellar", email_id: original.id, account_id: account?.id ?? null, from_address: account ? replyFrom(account, original as { recipients?: string | null }) : null,
+              to_addresses: [to], subject, body_html: escapeHtml(String(args.body ?? "")).replace(/\n/g, "<br>"),
+            })
+            .select("id")
+            .single();
+          if (draft) actions.push({ type: "save_draft", data: { subject, to, id: draft.id } });
+        } else if (["update_todo", "delete_todo", "update_meeting", "delete_meeting", "delete_draft", "archive_email"].includes(tc.name)) {
+          // Carried out while the model was answering (ai.ts).
+          if (tc.done) actions.push({ type: tc.name, data: tc.arguments });
         } else if (tc.name === "plan_cleanup") {
           actions.push({ type: "plan_cleanup", data: { session_id: await cleanupPlan() } });
         } else if (tc.name === "suggest_reply_options") {
@@ -1526,7 +1289,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
                   thread_id: threadId,
                   recipient_email: args.recipient_email,
                   subject: args.subject,
-                  remind_at: args.remind_at,
+                  remind_at: localToUtc(String(args.remind_at), timezone as string),
+                  created_at: new Date().toISOString(),
                   status: "waiting",
                 },
                 { onConflict: "user_id,thread_id" },
@@ -1546,82 +1310,15 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
             console.error("[chat/set_follow_up] error:", err);
           }
         } else if (tc.name === "create_meeting") {
-          const args = tc.arguments as {
-            title: string;
-            start_time: string;
-            end_time: string;
-            attendees?: string[];
-            description?: string;
-          };
-          const userTz = (timezone as string) || "UTC";
+          // Waits in Meetings; the user adds it to the calendar there, which is what invites anyone.
+          const args = tc.arguments as { title: string; start_time: string; end_time: string; attendees?: string[]; description?: string };
           try {
-            const startDt = args.start_time.includes("T")
-              ? args.start_time
-              : args.start_time + "T00:00:00";
-            const endDt = args.end_time.includes("T")
-              ? args.end_time
-              : args.end_time + "T00:00:00";
-
-            // AI returns local times (no offset); convert to UTC ISO for DB.
-            const startIso = toUtcIso(startDt, userTz);
-            const endIso = toUtcIso(endDt, userTz);
-
-            const cal = await userCalendar(userId);
-            if (cal) {
-              try {
-                const ev = await cal.calendar.create(
-                  cal.account,
-                  { title: args.title, description: args.description || "", start: startDt, end: endDt, timeZone: userTz, attendees: args.attendees ?? [] },
-                  cal.invite,
-                );
-                await db.from("meetings").insert({
-                  user_id: userId,
-                  title: args.title,
-                  start_time: startIso,
-                  end_time: endIso,
-                  attendees: args.attendees ?? [],
-                  description: args.description || "",
-                  calendar_event_id: ev.id,
-                  status: "confirmed",
-                });
-                actions.push({
-                  type: "create_meeting",
-                  data: {
-                    title: args.title,
-                    start_time: startIso,
-                    attendees: args.attendees,
-                  },
-                });
-              } catch {
-                actions.push({
-                  type: "create_meeting_failed",
-                  data: { error: "Calendar API error" },
-                });
-              }
-            } else {
-              await db.from("meetings").insert({
-                user_id: userId,
-                title: args.title,
-                start_time: startIso,
-                end_time: endIso,
-                attendees: args.attendees ?? [],
-                description: args.description || "",
-                status: "proposed",
-              });
-              actions.push({
-                type: "create_meeting",
-                data: {
-                  title: args.title,
-                  start_time: startIso,
-                  attendees: args.attendees,
-                },
-              });
-            }
-          } catch (err) {
-            actions.push({
-              type: "create_meeting_failed",
-              data: { error: String(err) },
-            });
+            const start = localToUtc(String(args.start_time), timezone as string);
+            const end = args.end_time ? localToUtc(String(args.end_time), timezone as string) : new Date(new Date(start).getTime() + 30 * 60_000).toISOString();
+            await db.from("meetings").insert({ user_id: userId, title: String(args.title || "Meeting"), start_time: start, end_time: end, attendees: args.attendees ?? [], description: args.description || "", status: "proposed" });
+            actions.push({ type: "create_meeting", data: { title: args.title, start_time: start, attendees: args.attendees } });
+          } catch {
+            actions.push({ type: "create_meeting_failed", data: { error: "The time could not be read" } });
           }
         }
       }
@@ -1880,14 +1577,11 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       if (!session) {
         return json({ error: "Session not found" }, 404, corsHeaders);
       }
-      const bgStep = runAgentStepParallel(
+      void runAgentStepParallel(
         body.session_id,
         db,
         body.timezone ?? "UTC",
       ).catch((e) => console.error("[agent/step] parallel step failed:", e));
-      (globalThis as unknown as Record<symbol, { waitUntil: (p: Promise<unknown>) => void }>)[
-        Symbol.for("EdgeRuntime")
-      ]?.waitUntil(bgStep);
       return json({ status: "planning" }, 200, corsHeaders);
     }
 
@@ -1933,17 +1627,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       } else {
         await answerPendingQuestion(db, body.session_id, body);
       }
-      // Fire-and-forget: resume the orchestrator. waitUntil keeps the context
-      // alive so consolidation completes; the frontend learns the new state
-      // via its existing Realtime subscription.
-      const bgAnswer = runAgentStepParallel(
+      // Resume the plan; the window follows its row.
+      void runAgentStepParallel(
         body.session_id,
         db,
         body.timezone ?? "UTC",
       ).catch((e) => console.error("[agent/answer] parallel step failed:", e));
-      (globalThis as unknown as Record<symbol, { waitUntil: (p: Promise<unknown>) => void }>)[
-        Symbol.for("EdgeRuntime")
-      ]?.waitUntil(bgAnswer);
       return json({ status: "planning" }, 200, corsHeaders);
     }
 
@@ -1996,9 +1685,10 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       }
       await db
         .from("agent_sessions")
-        .update({ status: "cancelled", pending_question: null })
+        .update({ status: "cancelled", pending_question: null, pending_questions: [] })
         .eq("id", body.session_id)
-        .eq("user_id", userId);
+        .eq("user_id", userId)
+        .in("status", ["planning", "asking", "ready", "executing"]);
       return json({ ok: true }, 200, corsHeaders);
     }
 

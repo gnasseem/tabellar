@@ -169,6 +169,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", account_id: "uuid >accounts:cascade", from_address: "text",
       to_addresses: "json ! =[]", subject: "text", body_html: "text", email_id: "uuid >emails:null", source: "text",
+      cc_addresses: "json", bcc_addresses: "json",
       gmail_draft_id: "text", // the same draft in Gmail's Drafts, when the user saved it
       forward: "json", read_receipt: "bool ! =false",
       created_at: "time ! =now",
@@ -376,6 +377,8 @@ function retire() {
     sqlite.exec(`UPDATE profiles SET notification_level = 'needs' WHERE notification_level IN ('important', 'all')`);
   }
   if (cols("style_profiles").includes("patterns")) sqlite.exec(`ALTER TABLE style_profiles DROP COLUMN patterns`);
+  // Addresses are kept in lower case, as they are compared.
+  sqlite.exec(`UPDATE emails SET sender_email = lower(sender_email) WHERE sender_email <> lower(sender_email)`);
   // Forwarding rules only ever made a suggestion the window never showed.
   sqlite.exec(`DROP TABLE IF EXISTS delegation_rules`);
 }
@@ -921,6 +924,15 @@ export function execute(spec: QuerySpec): Result {
     console.error(`[db] ${spec.action} ${spec.table}: ${err.message}`);
     return { data: null, error: { message: err.message, code: err.code }, count: null, status: 400 };
   }
+}
+
+// The newest mail, sent mail aside, that has not been sorted yet.
+export function unprocessedIds(userId: string, limit: number): string[] {
+  return all(
+    `SELECT id FROM emails WHERE user_id = ? AND NOT EXISTS (SELECT 1 FROM json_each(emails.label_ids) WHERE value = 'SENT')
+     AND NOT EXISTS (SELECT 1 FROM email_processed p WHERE p.email_id = emails.id) ORDER BY received_at DESC LIMIT ?`,
+    [userId, limit],
+  ).map((r) => String(r.id));
 }
 
 // ── Stored procedures the old database provided ─────────────────────────────

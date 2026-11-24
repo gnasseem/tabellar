@@ -129,6 +129,7 @@ export type Outgoing = {
   subject: string;
   html: string;
   inReplyTo?: string;
+  root?: string; // the Message-ID that started the thread, where threads go by References (IMAP)
   attachments?: { name: string; contentType: string; data: string }[];
   receipt?: boolean; // ask for a read receipt, sent to the From address
 };
@@ -186,6 +187,9 @@ export type Mail = {
   send(a: Box, m: Outgoing, threadId?: string): Promise<{ id: string }>;
   // Put a draft in the mailbox's Drafts, replacing `draftId`. Returns its id.
   saveDraft(a: Box, draftId: string | null, m: Outgoing, threadId?: string): Promise<string>;
+  // Take one draft out of Drafts: only a draft, and only one whose id
+  // saveDraft returned (drafts.ts). One already gone is fine.
+  discardDraft(a: Box, draftId: string): Promise<void>;
   // Send a draft that is in Drafts, with its final text; it leaves Drafts.
   sendDraft(a: Box, draftId: string, m: Outgoing, threadId?: string): Promise<{ id: string }>;
   // The id of the label with this name, made when missing.

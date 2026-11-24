@@ -67,22 +67,27 @@ export async function firstReadState(userId: string): Promise<FirstRead> {
 
 let running: Promise<void> | null = null;
 let failures = 0;
+let retryAt = 0;
 
 // Start the first read, or join the one already running. `plan` runs after
 // each batch of mail is sorted (the engine's planNew), so todos and drafts
 // appear as the read goes. After a failure (Google busy, the Mac offline) it
-// tries again on its own, a minute later, then less and less often.
-export function startFirstRead(userId: string, plan: () => unknown): Promise<void> {
+// tries again on its own, a minute later, then less and less often; `now`
+// does not wait for that (the user just connected something).
+export function startFirstRead(userId: string, plan: () => unknown, now = false): Promise<void> {
+  if (!now && Date.now() < retryAt) return Promise.resolve();
   if (modelConfigured()) void learnOnce(userId).catch((e) => console.error("[first read] sent mail:", (e as Error).message));
   running ??= firstRead(userId, plan)
     .then(() => {
       failures = 0;
+      retryAt = 0;
     })
     .catch(async (e) => {
       console.error("[first read]", e);
       await save(userId, { error: (e as Error).message });
       const wait = Math.min(30, 2 ** failures++) * 60_000;
-      setTimeout(() => void startFirstRead(userId, plan), wait).unref();
+      retryAt = Date.now() + wait;
+      setTimeout(() => void startFirstRead(userId, plan, true), wait).unref();
     })
     .finally(() => {
       running = null;
@@ -135,8 +140,10 @@ async function firstRead(userId: string, plan: () => unknown): Promise<void> {
   if (!accounts.length) return;
   if (state.step === "done") {
     for (const account of accounts.filter((a) => !a.read_at)) {
-      // Connected before the first read finished: that read covered it.
-      if (state.finished_at && account.created_at <= state.finished_at) {
+      // Connected before the first read finished: that read covered it,
+      // unless it could not be reached then.
+      const { count } = await db.from("mail_index").select("id", { count: "exact", head: true }).eq("account_id", account.id);
+      if (state.finished_at && account.created_at <= state.finished_at && count) {
         await db.from("accounts").update({ read_at: state.finished_at }).eq("id", account.id);
       } else if (modelConfigured()) await readAccount(userId, account, plan);
     }
@@ -163,12 +170,29 @@ async function firstRead(userId: string, plan: () => unknown): Promise<void> {
   }
 
   if (state.step === "deep") {
-    for (const account of accounts) await fetchDeep(userId, account);
+    await eachAccount(accounts, (account) => fetchDeep(userId, account));
     await sortDeep(userId, plan);
     const at = new Date().toISOString();
     await db.from("accounts").update({ read_at: at }).in("id", accounts.map((a) => a.id));
     await save(userId, { step: "done", finished_at: at });
   }
+}
+
+// One mailbox that cannot be reached does not hold up the others; when none
+// can, the read is tried again.
+async function eachAccount(accounts: Account[], fn: (a: Account) => Promise<void>): Promise<void> {
+  let last: unknown;
+  let failed = 0;
+  for (const a of accounts) {
+    try {
+      await fn(a);
+    } catch (e) {
+      failed++;
+      last = e;
+      console.error(`[first read] ${a.address}:`, (e as Error).message);
+    }
+  }
+  if (failed && failed === accounts.length) throw last;
 }
 
 // The first read of one more account.
@@ -190,7 +214,7 @@ async function indexHeaders(userId: string, accounts: Account[], progress = true
   const todo: { account: Account; ids: string[] }[] = [];
   let total = 0;
   let done = 0;
-  for (const account of accounts) {
+  await eachAccount(accounts, async (account) => {
     const ids = await mail(account).list(account, { days: HEADER_DAYS, cap: HEADER_CAP, inbox: false });
     const have = new Set<string>();
     for (let i = 0; i < ids.length; i += 500) {
@@ -200,9 +224,10 @@ async function indexHeaders(userId: string, accounts: Account[], progress = true
     total += ids.length;
     done += have.size;
     todo.push({ account, ids: ids.filter((id) => !have.has(id)) });
-  }
+  });
   if (progress) await save(userId, { headers: done, headers_total: total });
-  for (const { account, ids } of todo) {
+  await eachAccount(todo.map((t) => t.account), async (account) => {
+    const { ids } = todo.find((t) => t.account === account)!;
     for (let i = 0; i < ids.length; i += 50) {
       // Both draw on the same quota; the sent mail goes first, since About
       // you waits for it.
@@ -212,7 +237,7 @@ async function indexHeaders(userId: string, accounts: Account[], progress = true
       done += Math.min(50, ids.length - i);
       if (progress) await save(userId, { headers: done });
     }
-  }
+  });
 }
 
 // Sort what is already stored and plan it.
@@ -261,10 +286,13 @@ export async function learnFromSent(userId: string, account: Account, opts: { fa
 }
 
 // A style learned before it was read per kind of recipient (its kinds are
-// empty; learning always fills them in) is learned again, once.
+// empty; learning always fills them in) is learned again, once. So is one the
+// first read did not get to learn.
 export async function relearnStyle(userId: string): Promise<void> {
   const style = await styleRow(userId);
-  if (!style.last_learned_at || Object.keys(style.kinds).length || !modelConfigured()) return;
+  const state = await firstReadState(userId);
+  const missed = !style.last_learned_at && state.step === "done" && state.learned && state.sent >= 3;
+  if ((!missed && (!style.last_learned_at || Object.keys(style.kinds).length)) || !modelConfigured()) return;
   const account = await defaultAccount(userId);
   if (account) await (await learnFromSent(userId, account, { facts: false })).style?.();
 }

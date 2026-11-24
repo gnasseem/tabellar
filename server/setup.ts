@@ -227,6 +227,14 @@ function run(cmd: string, args: string[]): Promise<boolean> {
   });
 }
 
+// Rejects when the file cannot be written (the disk is full), which would
+// otherwise end the server.
+function failure(out: ReturnType<typeof createWriteStream>): Promise<never> {
+  const p = new Promise<never>((_, reject) => out.on("error", (e) => reject(new Error((e as NodeJS.ErrnoException).code === "ENOSPC" ? "The disk is full. Free some space and try again." : `Could not write the download: ${e.message}`))));
+  p.catch(() => {});
+  return p;
+}
+
 // Download Ollama.app from ollama.com, check Apple's signature on it, put it in
 // Applications and start it.
 export async function* installOllama(): AsyncGenerator<Progress> {
@@ -237,17 +245,18 @@ export async function* installOllama(): AsyncGenerator<Progress> {
     if (!r.ok || !r.body) throw new Error(`Could not download Ollama (${r.status}).`);
     const total = Number(r.headers.get("content-length")) || undefined;
     const out = createWriteStream(zip);
+    const failed = failure(out);
     let completed = 0;
     let last = 0;
     for await (const chunk of r.body as unknown as AsyncIterable<Uint8Array>) {
-      if (!out.write(chunk)) await new Promise<void>((done) => out.once("drain", () => done()));
+      if (!out.write(chunk)) await Promise.race([new Promise<void>((done) => out.once("drain", () => done())), failed]);
       completed += chunk.length;
       if (Date.now() - last > 250) {
         last = Date.now();
         yield { status: "Downloading Ollama", completed, total };
       }
     }
-    await new Promise<void>((done) => out.end(() => done()));
+    await Promise.race([new Promise<void>((done) => out.end(() => done())), failed]);
 
     yield { status: "Installing Ollama" };
     const unpacked = join(work, "unpacked");
@@ -334,17 +343,18 @@ async function* fetchModelFiles(model: string): AsyncGenerator<Progress> {
     if (!res.ok || !res.body) throw new Error(`Could not download ${model} (${res.status}). Try again.`);
     const part = `${blob}-tabellar-partial`;
     const out = createWriteStream(part);
+    const failed = failure(out);
     const hash = createHash("sha256");
     for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
       hash.update(chunk);
-      if (!out.write(chunk)) await new Promise<void>((done) => out.once("drain", () => done()));
+      if (!out.write(chunk)) await Promise.race([new Promise<void>((done) => out.once("drain", () => done())), failed]);
       completed += chunk.length;
       if (Date.now() - last > 250) {
         last = Date.now();
         yield { status: `pulling ${f.digest.slice(7, 19)}`, completed, total };
       }
     }
-    await new Promise<void>((done) => out.end(() => done()));
+    await Promise.race([new Promise<void>((done) => out.end(() => done())), failed]);
     if (`sha256:${hash.digest("hex")}` !== f.digest) {
       rmSync(part, { force: true });
       throw new Error(`A file of ${model} arrived damaged. Try again.`);

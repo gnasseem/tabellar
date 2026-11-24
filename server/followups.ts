@@ -22,7 +22,7 @@ const WINDOW_DAYS = 30;
 const WAIT_DAYS = 2;
 
 const NO_REPLY = /no.?reply|donotreply|do-not-reply|notifications?@|mailer-daemon|postmaster|bounce/i;
-export const SERVICE = /print|scan|mailer|daemon|robot/i;
+export const SERVICE = /(^|[._-])((web|mobile|wepa|secure|cloud)?print(er|ing)?|scan(ner|s)?|mailer|daemon|robot)\d*(?=[._-]|$)/i;
 export const SERVICE_NAME = /\b(service account|no.?reply|notifications?|printer)\b/i;
 
 // One line of the Follow-ups list: a reminder the user set, or sent mail
@@ -108,15 +108,17 @@ async function candidates(userId: string): Promise<{ sent: Sent; to: { email: st
   const since = new Date(Date.now() - WINDOW_DAYS * DAY).toISOString();
   const [{ data: sentRows }, { data: tracked }, own, { data: listy }] = await Promise.all([
     db.from("emails").select("id, thread_id, recipients, subject, body_text, received_at, awaits_reply, seen_at").eq("user_id", userId).contains("label_ids", ["SENT"]).gte("received_at", since).order("received_at", { ascending: false }).limit(500),
-    db.from("follow_up_reminders").select("thread_id").eq("user_id", userId),
+    db.from("follow_up_reminders").select("thread_id, status, created_at").eq("user_id", userId),
     ownAddresses(userId),
     db.from("senders").select("address, list_id, precedence, category").eq("user_id", userId).or("list_unsubscribe.eq.true,category.eq.promotions"),
   ]);
   // Addresses whose own mail is bulk by the same headers as senders.isBulk.
   const lists = new Set<string>((listy ?? []).filter((s) => s.category === "promotions" || bulkHeaders(true, s.list_id as string | null, s.precedence as string | null)).map((s) => String(s.address)));
-  const isTracked = new Set((tracked ?? []).map((t) => String(t.thread_id)));
   const latest = new Map<string, Sent>();
   for (const e of (sentRows ?? []) as Sent[]) if (e.thread_id && !latest.has(e.thread_id)) latest.set(e.thread_id, e);
+  // A reminder that is over (answered, turned down) was about what had been
+  // sent by then; a question sent since is a new one.
+  const isTracked = new Set((tracked ?? []).filter((t) => t.status === "waiting" || t.status === "snoozed" || String(t.created_at) >= (latest.get(String(t.thread_id))?.received_at ?? "")).map((t) => String(t.thread_id)));
   const threads = [...latest.keys()].filter((t) => !isTracked.has(t));
   if (!threads.length) return [];
 

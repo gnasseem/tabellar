@@ -26,10 +26,12 @@ const record = async (m: Outgoing, threadId?: string) => {
   return { id: `sent-${sent.length}` };
 };
 const nothing = async () => [];
+const discarded: string[] = [];
+let draftN = 0;
 MAILBOXES.fake = {
   cursor: async () => "0", changes: async () => ({ tooOld: false, historyId: "0", added: [], sentAdded: false, labels: [], deleted: [] }), moved: async () => false,
   list: nothing, fetch: nothing, headerRows: nothing, sent: nothing, headers: async () => ({}), threadOf: async () => "",
-  send: (_a, m, t) => record(m, t), saveDraft: async () => "draft-1", sendDraft: (_a, _d, m, t) => record(m, t),
+  send: (_a, m, t) => record(m, t), saveDraft: async () => `draft-${++draftN}`, discardDraft: async (_a, id) => void discarded.push(id), sendDraft: (_a, _d, m, t) => record(m, t),
   label: async (_a, name) => name, labelNames: nothing, modify: async () => {}, sendAs: nothing, hasSentTo: async () => false, attachment: async () => null, disconnect: async () => {},
   calendar: { busy: nothing, events: nothing, create: async () => ({ id: "event-1", link: null }), update: async () => ({ id: "event-1", link: null }), find: async () => null },
 } satisfies Mail;
@@ -120,10 +122,18 @@ ok("an approval is bound to the exact text", () => {
   assert.notEqual(a, proposalHash("draft", "e1", { to: ["evil@x.y"], subject: "Re: x", body: "Hello there" }));
   assert.notEqual(a, proposalHash("draft", "e2", { to: ["a@b.c"], subject: "Re: x", body: "Hello there" }));
 });
-ok("the Gmail client cannot delete or trash mail", () => {
+ok("the Gmail client cannot delete or trash mail; the one thing it deletes is a draft, by its draft id", () => {
   for (const name of Object.keys(gmail)) assert.ok(!/delete|trash|remove|purge/i.test(name), `gmail.${name}`);
   const src = readFileSync(sibling("gmail"), "utf8");
-  assert.ok(!/\/trash\b|method:\s*["']DELETE["']|batchDelete/.test(src), "the Gmail client calls a delete endpoint");
+  assert.ok(!/\/trash\b|batchDelete/.test(src), "the Gmail client calls a delete endpoint");
+  const deletes = src.split("\n").filter((l) => /method:\s*["']DELETE["']/.test(l));
+  assert.equal(deletes.length, 1, "the Gmail client deletes something else");
+  assert.ok(deletes[0].includes("`/drafts/${encodeURIComponent(draftId)}`"), deletes[0]);
+});
+ok("only discarding a draft reaches a mailbox's drafts, and only with an id kept for its row", () => {
+  for (const f of ["actions", "agentExecute", "agentLoop", "ai", "api", "engine", "outbox", "profile", "sync", "newsletters"]) assert.ok(!/\.discardDraft\(/.test(readFileSync(sibling(f), "utf8")), f);
+  const calls = readFileSync(sibling("drafts"), "utf8").match(/\.discardDraft\([^)]*\)/g);
+  assert.deepEqual(calls, [".discardDraft(account, row.gmail_draft_id)"]);
 });
 
 // ── Unsubscribe headers ─────────────────────────────────────────────────────
@@ -310,7 +320,22 @@ const second = await incoming("ann@example.org");
 await undo(userId, second.log.find((r) => r.kind === "send")!.id as string);
 await fallDue(second.row.id);
 await sendDueEmails();
-ok("a cancelled reply is never sent", () => assert.equal(sent.length, 1));
+const { count: secondDrafts } = await db.from("draft_emails").select("id", { count: "exact", head: true }).eq("email_id", second.emailId);
+ok("a cancelled reply is never sent, and its text is kept as a draft", () => {
+  assert.equal(sent.length, 1);
+  assert.equal(secondDrafts, 1);
+});
+
+const byHand = await incoming("ann@example.org");
+await db.from("emails").insert({ user_id: userId, gmail_id: `by-hand-${randomUUID()}`, thread_id: byHand.row.thread_id, account_id: account!.id, recipients: "ann@example.org", subject: "Re: hi", received_at: new Date(Date.now() + 1000).toISOString(), label_ids: ["SENT"] });
+await fallDue(byHand.row.id);
+await sendDueEmails();
+const { count: byHandDrafts } = await db.from("draft_emails").select("id", { count: "exact", head: true }).eq("email_id", byHand.emailId);
+ok("a reply the user wrote by hand inside the window stops Autopilot's", () => {
+  assert.equal(sent.length, 1);
+  assert.equal(byHandDrafts, 0);
+});
+await db.from("emails").delete().eq("user_id", userId).ilike("gmail_id", "by-hand-%");
 
 const third = await incoming("ann@example.org");
 await db.from("scheduled_emails").update({ to_addresses: ["attacker@evil.example"] }).eq("id", third.row.id);
@@ -356,6 +381,81 @@ ok("when the model holds, the reply becomes a draft", () => {
   assert.equal(held.row, null);
   assert.ok(held.log.some((r) => r.kind === "draft"));
 });
+
+// ── Sending without a network, and after a crash ────────────────────────────
+console.log("Outbox");
+const { closeInterrupted } = await import("./outbox.ts");
+const queueOne = async (status: string, sendAt = Date.now() - 1000) =>
+  (await db.from("scheduled_emails").insert({ user_id: userId, account_id: account!.id, to_addresses: ["bo@example.org"], subject: "Later", body_html: "x", send_at: new Date(sendAt).toISOString(), status }).select("id").single()).data!.id as string;
+const statusOf = async (id: string) => (await db.from("scheduled_emails").select("status").eq("id", id).single()).data!.status;
+const goodSend = MAILBOXES.fake.send;
+const queued = await queueOne("pending");
+const sentSoFar = sent.length;
+MAILBOXES.fake.send = async () => { throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ENOTFOUND" } }); };
+await sendDueEmails();
+const offline = await statusOf(queued);
+MAILBOXES.fake.send = goodSend;
+await sendDueEmails();
+const online = await statusOf(queued);
+ok("a send with no network waits for it, and goes out once", () => {
+  assert.equal(offline, "pending");
+  assert.equal(online, "sent");
+  assert.equal(sent.length, sentSoFar + 1);
+});
+const unsure = await queueOne("pending");
+MAILBOXES.fake.send = async () => { throw new Error("The operation was aborted due to timeout"); };
+await sendDueEmails();
+MAILBOXES.fake.send = goodSend;
+const unsureNow = await statusOf(unsure);
+const cut = await queueOne("sending");
+await closeInterrupted();
+const cutNow = await statusOf(cut);
+await sendDueEmails();
+ok("a send that may have gone out is never repeated on its own", () => {
+  assert.equal(unsureNow, "failed");
+  assert.equal(cutNow, "failed");
+  assert.equal(sent.length, sentSoFar + 1);
+});
+
+// ── Drafts in the mailbox ───────────────────────────────────────────────────
+console.log("Drafts");
+const draftsModule = await import("./drafts.ts");
+const userDraft = await draftsModule.saveUserDraft(userId, { account_id: account!.id as string, to: ["bo@example.org"], subject: "One", body_html: "x" });
+const { data: keptDraft } = await db.from("draft_emails").select("gmail_draft_id").eq("id", userDraft.id).single();
+const { data: ours } = await db.from("draft_emails").insert({ user_id: userId, to_addresses: ["bo@example.org"], subject: "Tabellar's own", body_html: "x", source: "tabellar" }).select("id").single();
+const goodDiscard = MAILBOXES.fake.discardDraft;
+MAILBOXES.fake.discardDraft = async () => { throw new Error("fetch failed"); };
+await assert.rejects(draftsModule.discardDrafts(userId, [userDraft.id]));
+MAILBOXES.fake.discardDraft = goodDiscard;
+const { count: stillHere } = await db.from("draft_emails").select("id", { count: "exact", head: true }).eq("id", userDraft.id);
+await draftsModule.discardDrafts(userId, [userDraft.id, ours!.id as string]);
+ok("discarding takes the saved draft out of the mailbox, and asks nothing of it for one never saved there", () => {
+  assert.equal(stillHere, 1);
+  assert.deepEqual(discarded, [keptDraft!.gmail_draft_id]);
+});
+
+// ── Reading mail ────────────────────────────────────────────────────────────
+console.log("MIME");
+const mime = await import("./mime.ts");
+const rawMail = (t: string) => mime.readMessage(Buffer.from(t.replace(/\n/g, "\r\n")));
+ok("text on both sides of a file, and a list's footer, are all part of the email", () => {
+  const m = rawMail('Content-Type: multipart/mixed; boundary=X\n\n--X\nContent-Type: text/plain\n\nfirst\n--X\nContent-Type: application/pdf; name="f.pdf"\n\nAA\n--X\n\nsecond\n--X--\n');
+  assert.equal(m.text, "first\n\nsecond");
+  assert.equal(m.attachments[0].filename, "f.pdf");
+  const f = rawMail("Content-Type: multipart/mixed; boundary=X\n\n--X\nContent-Type: text/html\n\n<p>body</p>\n--X\nContent-Type: text/plain\n\nfooter\n--X--\n");
+  assert.ok(f.text.includes("body") && f.text.includes("footer"));
+});
+ok("an attached email is a file, an image the text does not show too", () => {
+  const m = rawMail("Content-Type: multipart/mixed; boundary=X\n\n--X\nContent-Type: text/plain\n\nbounced\n--X\nContent-Type: message/rfc822\n\nSubject: in\n\ninner\n--X\nContent-Type: image/png; name=p.png\nContent-ID: <c>\n\nxx\n--X--\n");
+  assert.equal(m.text, "bounced");
+  assert.deepEqual(m.attachments.map((a) => a.filename), ["message.eml", "p.png"]);
+});
+ok("names and words in other scripts are read whole", () => {
+  assert.equal(rawMail("Content-Type: application/pdf; name*=UTF-8''r%C3%A9sum%C3%A9.pdf\n\nx").attachments[0].filename, "r\u00e9sum\u00e9.pdf");
+  assert.equal(mime.decodeWords("=?utf-8?q?caf=C3?= =?utf-8?q?=A9?="), "caf\u00e9");
+});
+ok("a name that looks like an address is not the sender", () => assert.equal(mime.addressOf('"<boss@nyu.edu>" <evil@x.example>'), "evil@x.example"));
+ok("an address cannot add a header of its own", () => assert.ok(!/^Bcc:/m.test(mime.writeMessage({ from: "a@b.example", to: ["x@y.example\r\nBcc: z@q.example"], subject: "s", html: "h" }))));
 
 // ── Aliases ─────────────────────────────────────────────────────────────────
 // An account that also sends as another address (Gmail's "Send mail as").
@@ -685,6 +785,21 @@ ok("a stated zone is applied and shown; an unreadable one gives no time", () => 
   assert.equal(mtg("Lunch tomorrow at 12:30?", "Lunch tomorrow at 12:30?", { time: "12:30" }).dateTime, "2026-11-24T12:30");
   assert.equal(mtg("Call at 3:00 on Friday?", "Call at 3:00 on Friday?", { time: "3:00" }).dateTime, null, "3:00 could be morning or afternoon");
 });
+ok("the day is the one the sentence means, counted from when the email was sent", () => {
+  const at = (q: string, time: string, date: string) => mtg(q, q, { time, date }).dateTime;
+  assert.equal(at("Let us meet on 26 November 14:00 in the lab.", "14:00", "2026-11-26"), "2026-11-26T14:00");
+  assert.equal(at("I can't do Wednesday, could we do Friday at 3pm?", "3pm", "2026-11-27"), "2026-11-27T15:00");
+  assert.equal(at("Can we do Thursday next week at 3pm instead?", "3pm", "2026-12-03"), "2026-12-03T15:00");
+  assert.equal(at("The day after tomorrow at 3pm works for me.", "3pm", "2026-11-25"), "2026-11-25T15:00");
+  assert.equal(at("Dinner on Friday 7:30-9:30pm at my place.", "7:30", "2026-11-27"), "2026-11-27T19:30");
+  const q = "Can we meet tomorrow at 3pm?";
+  assert.equal(rules.meetingOf({ action: "schedule_meeting", quote: q, meetingDetails: { time: "3pm" } }, { subject: "x", body_text: q }, TZ, new Date("2026-11-20T08:00:00Z")).dateTime, "2026-11-21T15:00");
+});
+ok("an Outlook invitation in summer is read in summer time", () => {
+  const ics = (line: string) => rules.parseIcs(`BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:1\n${line}\nEND:VEVENT\nEND:VCALENDAR`, "UTC")!.start;
+  assert.equal(ics("DTSTART;TZID=Eastern Standard Time:20270615T100000"), "2027-06-15T14:00:00.000Z");
+  assert.equal(ics('DTSTART;TZID="(UTC-05:00) Eastern Time (US & Canada)":20270615T100000'), "2027-06-15T14:00:00.000Z");
+});
 ok("a todo needs a person's ask, quoted from the email, and never comes from calendar mail", () => {
   const lease = { subject: "Lease", body_text: "Hi, could you sign the renewal and send it back by December 15? Thanks, Dana" };
   const todo = { action: "add_todo", label: "Sign the lease renewal", quote: "could you sign the renewal and send it back by December 15?" };
@@ -698,6 +813,7 @@ ok("a todo is due on the day its sentence names after by, before or due, and on 
   assert.equal(rules.dueOf("could you sign the renewal and send it back by December 15?", TZ, NOW), "2026-12-15");
   assert.equal(rules.dueOf("Please submit the form before Friday.", TZ, NOW), "2026-11-27");
   assert.equal(rules.dueOf("We talked on Monday; could you send the slides?", TZ, NOW), null);
+  assert.equal(rules.dueOf("Please send it by 15 December 17:00.", TZ, NOW), "2026-12-15");
 });
 
 // Through the engine: calendar mail is linked, not proposed; sorted mail
@@ -978,7 +1094,7 @@ const { data: imapRow } = await db.from("accounts").insert({ user_id: mailUser, 
 const imapAccount = imapRow as unknown as import("./accounts.ts").Account;
 const { syncMail } = await import("./sync.ts");
 const { act, setMailState } = await import("./actions.ts");
-const { saveUserDraft } = await import("./drafts.ts");
+const { saveUserDraft, discardDrafts } = await import("./drafts.ts");
 const box = mailbox(imapAccount);
 
 await syncMail(mailUser, true);
@@ -1042,6 +1158,18 @@ ok("a draft is in Drafts, and saving it again replaces it", () => {
   assert.equal(folder("Drafts").msgs.length, 1);
   assert.match(textOf(folder("Drafts").msgs[0].raw), /at noon/);
 });
+put("Drafts", "Message-ID: <byhand@fake.example>\nFrom: me@fake.example\nTo: cy@people.example\nSubject: Written elsewhere\n\nKeep me.\n");
+const spare = await saveUserDraft(mailUser, { account_id: imapAccount.id, to: ["cy@people.example"], cc: ["bo@people.example"], subject: "Spare", body_html: "<p>Never mind.</p>" });
+const { data: spareRow } = await db.from("draft_emails").select("cc_addresses").eq("id", spare.id).single();
+await discardDrafts(mailUser, [spare.id]);
+const { count: spareLeft } = await db.from("draft_emails").select("id", { count: "exact", head: true }).eq("id", spare.id);
+ok("a discarded draft leaves the mailbox's Drafts, and no other draft does", () => {
+  assert.deepEqual(spareRow!.cc_addresses, ["bo@people.example"]);
+  assert.equal(spareLeft, 0);
+  assert.equal(folder("Drafts").msgs.length, 2);
+  assert.ok(folder("Drafts").msgs.some((m) => m.raw.includes("<byhand@")) && folder("Drafts").msgs.some((m) => /at noon/.test(textOf(m.raw))));
+});
+folder("Drafts").msgs = folder("Drafts").msgs.filter((m) => !m.raw.includes("<byhand@"));
 const { data: savedDraft } = await db.from("draft_emails").select("gmail_draft_id").eq("id", draft.id).single();
 await db.from("scheduled_emails").insert({
   user_id: mailUser, account_id: imapAccount.id, to_addresses: ["bo@people.example"], bcc_addresses: ["me2@fake.example"], subject: "Lunch", body_html: "<p>Yes, at noon.</p>",

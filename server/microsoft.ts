@@ -122,7 +122,10 @@ async function graph(a: Box, path: string, init: RequestInit = {}): Promise<any>
       renew = true;
       continue;
     }
-    if ((res.status === 429 || res.status >= 500) && attempt < 4) {
+    // Something made by a POST may have been made in spite of a 5xx; only
+    // "busy, not now" is asked again.
+    const again = res.status === 429 || res.status === 503 || (res.status >= 500 && init.method !== "POST");
+    if (again && attempt < 4) {
       await new Promise((r) => setTimeout(r, (Number(res.headers.get("retry-after")) || 2 ** attempt) * 1000));
       continue;
     }
@@ -209,7 +212,7 @@ async function emailOf(a: Box, m: any): Promise<EmailData> {
     }
   }
   const attachments = m.hasAttachments
-    ? (await pages(a, `/me/messages/${m.id}/attachments?$select=id,name,contentType,size,isInline`).catch(() => []))
+    ? (await pages(a, `/me/messages/${m.id}/attachments?$select=id,name,contentType,size,isInline`))
         .filter((x) => !x.isInline)
         .map((x) => ({ filename: x.name ?? "attachment", mime_type: x.contentType ?? "application/octet-stream", size: x.size ?? 0, attachment_id: x.id }))
     : [];
@@ -255,9 +258,15 @@ async function emailOf(a: Box, m: any): Promise<EmailData> {
   };
 }
 
+// Each of them, a few at a time, without those that are gone. Any other
+// failure throws, so the sync that asked is tried again.
 async function each<T, R>(items: T[], fn: (t: T) => Promise<R | null>, at = 8): Promise<R[]> {
+  const gone = (e: unknown) => {
+    if ((e as { status?: number }).status === 404) return null;
+    throw e;
+  };
   const out: R[] = [];
-  for (let i = 0; i < items.length; i += at) for (const r of await Promise.all(items.slice(i, i + at).map((x) => fn(x).catch(() => null)))) if (r) out.push(r);
+  for (let i = 0; i < items.length; i += at) for (const r of await Promise.all(items.slice(i, i + at).map((x) => fn(x).catch(gone)))) if (r) out.push(r);
   return out;
 }
 
@@ -290,19 +299,40 @@ async function newDraft(a: Box, m: Outgoing, threadId?: string): Promise<string>
   const draft = replyTo
     ? await graph(a, `/me/messages/${replyTo}/createReply`, { method: "POST", body: "{}" }).then((d) => graph(a, `/me/messages/${d.id}`, { method: "PATCH", body: JSON.stringify(bodyOf(m)) }))
     : await graph(a, "/me/messages", { method: "POST", body: JSON.stringify(bodyOf(m)) });
-  for (const att of m.attachments ?? []) {
-    await graph(a, `/me/messages/${draft.id}/attachments`, {
-      method: "POST",
-      body: JSON.stringify({ "@odata.type": "#microsoft.graph.fileAttachment", name: att.name, contentType: att.contentType, contentBytes: att.data }),
-    });
-  }
+  for (const att of m.attachments ?? []) await attach(a, draft.id, att);
   return draft.id;
+}
+
+// Graph takes up to 3 MB in one call, and more in pieces.
+const PIECE = 327_680 * 10;
+async function attach(a: Box, draftId: string, att: NonNullable<Outgoing["attachments"]>[number]): Promise<void> {
+  const bytes = Buffer.from(att.data, "base64");
+  if (bytes.length < 3 * 1024 * 1024) {
+    await graph(a, `/me/messages/${draftId}/attachments`, {
+      method: "POST",
+      body: JSON.stringify({ "@odata.type": "#microsoft.graph.fileAttachment", name: att.name, contentType: att.contentType, contentBytes: bytes.toString("base64") }),
+    });
+    return;
+  }
+  const { uploadUrl } = await graph(a, `/me/messages/${draftId}/attachments/createUploadSession`, {
+    method: "POST",
+    body: JSON.stringify({ AttachmentItem: { attachmentType: "file", name: att.name, contentType: att.contentType, size: bytes.length } }),
+  });
+  for (let at = 0; at < bytes.length; at += PIECE) {
+    const piece = bytes.subarray(at, at + PIECE);
+    // The address itself is the permission; it takes no token.
+    const res = await fetch(uploadUrl, { method: "PUT", signal: AbortSignal.timeout(300_000), headers: { "Content-Range": `bytes ${at}-${at + piece.length - 1}/${bytes.length}` }, body: new Uint8Array(piece) });
+    if (!res.ok) throw new Error(`Outlook did not take the attachment "${att.name}" (${res.status})`);
+  }
 }
 
 async function saveDraft(a: Box, draftId: string | null, m: Outgoing, threadId?: string): Promise<string> {
   if (draftId) {
     try {
       await graph(a, `/me/messages/${draftId}`, { method: "PATCH", body: JSON.stringify(bodyOf(m)) });
+      // Its files are what they are now, not what they were when it was saved.
+      for (const old of await pages(a, `/me/messages/${draftId}/attachments?$select=id,isInline`)) if (!old.isInline) await graph(a, `/me/messages/${draftId}/attachments/${old.id}`, { method: "DELETE" });
+      for (const att of m.attachments ?? []) await attach(a, draftId, att);
       return draftId;
     } catch (e) {
       // Sent or deleted in Outlook meanwhile: made again.
@@ -531,6 +561,16 @@ export const microsoftMailbox: Mail = {
   },
 
   saveDraft,
+
+  // A sent draft keeps its id, so it is asked first whether it still is one.
+  async discardDraft(a, draftId) {
+    try {
+      const m = await graph(a, `/me/messages/${draftId}?$select=isDraft`);
+      if (m?.isDraft === true) await graph(a, `/me/messages/${draftId}`, { method: "DELETE" });
+    } catch (e) {
+      if ((e as { status?: number }).status !== 404) throw e;
+    }
+  },
 
   async sendDraft(a, draftId, m, threadId) {
     const id = await saveDraft(a, draftId, m, threadId);

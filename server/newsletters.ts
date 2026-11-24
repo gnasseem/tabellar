@@ -103,7 +103,7 @@ async function mailFrom(userId: string, sender: string, inboxOnly: boolean) {
     .from("emails")
     .select("id, gmail_id, has_list_unsubscribe, label_ids, is_archived, accounts(*)")
     .eq("user_id", userId)
-    .ilike("sender_email", sender.replace(/[%_]/g, ""))
+    .eq("sender_email", sender.toLowerCase())
     .order("received_at", { ascending: false });
   if (inboxOnly) q = q.eq("is_archived", false).contains("label_ids", ["INBOX"]);
   const { data } = await q.limit(5000);

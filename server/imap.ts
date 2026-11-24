@@ -25,10 +25,11 @@ import { createHash } from "node:crypto";
 import { db } from "./db.ts";
 import { keychainDelete, keychainGet, keychainSet } from "./config.ts";
 import { calendarHeaders, parseIcs } from "./rules.ts";
-import { htmlToText, newMessageId, parseHeaders, partAt, readMessage, writeMessage } from "./mime.ts";
+import { addressOf as address, htmlToText, newMessageId, parseHeaders, partAt, readMessage, writeMessage } from "./mime.ts";
 import type { ImapServer } from "./accounts.ts";
 import type { Box, EmailData, HeaderRow, Mail, MailboxChanges, Outgoing, Sent } from "./providers.ts";
 import { isReceipt, receiptOf } from "./receipts.ts";
+import { addressesIn } from "./senders.ts";
 
 // `tabellar check` swaps these so its fake mailbox needs no Keychain item.
 export const secrets = { get: keychainGet, set: keychainSet, delete: keychainDelete };
@@ -43,20 +44,21 @@ const loopback = (host: string) => /^(127\.|::1$|localhost$)/.test(host);
 type Tok = string | Buffer | null | Tok[];
 
 // One whole response from the front of the buffer: its line with each
-// literal replaced by a marker, and the literals. Null until all of it is in.
-function takeResponse(buf: Buffer): { line: string; lits: Buffer[]; used: number } | null {
+// literal replaced by a marker, and the literals. Until all of it is in, how
+// long the buffer has to get before it is worth looking again.
+function takeResponse(buf: Buffer): { line: string; lits: Buffer[]; used: number } | number {
   let pos = 0;
   let line = "";
   const lits: Buffer[] = [];
   for (;;) {
     const nl = buf.indexOf("\r\n", pos);
-    if (nl < 0) return null;
+    if (nl < 0) return buf.length + 1;
     const seg = buf.toString("utf8", pos, nl);
     const m = /\{(\d+)\+?\}$/.exec(seg);
     if (!m) return { line: line + seg, lits, used: nl + 2 };
     const start = nl + 2;
     const n = Number(m[1]);
-    if (buf.length < start + n) return null;
+    if (buf.length < start + n) return start + n;
     line += `${seg.slice(0, m.index)}\x00${lits.length}\x00`;
     lits.push(buf.subarray(start, start + n));
     pos = start + n;
@@ -143,17 +145,25 @@ class Conn {
   closed = false;
   onUntagged: ((t: Tok[]) => void) | null = null;
   private sock: Socket;
-  private buf: Buffer = Buffer.alloc(0);
+  private chunks: Buffer[] = [];
+  private size = 0;
+  private need = 0;
   private n = 0;
+  private alive: () => void = () => {}; // puts off the running command's timeout
   private queue: Promise<unknown> = Promise.resolve();
   private waiting: { tag: string; rows: Tok[][]; done: (e: Error | null) => void; more: () => void } | null = null;
   private greeted: (() => void) | null = null;
+  private refused: (e: Error) => void = () => {};
   private ended: () => void = () => {};
   readonly ready: Promise<void>;
   readonly gone: Promise<void>;
 
   constructor(sock: Socket) {
-    this.ready = new Promise((resolve) => (this.greeted = resolve));
+    this.ready = new Promise((resolve, reject) => {
+      this.greeted = resolve;
+      this.refused = reject;
+    });
+    this.ready.catch(() => {});
     this.gone = new Promise((resolve) => (this.ended = resolve));
     this.sock = sock;
     this.attach(sock);
@@ -161,6 +171,7 @@ class Conn {
 
   private attach(sock: Socket) {
     this.sock = sock;
+    sock.setKeepAlive(true, 60_000);
     sock.on("data", (d: Buffer) => this.data(d));
     sock.on("error", () => this.close());
     sock.on("close", () => this.close());
@@ -182,17 +193,31 @@ class Conn {
     this.sock.destroy();
     this.waiting?.done(new Error("The mail server closed the connection"));
     this.waiting = null;
+    this.refused(new Error("The mail server closed the connection"));
     this.ended();
   }
 
+  // In pieces, so a slow upload is seen to move.
   write(s: string | Buffer) {
-    this.sock.write(s);
+    const b = Buffer.isBuffer(s) ? s : Buffer.from(s, "utf8");
+    for (let i = 0; i < b.length; i += 65_536) this.sock.write(b.subarray(i, i + 65_536), () => this.alive());
   }
 
   private data(d: Buffer) {
-    this.buf = this.buf.length ? Buffer.concat([this.buf, d]) : d;
-    for (let r = takeResponse(this.buf); r; r = takeResponse(this.buf)) {
-      this.buf = this.buf.subarray(r.used);
+    this.alive();
+    this.chunks.push(d);
+    this.size += d.length;
+    if (this.size < this.need) return;
+    let buf = this.chunks.length > 1 ? Buffer.concat(this.chunks) : d;
+    for (;;) {
+      const r = takeResponse(buf);
+      if (typeof r === "number") {
+        this.chunks = buf.length ? [buf] : [];
+        this.size = buf.length;
+        this.need = r;
+        return;
+      }
+      buf = buf.subarray(r.used);
       if (r.line.startsWith("+")) {
         this.waiting?.more();
         continue;
@@ -204,7 +229,10 @@ class Conn {
         if (this.greeted) {
           this.greeted();
           this.greeted = null;
-          if (/^\* BYE/i.test(r.line)) this.close();
+          if (/^\* BYE/i.test(r.line)) {
+            this.close();
+            return;
+          }
           continue;
         }
         this.waiting?.rows.push(t);
@@ -227,11 +255,17 @@ class Conn {
         const tail = (i: number) => (i < lits.length ? `{${lits[i].length}}\r\n` : "\r\n");
         const rows: Tok[][] = [];
         this.sock.ref();
-        const timer = timeout ? setTimeout(() => this.close(), timeout) : undefined;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        this.alive = () => {
+          clearTimeout(timer);
+          if (timeout) timer = setTimeout(() => this.close(), timeout);
+        };
+        this.alive();
         this.waiting = {
           tag,
           rows,
           done: (e) => {
+            this.alive = () => {};
             clearTimeout(timer);
             this.sock.unref();
             if (e) reject(e);
@@ -264,8 +298,9 @@ class Conn {
 
   async fetch(uids: number[], items: string): Promise<Fetched[]> {
     const out: Fetched[] = [];
-    for (let i = 0; i < uids.length; i += 200) {
-      const want = new Set(uids.slice(i, i + 200));
+    const step = items.includes("BODY.PEEK[]") ? 10 : 200;
+    for (let i = 0; i < uids.length; i += step) {
+      const want = new Set(uids.slice(i, i + step));
       const rows = await this.cmd(`UID FETCH ${[...want].join(",")} (UID ${items})`);
       for (const r of rows) {
         if (str(r[2]).toUpperCase() !== "FETCH" || !Array.isArray(r[3])) continue;
@@ -311,14 +346,29 @@ function socketTo(host: string, port: number): Promise<Socket> {
 function upgrade(sock: Socket, host: string): Promise<Socket> {
   return new Promise((resolve, reject) => {
     sock.removeAllListeners("data");
-    const s = tlsConnect({ socket: sock, servername: host, rejectUnauthorized: !loopback(host) }, () => resolve(s));
-    s.once("error", reject);
+    const s = tlsConnect({ socket: sock, servername: host, rejectUnauthorized: !loopback(host) }, () => {
+      clearTimeout(timer);
+      resolve(s);
+    });
+    const timer = setTimeout(() => s.destroy(new Error(`${host} did not answer`)), TIMEOUT_MS);
+    s.once("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    s.once("close", () => reject(new Error(`${host} closed the connection`)));
   });
 }
 
 async function open(server: ImapServer["imap"], user: string, password: string): Promise<Conn> {
   const c = new Conn(await socketTo(server.host, server.port));
-  await c.ready;
+  const slow = setTimeout(() => c.close(), 30_000);
+  try {
+    await c.ready;
+  } catch {
+    throw new Error(`${server.host} did not answer as a mail server on port ${server.port}`);
+  } finally {
+    clearTimeout(slow);
+  }
   if (!c.caps.size) await c.cmd("CAPABILITY");
   if (server.port !== 993) {
     if (c.caps.has("STARTTLS")) await c.starttls(server.host);
@@ -372,15 +422,17 @@ function session<T>(a: Box, fn: (c: Conn) => Promise<T>): Promise<T> {
 
 // ── Folders ─────────────────────────────────────────────────────────────────
 
-type Folders = { delim: string; names: string[]; sent: string; drafts: string; archive: string | null; special: Set<string> };
+// `prefix` is what the server puts before every folder of the user's, such as
+// "INBOX." where all folders sit under the Inbox.
+type Folders = { delim: string; prefix: string; names: string[]; sent: string; drafts: string; archive: string | null; special: Set<string> };
 const folderCache = new Map<string, Folders>();
 
 async function folders(c: Conn, a: Box, fresh = false): Promise<Folders> {
   const cached = folderCache.get(a.id);
   if (cached && !fresh) return cached;
   const rows = await c.cmd('LIST "" "*"');
-  const f: Folders = { delim: "/", names: [], sent: "", drafts: "", archive: null, special: new Set(["INBOX"]) };
-  const byName = (re: RegExp) => f.names.find((n) => re.test(n)) ?? "";
+  const f: Folders = { delim: "/", prefix: "", names: [], sent: "", drafts: "", archive: null, special: new Set(["INBOX"]) };
+  const byName = (re: RegExp) => f.names.find((n) => re.test(n.slice(n.startsWith(f.prefix) ? f.prefix.length : 0))) ?? "";
   for (const r of rows) {
     if (str(r[1]).toUpperCase() !== "LIST") continue;
     const attrs = (Array.isArray(r[2]) ? r[2] : []).map((x) => str(x).toLowerCase());
@@ -393,36 +445,43 @@ async function folders(c: Conn, a: Box, fresh = false): Promise<Folders> {
     if (attrs.includes("\\archive")) f.archive = name;
     if (attrs.some((x) => ["\\sent", "\\drafts", "\\archive", "\\trash", "\\junk", "\\all", "\\flagged"].includes(x))) f.special.add(name);
   }
-  f.sent ||= byName(/^(sent|sent messages|sent items|sent mail)$/i) || "Sent";
-  f.drafts ||= byName(/^drafts?$/i) || "Drafts";
+  const under = f.names.filter((n) => n.toUpperCase() !== "INBOX");
+  if (under.length && under.every((n) => n.toUpperCase().startsWith(`INBOX${f.delim}`))) f.prefix = under[0].slice(0, 5 + f.delim.length);
+  f.sent ||= byName(/^(sent|sent messages|sent items|sent mail)$/i) || `${f.prefix}Sent`;
+  f.drafts ||= byName(/^drafts?$/i) || `${f.prefix}Drafts`;
   f.archive ??= byName(/^(archive|archives)$/i) || null;
-  for (const n of [f.sent, f.drafts, f.archive ?? "", ...f.names.filter((n) => /^(trash|deleted messages|deleted items|junk|spam|bulk mail)$/i.test(n))]) if (n) f.special.add(n);
+  for (const n of [f.sent, f.drafts, f.archive ?? "", ...f.names.filter((n) => /^(inbox[./])?(trash|deleted messages|deleted items|junk|spam|bulk mail)$/i.test(n))]) if (n) f.special.add(n);
   folderCache.set(a.id, f);
   return f;
 }
 
 // A label's folder: "Tabellar/Work" with the server's separator.
-const folderOf = (f: Folders, label: string) => label.split("/").join(f.delim);
-const labelOf = (f: Folders, folder: string) => folder.split(f.delim).join("/");
+const folderOf = (f: Folders, label: string) => f.prefix + label.split("/").join(f.delim);
+const labelOf = (f: Folders, folder: string) => (f.prefix && folder.startsWith(f.prefix) ? folder.slice(f.prefix.length) : folder).split(f.delim).join("/");
 
 async function makeFolder(c: Conn, a: Box, name: string): Promise<Folders> {
   const f = await folders(c, a);
   const parts = name.split(f.delim);
+  let refused = "";
   for (let i = 1; i <= parts.length; i++) {
     const path = parts.slice(0, i).join(f.delim);
-    if (f.names.includes(path)) continue;
-    await c.cmd(`CREATE ${quote(toImapName(path))}`).catch(() => {});
+    if (f.names.includes(path) || path.toUpperCase() === "INBOX") continue;
+    await c.cmd(`CREATE ${quote(toImapName(path))}`).catch((e) => (refused = (e as Error).message));
     await c.cmd(`SUBSCRIBE ${quote(toImapName(path))}`).catch(() => {});
   }
-  return folders(c, a, true);
+  const now = await folders(c, a, true);
+  if (!now.names.includes(name)) throw new Error(`The mail server would not make the folder ${name}${refused ? `: ${refused}` : ""}`);
+  return now;
 }
 
 async function archiveFolder(c: Conn, a: Box): Promise<string> {
   const f = await folders(c, a);
   if (f.archive) return f.archive;
-  await makeFolder(c, a, "Archive");
-  f.archive = "Archive";
-  return f.archive;
+  const name = `${f.prefix}Archive`;
+  const now = await makeFolder(c, a, name);
+  now.archive = f.archive = name;
+  now.special.add(name);
+  return name;
 }
 
 // ── Messages ────────────────────────────────────────────────────────────────
@@ -434,7 +493,6 @@ const angle = (v: string | undefined) => [...String(v ?? "").matchAll(/<([^<>\s]
 const idOf = (h: Record<string, string>, folder: string, validity: number, uid: number) =>
   angle(h["message-id"])[0] ?? (h["message-id"]?.trim() || `uid:${validity}:${uid}:${folder}`);
 const threadOf = (h: Record<string, string>, id: string) => angle(h.references)[0] ?? angle(h["in-reply-to"])[0] ?? id;
-const address = (v: string) => (v.match(/<([^>]+)>/)?.[1] ?? v).trim().toLowerCase();
 
 function labelsOf(f: Folders, folder: string, flags: string[]): string[] {
   const out: string[] = [];
@@ -450,6 +508,9 @@ function labelsOf(f: Folders, folder: string, flags: string[]): string[] {
 const where = new Map<string, Map<string, { folder: string; uid: number }>>();
 const seenRows = new Map<string, Map<string, HeaderRow>>();
 const placeOf = (a: Box) => where.get(a.id) ?? where.set(a.id, new Map()).get(a.id)!;
+// Other copies of a message in the Inbox: one sent to the user and through a list.
+const copies = new Map<string, Map<string, Set<number>>>();
+const copiesOf = (a: Box) => copies.get(a.id) ?? copies.set(a.id, new Map()).get(a.id)!;
 const rowsOf = (a: Box) => seenRows.get(a.id) ?? seenRows.set(a.id, new Map()).get(a.id)!;
 
 function headerRow(f: Folders, folder: string, id: string, x: Fetched, h: Record<string, string>): HeaderRow {
@@ -476,6 +537,8 @@ async function readHeads(c: Conn, a: Box, folder: string, uids: number[]): Promi
     const h = parseHeaders(x.head?.toString("utf8") ?? "");
     const id = idOf(h, folder, validity, x.uid);
     const row = headerRow(f, folder, id, x, h);
+    const before = placeOf(a).get(id);
+    if (folder === "INBOX" && before?.folder === "INBOX" && before.uid !== x.uid) copiesOf(a).set(id, (copiesOf(a).get(id) ?? new Set()).add(before.uid).add(x.uid));
     placeOf(a).set(id, { folder, uid: x.uid });
     rowsOf(a).set(id, row);
     out.push({ id, uid: x.uid, flags: x.flags, row });
@@ -580,7 +643,10 @@ async function fetchFull(c: Conn, a: Box, ids: string[]): Promise<{ id: string; 
 async function removeUids(c: Conn, uids: number[]) {
   if (!uids.length) return;
   await c.cmd(`UID STORE ${uids.join(",")} +FLAGS.SILENT (\\Deleted)`);
-  await c.cmd(c.caps.has("UIDPLUS") ? `UID EXPUNGE ${uids.join(",")}` : "EXPUNGE");
+  if (c.caps.has("UIDPLUS")) await c.cmd(`UID EXPUNGE ${uids.join(",")}`);
+  // A plain EXPUNGE takes everything marked deleted, so only when that is
+  // these and nothing another mail program marked.
+  else if ((await c.search("DELETED")).every((u) => uids.includes(u))) await c.cmd("EXPUNGE");
 }
 
 async function move(c: Conn, uids: number[], to: string) {
@@ -612,8 +678,8 @@ async function smtpSend(server: ImapServer["smtp"], user: string, password: stri
   };
   listen(sock);
   sock.on("error", () => wake?.());
-  const reply = async (): Promise<{ code: number; text: string }> => {
-    const deadline = Date.now() + TIMEOUT_MS;
+  const reply = async (timeout = TIMEOUT_MS): Promise<{ code: number; text: string }> => {
+    const deadline = Date.now() + timeout;
     for (;;) {
       const m = /(?:^|\r\n)(\d{3}) [^\r\n]*\r\n/.exec(buf);
       if (m) {
@@ -630,9 +696,9 @@ async function smtpSend(server: ImapServer["smtp"], user: string, password: stri
       wake = null;
     }
   };
-  const say = async (line: string | null, ok: number[]) => {
+  const say = async (line: string | null, ok: number[], timeout?: number) => {
     if (line !== null) sock.write(`${line}\r\n`);
-    const r = await reply();
+    const r = await reply(timeout);
     if (!ok.includes(r.code)) throw new Error(`The mail server refused it: ${r.text.replace(/^\d{3}[ -]/gm, "").replace(/\r\n/g, " ")}`);
     return r;
   };
@@ -644,6 +710,7 @@ async function smtpSend(server: ImapServer["smtp"], user: string, password: stri
         await say("STARTTLS", [220]);
         sock = await upgrade(sock, server.host);
         listen(sock);
+        sock.on("error", () => wake?.());
         ehlo = await say("EHLO tabellar.local", [250]);
       } else if (!loopback(server.host)) throw new Error(`${server.host} offers no encrypted connection on port ${server.port}`);
     }
@@ -661,7 +728,17 @@ async function smtpSend(server: ImapServer["smtp"], user: string, password: stri
       for (const r of rcpts) await say(`RCPT TO:<${r}>`, [250, 251]);
       await say("DATA", [354]);
       const body = data.replace(/\r?\n/g, "\r\n").replace(/^\./gm, "..");
-      await say(`${body}${body.endsWith("\r\n") ? "" : "\r\n"}.`, [250]);
+      // The upload takes as long as it takes, while it moves; the server then
+      // has ten minutes to take the message in (RFC 5321).
+      sock.setTimeout(TIMEOUT_MS, () => sock.destroy());
+      await new Promise<void>((resolve, reject) => {
+        sock.once("close", () => reject(new Error(`${server.host} closed the connection`)));
+        sock.write(`${body}${body.endsWith("\r\n") ? "" : "\r\n"}.\r\n`, (e) => (e ? reject(e) : resolve()));
+      });
+      sock.setTimeout(0);
+      await say(null, [250], 600_000).catch((e) => {
+        throw /closed the connection|did not answer/.test((e as Error).message) ? new Error(`${server.host} did not confirm it. It may have been sent: look in Sent before sending it again.`) : e;
+      });
     }
     sock.write("QUIT\r\n");
   } finally {
@@ -713,6 +790,10 @@ async function draftRemove(c: Conn, a: Box, draftId: string) {
 
 const bare = (id: string) => id.replace(/^<|>$/g, "");
 
+// A thread is named by the Message-ID that started it, which every answer has
+// to carry first in its References to stay in it.
+const rootOf = (threadId: string | undefined) => (threadId?.includes("@") && !threadId.startsWith("uid:") ? `<${bare(threadId)}>` : undefined);
+
 export const imapMailbox: Mail = {
   cursor: (a) => session(a, async (c) => JSON.stringify(await cursorNow(c, a))),
 
@@ -730,6 +811,9 @@ export const imapMailbox: Mail = {
       if (now.n > before.n) for (const u of await c.search(`UID ${before.n}:*`)) if (u >= before.n) uids.add(u);
       // Flags for all of them; headers only for messages not seen before.
       const flags = await c.fetch([...uids], "FLAGS");
+      // What left the Inbox is looked for again when it is needed.
+      const inboxUids = new Set(flags.map((x) => x.uid));
+      for (const [id, p] of placeOf(a)) if (p.folder === "INBOX" && !inboxUids.has(p.uid)) placeOf(a).delete(id);
       const idAt = new Map([...placeOf(a)].filter(([, p]) => p.folder === "INBOX").map(([id, p]) => [p.uid, id]));
       for (const p of await readHeads(c, a, "INBOX", flags.filter((x) => !idAt.has(x.uid)).map((x) => x.uid))) idAt.set(p.uid, p.id);
       const present = flags.filter((x) => idAt.has(x.uid)).map((x) => ({ uid: x.uid, flags: x.flags, id: idAt.get(x.uid)! }));
@@ -793,7 +877,16 @@ export const imapMailbox: Mail = {
   fetch: (a, ids) =>
     session(a, async (c) => {
       const f = await folders(c, a);
-      return (await fetchFull(c, a, ids)).map(({ id, folder, x }) => emailOf(f, folder, id, x));
+      return (await fetchFull(c, a, ids)).map(({ id, folder, x }) => {
+        try {
+          return emailOf(f, folder, id, x);
+        } catch (e) {
+          // A message that cannot be taken apart is kept with its headers alone.
+          console.error(`[imap] ${a.address}: a message could not be read:`, (e as Error).message);
+          const end = x.body?.indexOf("\r\n\r\n") ?? -1;
+          return emailOf(f, folder, id, { ...x, body: Buffer.concat([x.body!.subarray(0, Math.max(0, end)), Buffer.from("\r\nContent-Type: text/plain\r\n\r\n")]) });
+        }
+      });
     }),
 
   headerRows: (a, ids) =>
@@ -814,7 +907,15 @@ export const imapMailbox: Mail = {
       const { validity } = await c.select(f.sent);
       const uids = (await c.search("ALL")).slice(-max);
       const got = await c.fetch(uids, "FLAGS INTERNALDATE BODY.PEEK[]");
-      return got.reverse().map((x) => {
+      return got.reverse().flatMap((x) => {
+        try {
+          return [sentOf(x)];
+        } catch (e) {
+          console.error(`[imap] ${a.address}: a sent message could not be read:`, (e as Error).message);
+          return [];
+        }
+      });
+      function sentOf(x: Fetched): Sent {
         const r = readMessage(x.body ?? Buffer.alloc(0));
         const h = r.headers;
         const id = idOf(h, f.sent, validity, x.uid);
@@ -824,7 +925,7 @@ export const imapMailbox: Mail = {
           id, thread_id: threadOf(h, id), subject: h.subject ?? "", from: h.from ?? "", to: h.to ?? "", cc: h.cc ?? "", date: h.date || x.date,
           body_html: r.html, body, snippet: body.replace(/\s+/g, " ").trim().slice(0, 200), has_attachments: r.attachments.length > 0, attachments: r.attachments,
         };
-      });
+      }
     }),
 
   headers: (a, id, names) =>
@@ -839,8 +940,8 @@ export const imapMailbox: Mail = {
 
   threadOf: async (a, id) => (await imapMailbox.headerRows(a, [id]))[0]?.thread_id ?? "",
 
-  async send(a, m) {
-    const text = await sendWith(a, m);
+  async send(a, m, threadId) {
+    const text = await sendWith(a, { ...m, root: rootOf(threadId) });
     const id = bare(text.match(/^Message-ID: (\S+)/m)![1]);
     // Keep a copy in Sent, unless the server already put one there.
     await session(a, async (c) => {
@@ -852,15 +953,18 @@ export const imapMailbox: Mail = {
     return { id };
   },
 
-  saveDraft: (a, draftId, m) =>
+  saveDraft: (a, draftId, m, threadId) =>
     session(a, async (c) => {
       const f = await folders(c, a);
       if (!f.names.includes(f.drafts)) await makeFolder(c, a, f.drafts);
       const id = newMessageId(a.address);
-      await append(c, f.drafts, "\\Draft \\Seen", writeMessage(m, [`Date: ${new Date().toUTCString().replace("GMT", "+0000")}`, `Message-ID: ${id}`]));
+      await append(c, f.drafts, "\\Draft \\Seen", writeMessage({ ...m, root: rootOf(threadId) }, [`Date: ${new Date().toUTCString().replace("GMT", "+0000")}`, `Message-ID: ${id}`]));
       if (draftId) await draftRemove(c, a, bare(draftId));
       return bare(id);
     }),
+
+  // By the Message-ID Tabellar gave it, in the Drafts folder only.
+  discardDraft: (a, draftId) => session(a, (c) => draftRemove(c, a, bare(draftId))),
 
   async sendDraft(a, draftId, m, threadId) {
     const sent = await imapMailbox.send(a, m, threadId);
@@ -924,8 +1028,11 @@ export const imapMailbox: Mail = {
         const inbox = [...places].filter(([, p]) => p.folder === "INBOX");
         const archive = await archiveFolder(c, a);
         await c.select("INBOX");
-        await move(c, inbox.map(([, p]) => p.uid), archive);
-        for (const [id] of inbox) placeOf(a).delete(id);
+        await move(c, [...new Set(inbox.flatMap(([id, p]) => [p.uid, ...(copiesOf(a).get(id) ?? [])]))], archive);
+        for (const [id] of inbox) {
+          placeOf(a).delete(id);
+          copiesOf(a).delete(id);
+        }
       }
       if (add.includes("INBOX") && f.archive) {
         const archived = [...places].filter(([, p]) => p.folder === f.archive);
@@ -942,7 +1049,9 @@ export const imapMailbox: Mail = {
       const f = await folders(c, a);
       if (!f.names.includes(f.sent)) return false;
       await c.select(f.sent);
-      return (await c.search(`TO ${quote(to)}`)).length > 0;
+      // A search finds the text anywhere in the header ("am@x.com" in "sam@x.com").
+      const uids = (await c.search(`TO ${quote(to)}`)).slice(-20);
+      return (await readHeads(c, a, f.sent, uids)).some((p) => addressesIn(`${p.row.to}, ${p.row.cc}`).includes(to.toLowerCase()));
     }),
 
   // IMAP cannot ask for attachments, only for the message type that carries
@@ -996,7 +1105,8 @@ export const imapMailbox: Mail = {
             await Promise.race([new Promise((r) => setTimeout(r, 25 * 60_000).unref()), conn.gone]);
             if (conn.closed) break;
             conn.write("DONE\r\n");
-            await done;
+            const stuck = setTimeout(() => conn?.close(), 30_000);
+            await done.finally(() => clearTimeout(stuck));
           }
         } catch {
           // A dropped connection or no network: try again in a minute.
@@ -1012,7 +1122,7 @@ export const imapMailbox: Mail = {
     idlers.delete(a.id);
     pool.get(a.id)?.conn?.logout();
     pool.delete(a.id);
-    for (const m of [folderCache, where, seenRows, lastStatus]) m.delete(a.id);
+    for (const m of [folderCache, where, copies, seenRows, lastStatus]) m.delete(a.id);
     secrets.delete(a.token_ref);
   },
 };

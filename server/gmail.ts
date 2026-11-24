@@ -5,7 +5,7 @@
 
 import { loadTokens, saveTokens, refreshAccessToken, revokeGoogleTokens, type TokenData } from "./google.ts";
 import { calendarHeaders, parseIcs } from "./rules.ts";
-import { htmlToText, writeMessage } from "./mime.ts";
+import { addressOf, bodyOf, htmlToText, writeMessage, type BodyNode } from "./mime.ts";
 import type { AttachmentInfo, Calendar, CalEvent, EmailData, HeaderRow, LinkedEvent, Mail, MailboxChanges, NewEvent, Outgoing, Sent, SendAs } from "./providers.ts";
 import { isReceipt, receiptOf } from "./receipts.ts";
 
@@ -22,9 +22,10 @@ async function pace(): Promise<void> {
   if (at > now) await new Promise((r) => setTimeout(r, at - now));
 }
 
-// Over quota, Gmail answers 429, or 403 with a rate limit reason.
-async function overQuota(res: Response): Promise<boolean> {
-  if (res.status === 429 || res.status >= 500) return true;
+// Over quota, Gmail answers 429, or 403 with a rate limit reason; busy, 5xx.
+// A send or a new draft is not asked again after a 5xx: it may have happened.
+async function overQuota(res: Response, once: boolean): Promise<boolean> {
+  if (res.status === 429 || (res.status >= 500 && !once)) return true;
   if (res.status !== 403) return false;
   return /rateLimitExceeded|quota exceeded/i.test(await res.clone().text().catch(() => ""));
 }
@@ -38,6 +39,7 @@ async function gmailRequest(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
+  const once = init.method === "POST" && /\/(send|drafts)$/.test(path);
   for (let attempt = 0; ; attempt++) {
     await pace();
     const controller = new AbortController();
@@ -56,7 +58,7 @@ async function gmailRequest(
     } finally {
       clearTimeout(timeout);
     }
-    if (attempt >= 8 || !(await overQuota(res))) return res;
+    if (attempt >= 8 || !(await overQuota(res, once))) return res;
     await res.body?.cancel().catch(() => {});
     nextStart = Math.max(nextStart, Date.now() + 1500);
     await new Promise((r) => setTimeout(r, Math.min(12_000, 1500 * 2 ** attempt) + Math.random() * 500));
@@ -115,11 +117,6 @@ async function withTokenRefresh<T>(
   return { result, updatedTokenRef: updated };
 }
 
-function extractEmail(from: string): string {
-  const match = from.match(/<([^>]+)>/);
-  return match ? match[1] : from;
-}
-
 // Gmail returns snippets HTML-escaped ("I&#39;m", "&lt;a@b.c&gt;").
 function decodeSnippet(s: string | undefined): string {
   return (s ?? "")
@@ -152,13 +149,13 @@ interface EmailPart {
 }
 
 interface ExtractState {
-  bodyText: string;
-  bodyHtml: string;
   hasAttachments: boolean;
   attachments: AttachmentInfo[];
   cidParts: {
     contentId: string;
     mimeType: string;
+    filename: string;
+    size: number;
     data?: string;
     attachmentId?: string;
   }[];
@@ -166,11 +163,16 @@ interface ExtractState {
   report?: { data?: string; attachmentId?: string }; // a read receipt's own part
 }
 
-function extractBody(part: EmailPart, state: ExtractState) {
+const newState = (): ExtractState => ({ hasAttachments: false, attachments: [], cidParts: [], ics: null });
+
+// Sorts a message's parts into the state, and returns the tree of its text.
+function extractParts(part: EmailPart, state: ExtractState): BodyNode {
   const mime = part.mimeType ?? "";
+  const node: BodyNode = { type: mime, parts: [] };
   const contentId = part.headers
     ?.find((h) => h.name.toLowerCase() === "content-id")
-    ?.value?.replace(/[<>]/g, "");
+    ?.value?.replace(/[<>]/g, "").trim();
+  const attached = /^attachment/i.test(part.headers?.find((h) => h.name.toLowerCase() === "content-disposition")?.value ?? "");
 
   if ((mime === "text/calendar" || mime === "application/ics") && !state.ics && (part.body?.data || part.body?.attachmentId)) {
     state.ics = { data: part.body.data, attachmentId: part.body.attachmentId };
@@ -178,25 +180,15 @@ function extractBody(part: EmailPart, state: ExtractState) {
 
   if (mime === "message/disposition-notification") {
     state.report ??= { data: part.body?.data, attachmentId: part.body?.attachmentId };
-    return;
+    return node;
   }
 
-  if (mime === "text/plain" && part.body?.data) {
-    state.bodyText = b64urlDecode(part.body.data);
-  } else if (mime === "text/html" && part.body?.data) {
-    state.bodyHtml = b64urlDecode(part.body.data);
-  } else if (mime.startsWith("image/") && contentId) {
+  if ((mime === "text/plain" || mime === "text/html") && part.body?.data && !part.filename) {
+    node.content = b64urlDecode(part.body.data);
+  } else if (mime.startsWith("image/") && contentId && !attached) {
     // Inline image referenced by CID
-    state.cidParts.push({
-      contentId,
-      mimeType: mime,
-      data: part.body?.data,
-      attachmentId: part.body?.attachmentId,
-    });
+    state.cidParts.push({ contentId, mimeType: mime, filename: part.filename ?? "", size: part.body?.size ?? 0, data: part.body?.data, attachmentId: part.body?.attachmentId });
   } else if (part.filename) {
-    // Regular attachment — treat message/rfc822 (attached .eml) as an opaque
-    // blob so we don't recurse into its nested parts and accidentally pull in
-    // the nested email's own attachments as if they belong to the parent.
     state.hasAttachments = true;
     if (part.body?.attachmentId) {
       state.attachments.push({
@@ -206,41 +198,41 @@ function extractBody(part: EmailPart, state: ExtractState) {
         attachment_id: part.body.attachmentId,
       });
     }
-    // Do not recurse into attached messages.
-    if (mime.startsWith("message/")) return;
   }
+  // An attached message's own text and files are not this message's.
+  if (mime.startsWith("message/")) return node;
+  node.parts = (part.parts ?? []).map((sub) => extractParts(sub as EmailPart, state));
+  return node;
+}
 
-  for (const sub of part.parts ?? []) {
-    extractBody(sub as EmailPart, state);
+// An image the HTML does not show is a file like any other.
+function listUnshown(state: ExtractState, html: string): void {
+  for (const c of state.cidParts) {
+    if (!c.attachmentId || html.includes(`cid:${c.contentId}`)) continue;
+    state.hasAttachments = true;
+    state.attachments.push({ filename: c.filename || "image", mime_type: c.mimeType, size: c.size, attachment_id: c.attachmentId });
   }
 }
 
+// One message, or null when Gmail no longer has it. Any other failure throws,
+// so the sync that asked is tried again instead of going on without it.
 async function fetchMessageById(
   accessToken: string,
   messageId: string,
 ): Promise<EmailData | null> {
+  const msgRes = await gmailRequest(accessToken, `/messages/${messageId}?format=full`);
+  if (msgRes.status === 404) return null;
+  if (!msgRes.ok) throw new Error(`Gmail message fetch failed (${msgRes.status})`);
+  const msg = await msgRes.json();
   try {
-    const msgRes = await gmailRequest(
-      accessToken,
-      `/messages/${messageId}?format=full`,
-    );
-    if (!msgRes.ok) return null;
-    const msg = await msgRes.json();
-
     const headers: Record<string, string> = {};
     for (const h of msg.payload?.headers ?? []) {
       headers[(h.name as string).toLowerCase()] = h.value as string;
     }
 
-    const state: ExtractState = {
-      bodyText: "",
-      bodyHtml: "",
-      hasAttachments: false,
-      attachments: [],
-      cidParts: [],
-      ics: null,
-    };
-    extractBody(msg.payload ?? {}, state);
+    const state = newState();
+    const body = bodyOf(extractParts(msg.payload ?? {}, state));
+    listUnshown(state, body.html);
 
     // The event a calendar email is about, from its .ics; what a read receipt
     // is about, from its report. Gmail hands a longer part over separately.
@@ -259,6 +251,7 @@ async function fetchMessageById(
 
     // Replace CID inline image references with embedded data URIs
     for (const cid of state.cidParts) {
+      if (!body.html.includes(`cid:${cid.contentId}`)) continue;
       let imgData = cid.data;
       if (!imgData && cid.attachmentId) {
         try {
@@ -274,11 +267,11 @@ async function fetchMessageById(
           /* skip on error */
         }
       }
-      if (imgData && state.bodyHtml) {
+      if (imgData && body.html) {
         const base64 = imgData.replace(/-/g, "+").replace(/_/g, "/");
         const dataUri = `data:${cid.mimeType};base64,${base64}`;
         const escaped = cid.contentId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        state.bodyHtml = state.bodyHtml.replace(
+        body.html = body.html.replace(
           new RegExp(`cid:${escaped}`, "gi"),
           dataUri,
         );
@@ -287,17 +280,17 @@ async function fetchMessageById(
 
     const from = headers["from"] ?? "";
     const replyTo = headers["reply-to"] ?? "";
-    const replyToEmail = replyTo ? extractEmail(replyTo) : undefined;
+    const replyToEmail = replyTo ? addressOf(replyTo) : undefined;
     return {
       gmail_id: msg.id as string,
       thread_id: msg.threadId as string,
       subject: headers["subject"] ?? "",
       sender: from,
-      sender_email: extractEmail(from),
+      sender_email: addressOf(from),
       recipients: headers["to"] ?? "",
       snippet: decodeSnippet(msg.snippet as string),
-      body_text: state.bodyText || htmlToText(state.bodyHtml),
-      body_html: state.bodyHtml,
+      body_text: body.text || htmlToText(body.html),
+      body_html: body.html,
       received_at: msg.internalDate
         ? new Date(parseInt(msg.internalDate as string, 10)).toISOString()
         : (headers["date"] ?? new Date().toISOString()),
@@ -310,7 +303,7 @@ async function fetchMessageById(
       ),
       is_reply: !!(headers["in-reply-to"] || headers["references"]),
       reply_to_email:
-        replyToEmail && replyToEmail !== extractEmail(from)
+        replyToEmail && replyToEmail !== addressOf(from)
           ? replyToEmail
           : undefined,
       cc_recipients: headers["cc"] ?? undefined,
@@ -321,7 +314,8 @@ async function fetchMessageById(
       is_receipt: isReceipt(headers),
       receipt,
     };
-  } catch {
+  } catch (e) {
+    console.error(`[gmail] message ${messageId} could not be read:`, (e as Error).message);
     return null;
   }
 }
@@ -366,7 +360,8 @@ async function fetchHeaderRows(tokenRef: string, ids: string[]): Promise<HeaderR
     const got = await Promise.all(
       ids.slice(i, i + 10).map(async (id) => {
         const res = await gmailRequest(tokenData.token, `/messages/${id}?format=metadata&${q}&fields=id,threadId,labelIds,internalDate,payload/headers`);
-        if (!res.ok) return null;
+        if (res.status === 404) return null;
+        if (!res.ok) throw new Error(`Gmail header fetch failed (${res.status})`);
         const msg = await res.json();
         const h: Record<string, string> = {};
         for (const x of (msg.payload?.headers ?? []) as { name: string; value: string }[]) h[x.name.toLowerCase()] = x.value;
@@ -583,8 +578,9 @@ async function sendEmail(tokenRef: string, m: Outgoing, threadId?: string): Prom
 }
 
 // ── Drafts and send-as addresses ────────────────────────────────────────────
-// Tabellar puts drafts into Gmail's Drafts and sends them from there; it never
-// deletes one, so a draft discarded here stays in Gmail.
+// Tabellar puts drafts into Gmail's Drafts, sends them from there, and takes
+// out the ones it put there when they are discarded. That is the only thing
+// this file can remove.
 
 // Put a draft in the mailbox's Drafts, or replace the one already there.
 // Returns the Gmail draft id. Nothing is sent.
@@ -599,6 +595,14 @@ async function saveDraft(tokenRef: string, draftId: string | null, m: Outgoing, 
   if (!res || res.status === 404) res = await gmailRequest(tokenData.token, "/drafts", { method: "POST", body: JSON.stringify({ message }) });
   if (!res.ok) throw new Error(`Gmail draft save failed (${res.status}): ${await res.text().catch(() => "")}`);
   return (await res.json()).id as string;
+}
+
+// Take out a draft Tabellar put there. The id is a draft's, which no message
+// has; one sent or discarded in Gmail meanwhile is gone already.
+async function discardDraft(tokenRef: string, draftId: string): Promise<void> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const res = await gmailRequest(tokenData.token, `/drafts/${encodeURIComponent(draftId)}`, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) throw new Error(`Gmail kept the draft (${res.status})`);
 }
 
 // Send a draft that is in Gmail's Drafts, with its final text: Gmail sends
@@ -655,15 +659,9 @@ async function fetchSentEmails(tokenRef: string, maxResults = 20): Promise<Sent[
           for (const h of msg.payload?.headers ?? []) {
             headers[(h.name as string).toLowerCase()] = h.value as string;
           }
-          const state: ExtractState = {
-            bodyText: "",
-            bodyHtml: "",
-            hasAttachments: false,
-            attachments: [],
-            cidParts: [],
-            ics: null,
-          };
-          extractBody(msg.payload ?? {}, state);
+          const state = newState();
+          const body = bodyOf(extractParts(msg.payload ?? {}, state));
+          listUnshown(state, body.html);
           return {
             id: msg.id as string,
             thread_id: msg.threadId as string,
@@ -672,8 +670,8 @@ async function fetchSentEmails(tokenRef: string, maxResults = 20): Promise<Sent[
             to: headers["to"] ?? "",
             cc: headers["cc"] ?? "",
             date: headers["date"] ?? "",
-            body_html: state.bodyHtml,
-            body: state.bodyText || htmlToText(state.bodyHtml),
+            body_html: body.html,
+            body: body.text || htmlToText(body.html),
             snippet: decodeSnippet(msg.snippet as string),
             has_attachments: state.hasAttachments,
             attachments: state.attachments,
@@ -1053,6 +1051,7 @@ export const gmailMailbox: Mail = {
   threadOf: (a, id) => threadIdOf(a.token_ref, id),
   send: (a, m, threadId) => sendEmail(a.token_ref, m, threadId),
   saveDraft: (a, draftId, m, threadId) => saveDraft(a.token_ref, draftId, m, threadId),
+  discardDraft: (a, draftId) => discardDraft(a.token_ref, draftId),
   sendDraft: (a, draftId, m, threadId) => sendDraft(a.token_ref, draftId, m, threadId),
   label: (a, name) => ensureLabel(a.token_ref, name),
   labelNames: (a) => userLabelNames(a.token_ref),

@@ -45,7 +45,7 @@ export async function saveTokens(t: TokenData): Promise<string> {
 
 export async function loadTokens(ref: string): Promise<TokenData> {
   const stored = keychainGet(ref);
-  if (!stored) throw new Error("Google account is not connected on this Mac. Sign in again.");
+  if (!stored) throw Object.assign(new Error("This Google account is not connected on this Mac. Sign in again."), { status: 401 });
   const { refresh_token, scopes } = JSON.parse(stored) as { refresh_token: string; scopes?: string[] };
   const cached = accessTokens.get(ref);
   // No cached access token: report it as expired so callers refresh first.
@@ -69,8 +69,11 @@ export async function refreshAccessToken(refreshToken: string): Promise<TokenDat
     }),
   });
   if (!res.ok) {
-    console.error(`[google] token refresh failed status=${res.status} ${(await res.text()).slice(0, 200)}`);
-    throw new Error("Token refresh failed");
+    const said = (await res.text()).slice(0, 200);
+    console.error(`[google] token refresh failed status=${res.status} ${said}`);
+    // Taken back in the Google account, expired, or issued to another client.
+    if (/invalid_grant|unauthorized_client|invalid_client/.test(said)) throw Object.assign(new Error("Google no longer accepts this sign-in. Sign in again."), { status: 401 });
+    throw new Error(`Google did not renew the sign-in (${res.status})`);
   }
   const data = await res.json();
   return {

@@ -19,14 +19,38 @@ import { answered } from "./snooze.ts";
 
 type Row = Record<string, any>;
 
+const ANSWERED = "You answered it yourself";
+
+// Nothing reached the mailbox: no network (a Mac just awake), no address for
+// it, no connection, or no sign-in to send with. Tried again until it is this
+// late; anything else may have gone out, and is never sent twice.
+const RETRY_FOR_MS = 12 * 3600_000;
+const NOT_SENT = /ENOTFOUND|EAI_AGAIN|ENETUNREACH|ENETDOWN|EHOSTUNREACH|EHOSTDOWN|ECONNREFUSED|UND_ERR_CONNECT_TIMEOUT|Could not reach /;
+function notSent(e: unknown): boolean {
+  const err = e as { message?: string; cause?: { code?: string; message?: string } };
+  return NOT_SENT.test(`${err.message ?? ""} ${err.cause?.code ?? ""} ${err.cause?.message ?? ""}`);
+}
+
+// A send cut off by a crash or a quit may or may not have gone out, so it is
+// not sent again on its own; the user looks.
+export async function closeInterrupted(): Promise<void> {
+  const { data } = await db.from("scheduled_emails").update({ status: "failed", error_message: "Tabellar stopped while sending it. Look in Sent before sending it again." }).eq("status", "sending").select("action_id");
+  for (const r of data ?? []) if (r.action_id) await db.from("action_log").update({ status: "failed", error: "Tabellar stopped while sending it" }).eq("id", r.action_id);
+  await db.from("action_log").update({ status: "failed", error: "Tabellar stopped before it was done" }).eq("status", "running");
+  await db.from("agent_sessions").update({ status: "error", error: "Tabellar stopped while this was running. Ask again.", pending_question: null, pending_questions: [] }).in("status", ["planning", "executing"]);
+}
+
 async function autopilotRefusal(row: Row): Promise<string | null> {
   const { level, paused } = await engineSettings(row.user_id);
   if (paused) return "Tabellar was paused before it was sent";
   if (level !== "autopilot") return "Autopilot was turned off before it was sent";
   if (!row.email_id) return "The email it answered is no longer in Tabellar";
-  const { data: email } = await db.from("emails").select("sender_email, reply_to_email, thread_id").eq("id", row.email_id).maybeSingle();
+  const { data: email } = await db.from("emails").select("sender_email, reply_to_email, thread_id, received_at").eq("id", row.email_id).maybeSingle();
   if (!email) return "The email it answered is no longer in Tabellar";
   if (email.thread_id !== row.thread_id) return "The reply is not in the thread of the email it answers";
+  // Answered by hand inside the window, here or from another device.
+  const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", row.user_id).eq("thread_id", row.thread_id).contains("label_ids", ["SENT"]).gt("received_at", email.received_at);
+  if (count) return ANSWERED;
   return checkAutoSend({
     to: (row.to_addresses as string[]) ?? [],
     cc: (row.cc_addresses as string[] | null) ?? [],
@@ -36,9 +60,14 @@ async function autopilotRefusal(row: Row): Promise<string | null> {
   });
 }
 
-// Keep a refused Autopilot reply as a draft and say so in History.
+// Keep a refused Autopilot reply as a draft and say so in History. One the
+// user answered themselves is of no more use.
 async function holdBack(row: Row, reason: string) {
   await db.from("scheduled_emails").update({ status: "cancelled", error_message: reason }).eq("id", row.id);
+  if (reason === ANSWERED) {
+    if (row.action_id) await db.from("action_log").update({ status: "blocked", reason, decided_at: new Date().toISOString() }).eq("id", row.action_id);
+    return;
+  }
   await db.from("draft_emails").insert({
     user_id: row.user_id, account_id: row.account_id, from_address: row.from_address, to_addresses: row.to_addresses, subject: row.subject, body_html: row.body_html, email_id: row.email_id, source: "tabellar",
   });
@@ -78,7 +107,7 @@ export async function sendDueEmails(): Promise<void> {
       const result = row.gmail_draft_id
         ? await mail(account).sendDraft(account, row.gmail_draft_id, m, row.thread_id ?? undefined)
         : await mail(account).send(account, m, row.thread_id ?? undefined);
-      await db.from("scheduled_emails").update({ status: "sent" }).eq("id", row.id);
+      await db.from("scheduled_emails").update({ status: "sent", error_message: null }).eq("id", row.id);
       await db.from("emails").upsert(
         {
           user_id: row.user_id,
@@ -104,6 +133,10 @@ export async function sendDueEmails(): Promise<void> {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      if (notSent(e) && Date.now() - new Date(row.send_at).getTime() < RETRY_FOR_MS) {
+        await db.from("scheduled_emails").update({ status: "pending", error_message: "Waiting for the network" }).eq("id", row.id);
+        continue;
+      }
       console.error(`[scheduled] send failed for ${row.id}: ${msg}`);
       await db.from("scheduled_emails").update({ status: "failed", error_message: msg.slice(0, 500) }).eq("id", row.id);
       if (autopilot && row.action_id) await db.from("action_log").update({ status: "failed", error: msg.slice(0, 500) }).eq("id", row.action_id);

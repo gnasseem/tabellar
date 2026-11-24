@@ -107,7 +107,7 @@ export async function answered(userId: string, threadId: string | null | undefin
 }
 
 // Put everything snoozed back in the inbox, so nothing is left archived when
-// an account is disconnected (or all data deleted).
+// an account is disconnected.
 export async function unsnoozeAll(userId: string, accountId?: string): Promise<void> {
   let q = db.from("emails").select("id").eq("user_id", userId).eq("is_snoozed", true);
   if (accountId) q = q.eq("account_id", accountId);

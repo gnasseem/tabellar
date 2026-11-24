@@ -13,6 +13,7 @@ import type { Account } from "./accounts.ts";
 import { escapeHtml } from "./mime.ts";
 import { decide, normalizeLevel, proposalHash, type AutoSend, type Kind, type Source } from "./policy.ts";
 import { learn, type Signal } from "./profile.ts";
+import { discardDrafts } from "./drafts.ts";
 
 export type Planned = {
   kind: Kind;
@@ -291,8 +292,11 @@ export async function undo(userId: string, id: string): Promise<void> {
   const kind = row.kind as string;
   if (kind === "send") {
     // Cancelling an Autopilot reply still inside its window.
-    const res = await db.from("scheduled_emails").update({ status: "cancelled", error_message: "Cancelled" }).eq("id", String(d.scheduledId ?? "")).eq("user_id", userId).eq("status", "pending").select("id");
+    const res = await db.from("scheduled_emails").update({ status: "cancelled", error_message: "Cancelled" }).eq("id", String(d.scheduledId ?? "")).eq("user_id", userId).eq("status", "pending").select("*");
     if (!res.data?.length) throw Object.assign(new Error("This reply was already sent"), { status: 409 });
+    // Its text is kept as a draft, to change and send.
+    const s = res.data[0];
+    await db.from("draft_emails").insert({ user_id: userId, account_id: s.account_id, from_address: s.from_address, to_addresses: s.to_addresses, subject: s.subject, body_html: s.body_html, email_id: s.email_id, source: "tabellar" });
   } else if (kind === "archive" && Array.isArray(d.emailIds)) {
     await setMailState(userId, d.emailIds as string[], { archived: false });
   } else if (kind === "label" || kind === "archive") {
@@ -300,7 +304,7 @@ export async function undo(userId: string, id: string): Promise<void> {
     if (kind === "label") await relabel(email, [], [String(d.labelId)]);
     else await relabel(email, ["INBOX"], [], { is_archived: false });
   } else if (kind === "draft") {
-    await db.from("draft_emails").delete().eq("id", String(d.draftId)).eq("user_id", userId);
+    await discardDrafts(userId, [String(d.draftId)]);
   } else if (kind === "todo") {
     await db.from("todos").delete().eq("id", String(d.todoId)).eq("user_id", userId);
   } else if (kind === "meeting") {

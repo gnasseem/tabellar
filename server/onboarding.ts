@@ -190,14 +190,14 @@ export async function answerExample(userId: string, b: { kind?: unknown; address
   if (kind === "followup") {
     const f = (await followupList(userId)).find((x) => x.email_id === emailId);
     if (!f) return;
-    await db.from("follow_up_reminders").insert({
+    await db.from("follow_up_reminders").upsert({
       user_id: userId, email_id: f.email_id, thread_id: f.thread_id, recipient_email: f.recipient_email, recipient_name: f.recipient_name,
-      subject: f.subject, remind_at: new Date().toISOString(), status: answer === "yes" ? "waiting" : "dismissed",
-    });
+      subject: f.subject, remind_at: new Date().toISOString(), status: answer === "yes" ? "waiting" : "dismissed", created_at: new Date().toISOString(),
+    }, { onConflict: "user_id,thread_id" });
     return;
   }
   if (answer === "yes") {
-    const own = (await allPrefs(userId)).filter((r) => r.kind === "sender" && r.subject === address);
+    const own = pick(await allPrefs(userId), address, "");
     if (!own.some((r) => ["vip", "normal", "quiet", "ignore"].includes(r.value))) {
       await setPref(userId, "sender", address, "normal", "user", `Said yes to a ${kind} from their mail, in the first run`);
     }

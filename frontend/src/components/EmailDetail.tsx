@@ -98,11 +98,11 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
     let live = true;
     const q = supabase.from("emails").select(MESSAGE_FIELDS).eq("user_id", user.id);
     (email.thread_id ? q.eq("thread_id", email.thread_id) : q.eq("id", email.id))
-      .order("received_at", { ascending: true })
-      .limit(40)
+      .order("received_at", { ascending: false })
+      .limit(100)
       .then(({ data }: { data: any[] | null }) => {
         if (!live) return;
-        const list = data?.length ? data : [email];
+        const list = data?.length ? data.reverse() : [email];
         setMessages(list);
         setOpen(new Set([list[list.length - 1].id]));
       });
@@ -197,7 +197,9 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
 
   const track = async () => {
     setBusy(true);
-    const first = String(email.recipients || "").split(",")[0]?.trim() || "";
+    // Who owes the answer: the sender of an email received, who one sent went to.
+    const sent = (email.label_ids || []).includes("SENT");
+    const first = sent ? String(email.recipients || "").split(",")[0]?.trim() || "" : email.sender || email.sender_email || "";
     const { error } = await supabase.from("follow_up_reminders").upsert(
       {
         user_id: user.id,
@@ -207,6 +209,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
         recipient_name: first.match(/^(.*?)\s*</)?.[1]?.replace(/"/g, "").trim() || null,
         subject: email.subject || "(no subject)",
         remind_at: new Date(remindAt).toISOString(),
+        created_at: new Date().toISOString(),
         status: "waiting",
       },
       { onConflict: "user_id,thread_id" },

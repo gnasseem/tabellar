@@ -18,6 +18,7 @@
 import { db } from "./db.ts";
 import { mail } from "./providers.ts";
 import type { Account } from "./accounts.ts";
+import { addressesIn } from "./senders.ts";
 
 export const KINDS = ["fact", "rule", "writing", "sender", "domain", "topic"] as const;
 export const VALUES = ["vip", "normal", "quiet", "ignore", "never_todo", "never_meeting", "never_draft", "never_followup", "not_newsletter"] as const;
@@ -61,7 +62,7 @@ export type Pref = { id: string; kind: string; subject: string; value: string; s
 export type Option = { label: string; pref?: { kind: string; subject: string; value: string } };
 
 const lc = (s: unknown) => String(s ?? "").trim().toLowerCase();
-const like = (s: string) => s.replace(/[%_]/g, "");
+const like = (s: string) => s.replace(/%/g, "");
 export const domainOf = (address: string) => lc(address).split("@")[1] ?? "";
 
 // "Voyage AI <hi@voyageai.com>" is "Voyage AI"; a bare address is itself.
@@ -70,11 +71,12 @@ export function displayName(sender: string | null | undefined, address: string):
   return name && !name.includes("@") ? name : address;
 }
 
-// Does the text mention the topic? Every word of it, a plural counting as the singular.
+// Does the text mention the topic? Every word of it, as a word ("AI" is not
+// in "email"), a plural counting as the singular.
 export function mentions(text: string, topic: string): boolean {
   const t = lc(text);
   const words = lc(topic).split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1);
-  return words.length > 0 && words.every((w) => t.includes(w.length > 3 ? w.replace(/s$/, "") : w));
+  return words.length > 0 && words.every((w) => new RegExp(`(?<![\\p{L}\\p{N}])${w.length > 3 ? w.replace(/s$/, "") : w}(?:e?s)?(?![\\p{L}\\p{N}])`, "u").test(t));
 }
 
 export async function allPrefs(userId: string): Promise<Pref[]> {
@@ -111,19 +113,21 @@ export const covers = (rows: Pref[]) => rows.some((r) => r.kind === "sender" || 
 // Has the user written to this address? Sent mail in the database first; for
 // anything else the mailbox answers, since sync keeps little sent mail.
 export async function wroteTo(userId: string, address: string, account: Account | null): Promise<boolean> {
-  const { count } = await db
+  const a = lc(address);
+  const { data: sent } = await db
     .from("emails")
-    .select("id", { count: "exact", head: true })
+    .select("recipients, cc_recipients")
     .eq("user_id", userId)
     .contains("label_ids", ["SENT"])
-    .ilike("recipients", `%${like(address)}%`);
-  if (count) return true;
+    .or(`recipients.ilike.%${like(a).replace(/[,()]/g, "")}%,cc_recipients.ilike.%${like(a).replace(/[,()]/g, "")}%`)
+    .limit(500);
+  if ((sent ?? []).some((e) => addressesIn(`${e.recipients ?? ""}, ${e.cc_recipients ?? ""}`).includes(a))) return true;
   if (!account || !/^[^\s@"]+@[^\s@"]+$/.test(address)) return false;
   // That mailbox first, then the user's other mailboxes.
   const { data: accounts } = await db.from("accounts").select("*").eq("user_id", userId);
-  for (const a of [account, ...((accounts ?? []) as unknown as Account[]).filter((x) => x.id !== account.id)]) {
+  for (const x of [account, ...((accounts ?? []) as unknown as Account[]).filter((other) => other.id !== account.id)]) {
     try {
-      if (await mail(a).hasSentTo(a, address)) return true;
+      if (await mail(x).hasSentTo(x, address)) return true;
     } catch {
       // A mailbox that cannot be asked counts as not written to.
     }
@@ -171,7 +175,7 @@ export async function knowsSender(userId: string, address: string, opts: { excep
     .from("emails")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
-    .ilike("sender_email", like(a))
+    .eq("sender_email", a)
     .eq("is_read", true)
     .neq("id", opts.exceptEmailId ?? "");
   if (opened) return true;
@@ -253,7 +257,7 @@ export async function setPref(userId: string, kind: string, subject: string, val
 
 async function emailIdsFor(userId: string, kind: string, subject: string): Promise<string[]> {
   if (kind === "sender") {
-    const { data } = await db.from("emails").select("id").eq("user_id", userId).ilike("sender_email", like(subject)).limit(5000);
+    const { data } = await db.from("emails").select("id").eq("user_id", userId).eq("sender_email", lc(subject)).limit(5000);
     return (data ?? []).map((e) => e.id as string);
   }
   if (kind === "domain") {
@@ -290,7 +294,10 @@ export async function applyPref(userId: string, kind: string, subject: string, v
   const gone = (r: { data: Record<string, unknown>[] | null }) => (r.data ?? []).forEach((x) => removed.add(String(x.id)));
   if (kinds.includes("todo")) gone(await db.from("todos").delete().eq("user_id", userId).neq("source", "manual").eq("is_completed", false).in("email_id", ids).select("id"));
   if (kinds.includes("meeting")) gone(await db.from("meetings").delete().eq("user_id", userId).eq("status", "proposed").in("email_id", ids).select("id"));
-  if (kinds.includes("draft")) gone(await db.from("draft_emails").delete().eq("user_id", userId).eq("source", "tabellar").in("email_id", ids).select("id"));
+  if (kinds.includes("draft")) {
+    const { data: drafts } = await db.from("draft_emails").select("id").eq("user_id", userId).eq("source", "tabellar").in("email_id", ids);
+    if (drafts?.length) for (const id of await import("./drafts.ts").then((m) => m.discardDrafts(userId, drafts.map((d) => String(d.id)))).catch(() => [])) removed.add(id);
+  }
   if (!removed.size) return;
   const { data: done } = await db.from("action_log").select("id, detail").eq("user_id", userId).eq("status", "done").in("kind", kinds).in("email_id", ids);
   for (const r of done ?? []) {
@@ -331,14 +338,16 @@ export async function learn(userId: string, s: Signal): Promise<void> {
   const sender = lc(s.sender) || (await senderOf(s.emailId));
   if (!sender) return;
   const value = s.thing === "newsletter" ? "not_newsletter" : `never_${s.thing}`;
-  const own = (await allPrefs(userId)).filter((r) => r.kind === "sender" && r.subject === sender);
+  const rows = await allPrefs(userId);
+  const own = rows.filter((r) => r.kind === "sender" && r.subject === sender);
   if (s.outcome === "never_sender") {
     await setPref(userId, "sender", sender, value, "user", `Said never, on a ${s.thing}`);
     await applyPref(userId, "sender", sender, value);
     return;
   }
   if (s.outcome === "approved") {
-    if (!own.some((r) => STANDING.has(r.value))) await setPref(userId, "sender", sender, "normal", "learned", `Approved a ${s.thing} from their mail`);
+    // Their company may have a standing already (most important), which one of their own would replace.
+    if (!pick(rows, sender, "").some((r) => STANDING.has(r.value))) await setPref(userId, "sender", sender, "normal", "learned", `Approved a ${s.thing} from their mail`);
     return;
   }
   if (!["todo", "meeting", "draft"].includes(s.thing) || own.some((r) => r.value === value)) return;
@@ -414,8 +423,10 @@ export async function feedback(userId: string, f: Feedback): Promise<void> {
 // answered. Returns whether it was added.
 export async function ask(userId: string, q: { text: string; detail?: string; about: string; emailId?: string | null; options: Option[] }): Promise<boolean> {
   const about = lc(q.about);
-  const { count: seen } = await db.from("questions").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("about", about).in("status", ["open", "waiting", "answered"]);
-  if (seen) return false;
+  const { data: seen } = await db.from("questions").select("status").eq("user_id", userId).eq("about", about).in("status", ["open", "waiting", "answered"]);
+  // An answer whose preference the user has deleted since no longer answers it.
+  const forgotten = about.includes("@") && !covers(await prefsFor(userId, about));
+  if ((seen ?? []).some((q) => q.status !== "answered" || !forgotten)) return false;
   const { count: open } = await db.from("questions").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "open");
   await db.from("questions").insert({
     user_id: userId, text: q.text, detail: q.detail ?? null, about, email_id: q.emailId ?? null, options: q.options,
@@ -464,7 +475,12 @@ export async function answer(userId: string, id: string, index: number): Promise
   await db.from("questions").update({ status: opt.pref ? "answered" : "skipped", answer: opt.label, answered_at: new Date().toISOString() }).eq("id", id);
   await promote(userId);
   const replan = opt.pref && !STOPS[opt.pref.value] && q.email_id ? (q.email_id as string) : null;
-  if (replan) await db.from("email_processed").update({ engine_at: null }).eq("email_id", replan);
+  if (replan) {
+    // Everything recent from that sender waited on this answer, not only the email it was asked about.
+    const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    const { data: theirs } = opt.pref!.kind === "sender" ? await db.from("emails").select("id").eq("user_id", userId).eq("sender_email", opt.pref!.subject).gte("received_at", since).limit(200) : { data: [] };
+    await db.from("email_processed").update({ engine_at: null }).in("email_id", [...new Set([replan, ...(theirs ?? []).map((e) => String(e.id))])]);
+  }
   return { replan };
 }
 

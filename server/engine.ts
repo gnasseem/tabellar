@@ -27,9 +27,9 @@ import { generateDraft } from "./ai.ts";
 import { keepRules, ownWords, recipients, stylePrompt, writingFor, type Recipient } from "./writing.ts";
 import { isBulk, writtenTo } from "./senders.ts";
 import { calendarAccount, mail, type LinkedEvent } from "./providers.ts";
-import { syncMail, readBacklog, serial, fillMissingBodies, refreshStored } from "./sync.ts";
+import { syncMail, syncErrors, readBacklog, serial, fillMissingBodies, refreshStored } from "./sync.ts";
 import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions.ts";
-import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
+import { CAP_PER_CYCLE, decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
 import { ACT_WITHIN_MS, dueOf, meetingOf, RULES_VERSION, todoOf } from "./rules.ts";
 import { judgeSent } from "./followups.ts";
@@ -56,7 +56,8 @@ const NO_REPLY = /no.?reply|noreply|donotreply|do-not-reply|notifications?@|mail
 export const engineStatus = {
   lastCycleAt: null as string | null,
   lastError: null as string | null,
-  mailError: null as string | null, // set after a few failed checks in a row
+  mailError: null as string | null, // set after a few failed checks of a mailbox in a row
+  signIn: null as string | null, // the address whose sign-in is no longer accepted
   running: false,
 };
 
@@ -93,6 +94,12 @@ const AUTOPILOT_INSTRUCTIONS =
   "If a good reply needs a decision, a commitment (money, a date, attending something, agreeing to something), an attachment, or facts you do not have, write only the word HOLD and nothing else.";
 
 const HOLD = /^\W*HOLD\W*$/;
+
+// A draft the model failed to write is tried again, this often in all.
+const DRAFT_TRIES = 3;
+const draftTries = new Map<string, number>();
+
+const NEWS_MS = 24 * 3600_000;
 
 // `tabellar check` swaps this for canned text so Autopilot can be run without a model.
 export const drafter = { draft: (userId: string, e: EmailRow, instructions: string) => draftReply(userId, e, instructions) };
@@ -221,8 +228,11 @@ export const planNew = serial(async (userId: string): Promise<void> => {
   );
 
   for (const row of sorted) {
+    // The limit for one pass is reached: the rest is planned in the next.
+    if (cycleCount >= CAP_PER_CYCLE) break;
     const email = row.emails as EmailRow;
-    await db.from("email_processed").update({ engine_at: new Date().toISOString() }).eq("id", row.id);
+    const planned = (at: string | null) => db.from("email_processed").update({ engine_at: at }).eq("id", row.id);
+    await planned(new Date().toISOString());
     if (!email.received_at || Date.now() - new Date(email.received_at).getTime() > ACT_WITHIN_MS) continue;
 
     const category = String(row.category);
@@ -336,14 +346,18 @@ export const planNew = serial(async (userId: string): Promise<void> => {
           } else if (pre.verdict === "refuse") await run(base);
           else if (body) drafted = (await run({ ...base, detail: { ...base.detail, body } })) === "done";
         } catch (e) {
+          // Planned again in the next pass; what is already done is not repeated.
           console.error("[engine] reply failed:", (e as Error).message);
+          const tries = (draftTries.get(email.id) ?? 0) + 1;
+          draftTries.set(email.id, tries);
+          if (tries < DRAFT_TRIES) await planned(null);
         }
       }
     }
 
     // Todo.
     if (wantsTodo && !asked) {
-      const due = dueOf(todo.quote, timezone);
+      const due = dueOf(todo.quote, timezone, new Date(email.received_at));
       await run({ kind: "todo", emailId: email.id, summary: `Todo: ${todo.label}`, detail: { text: String(todo.label).trim(), ...(due ? { due } : {}) } });
     }
 
@@ -352,7 +366,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     // either side; if it has, the email is linked to that event instead.
     // Calendar mail never becomes a proposal (the analysis linked it).
     const suggested = email.is_calendar || stopped("meeting") ? undefined : actions.find((a) => a.action === "schedule_meeting");
-    const meeting = suggested ? meetingOf(suggested, email, timezone) : null;
+    const meeting = suggested ? meetingOf(suggested, email, timezone, new Date(email.received_at)) : null;
     const wall = meeting?.dateTime ? parseWallClock(meeting.dateTime) : null;
     if (meeting && wall !== null && !row.calendar) {
       const start = wallClockToUtc(wall, timezone);
@@ -386,7 +400,9 @@ export const planNew = serial(async (userId: string): Promise<void> => {
       }
     }
 
-    const worthIt = !stopped("notify") && worthNotifying(profile?.notification_level, { vip: prefs.some((r) => r.value === "vip"), needsUser: category === "action-required" || waiting || asked });
+    // Mail that has been there a while (the first read, mail read again) is not news.
+    const news = Date.now() - new Date(email.received_at).getTime() < NEWS_MS;
+    const worthIt = news && !stopped("notify") && worthNotifying(profile?.notification_level, { vip: prefs.some((r) => r.value === "vip"), needsUser: category === "action-required" || waiting || asked });
     if (replying) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted: false, replying: true });
     else if (worthIt && !suspicious) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted });
   }
@@ -421,7 +437,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
 // Start or carry on the first read now (a mailbox was just connected, a
 // model was just chosen) instead of at the next cycle.
 export function readNow(userId: string): void {
-  void startFirstRead(userId, () => planNew(userId));
+  void startFirstRead(userId, () => planNew(userId), true);
   if (modelConfigured()) void readAll(userId).catch((e) => console.error("[engine] reading:", e));
 }
 
@@ -512,7 +528,7 @@ export async function runCycle(): Promise<void> {
       await judgeSent(userId);
     }
     if (!(await engineSettings(userId)).paused) void prepareBrief(userId).catch((e) => console.error("[engine] brief:", (e as Error).message));
-    engineStatus.lastError = null;
+    engineStatus.lastError = [...syncErrors.values()][0] ?? null;
   } catch (e) {
     engineStatus.lastError = (e as Error).message;
     console.error("[engine]", e);
@@ -543,14 +559,30 @@ export function windowClosed(): void {
   windowsOpen = Math.max(0, windowsOpen - 1);
 }
 
-async function mailboxChanged(userId: string): Promise<boolean> {
+// One mailbox that cannot be reached does not keep the others from being
+// watched. `failures` counts each one's checks that failed in a row.
+async function mailboxChanged(userId: string, failures: Map<string, number>): Promise<boolean> {
   const { data } = await db.from("accounts").select("*").eq("user_id", userId).eq("paused", false);
+  const accounts = (data ?? []) as unknown as Account[];
   let changed = false;
-  for (const a of (data ?? []) as unknown as Account[]) {
+  let error: string | null = null;
+  let signIn: string | null = null;
+  for (const id of failures.keys()) if (!accounts.some((a) => a.id === id)) failures.delete(id);
+  for (const a of accounts) {
     const box = mail(a);
-    box.watch?.(a, () => wakeWatcher());
-    if (!changed && a.history_id && (await box.moved(a))) changed = true;
+    try {
+      box.watch?.(a, () => wakeWatcher());
+      if (a.history_id && (await box.moved(a))) changed = true;
+      failures.delete(a.id);
+    } catch (e) {
+      const n = (failures.get(a.id) ?? 0) + 1;
+      failures.set(a.id, n);
+      if (n >= 3) error = accounts.length > 1 ? `${a.address}: ${(e as Error).message}` : (e as Error).message;
+      if ((e as { status?: number }).status === 401) signIn = a.address;
+    }
   }
+  engineStatus.mailError = error;
+  engineStatus.signIn = signIn;
   return changed;
 }
 
@@ -580,7 +612,7 @@ function startWatcher(): () => void {
   let stopped = false;
   let busy = false;
   let soon = false;
-  let failures = 0;
+  const failures = new Map<string, number>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const schedule = (ms: number) => {
     clearTimeout(timer);
@@ -595,16 +627,16 @@ function startWatcher(): () => void {
     let delay = windowsOpen ? WATCH_OPEN_MS : WATCH_CLOSED_MS;
     try {
       const userId = await localUser();
-      if (userId && (await mailboxChanged(userId))) {
+      const changed = !!userId && (await mailboxChanged(userId, failures));
+      if (userId && changed) {
         const fresh = await syncMail(userId);
         if (fresh.length && modelConfigured()) void readNew(userId);
       }
-      failures = 0;
-      engineStatus.mailError = null;
+      // While none can be reached, ask less and less often.
+      const { count } = await db.from("accounts").select("id", { count: "exact", head: true }).eq("paused", false);
+      if (failures.size && failures.size === count) delay = Math.min(WATCH_MAX_MS, delay * 2 ** Math.min(...failures.values()));
     } catch (e) {
-      failures++;
-      if (failures >= 3) engineStatus.mailError = (e as Error).message;
-      delay = Math.min(WATCH_MAX_MS, delay * 2 ** failures);
+      console.error("[engine] watching:", (e as Error).message);
     } finally {
       busy = false;
     }
@@ -645,8 +677,12 @@ async function tellUser(): Promise<void> {
 
 export function startEngine(): () => void {
   let last = 0;
+  let ticked = Date.now();
   const tell = setInterval(() => void tellUser(), 60_000);
   const tick = () => {
+    // The timer did not run for a while: the Mac was asleep. Look at once.
+    if (Date.now() - ticked > 3 * TICK_MS) wakeWatcher();
+    ticked = Date.now();
     if (Date.now() - last < INTERVAL_MS) return;
     last = Date.now();
     void runCycle();

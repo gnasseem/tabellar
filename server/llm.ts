@@ -61,6 +61,23 @@ export function requireModel(slot: Slot = "careful"): void {
   if (!modelConfigured(slot)) throw new Error("No AI model is set up. Choose one in Settings, under Models.");
 }
 
+// What to tell the user when a model call failed, from the provider's answer
+// or, when there was none, what went wrong on the way.
+export function modelFailure(slot: Slot, status: number, text: string): string {
+  let said = "";
+  try {
+    const d = JSON.parse(text);
+    said = typeof d.error === "string" ? d.error : String(d.error?.message ?? d.message ?? "");
+  } catch {
+    // not JSON
+  }
+  const m = slotModel(slot);
+  if (m?.format === "ollama") return status === 404 ? `${m.model} is not on this Mac. Choose a model in Settings, under Models.` : said || "The model on this Mac is not answering.";
+  if (status === 401 || status === 403) return `The API key was not accepted. Check it in Settings, under Models.${said ? ` (${said.slice(0, 160)})` : ""}`;
+  if (status === 429) return said ? `The model provider refused: ${said.slice(0, 200)}` : "The model provider is over its limit. Try again in a minute.";
+  return status ? `The model provider answered with an error (${status})${said ? `: ${said.slice(0, 200)}` : ""}` : "The model provider could not be reached.";
+}
+
 export async function chatCompletion(req: ChatRequest, signal?: AbortSignal): Promise<Response> {
   const m = slotModel(req.slot ?? "careful");
   if (!m) throw new Error("No AI model is set up. Choose one in Settings, under Models.");
@@ -106,13 +123,14 @@ async function openai(baseUrl: string, model: string, key: string, req: ChatRequ
   // want max_completion_tokens instead of max_tokens. Adjust and retry once each.
   for (let attempt = 0; ; attempt++) {
     const res = await send();
-    if (res.status !== 400 || attempt >= 2) return res;
+    if (res.status !== 400 || attempt >= 3) return res;
     const text = await res.text();
     if (/temperature/i.test(text) && "temperature" in body) delete body.temperature;
     else if (/max_tokens/i.test(text) && "max_tokens" in body) {
       body.max_completion_tokens = body.max_tokens;
       delete body.max_tokens;
-    } else return new Response(text, { status: res.status, headers: res.headers });
+    } else if (/parallel_tool_calls/i.test(text) && "parallel_tool_calls" in body) delete body.parallel_tool_calls;
+    else return new Response(text, { status: res.status, headers: res.headers });
   }
 }
 
@@ -142,6 +160,21 @@ function contextFor(slot: Slot, model: string): number {
 // minutes let the fast model unload between the steps of the first read and
 // between bursts of new mail, and loading it again costs seconds each time.
 const KEEP_ALIVE = "30m";
+
+// Ollama stopped (quit, crashed, or the Mac restarted it): start it again, at
+// most once a minute.
+let restartedAt = 0;
+let restarting: Promise<boolean> | null = null;
+function restartOllama(baseUrl: string): Promise<boolean> {
+  if (!/^https?:\/\/(127\.0\.0\.1|localhost)[:/]/.test(`${baseUrl}/`)) return Promise.resolve(false);
+  if (restarting) return restarting;
+  if (Date.now() - restartedAt < 60_000) return Promise.resolve(false);
+  restartedAt = Date.now();
+  restarting = import("./setup.ts").then((s) => s.startOllama()).catch(() => false).finally(() => {
+    restarting = null;
+  });
+  return restarting;
+}
 
 async function ollama(baseUrl: string, model: string, req: ChatRequest, signal?: AbortSignal): Promise<Response> {
   const toolNames = new Map<string, string>();
@@ -191,6 +224,7 @@ async function ollama(baseUrl: string, model: string, req: ChatRequest, signal?:
     }
   } catch {
     if (signal?.aborted) throw new Error("Local model request was cancelled");
+    if (await restartOllama(baseUrl)) return ollama(baseUrl, model, req, signal);
     return new Response(JSON.stringify({ error: `Could not reach Ollama at ${baseUrl}. Is the Ollama app running?` }), { status: 503 });
   }
   if (!res.ok) return new Response(await res.text(), { status: res.status });
@@ -311,15 +345,17 @@ async function anthropic(baseUrl: string, model: string, key: string, req: ChatR
     headers["anthropic-beta"] = "server-side-fallback-2026-07-01";
     body.fallbacks = "default";
   }
-  const res = await fetch(`${baseUrl.replace(/\/+$/, "")}/messages`, {
-    method: "POST",
-    signal,
-    headers,
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
+  let res: Response;
+  for (;;) {
+    res = await fetch(`${baseUrl.replace(/\/+$/, "")}/messages`, { method: "POST", signal, headers, body: JSON.stringify(body) });
+    if (res.ok) break;
+    const text = await res.text();
+    // Older models (Haiku 4.5, Sonnet 4.5) take neither effort nor adaptive
+    // thinking. Leave out the one refused and ask again.
+    if (res.status === 400 && /effort|output_config/i.test(text) && "output_config" in body) delete body.output_config;
+    else if (res.status === 400 && /thinking/i.test(text) && "thinking" in body) delete body.thinking;
     // 529 means overloaded; callers retry on 503.
-    return new Response(await res.text(), { status: res.status === 529 ? 503 : res.status, headers: res.headers });
+    else return new Response(text, { status: res.status === 529 ? 503 : res.status, headers: res.headers });
   }
   const data = (await res.json()) as { content: Block[]; stop_reason: string };
   const text = data.content.filter((b) => b.type === "text").map((b) => b.text as string).join("");

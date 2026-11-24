@@ -40,6 +40,7 @@ export interface AgentAction {
     duration_mins?: number;
     attendees?: string[];
     email_ids?: string[];
+    emails?: { id: string; sender: string; subject: string }[];
     summary?: string;
   };
   selected: boolean;

@@ -17,6 +17,7 @@
 // headers whether mail is bulk, so the model never reads it.
 
 import { db } from "./db.ts";
+import { addressOf } from "./mime.ts";
 import type { HeaderRow } from "./providers.ts";
 
 const lc = (s: unknown) => String(s ?? "").trim().toLowerCase();
@@ -52,7 +53,7 @@ export async function ownAddresses(userId: string): Promise<Set<string>> {
 // Add messages to mail_index; a message seen again updates its row.
 export async function indexMail(userId: string, accountId: string, rows: HeaderRow[], own: Set<string>): Promise<void> {
   const out = rows.map((r) => {
-    const from = addressesIn(r.from)[0] ?? "";
+    const from = addressesIn(addressOf(r.from))[0] ?? "";
     const category = r.labels.map((l) => CATEGORY[l]).find(Boolean) ?? null;
     return {
       user_id: userId,

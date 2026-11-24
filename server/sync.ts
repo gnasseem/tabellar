@@ -34,7 +34,19 @@ const RECENT_CAP = 300;
 // most 300. What a sync falls back on when the mailbox's change history has expired.
 async function fetchRecent(userId: string, account: Account): Promise<EmailData[]> {
   const ids = await mail(account).list(account, { days: RECENT_DAYS, cap: RECENT_CAP, inbox: true });
-  return mail(account).fetch(account, await notStored(userId, ids));
+  const missing = await notStored(userId, ids);
+  // What was read, archived or labelled meanwhile: the labels the stored ones
+  // have now, and out of the inbox what is no longer in the list.
+  const absent = new Set(missing);
+  const stored = ids.filter((id) => !absent.has(id));
+  const labels: MailboxChanges["labels"] = (await mail(account).headerRows(account, stored)).map((r) => ({ id: r.gmail_id, add: r.labels, remove: [], exact: true }));
+  if (ids.length < RECENT_CAP) {
+    const listed = new Set(ids);
+    const { data } = await db.from("emails").select("gmail_id").eq("account_id", account.id).contains("label_ids", ["INBOX"]).gte("received_at", new Date(Date.now() - (RECENT_DAYS - 1) * 86_400_000).toISOString()).limit(5000);
+    for (const e of data ?? []) if (!listed.has(String(e.gmail_id))) labels.push({ id: String(e.gmail_id), add: [], remove: ["INBOX"] });
+  }
+  await applyChanges(userId, { tooOld: false, historyId: null, added: [], sentAdded: false, labels, deleted: [] });
+  return mail(account).fetch(account, missing);
 }
 
 // Of these message ids, the ones not in emails yet.
@@ -88,7 +100,8 @@ export async function storeInbox(userId: string, account: Account, rawEmails: Em
       calendar_event: e.calendar_event,
       is_receipt: !!e.is_receipt,
     }));
-    const { data } = await db.from("emails").insert(rows).select("id");
+    const { data, error } = await db.from("emails").insert(rows).select("id");
+    if (error) throw new Error(error.message);
     inserted.push(...((data ?? []) as { id: string }[]).map((e) => e.id));
   }
 
@@ -239,6 +252,9 @@ const CONTACTS_EVERY_MS = 6 * 3600_000;
 const lastSent = new Map<string, number>();
 const lastContacts = new Map<string, number>();
 
+// Why each account's last sync failed, while it does.
+export const syncErrors = new Map<string, string>();
+
 // Fetch new inbox mail (and recent sent mail) for every active account.
 // Initial: the latest 50 inbox messages. Otherwise: whatever the mailbox's
 // change history says arrived or changed since the last sync, falling back to the
@@ -259,39 +275,26 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
     try {
       const box = mail(account);
       // Incremental sync needs a starting point in the mailbox's change
-      // history. Take it before a full fetch so mail arriving in between is
-      // not missed.
-      const startOver = async () => {
-        try {
-          const historyId = await box.cursor(account);
-          await db.from("accounts").update({ history_id: historyId }).eq("id", account.id);
-        } catch (err) {
-          console.warn("[sync] could not read the mailbox history id:", err);
-        }
-      };
-
+      // history. It is read before the mail is fetched, so what arrives in
+      // between is not missed, and kept once the mail is stored, so a fetch
+      // that fails half way is done again.
+      let cursor: string | null = null;
       let rawEmails: EmailData[] = [];
       let sentArrived = true;
-      if (isInitialFetch) {
-        await startOver();
-        rawEmails = await box.fetch(account, await box.list(account, { cap: 50, inbox: true }));
-      } else if (account.history_id) {
-        const changes = await box.changes(account, account.history_id);
-        if (changes.tooOld) {
-          await startOver();
-          rawEmails = await fetchRecent(userId, account);
-        } else {
-          const back = await applyChanges(userId, changes);
-          rawEmails = await box.fetch(account, await notStored(userId, [...new Set([...changes.added, ...back])]));
-          sentArrived = changes.sentAdded;
-          if (changes.historyId) await db.from("accounts").update({ history_id: changes.historyId }).eq("id", account.id);
-        }
+      const changes = !isInitialFetch && account.history_id ? await box.changes(account, account.history_id) : null;
+      if (changes && !changes.tooOld) {
+        const back = await applyChanges(userId, changes);
+        rawEmails = await box.fetch(account, await notStored(userId, [...new Set([...changes.added, ...back])]));
+        sentArrived = changes.sentAdded;
+        cursor = changes.historyId;
       } else {
-        await startOver();
-        rawEmails = await fetchRecent(userId, account);
+        cursor = await box.cursor(account);
+        rawEmails = isInitialFetch ? await box.fetch(account, await box.list(account, { cap: 50, inbox: true })) : await fetchRecent(userId, account);
       }
 
       allNew.push(...(await storeInbox(userId, account, rawEmails)));
+      if (cursor) await db.from("accounts").update({ history_id: cursor }).eq("id", account.id);
+      syncErrors.delete(account.id);
 
       // The mailbox's contacts into email_memory, for names and autocomplete.
       if (box.contacts && Date.now() - (lastContacts.get(account.id) ?? 0) > CONTACTS_EVERY_MS) try {
@@ -356,7 +359,8 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
         console.warn("[sync] sent thread backfill failed:", e);
       }
     } catch (e) {
-      console.error(`Fetch failed for account ${account.id}:`, e);
+      syncErrors.set(account.id, (e as Error).message);
+      console.error(`[sync] ${account.address}:`, (e as Error).message);
     }
   }
 

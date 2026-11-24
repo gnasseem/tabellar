@@ -16,7 +16,8 @@
  */
 
 import type { Db } from "./db.ts";
-import { llmWithTools, PROMPTS } from "./ai.ts";
+import { dateContextFor, llmWithTools, PROMPTS } from "./ai.ts";
+import { looksLikeInstructions } from "./policy.ts";
 import { isLocalModel } from "./llm.ts";
 import {
   AGENT_TOOLS,
@@ -83,7 +84,11 @@ interface PendingQuestion {
   allow_custom: boolean;
   related_email_id?: string | null;
   bucket?: AgentBucket;
+  given?: string[]; // answers to the others of the same call
 }
+
+// The states a run may still change; a cancelled, approved or finished plan stays as it is.
+const OPEN = ["planning", "asking"];
 
 interface SessionRow {
   id: string;
@@ -204,7 +209,7 @@ function buildSystemPrompt(
   timezone: string,
   bucket: AgentBucket | undefined,
 ): string {
-  const today = new Date().toISOString().split("T")[0];
+  const today = dateContextFor(timezone || "UTC");
   const base =
     bucket && bucket !== "single"
       ? PROMPTS.agent_system_bucket.replace("{BUCKET}", bucket)
@@ -301,7 +306,7 @@ export async function getOrCreateBriefingSnapshot(
   const [{ data: mail }, { data: drafts }, { data: todos }] = await Promise.all([
     db
       .from("emails")
-      .select("id, subject, sender, sender_email, snippet, label_ids, is_archived, email_processed(category, urgency, summary, quick_actions)")
+      .select("id, subject, sender, sender_email, snippet, body_text, body_html, label_ids, is_archived, email_processed(category, urgency, summary, quick_actions)")
       .eq("user_id", userId)
       .eq("is_archived", false)
       .contains("label_ids", ["INBOX"])
@@ -319,9 +324,12 @@ export async function getOrCreateBriefingSnapshot(
     const raw = e.email_processed as Record<string, unknown> | Record<string, unknown>[] | null;
     const p = (Array.isArray(raw) ? raw[0] : raw) ?? null;
     if (!p) continue;
+    // Mail that tries to instruct an AI is left out of the plan altogether.
+    if (looksLikeInstructions(e.subject as string, e.body_text as string, e.body_html as string)) continue;
     const id = String(e.id);
     const category = String(p.category ?? "");
-    const asksReply = Array.isArray(p.quick_actions) && (p.quick_actions as { action?: string }[]).some((q) => q?.action === "reply");
+    const suggests = (action: string) => Array.isArray(p.quick_actions) && (p.quick_actions as { action?: string }[]).some((q) => q?.action === action);
+    const asksReply = suggests("reply");
     const card: BriefingCard = {
       email_id: id,
       subject: String(e.subject ?? ""),
@@ -332,6 +340,8 @@ export async function getOrCreateBriefingSnapshot(
       deadline: (due.get(id) as string | undefined) ?? null,
       waitingForReply: drafted.has(id) || (category === "action-required" && asksReply),
       tags: [],
+      // The lane that takes it (bucketSnapshot).
+      suggestedAction: suggests("schedule_meeting") ? "meeting" : suggests("add_todo") || (category === "action-required" && !asksReply) ? "todo" : undefined,
     };
     if (card.waitingForReply) cards.replyNeeded.push(card);
     else if (card.deadline) cards.deadlines.push(card);
@@ -536,10 +546,15 @@ function validateAndApplyPropose(
     }
   }
 
+  // Only mail listed as non-essential may be archived, whatever else was read.
+  const listed = new Map(ctx.briefingCards.nonEssential.map((c) => [c.email_id, c]));
+  const titles = (ids: string[]) => ids.map((id) => ({ id, sender: listed.get(id)?.senderName ?? "", subject: listed.get(id)?.subject ?? "" }));
   if (type === "archive") {
     const newIds = Array.isArray(args.email_ids)
-      ? (args.email_ids as string[]).filter(Boolean)
+      ? (args.email_ids as string[]).filter((id) => listed.has(id))
       : [];
+    if (!newIds.length) return { actions: existing, error: "propose_action rejected: email_ids must be ids from the NON-ESSENTIAL list." };
+    args.email_ids = newIds;
     const existingArchive = existing.find((a) => a.type === "archive");
     if (existingArchive) {
       const currentIds = new Set<string>(
@@ -553,6 +568,7 @@ function validateAndApplyPropose(
               payload: {
                 ...a.payload,
                 email_ids: Array.from(currentIds),
+                emails: titles(Array.from(currentIds)),
                 summary:
                   (args.summary as string) ??
                   (a.payload.summary as string) ??
@@ -588,6 +604,7 @@ function validateAndApplyPropose(
       duration_mins: args.duration_mins,
       attendees: args.attendees,
       email_ids: args.email_ids,
+      emails: type === "archive" ? titles(args.email_ids as string[]) : undefined,
       summary: args.summary,
     },
     selected: true,
@@ -602,7 +619,10 @@ function applyReviseAction(
   args: Record<string, unknown>,
 ): DraftAction[] {
   const id = String(args.id ?? "");
-  const patch = (args.patch as Record<string, unknown>) ?? {};
+  const patch = { ...((args.patch as Record<string, unknown>) ?? {}) };
+  // What is archived is set by proposing, which checks it.
+  delete patch.email_ids;
+  delete patch.emails;
   return existing.map((a) =>
     a.id === id
       ? {
@@ -776,6 +796,9 @@ export async function runAgentStep(
 
   try {
     for (let round = 0; round < MAX_ROUNDS_PER_STEP; round++) {
+      // Cancelled, or closed by the time limit, meanwhile.
+      const { data: now } = await db.from("agent_sessions").select("status").eq("id", sessionId).single();
+      if (!OPEN.includes(String(now?.status))) return { status: String(now?.status), draft_actions: draftActions };
       const { data: turnsRows } = await db
         .from("agent_turns")
         .select(
@@ -914,6 +937,8 @@ export async function runAgentStep(
         } else if (name === "ask_user") {
           pendingQuestions = extractQuestions(args, tc.id, ctx, bucket);
           paused = true;
+          // Every call in a message gets an answer, or the next one is refused.
+          for (const rest of toolCalls.slice(ti + 1)) await pushToolOutput(rest, "Not done: wait for the user's answer first, then call it again if it is still needed.");
           break;
         } else if (name === "finalize") {
           const cardSource = opts.bucketCards ?? ctx.briefingCards;
@@ -946,6 +971,7 @@ export async function runAgentStep(
           };
           finalized = true;
           await pushToolOutput(tc, "Plan finalized.");
+          for (const rest of toolCalls.slice(ti + 1)) await pushToolOutput(rest, "Not done: the plan is finalized.");
           break;
         } else {
           await pushToolOutput(tc, `Unknown tool: ${name}`);
@@ -980,7 +1006,8 @@ export async function runAgentStep(
             pending_questions: merged,
             draft_actions: mergedDraft,
           })
-          .eq("id", sessionId);
+          .eq("id", sessionId)
+          .in("status", OPEN);
         return {
           status: "asking",
           pending_question: merged[0] ?? null,
@@ -1023,7 +1050,8 @@ export async function runAgentStep(
             pending_question: null,
             pending_questions: [],
           })
-          .eq("id", sessionId);
+          .eq("id", sessionId)
+          .in("status", OPEN);
         return {
           status: "ready",
           plan,
@@ -1048,7 +1076,8 @@ export async function runAgentStep(
       await db
         .from("agent_sessions")
         .update({ status: "error", error: message })
-        .eq("id", sessionId);
+        .eq("id", sessionId)
+        .in("status", OPEN);
     }
     return {
       status: "error",
@@ -1065,7 +1094,30 @@ export async function runAgentStep(
  * Called once from /agent/start and again from /agent/answer when a question
  * is cleared and the remaining buckets still have work.
  */
-export async function runAgentStepParallel(
+const runs = new Map<string, Promise<StepResult>>();
+const again = new Set<string>();
+
+// One run per plan. An answer that comes while lanes are still working is
+// taken in by one more round when they are done, never by a second set of lanes.
+export function runAgentStepParallel(sessionId: string, db: Db, userTimezone = "UTC"): Promise<StepResult> {
+  const going = runs.get(sessionId);
+  if (going) {
+    again.add(sessionId);
+    return going;
+  }
+  const run = (async () => {
+    let r: StepResult;
+    do {
+      again.delete(sessionId);
+      r = await runLanes(sessionId, db, userTimezone);
+    } while (again.has(sessionId));
+    return r;
+  })().finally(() => runs.delete(sessionId));
+  runs.set(sessionId, run);
+  return run;
+}
+
+async function runLanes(
   sessionId: string,
   db: Db,
   userTimezone = "UTC",
@@ -1083,7 +1135,8 @@ export async function runAgentStepParallel(
         pending_question: null,
         pending_questions: [],
       })
-      .eq("id", sessionId);
+      .eq("id", sessionId)
+      .in("status", OPEN);
     return { status: "error", draft_actions: [], error: message };
   }
 }
@@ -1145,7 +1198,8 @@ async function _runAgentStepParallel(
         },
         summary: "Your inbox was already clear.",
       })
-      .eq("id", sessionId);
+      .eq("id", sessionId)
+      .in("status", OPEN);
     return {
       status: "ready",
       draft_actions: [],
@@ -1155,7 +1209,14 @@ async function _runAgentStepParallel(
 
   // One non-empty bucket: a single coordinator is cheaper than parallel lanes.
   if (bucketPlans.length < 2) {
-    return runAgentStep(sessionId, db, userTimezone);
+    const r = await runAgentStep(sessionId, db, userTimezone);
+    if (r.status !== "planning") return r;
+    // It ran out of rounds without finishing: what it proposed is the plan.
+    if (!r.draft_actions.length) throw new Error("The plan could not be worked out. Ask again in a moment.");
+    const summary = `Planned ${r.draft_actions.length} action${r.draft_actions.length === 1 ? "" : "s"}.`;
+    const plan = { actions: r.draft_actions, summary, finalized_at: new Date().toISOString() };
+    await db.from("agent_sessions").update({ status: "ready", plan, summary, draft_actions: r.draft_actions, pending_question: null, pending_questions: [] }).eq("id", sessionId).in("status", OPEN);
+    return { status: "ready", plan, draft_actions: r.draft_actions, summary };
   }
 
   const hadBriefingWork = briefingCardsHaveEmails(snap.cards);
@@ -1187,7 +1248,7 @@ async function _runAgentStepParallel(
     if (!drafts.length) throw new Error(`The plan took longer than ${capMs / 60_000} minutes and proposed nothing`);
     const summary = `Stopped after ${capMs / 60_000} minutes with what was proposed by then.`;
     const plan = { actions: drafts, summary, finalized_at: new Date().toISOString() };
-    await db.from("agent_sessions").update({ status: "ready", plan, summary, draft_actions: drafts, pending_question: null, pending_questions: [] }).eq("id", sessionId);
+    await db.from("agent_sessions").update({ status: "ready", plan, summary, draft_actions: drafts, pending_question: null, pending_questions: [] }).eq("id", sessionId).in("status", OPEN);
     return { status: "ready", plan, draft_actions: drafts, summary };
   }
   const results = raced;
@@ -1202,6 +1263,13 @@ async function _runAgentStepParallel(
     .single();
 
   const mergedFromRuns = mergeDraftsFromParallelResults(results);
+
+  // An answer came in while the other lanes worked: carry on with it first.
+  if (again.has(sessionId) && refreshed?.status === "planning") {
+    const drafts = mergeDraftsById([...((refreshed.draft_actions as DraftAction[]) ?? []), ...mergedFromRuns]);
+    await db.from("agent_sessions").update({ draft_actions: drafts }).eq("id", sessionId).in("status", OPEN);
+    return { status: "planning", draft_actions: drafts };
+  }
 
   if (refreshed?.status === "cancelled") {
     return {
@@ -1245,7 +1313,8 @@ async function _runAgentStepParallel(
         pending_question: firstQ,
         pending_questions: mergedQuestions,
       })
-      .eq("id", sessionId);
+      .eq("id", sessionId)
+      .in("status", OPEN);
     return {
       status: "asking",
       pending_question: firstQ,
@@ -1331,7 +1400,8 @@ async function _runAgentStepParallel(
         pending_question: null,
         pending_questions: [],
       })
-      .eq("id", sessionId);
+      .eq("id", sessionId)
+      .in("status", OPEN);
     return {
       status: "error",
       draft_actions: [],
@@ -1365,7 +1435,8 @@ async function _runAgentStepParallel(
       pending_question: null,
       pending_questions: [],
     })
-    .eq("id", sessionId);
+    .eq("id", sessionId)
+    .in("status", OPEN);
   if (finalWriteError) {
     throw new Error(
       `Failed to mark session ready: ${finalWriteError.message ?? JSON.stringify(finalWriteError)}`,
@@ -1453,23 +1524,29 @@ export async function answerPendingQuestion(
     userText = `[User picked] ${selected.label}${selected.preview ? ` — ${selected.preview}` : ""}${tags.length ? ` (${tags.join("; ")})` : ""}`;
   } else userText = "[User did not answer explicitly.]";
 
-  const idx = await allocTurnIdx(db, sessionId, 2);
-
-  await persistTurn(db, sessionId, idx, {
-    role: "tool",
-    content: { output: userText },
-    tool_name: "ask_user",
-    tool_call_id: target.tool_call_id,
-    bucket: (target.bucket as AgentBucket) ?? "single",
-  });
-  await persistTurn(db, sessionId, idx + 1, {
-    role: "user",
-    content: { text: `Continue with: ${userText}` },
-    bucket: (target.bucket as AgentBucket) ?? "single",
-  });
+  // Questions asked in one call are answered by one result, once all of them
+  // have an answer; until then the answers wait on the questions still open.
+  const given = [...(target.given ?? []), `${target.question} ${userText}`];
+  const siblings = all.filter((q) => q.id !== target.id && q.tool_call_id === target.tool_call_id);
+  if (!siblings.length) {
+    const said = given.length > 1 ? given.join("\n") : userText;
+    const idx = await allocTurnIdx(db, sessionId, 2);
+    await persistTurn(db, sessionId, idx, {
+      role: "tool",
+      content: { output: said },
+      tool_name: "ask_user",
+      tool_call_id: target.tool_call_id,
+      bucket: (target.bucket as AgentBucket) ?? "single",
+    });
+    await persistTurn(db, sessionId, idx + 1, {
+      role: "user",
+      content: { text: `Continue with: ${said}` },
+      bucket: (target.bucket as AgentBucket) ?? "single",
+    });
+  }
 
   // Remove this question from the pending batch. If batch empties, resume.
-  const remaining = all.filter((q) => q.id !== target.id);
+  const remaining = all.filter((q) => q.id !== target.id).map((q) => (q.id === siblings[0]?.id ? { ...q, given } : q));
   const nextStatus = remaining.length ? "asking" : "planning";
   await db
     .from("agent_sessions")
@@ -1478,5 +1555,6 @@ export async function answerPendingQuestion(
       pending_question: remaining[0] ?? null,
       pending_questions: remaining,
     })
-    .eq("id", sessionId);
+    .eq("id", sessionId)
+    .in("status", OPEN);
 }

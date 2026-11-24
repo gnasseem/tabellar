@@ -49,7 +49,7 @@ export default function AgentActionCard({ action, onToggle, onEdit, onRemove, re
           ? `Due ${p.due}`
           : ""
         : action.type === "meeting"
-          ? `${fmtIso(p.start_iso)}${p.duration_mins ? `, ${p.duration_mins} min` : ""}`
+          ? `${fmtIso(p.start_iso)}${p.duration_mins ? `, ${p.duration_mins} min` : ""}${p.attendees?.length ? `, invites ${p.attendees.join(", ")}` : ""}`
           : p.summary || "";
   const notes = [action.type === "reply" ? MODE_TEXT[replyMode(action)] : "", action.recommended ? "Suggested" : "", action.priority === "high" ? "High priority" : action.priority === "low" ? "Low priority" : ""].filter(Boolean).join(", ");
 
@@ -81,7 +81,7 @@ export default function AgentActionCard({ action, onToggle, onEdit, onRemove, re
               </button>
             )}
             <button className="link" aria-expanded={expanded} onClick={() => setExpanded((v) => !v)}>
-              {expanded ? "Close" : action.type === "reply" ? "Read and edit" : "Edit"}
+              {expanded ? "Close" : action.type === "reply" ? "Read and edit" : action.type === "archive" ? "Show" : "Edit"}
             </button>
           </>
         )}
@@ -142,7 +142,15 @@ export default function AgentActionCard({ action, onToggle, onEdit, onRemove, re
               />
             </>
           )}
-          {action.type === "archive" && <Field label="What is being archived" value={p.summary ?? ""} onChange={(summary) => onEdit({ summary })} />}
+          {action.type === "archive" && (
+            <ul className="max-h-64 overflow-y-auto text-[12.5px] leading-relaxed text-ink2">
+              {(p.emails ?? []).map((e) => (
+                <li key={e.id} className="truncate">
+                  <span className="text-ink">{e.sender}</span> {e.subject || "(no subject)"}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </div>

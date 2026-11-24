@@ -19,7 +19,7 @@ export const ACT_WITHIN_MS = 7 * 24 * 3600_000;
 
 // Raised when the rules for todos and meetings change; engine.ts then reads
 // the stored mail again. A new install starts on the current ones.
-export const RULES_VERSION = 1;
+export const RULES_VERSION = 2;
 
 export type Action = Record<string, unknown> & { action?: string; label?: string; text?: string; quote?: string };
 type Mail = { subject?: string | null; body_text?: string | null; snippet?: string | null };
@@ -66,6 +66,29 @@ export function parseTime(s: unknown): number | null {
   return h * 60 + min;
 }
 
+// The time a quote gives. A time with no am or pm takes it from the end of its
+// range ("7:30-9:30pm") or from the evening the quote speaks of; morning
+// hours with neither stay as parseTime reads them.
+function timeIn(timeText: string, quote: string): number | null {
+  const at = quote.toLowerCase().indexOf(timeText.toLowerCase());
+  const said = timeText + (at >= 0 ? quote.slice(at + timeText.length) : "");
+  const range = said.match(/^(\d{1,2})(?:[:.h](\d{2}))?\s*(?:-|–|to|until|till)\s*(\d{1,2})(?:[:.h](\d{2}))?\s*([ap])\.?\s*m/i);
+  if (range) {
+    const start = (Number(range[1]) % 12) * 60 + Number(range[2] ?? 0);
+    const end = (Number(range[3]) % 12) * 60 + Number(range[4] ?? 0);
+    if (Number(range[1]) > 12) return parseTime(timeText);
+    const pm = /p/i.test(range[5]);
+    // "11:30 to 1pm" starts before noon; "7:30-9:30pm" does not.
+    return start + (pm === start < end ? 720 : 0);
+  }
+  const minutes = parseTime(timeText);
+  const spelled = /[ap]\.?\s*m|noon|midnight/i.test(timeText);
+  const evening = /\b(tonight|evening|dinner|drinks|p\.m\.)\b/i.test(quote);
+  const bare = timeText.trim().match(/^(\d{1,2})[:.h](\d{2})$/);
+  if (!spelled && evening && bare && Number(bare[1]) >= 5 && Number(bare[1]) < 12 && Number(bare[2]) < 60) return (Number(bare[1]) + 12) * 60 + Number(bare[2]);
+  return minutes;
+}
+
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const MONTH = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
@@ -83,15 +106,30 @@ const addDays = (t: Day, n: number): Day => {
   return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
 };
 
-// The day a piece of text names: a date ("Nov 24", "24 November 2026",
-// "2026-11-24"), today, tomorrow, or a weekday (the next one, today included).
-// A date with no year that is more than two months gone is next year's.
-export function parseDay(s: string, today: Day & { dow: number }): Day | null {
-  const t = s.toLowerCase();
-  let m = t.match(/\b(20\d\d)-(\d\d)-(\d\d)\b/);
-  if (m) return { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
+// Every day a piece of text names: dates ("Nov 24", "24 November 2026",
+// "2026-11-24"), today, tomorrow, the day after it, weekdays (the next one,
+// today included; the one in the week after with "next week"). A date with no
+// year that is more than two months gone is next year's. `today` is the day
+// the text was written.
+export function daysIn(s: string, today: Day & { dow: number }): Day[] {
+  // Accents are dropped so "3 déc." reads as "3 dec.", and what one pattern
+  // has read is blanked so the next does not read it again.
+  let t = s.normalize("NFKD").replace(/[̀-ͯ]/g, "");
+  const out: Day[] = [];
+  const add = (d: Day | null) => {
+    if (d && !out.some((x) => x.y === d.y && x.m === d.m && x.d === d.d)) out.push({ y: d.y, m: d.m, d: d.d });
+  };
+  const take = (re: RegExp, read: (m: RegExpMatchArray) => Day | null) => {
+    t = t.replace(re, (...args) => {
+      const m = args.slice(0, args.findIndex((x) => typeof x === "number")) as unknown as RegExpMatchArray;
+      const d = read(m);
+      if (!d) return m[0];
+      add(d);
+      return " ".repeat(m[0].length);
+    });
+  };
   const named = (mon: string, day: string, year?: string): Day | null => {
-    const mi = MONTHS.indexOf(mon.slice(0, 3)) + 1;
+    const mi = MONTHS.indexOf(mon.toLowerCase().slice(0, 3)) + 1;
     const d = Number(day);
     if (!mi || d < 1 || d > 31) return null;
     if (year) return { y: Number(year), m: mi, d };
@@ -99,25 +137,45 @@ export function parseDay(s: string, today: Day & { dow: number }): Day | null {
     const back = (Date.UTC(today.y, today.m - 1, today.d) - thisYear) / 86_400_000;
     return { y: back > 61 ? today.y + 1 : today.y, m: mi, d };
   };
-  m = t.match(new RegExp(`\\b${MONTH}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:,?\\s+(20\\d\\d))?`));
-  if (m) return named(m[1], m[2], m[3]);
-  m = t.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MONTH}\\b\\.?(?:,?\\s+(20\\d\\d))?`));
-  if (m) return named(m[2], m[1], m[3]);
-  if (/\btoday\b|\btonight\b|\bthis (morning|afternoon|evening)\b/.test(t)) return today;
-  if (/\btomorrow\b/.test(t)) return addDays(today, 1);
-  m = t.match(/\b(sun|mon|tue|wed|thu|fri|sat)(?:day|sday|nesday|rsday|urday|s|\.)?\b/);
-  if (m) return addDays(today, (DAYS.indexOf(m[1]) - today.dow + 7) % 7);
-  return null;
+  // A number with minutes or am or pm after it is a time, not a day.
+  const NOT_TIME = "(?![:.h]\\d|\\s*[ap]\\.?\\s*m\\b)";
+  take(/\b(20\d\d)-(\d\d)-(\d\d)\b/g, (m) => ({ y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) }));
+  take(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MONTH}\\b\\.?(?:,?\\s+(20\\d\\d)\\b)?`, "gi"), (m) => named(m[2], m[1], m[3]));
+  take(new RegExp(`\\b${MONTH}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b${NOT_TIME}(?:,?\\s+(20\\d\\d)\\b)?`, "gi"), (m) => named(m[1], m[2], m[3]));
+  // A weekday beside its date ("Friday, Nov 27") says the same day twice.
+  const dated = out.length;
+  take(/\bday after tomorrow\b/gi, () => addDays(today, 2));
+  take(/\btoday\b|\btonight\b|\bthis (?:morning|afternoon|evening)\b/gi, () => today);
+  take(/\btomorrow\b/gi, () => addDays(today, 1));
+  const nextWeek = /\bnext week\b/i.test(t);
+  const weekday = (name: string): Day | null => {
+    const dow = DAYS.indexOf(name.toLowerCase().slice(0, 3));
+    if (nextWeek) return addDays(today, ((dow + 6) % 7) + 7 - ((today.dow + 6) % 7));
+    const d = addDays(today, (dow - today.dow + 7) % 7);
+    const same = out.slice(0, dated).some((x) => new Date(Date.UTC(x.y, x.m - 1, x.d)).getUTCDay() === dow);
+    return same ? null : d;
+  };
+  take(/\b(sun|mon|tues|wednes|thurs|fri|satur)days?\b/gi, (m) => weekday(m[1]));
+  // Short forms are also words ("we sat", "the sun"): capitalised, and with a time or date after.
+  take(/\b(Sun|Mon|Tue|Tues|Wed|Thu|Thur|Thurs|Fri|Sat)\b\.?,?(?=\s*(?:\d|at\b|@|morning|afternoon|evening))/g, (m) => weekday(m[1]));
+  return out;
+}
+
+// The one day a piece of text names. Null when it names none, or several.
+export function parseDay(s: string, today: Day & { dow: number }): Day | null {
+  const days = daysIn(s, today);
+  return days.length === 1 ? days[0] : null;
 }
 
 // The day a todo is due, from the sentence that asks for it: a day named
 // after "by", "before", "due", "until", "no later than" or "deadline"
-// ("send it back by December 15", "due Friday"). "YYYY-MM-DD" or null.
-export function dueOf(quote: unknown, userTz: string, now = new Date()): string | null {
+// ("send it back by December 15", "due Friday"). "YYYY-MM-DD" or null. `sent`
+// is when the email was written.
+export function dueOf(quote: unknown, userTz: string, sent = new Date()): string | null {
   const t = String(quote ?? "");
   const at = t.search(/\b(by|before|due|until|till|no later than|deadline)\b/i);
   if (at < 0) return null;
-  const day = parseDay(t.slice(at), todayIn(userTz, now));
+  const day = daysIn(t.slice(at), todayIn(userTz, sent))[0];
   return day ? `${day.y}-${String(day.m).padStart(2, "0")}-${String(day.d).padStart(2, "0")}` : null;
 }
 
@@ -199,8 +257,9 @@ export type Meeting = {
 type Details = { title?: unknown; date?: unknown; time?: unknown; timezone?: unknown; duration?: unknown; location?: unknown };
 
 // The meeting a schedule_meeting suggestion describes, with the time worked
-// out in code from what the email says.
-export function meetingOf(a: Action, m: Mail, userTz: string, now = new Date()): Meeting {
+// out in code from what the email says. `sent` is when it was written: its
+// "tomorrow" is the day after that, whenever it is read.
+export function meetingOf(a: Action, m: Mail, userTz: string, sent = new Date()): Meeting {
   const d = (a.meetingDetails ?? {}) as Details;
   const text = textOf(m);
   const quote = quoted(a.quote, text) ? String(a.quote) : null;
@@ -213,13 +272,20 @@ export function meetingOf(a: Action, m: Mail, userTz: string, now = new Date()):
     quote,
   };
   const timeText = String(d.time ?? "").trim();
-  const minutes = parseTime(timeText);
+  const minutes = quote ? timeIn(timeText, quote) : null;
   if (!quote || minutes === null || !squash(quote).includes(squash(timeText))) return out;
 
-  // The day: a date in the quote, else in the subject, else the model's resolved date.
-  const today = todayIn(userTz, now);
-  const modelDay = String(d.date ?? "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const day = parseDay(quote, today) ?? parseDay(String(m.subject ?? ""), today) ?? (modelDay ? { y: Number(modelDay[1]), m: Number(modelDay[2]), d: Number(modelDay[3]) } : null);
+  // The day: the one the quote names, else the subject, else the model's
+  // resolved date. Of several days named, only the model can tell which, and
+  // "next Friday" is this week's to some and next week's to others.
+  const today = todayIn(userTz, sent);
+  const iso = String(d.date ?? "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const modelDay = iso ? { y: Number(iso[1]), m: Number(iso[2]), d: Number(iso[3]) } : null;
+  const isModels = (x: Day) => !!modelDay && x.y === modelDay.y && x.m === modelDay.m && x.d === modelDay.d;
+  let named = daysIn(quote, today);
+  if (!named.length) named = daysIn(String(m.subject ?? ""), today);
+  if (/\bnext (sun|mon|tues|wednes|thurs|fri|satur)day\b/i.test(quote)) named = named.flatMap((x) => [x, addDays(x, 7)]);
+  const day = named.length > 1 ? (named.find(isModels) ?? null) : (named[0] ?? modelDay);
   if (!day) return out;
 
   // The zone: written right after the time, else as the model copied it (when
@@ -240,7 +306,7 @@ export function meetingOf(a: Action, m: Mail, userTz: string, now = new Date()):
 
 // What the analysis keeps of the model's suggestions: replies as they are, a
 // todo only when todoOf allows it, a meeting with its time worked out here.
-export function checkActions(actions: unknown, m: Mail & { is_calendar?: boolean | null }, category: string, userTz: string): Action[] {
+export function checkActions(actions: unknown, m: Mail & { is_calendar?: boolean | null }, category: string, userTz: string, sent = new Date()): Action[] {
   const list = (Array.isArray(actions) ? actions : []).filter((a): a is Action => !!a && typeof a === "object");
   const todo = todoOf(list, m, category);
   const out: Action[] = [];
@@ -248,7 +314,7 @@ export function checkActions(actions: unknown, m: Mail & { is_calendar?: boolean
     if (a.action === "reply" && !out.some((x) => x.action === "reply")) out.push(a);
     else if (a.action === "add_todo" && a === todo) out.push({ action: "add_todo", label: String(a.label).trim(), quote: a.quote });
     else if (a.action === "schedule_meeting" && !m.is_calendar && !out.some((x) => x.action === "schedule_meeting")) {
-      const mt = meetingOf(a, m, userTz);
+      const mt = meetingOf(a, m, userTz, sent);
       out.push({ action: "schedule_meeting", label: a.label, text: a.text, quote: mt.quote ?? undefined, meetingDetails: { ...(a.meetingDetails as object), ...mt } });
     } else if (a.action && !["reply", "add_todo", "schedule_meeting"].includes(a.action)) out.push(a);
   }
@@ -267,9 +333,28 @@ export function calendarHeaders(h: Record<string, string>): boolean {
   return Object.keys(h).some((k) => k.startsWith("x-ms-exchange-calendar"));
 }
 
-// The first event of an .ics, its times in UTC. A TZID Intl does not know
-// (Outlook writes Windows names) falls back to the offset of its VTIMEZONE,
-// then to `fallbackTz`.
+// The zone a TZID names. Outlook writes Windows names ("Eastern Standard
+// Time", summer included) or what its menu shows ("(UTC-05:00) Eastern Time
+// (US & Canada)").
+const WINDOWS_ZONES: [RegExp, string][] = [
+  [/^us mountain|arizona/i, "America/Phoenix"], [/^(us )?eastern|eastern time/i, "America/New_York"], [/^central standard time$|central time/i, "America/Chicago"],
+  [/^mountain|mountain time/i, "America/Denver"], [/^pacific standard time$|pacific time/i, "America/Los_Angeles"], [/^atlantic/i, "America/Halifax"],
+  [/^alaska/i, "America/Anchorage"], [/^hawaii/i, "Pacific/Honolulu"], [/^gmt standard|dublin, edinburgh/i, "Europe/London"], [/^greenwich/i, "Atlantic/Reykjavik"],
+  [/^w\. europe|amsterdam, berlin/i, "Europe/Berlin"], [/^romance|brussels, copenhagen/i, "Europe/Paris"], [/^central europe standard/i, "Europe/Budapest"], [/^central european/i, "Europe/Warsaw"],
+  [/^fle standard/i, "Europe/Helsinki"], [/^gtb standard/i, "Europe/Bucharest"], [/^turkey/i, "Europe/Istanbul"], [/^russian/i, "Europe/Moscow"], [/^israel/i, "Asia/Jerusalem"], [/^egypt/i, "Africa/Cairo"],
+  [/^south africa/i, "Africa/Johannesburg"], [/^arabian|abu dhabi/i, "Asia/Dubai"], [/^arab standard/i, "Asia/Riyadh"], [/^middle east/i, "Asia/Beirut"], [/^india/i, "Asia/Kolkata"], [/^pakistan/i, "Asia/Karachi"],
+  [/^china/i, "Asia/Shanghai"], [/^singapore/i, "Asia/Singapore"], [/^tokyo/i, "Asia/Tokyo"], [/^korea/i, "Asia/Seoul"], [/^aus eastern/i, "Australia/Sydney"], [/^new zealand/i, "Pacific/Auckland"], [/^utc$|^coordinated/i, "UTC"],
+];
+
+function icsZone(id: string): string | null {
+  if (!id) return null;
+  if (validIana(id)) return id;
+  const name = id.replace(/^\(UTC[^)]*\)\s*/i, "").trim();
+  return WINDOWS_ZONES.find(([re]) => re.test(name))?.[1] ?? null;
+}
+
+// The first event of an .ics, its times in UTC. A TZID that names no known
+// zone falls back to the offset of its VTIMEZONE, then to `fallbackTz`.
 export function parseIcs(ics: string, fallbackTz: string): CalendarEvent | null {
   const lines = ics.replace(/\r\n?/g, "\n").replace(/\n[ \t]/g, "").split("\n");
   const method = (lines.find((l) => /^METHOD:/i.test(l)) ?? "").split(":")[1]?.trim().toUpperCase() ?? "";
@@ -290,15 +375,18 @@ export function parseIcs(ics: string, fallbackTz: string): CalendarEvent | null 
   const prop = (name: string) => ev.find((l) => new RegExp(`^${name}[;:]`, "i").test(l));
   const time = (line: string | undefined): { iso: string; allDay: boolean } | null => {
     if (!line) return null;
-    const [params, value] = [line.slice(0, line.indexOf(":")), line.slice(line.indexOf(":") + 1).trim()];
+    // A quoted TZID may have a colon in it.
+    const colon = /^(?:"[^"]*"|[^":])*/.exec(line)![0].length;
+    const [params, value] = [line.slice(0, colon), line.slice(colon + 1).trim()];
     const m = value.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?$/);
     if (!m) return null;
     const day = { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) };
     if (!m[4]) return { iso: `${m[1]}-${m[2]}-${m[3]}`, allDay: true };
     const minutes = Number(m[4]) * 60 + Number(m[5]);
     if (m[7]) return { iso: new Date(Date.UTC(day.y, day.m - 1, day.d, Number(m[4]), Number(m[5]), Number(m[6] ?? 0))).toISOString(), allDay: false };
-    const id = params.match(/TZID=("?)([^";:]+)\1/i)?.[2] ?? "";
-    const zone: Zone = id && validIana(id) ? { iana: id } : offsets.has(id) ? { offset: offsets.get(id)! } : { iana: fallbackTz };
+    const id = params.match(/TZID="([^"]*)"|TZID=([^";:]+)/i)?.slice(1).find(Boolean) ?? "";
+    const known = icsZone(id);
+    const zone: Zone = known ? { iana: known } : offsets.has(id) ? { offset: offsets.get(id)! } : { iana: fallbackTz };
     return { iso: toInstant(day, minutes, zone).toISOString(), allDay: false };
   };
   const unescape = (s: string) => s.replace(/\\n/gi, " ").replace(/\\([,;\\])/g, "$1").trim();

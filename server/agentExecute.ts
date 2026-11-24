@@ -20,6 +20,8 @@ import { mail, userCalendar } from "./providers.ts";
 import { accountById, defaultAccount, fromLine, replyFrom } from "./accounts.ts";
 import { decide } from "./policy.ts";
 import { act, record, engineSettings } from "./actions.ts";
+import { messageIdOf } from "./forward.ts";
+import { answered } from "./snooze.ts";
 
 
 interface ApprovedAction {
@@ -115,15 +117,20 @@ export async function executeAgentPlan(
     { status: "success" | "error"; info?: string; error?: string }
   > = {};
 
-  await db
-    .from("agent_sessions")
-    .update({ status: "executing" })
-    .eq("id", sessionId);
+  // Claimed once, so a second click cannot run it twice, and only what the
+  // plan shows can be run.
+  const { data: claimed } = await db.from("agent_sessions").update({ status: "executing" }).eq("id", sessionId).eq("status", "ready").select("plan");
+  if (!claimed?.length) throw Object.assign(new Error("This plan was already run or cancelled"), { status: 409 });
+  const planned = new Map((((claimed[0].plan as { actions?: ApprovedAction[] } | null)?.actions ?? []) as ApprovedAction[]).map((a) => [a.id, a]));
 
   const { paused } = await engineSettings(userId);
 
   for (const action of approved) {
     try {
+      const shown = planned.get(action.id);
+      if (!shown || shown.type !== action.type) throw new Error("This is not in the plan");
+      const { data: now } = await db.from("agent_sessions").select("status").eq("id", sessionId).single();
+      if (now?.status === "cancelled") throw new Error("Cancelled");
       const kind = action.type === "reply" ? (action.payload.send_now === false ? "draft" : "send") : action.type;
       const verdict = decide({ kind, source: "agent", level: "suggest", paused });
       if (verdict.verdict !== "do") throw new Error(verdict.reason);
@@ -158,16 +165,23 @@ export async function executeAgentPlan(
         if (sendNow) {
           // From the account and address the email it answers was sent to.
           const { data: linked } = action.linked_email_id
-            ? await db.from("emails").select("account_id, recipients, cc_recipients").eq("id", action.linked_email_id).eq("user_id", userId).maybeSingle()
+            ? await db.from("emails").select("gmail_id, thread_id, sender_email, reply_to_email, account_id, recipients, cc_recipients").eq("id", action.linked_email_id).eq("user_id", userId).maybeSingle()
             : { data: null };
           const account = (await accountById(userId, linked?.account_id as string | undefined)) ?? (await defaultAccount(userId));
           if (!account) throw new Error("No account connected");
           const from = linked ? replyFrom(account, linked) : null;
-          const result = await mail(account).send(account, { from: await fromLine(userId, account, from), to: [to], subject, html: plainToHtml(body) });
+          // In the thread of the email it answers, when it goes to who wrote it.
+          const answers = linked && [linked.sender_email, linked.reply_to_email].some((x) => String(x ?? "").toLowerCase() === to.toLowerCase()) ? linked : null;
+          const inReplyTo = answers ? await messageIdOf(account, answers.gmail_id as string) : undefined;
+          const threadId = (answers?.thread_id as string | null) ?? undefined;
+          const result = await mail(account).send(account, { from: await fromLine(userId, account, from), to: [to], subject, html: plainToHtml(body), inReplyTo }, threadId);
+          await answered(userId, threadId, new Date().toISOString());
           await db.from("emails").insert({
             user_id: userId,
             gmail_id: result.id,
+            thread_id: threadId ?? null,
             account_id: account.id,
+            body_text: body,
             subject,
             recipients: to,
             body_html: plainToHtml(body),
@@ -192,6 +206,8 @@ export async function executeAgentPlan(
           // Save as draft (schema uses to_addresses array)
           await db.from("draft_emails").insert({
             user_id: userId,
+            email_id: action.linked_email_id ?? null,
+            source: "tabellar",
             to_addresses: [to],
             subject,
             body_html: plainToHtml(body),
@@ -215,9 +231,8 @@ export async function executeAgentPlan(
         // todos schema: { user_id, email_id?, text, is_completed, source }
         const row: Record<string, unknown> = {
           user_id: userId,
-          text: action.payload.due
-            ? `${title} (due ${action.payload.due})`
-            : title,
+          text: title,
+          due: /^\d{4}-\d{2}-\d{2}/.test(String(action.payload.due ?? "")) ? String(action.payload.due).slice(0, 10) : null,
           is_completed: false,
           source: "solver",
         };
@@ -261,33 +276,21 @@ export async function executeAgentPlan(
         const startInstant = wallClockToUtc(wallStartMs, userTimezone);
         const endInstant = wallClockToUtc(wallEndMs, userTimezone);
 
-        // Insert local row so it appears immediately.
-        const { data: meetingRow } = await db
-          .from("meetings")
-          .insert({
-            user_id: userId,
-            title,
-            start_time: startInstant.toISOString(),
-            end_time: endInstant.toISOString(),
-            attendees,
-            status: "confirmed",
-          })
-          .select("id")
-          .single();
-
-        // Put it on the calendar (best effort).
-        try {
-          const cal = await userCalendar(userId);
-          if (cal) {
-            await cal.calendar.create(
-              cal.account,
-              { title, description: (action.reasoning as string) ?? "", start: startLocal, end: endLocal, timeZone: userTimezone, attendees },
-              cal.invite,
-            );
-          }
-        } catch (calErr) {
-          console.warn("[agentExecute] calendar create failed:", calErr);
-        }
+        // On the calendar first; without it, it waits in Meetings.
+        const cal = await userCalendar(userId);
+        const ev = cal
+          ? await cal.calendar.create(cal.account, { title, description: "", start: startLocal, end: endLocal, timeZone: userTimezone, attendees }, cal.invite)
+          : null;
+        await db.from("meetings").insert({
+          user_id: userId,
+          email_id: action.linked_email_id ?? null,
+          title,
+          start_time: startInstant.toISOString(),
+          end_time: endInstant.toISOString(),
+          attendees,
+          calendar_event_id: ev?.id ?? null,
+          status: ev ? "confirmed" : "proposed",
+        });
 
         if (action.linked_email_id) {
           await db
@@ -299,29 +302,16 @@ export async function executeAgentPlan(
         }
         results[action.id] = {
           status: "success",
-          info: `Scheduled "${title}" at ${startIso}${meetingRow ? "" : " (local only)"}`,
+          info: ev ? `On your calendar: "${title}"` : `"${title}" waits in Meetings: no calendar is connected`,
         };
       } else if (action.type === "archive") {
-        const ids = ((action.payload.email_ids as string[]) ?? []).filter(
-          Boolean,
-        );
+        // The emails the plan listed.
+        const ids = ((shown.payload.email_ids as string[]) ?? []).filter(Boolean);
         if (!ids.length) throw new Error("Archive action has no email_ids");
-        let failed = 0;
-        for (const id of ids) {
-          const r = await act(userId, { kind: "archive", emailId: id, summary: "Archive", detail: {} }, { level: "suggest", paused, source: "agent" });
-          if (r !== "done") failed++;
-        }
-        // Mark them handled here even if Gmail refused, as before.
-        await db
-          .from("emails")
-          .update({ is_archived: true, resolved_at: new Date().toISOString() })
-          .in("id", ids)
-          .eq("user_id", userId)
-          .is("resolved_at", null);
-        results[action.id] = {
-          status: "success",
-          info: `Archived ${ids.length} email${ids.length === 1 ? "" : "s"}${failed ? ` (${failed} only in Tabellar, the mailbox refused)` : ""}`,
-        };
+        // One change in the mailbox, and one line in History that undoes it.
+        const r = await act(userId, { kind: "archive", emailId: null, summary: `Archive ${ids.length} email${ids.length === 1 ? "" : "s"} (cleanup plan)`, detail: { emailIds: ids } }, { level: "suggest", paused, source: "agent" });
+        if (r !== "done") throw new Error("The mailbox did not archive them");
+        results[action.id] = { status: "success", info: `Archived ${ids.length} email${ids.length === 1 ? "" : "s"}` };
       } else {
         throw new Error(`Unknown action type: ${action.type}`);
       }
@@ -331,10 +321,8 @@ export async function executeAgentPlan(
     }
   }
 
-  await db
-    .from("agent_sessions")
-    .update({ status: "done", results })
-    .eq("id", sessionId);
+  await db.from("agent_sessions").update({ results }).eq("id", sessionId);
+  await db.from("agent_sessions").update({ status: "done" }).eq("id", sessionId).eq("status", "executing");
 
   return results;
 }

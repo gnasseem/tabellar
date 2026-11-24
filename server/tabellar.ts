@@ -277,6 +277,9 @@ async function setup() {
 
 async function start() {
   if (await running()) {
+    // The login item was turned on while this one was already running: it
+    // takes over the next time, and opens no window.
+    if (args.includes("--no-open")) return console.log("Tabellar is already running.");
     console.log("Tabellar is already running. Opening its window.");
     return openWindow();
   }
@@ -330,8 +333,8 @@ async function autostart() {
 function check() {
   const home = mkdtempSync(join(tmpdir(), "tabellar-check-"));
   try {
-    const { model } = loadConfig();
-    if (model) writeFileSync(join(home, "config.json"), JSON.stringify({ model }));
+    const { model, fastModel } = loadConfig();
+    if (model) writeFileSync(join(home, "config.json"), JSON.stringify({ model, fastModel }));
     const r = spawnSync(process.execPath, [sibling("check")], {
       stdio: "inherit",
       env: { ...process.env, TABELLAR_HOME: home },

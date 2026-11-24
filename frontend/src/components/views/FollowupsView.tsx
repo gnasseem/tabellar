@@ -80,7 +80,7 @@ export default function FollowupsView() {
     }
     const { data, error: failed } = await supabase
       .from("follow_up_reminders")
-      .insert({ user_id: user.id, email_id: f.email_id, thread_id: f.thread_id, recipient_email: f.recipient_email, recipient_name: f.recipient_name, subject: f.subject, remind_at: new Date().toISOString(), ...fields })
+      .upsert({ user_id: user.id, email_id: f.email_id, thread_id: f.thread_id, recipient_email: f.recipient_email, recipient_name: f.recipient_name, subject: f.subject, remind_at: new Date().toISOString(), created_at: new Date().toISOString(), ...fields }, { onConflict: "user_id,thread_id" })
       .select("id")
       .single();
     return failed || !data ? null : (data as { id: string }).id;

@@ -16,14 +16,14 @@ import { existsSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { loadConfig, accessToken, googleClient } from "./config.ts";
+import { CONFIG_PATH, loadConfig, accessToken, googleClient } from "./config.ts";
 import { db, execute, callRpc, changes, type Change } from "./db.ts";
 import type { QuerySpec } from "./query.ts";
 import { handleApi } from "./api.ts";
 import { handleSetup, startOllama } from "./setup.ts";
 import { signInUrl, finishSignIn } from "./google.ts";
 import { finishMicrosoftSignIn, isMicrosoftState, microsoftClientId, microsoftSignInUrl } from "./microsoft.ts";
-import { sendDueEmails } from "./outbox.ts";
+import { closeInterrupted, sendDueEmails } from "./outbox.ts";
 import { modelConfigured } from "./llm.ts";
 import { startEngine, windowClosed, windowOpened } from "./engine.ts";
 import { connectAccount } from "./accounts.ts";
@@ -263,8 +263,12 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
   }, 10_000);
 
   return new Promise((resolve, reject) => {
-    server.once("error", reject);
+    server.once("error", (e) => {
+      clearInterval(timer);
+      reject((e as NodeJS.ErrnoException).code === "EADDRINUSE" ? new Error(`Port ${port} is in use by another program. Change "port" in ${CONFIG_PATH}, or stop that program.`) : e);
+    });
     server.listen(port, "127.0.0.1", () => {
+      closeInterrupted().catch((e) => console.error("[scheduled] interrupted sends:", e));
       // A local model needs Ollama running; start it if it is not.
       if ([loadConfig().model, loadConfig().fastModel].some((m) => m?.format === "ollama")) startOllama().catch(() => {});
       const stopEngine = startEngine();

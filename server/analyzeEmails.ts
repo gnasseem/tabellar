@@ -34,8 +34,9 @@
  */
 
 import type { Db } from "./db.ts";
+import { unprocessedIds } from "./db.ts";
 import { getEnv } from "./config.ts";
-import { processFullEmail } from "./ai.ts";
+import { ModelDown, processFullEmail, UnreadableAnswer } from "./ai.ts";
 import { isLocalModel } from "./llm.ts";
 import { allPrefs, correspondents, pick, profileContext } from "./profile.ts";
 import { readWithoutModel, writtenTo } from "./senders.ts";
@@ -60,6 +61,10 @@ async function linkCalendar(cal: ReturnType<typeof calendarAccount>, e: Record<s
 }
 
 
+// What the model said last when it did not answer, until it does.
+export const modelStatus = { error: null as string | null };
+const unreadable = new Map<string, number>();
+
 /**
  * Analyze all unprocessed emails for a given user.
  * Returns the number of emails analyzed.
@@ -68,25 +73,13 @@ export async function analyzeEmailsForUser(
   userId: string,
   db: Db,
 ): Promise<{ analyzed: number }> {
-  const { data: alreadyProcessed } = await db
-    .from("email_processed")
-    .select("email_id")
-    .eq("user_id", userId);
-  const processedIds = (alreadyProcessed || []).map((p) => p.email_id as string);
-
-  let unprocessedQuery = db
+  const ids = unprocessedIds(userId, isLocalModel("fast") ? 20 : 100);
+  if (!ids.length) return { analyzed: 0 };
+  const { data: unprocessed } = await db
     .from("emails")
     .select("id, subject, sender, sender_email, recipients, body_text, snippet, received_at, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, precedence_header, list_id, is_calendar, is_receipt, calendar_event, account_id")
-    .eq("user_id", userId)
-    .not("label_ids", "cs", '{"SENT"}')
-    .order("received_at", { ascending: false })
-    .limit(isLocalModel("fast") ? 20 : 100);
-
-  if (processedIds.length > 0) {
-    unprocessedQuery = unprocessedQuery.not("id", "in", `(${processedIds.join(",")})`);
-  }
-
-  const { data: unprocessed } = await unprocessedQuery;
+    .in("id", ids)
+    .order("received_at", { ascending: false });
   const emailsToProcess = unprocessed || [];
 
   if (emailsToProcess.length === 0) {
@@ -135,7 +128,7 @@ export async function analyzeEmailsForUser(
   // against the user's day, not the edge runtime's UTC day.
   const userTimezone =
     ((profileRes.data?.working_hours as { timezone?: string } | null)
-      ?.timezone) || "UTC";
+      ?.timezone) || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
   const memRows = memRowsRes.data ?? [];
   const userTags = labelsForPrompt(labels);
@@ -251,8 +244,10 @@ export async function analyzeEmailsForUser(
         profile,
         corresponds(email),
         recent(email),
+        new Date(String(email.received_at)),
       );
 
+      modelStatus.error = null;
       const finalCategory = result.category;
       const extraLabels = [...(result.tags || []), ...bySender(email)];
 
@@ -288,6 +283,18 @@ export async function analyzeEmailsForUser(
       if (kbBuffer.length >= FLUSH_SIZE) await flushKb();
     } catch (e) {
       console.error("[analyzeEmailsForUser] failed for email:", (e as Error).message);
+      if (e instanceof ModelDown) {
+        // The rest would fail the same way; they are read when it answers again.
+        modelStatus.error = e.message;
+        nextIdx = emailsToProcess.length;
+      } else if (e instanceof UnreadableAnswer) {
+        // An email the model never answers properly about is kept without a
+        // summary rather than asked about forever.
+        const id = email.id as string;
+        const tries = (unreadable.get(id) ?? 0) + 1;
+        unreadable.set(id, tries);
+        if (tries >= 3) rowBuffer.push({ user_id: userId, email_id: id, category: "updates", urgency: "low", summary: null, quick_actions: [], extra_labels: extra(bySender(email)) });
+      }
     }
   };
 
