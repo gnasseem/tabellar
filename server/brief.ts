@@ -194,6 +194,7 @@ export async function brief(userId: string): Promise<Brief> {
     return !stops(pick(prefs, String(e.sender_email ?? ""), String(e.subject ?? "")), "briefing");
   });
   const done = new Map<string, string[]>();
+  const acted = new Set<string>();
   const mailIds = mail.map((e) => String(e.id));
   for (let i = 0; i < mailIds.length; i += 300) {
     const { data } = await db.from("action_log").select("email_id, kind, summary, detail").eq("user_id", userId).eq("status", "done").in("email_id", mailIds.slice(i, i + 300));
@@ -202,12 +203,19 @@ export async function brief(userId: string): Promise<Brief> {
       const words =
         r.kind === "label" ? String(d.label ?? "").replace(/^Tabellar\//, "") : r.kind === "todo" ? "Todo added" : r.kind === "archive" ? "Archived" : r.kind === "send" ? "Replied" : r.kind === "meeting" ? "Meeting proposed" : r.kind === "unsubscribe" ? "Unsubscribed" : "";
       if (!words) continue;
+      if (r.kind !== "label") acted.add(String(r.email_id));
       const list = done.get(String(r.email_id)) ?? [];
       if (!list.includes(words)) list.push(words);
       done.set(String(r.email_id), list);
     }
   }
-  const handled: HandledItem[] = mail.slice(0, HANDLED_MAX).map((e) => {
+  // Mail that asks the user for something is not handled by being sorted.
+  const asks = (e: Row) => {
+    const raw = e.email_processed as Row | Row[] | null;
+    const p = (Array.isArray(raw) ? raw[0] : raw) as Row;
+    return p.category === "action-required" && !p.calendar && !acted.has(String(e.id));
+  };
+  const handled: HandledItem[] = mail.filter((e) => !asks(e)).slice(0, HANDLED_MAX).map((e) => {
     const raw = e.email_processed as Row | Row[] | null;
     const p = (Array.isArray(raw) ? raw[0] : raw) as Row;
     const cal = p.calendar as Row | null;

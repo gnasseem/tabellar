@@ -5,7 +5,7 @@ import { createClient } from "@/lib/db";
 import { measureEmailIframeBodyHeight } from "@/lib/emailIframe";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import { Empty, Glyph, SkeletonRows, ViewBar, VirtualList, useSizes, dayLabel, shortWhen } from "../ui";
+import { Empty, Glyph, SkeletonRows, ViewBar, VirtualList, useSizes, dayLabel, shortWhen, clock } from "../ui";
 
 // Sent: everything that went out, one line each, grouped by day. A line ends
 // in whether a follow-up is waiting on it. Opening one shows it on the right.
@@ -327,7 +327,7 @@ export default function SentView() {
               <div className="min-w-0 flex-1">
                 <h2 className="text-[15px] font-[650] leading-snug tracking-[-0.01em]">{cursor.subject || "(no subject)"}</h2>
                 <p className="mt-1 break-words text-xs leading-normal text-ink3">
-                  To {people(cursor.recipients).join(", ")}, {dayLabel(cursor.received_at).name.toLowerCase()} {shortWhen(cursor.received_at)}
+                  To {people(cursor.recipients).join(", ")}, {dayLabel(cursor.received_at).name.toLowerCase()} {clock(cursor.received_at)}
                 </p>
                 {follow?.text && (
                   <p className={`mt-1 text-xs ${follow.due ? "font-semibold text-wax-ink" : "text-ink2"}`}>

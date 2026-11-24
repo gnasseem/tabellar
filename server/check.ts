@@ -457,6 +457,30 @@ ok("names and words in other scripts are read whole", () => {
 ok("a name that looks like an address is not the sender", () => assert.equal(mime.addressOf('"<boss@nyu.edu>" <evil@x.example>'), "evil@x.example"));
 ok("an address cannot add a header of its own", () => assert.ok(!/^Bcc:/m.test(mime.writeMessage({ from: "a@b.example", to: ["x@y.example\r\nBcc: z@q.example"], subject: "s", html: "h" }))));
 
+// ── Replies the conversation has moved past ─────────────────────────────────
+const { withdrawStale } = await import("./engine.ts");
+const threadMail = async (id: string, minutesAgo: number, labels: string[]) =>
+  (await db.from("emails").insert({ user_id: userId, gmail_id: id, thread_id: "moved-on", account_id: account!.id, subject: "Moved on", sender_email: "ann@example.org", received_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(), label_ids: labels }).select("id").single()).data!.id as string;
+const firstOf = await threadMail("moved-1", 60, ["INBOX"]);
+await db.from("action_log").insert({ user_id: userId, kind: "draft", email_id: firstOf, summary: "Draft a reply to Ann", detail: { to: ["ann@example.org"], body: "x" }, status: "proposed", source: "engine" });
+await db.from("draft_emails").insert({ user_id: userId, to_addresses: ["ann@example.org"], subject: "Re: Moved on", body_html: "x", email_id: firstOf, source: "tabellar", created_at: new Date(Date.now() - 50 * 60_000).toISOString() });
+await withdrawStale(userId);
+const still = await db.from("action_log").select("status").eq("email_id", firstOf).single();
+await threadMail("moved-2", 30, ["INBOX"]);
+await withdrawStale(userId);
+const movedOn = await db.from("action_log").select("status").eq("email_id", firstOf).single();
+const { count: draftKept } = await db.from("draft_emails").select("id", { count: "exact", head: true }).eq("email_id", firstOf);
+await threadMail("moved-3", 10, ["SENT"]);
+await withdrawStale(userId);
+const { count: draftGone } = await db.from("draft_emails").select("id", { count: "exact", head: true }).eq("email_id", firstOf);
+ok("a proposed reply goes when the conversation goes on, Tabellar's draft when the user answers", () => {
+  assert.equal(still.data!.status, "proposed");
+  assert.equal(movedOn.data!.status, "dismissed");
+  assert.equal(draftKept, 1);
+  assert.equal(draftGone, 0);
+});
+await db.from("emails").delete().eq("user_id", userId).eq("thread_id", "moved-on");
+
 // ── Aliases ─────────────────────────────────────────────────────────────────
 // An account that also sends as another address (Gmail's "Send mail as").
 console.log("Aliases");

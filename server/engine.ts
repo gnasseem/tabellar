@@ -39,7 +39,7 @@ import { tellMeetings } from "./prep.ts";
 import { firstReadState, relearnStyle, startFirstRead } from "./firstRead.ts";
 import { listAccounts, refreshStaleSendAs, replyFrom, type Account } from "./accounts.ts";
 import { gmailLabelOf, userLabels } from "./labels.ts";
-import { ask, covers, PASSED, displayName, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
+import { ask, covers, MOVED_ON, PASSED, displayName, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
 
 const INTERVAL_MS = 2 * 60_000;
 const TICK_MS = 20_000;
@@ -170,6 +170,19 @@ async function laterInThread(e: EmailRow): Promise<boolean> {
   return !!count;
 }
 
+// The same thing asked again (a reminder, a resent form) is the todo already
+// there: an open one, or one waiting for approval, in the same words from the
+// same sender.
+async function sameTodo(userId: string, label: string, sender: string): Promise<boolean> {
+  const same = (t: unknown) => String(t ?? "").trim().toLowerCase() === label.trim().toLowerCase();
+  const [{ data: open }, { data: waiting }] = await Promise.all([
+    db.from("todos").select("text, emails(sender_email)").eq("user_id", userId).eq("is_completed", false).not("email_id", "is", null),
+    db.from("action_log").select("detail, emails(sender_email)").eq("user_id", userId).eq("kind", "todo").eq("status", "proposed"),
+  ]);
+  const from = (r: Record<string, unknown>) => String((r.emails as { sender_email?: string } | null)?.sender_email ?? "").toLowerCase() === sender;
+  return (open ?? []).some((r) => same(r.text) && from(r)) || (waiting ?? []).some((r) => same((r.detail as { text?: string } | null)?.text) && from(r));
+}
+
 type QuickAction = Record<string, unknown> & { action?: string; label?: string; text?: string };
 
 function startOfToday(): string {
@@ -283,7 +296,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     const wantsDraft =
       category === "action-required" && !!reply && !!replyTo && !NO_REPLY.test(replyTo) && !already.has("draft") && !already.has("send") && !stopped("draft") && !(await laterInThread(email));
     const todo = todoOf(actions, email, category);
-    const wantsTodo = !!todo && !already.has("todo") && !stopped("todo");
+    const wantsTodo = !!todo && !already.has("todo") && !stopped("todo") && !(await sameTodo(userId, String(todo.label), sender));
 
     // From someone the user does not know and has said nothing about: ask
     // instead of guessing, when the draft or todo would otherwise happen. A
@@ -525,6 +538,24 @@ export async function closePastMeetings(userId: string): Promise<void> {
   for (const r of made ?? []) if (ids.has(String((r.detail as { meetingId?: string }).meetingId))) await db.from("action_log").update({ status: "undone", undone_at: now, reason: PASSED }).eq("id", r.id);
 }
 
+// A reply that waits on an email the conversation has moved past is no longer
+// the reply to send: a proposal goes once anyone has written since, a draft
+// Tabellar wrote (and the user has not saved) once the user has answered.
+export async function withdrawStale(userId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { data: proposals } = await db.from("action_log").select("id, emails!inner(id, thread_id, received_at)").eq("user_id", userId).eq("kind", "draft").eq("status", "proposed");
+  for (const r of proposals ?? []) {
+    if (await laterInThread(r.emails as EmailRow)) await db.from("action_log").update({ status: "dismissed", decided_at: now, reason: MOVED_ON }).eq("id", r.id).eq("status", "proposed");
+  }
+  const { data: drafts } = await db.from("draft_emails").select("id, created_at, emails!inner(id, thread_id, received_at)").eq("user_id", userId).eq("source", "tabellar").is("gmail_draft_id", null);
+  for (const d of drafts ?? []) {
+    const e = d.emails as EmailRow;
+    if (!e.thread_id) continue;
+    const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("thread_id", e.thread_id).contains("label_ids", ["SENT"]).gt("received_at", d.created_at);
+    if (count) await db.from("draft_emails").delete().eq("id", d.id);
+  }
+}
+
 // Sort and plan everything not read yet, a batch at a time.
 const readAll = (userId: string) => readBacklog(userId, () => planNew(userId));
 
@@ -547,6 +578,7 @@ export async function runCycle(): Promise<void> {
     const unread = await db.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("paused", false).is("read_at", null);
     if ((await firstReadState(userId)).step !== "done" || unread.count) void startFirstRead(userId, () => planNew(userId));
     await closePastMeetings(userId);
+    await withdrawStale(userId);
     await refreshStaleSendAs(userId);
     await applyWaitingLabels(userId);
     await syncMail(userId);
@@ -658,6 +690,7 @@ function startWatcher(): () => void {
       const changed = !!userId && (await mailboxChanged(userId, failures));
       if (userId && changed) {
         const fresh = await syncMail(userId);
+        await withdrawStale(userId);
         if (fresh.length && modelConfigured()) void readNew(userId);
       }
       // While none can be reached, ask less and less often.

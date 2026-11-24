@@ -11,7 +11,7 @@ import EmailBody from "../EmailBody";
 import EmailDetail from "../EmailDetail";
 import { Questions } from "../Profile";
 import { SnoozeMenu, snoozedText, useSnooze } from "../Snooze";
-import { AccountMark, Countdown, Empty, Glyph, Menu, OutcomeLines, Seg, SkeletonRows, Tick, ViewBar, VirtualList, useSizes, dayLabel, shortWhen, type MailState } from "../ui";
+import { AccountMark, Countdown, Empty, Glyph, Menu, OutcomeLines, Seg, SkeletonRows, Tick, ViewBar, VirtualList, useSizes, dayLabel, shortWhen, type MailState, clock } from "../ui";
 
 // The inbox: every email on one quiet line that ends in what Tabellar did
 // with it. Only mail that needs the user is set in strong type and wax red.
@@ -904,7 +904,7 @@ function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thre
             <div className="min-w-0 flex-1">
               <h2 className="truncate text-[15px] font-[650] leading-tight tracking-[-0.01em]">{senderName(e)}</h2>
               <p className="mt-0.5 truncate text-xs text-ink3">
-                {e.sender_email}, {dayLabel(e.received_at).name.toLowerCase()} {shortWhen(e.received_at)}
+                {e.sender_email}, {dayLabel(e.received_at).name.toLowerCase()} {clock(e.received_at)}
                 {to && <>, to {to}</>}
               </p>
             </div>

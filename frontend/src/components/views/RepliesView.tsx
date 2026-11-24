@@ -7,7 +7,7 @@ import { useApp } from "../AppShell";
 import { api } from "@/lib/outcomes";
 import { reversible } from "@/lib/undo";
 import { replyFrom } from "@/lib/accounts";
-import { Countdown, Empty, Glyph, Menu, SearchBox, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
+import { Countdown, Empty, Glyph, Menu, SearchBox, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen, clock } from "../ui";
 
 // Replies: every answer Tabellar has written, ready to read and send, and the
 // ones Autopilot is about to send on its own. Reading and sending happen here,
@@ -455,7 +455,7 @@ export default function RepliesView() {
                   <div className="inset mb-5 mt-4">
                     <div className="mb-1 flex justify-between text-xs text-ink3">
                       <b className="font-semibold text-ink2">
-                        {nameOf(cursor.source.sender) || cursor.source.sender_email} wrote, {dayLabel(cursor.source.received_at).name.toLowerCase()} {shortWhen(cursor.source.received_at)}
+                        {nameOf(cursor.source.sender) || cursor.source.sender_email} wrote, {dayLabel(cursor.source.received_at).name.toLowerCase()} {clock(cursor.source.received_at)}
                       </b>
                       <button className="link" onClick={() => setShowSource(!showSource)}>
                         {showSource ? "Show summary" : "Show the email"}
