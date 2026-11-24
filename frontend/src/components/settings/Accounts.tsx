@@ -27,7 +27,7 @@ function signInAgain(provider: string) {
 // Settings > Accounts: each mailbox, its default From, whether it is read,
 // which one is the default, and adding or removing one.
 export default function Accounts() {
-  const { accounts, addToast } = useApp();
+  const { accounts, addToast, mail } = useApp();
   const [busy, setBusy] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -72,6 +72,8 @@ export default function Accounts() {
     }
     setBusy(null);
   };
+
+  const again = (provider: string) => (provider === "imap" ? setAdding(true) : signInAgain(provider));
 
   return (
     <Group
@@ -124,6 +126,11 @@ export default function Accounts() {
             {a.from.length > 1 && (
               <Menu label="From" value={a.default_from} onChange={(v) => change(a.id, { default_from: v })} options={a.from.map((f) => ({ id: f.address, label: f.address }))} />
             )}
+            {mail.engine?.signIn === a.address && (
+              <button className="btn btn-sm" onClick={() => again(a.provider)}>
+                {a.provider === "imap" ? "Change the app password" : "Sign in again"}
+              </button>
+            )}
             <Switch label={`Read mail from ${a.address}`} on={!a.paused} disabled={busy === a.id} onChange={(on) => change(a.id, { paused: !on })} />
             <div className="relative" data-account-menu>
               <button className="iconbtn" title="More" aria-label={`More for ${a.address}`} aria-haspopup="menu" aria-expanded={menu === a.id} onClick={() => setMenu(menu === a.id ? null : a.id)}>
@@ -136,7 +143,7 @@ export default function Accounts() {
                       Make default
                     </button>
                   )}
-                  <button role="menuitem" className="pop-item" onClick={() => (a.provider === "imap" ? (setMenu(null), setAdding(true)) : signInAgain(a.provider))}>
+                  <button role="menuitem" className="pop-item" onClick={() => (setMenu(null), again(a.provider))}>
                     {a.provider === "imap" ? "Change the app password" : "Sign in again"}
                   </button>
                   <button role="menuitem" className="pop-item text-danger" onClick={() => remove(a.id, a.address)}>

@@ -8,7 +8,7 @@ import { userCalendar } from "./providers.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
 import { chatCompletion, modelFailure, modelTimeoutMs, requireModel } from "./llm.ts";
 import type { Slot } from "./config.ts";
-import { checkActions } from "./rules.ts";
+import { checkActions, wording } from "./rules.ts";
 
 const PROMPTS = {
   process_email: `You sort one email for the user. Return only JSON, no markdown:
@@ -29,7 +29,7 @@ urgency, exactly one: critical (act today), high (within 1 to 3 days: an offer o
 summary: one sentence, two at most, that leads with the most important fact: an amount, a deadline, the decision or the ask. Name the sender only if a person. No filler such as "This email informs you".`,
   process_email_actions: `actions: what the user would do about it. Most email needs nothing: [] unless a rule below clearly applies. At most one of each kind.
 - {"action": "reply", "label": "Reply to John about the Q3 review", "text": "what the reply should say, in one line"}: only when a real person asked the user something or is waiting on their answer.
-- {"action": "add_todo", "label": "Sign the lease renewal for Dana by Dec 15", "quote": "the sentence that asks for it, copied word for word"}: only when someone the user deals with asks them personally to sign, pay what they owe, submit, send, prepare or fix something. Never for marketing or broadcast calls to action (register, sign up, apply, attend, nominate, buy), offers the user may take or leave, receipts, notifications, or things that happen on their own. The label names the task, the person when relevant, and a stated deadline.
+- {"action": "add_todo", "label": "Sign the lease renewal for Dana by Friday", "quote": "the sentence that asks for it, copied word for word"}: only when someone the user deals with asks them personally to sign, pay what they owe, submit, send, prepare or fix something. Never for marketing or broadcast calls to action (register, sign up, apply, attend, nominate, buy), offers the user may take or leave, receipts, notifications, or things that happen on their own. The label names the task, the person when relevant, and a deadline only in the email's own words ("by Friday"), never worked out into a date.
 - {"action": "schedule_meeting", "label": "Call with Priya", "text": "what it is about", "quote": "the sentence that gives the meeting's time, or else the one that proposes it, word for word", "meetingDetails": {"title": "Call with Priya", "date": "YYYY-MM-DD resolved against today, or null when no day is named", "time": "the start time as written, e.g. 4:30pm, or null", "timezone": "as written next to the time, e.g. EST, or null", "duration": minutes or null, "location": "link or address, or null"}}: only when the email arranges or proposes a meeting, call, interview or appointment with the user, not an event advertised to many. Never supply a time or timezone the email does not state.`,
   draft: `You write the user's email replies for them, in their own voice. Write only the body of the reply: no subject line, no notes about it, no placeholders like [Your Name]. Answer what the email asks and say nothing that the email, the instructions or the background do not support. Follow the user's way of writing below.`,
   agent_system: `You are Tabellar's Auto-Resolve executive agent. Your job is to completely clear the user's current inbox list by producing a fully confirmed action plan: drafted replies, todos, calendar events, and a single bulk archive. At the end, the user reviews and executes approved actions with one click.
@@ -226,8 +226,9 @@ export { PROMPTS };
 /** Strip Qwen 3 <think>...</think> reasoning blocks from model output.
  * Also handles truncated output where the closing tag is missing (token limit hit). */
 function stripThinkTags(text: string): string {
-  // Remove complete <think>...</think> blocks
-  let result = text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  // Remove complete <think>...</think> blocks, and the markers gemma leaves
+  // around its thinking ("thought <channel|>").
+  let result = text.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/^\s*(?:<\|?channel\|?>\s*)?thought\b[\s\S]*?<\|?\/?channel\|?>/i, "").trim();
   // Remove truncated <think> block with no closing tag (output cut off inside thinking)
   const openIdx = result.indexOf("<think>");
   if (openIdx !== -1) {
@@ -235,6 +236,9 @@ function stripThinkTags(text: string): string {
   }
   return result;
 }
+
+// A tool call a local model wrote out as text instead of making it.
+export const LEAKED_CALL = /<\|?\/?tool_(call|response)\|?>|^\s*call:\w+\s*\{/;
 
 function parseJson(raw: string): unknown {
   // Some models say a sentence before the JSON.
@@ -452,7 +456,7 @@ export async function processFullEmail(
   return {
     category: finalCategory,
     urgency: finalUrgency,
-    summary: (parsed?.summary || "").trim(),
+    summary: wording(String(parsed?.summary ?? "").trim(), `${subject}\n${body}`, timezone, sent),
     // What the model suggests, checked against the email itself.
     quick_actions: checkActions(parsed?.actions, { subject, body_text: body }, finalCategory, timezone, sent),
     tags: returnedTags,
@@ -1510,9 +1514,8 @@ export async function chatWithAssistant(
       !assistantMsg?.tool_calls?.length
     ) {
       const reply = stripThinkTags(assistantMsg?.content ?? "");
-      if (!reply.trim()) {
-        // Empty content from a non-tool-call response  -  treat as transient, retry via callAPI
-        messages.push({ role: "user", content: "Please respond." });
+      if (!reply.trim() || LEAKED_CALL.test(reply)) {
+        messages.push({ role: "user", content: reply.trim() ? "Call the tool itself instead of writing the call out." : "Please respond." });
         continue;
       }
       return { reply, tool_calls: allToolCalls };

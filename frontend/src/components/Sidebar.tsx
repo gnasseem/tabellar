@@ -67,17 +67,31 @@ function NavItem({ id, icon, label, count, need, on: forced }: { id: string; ico
   );
 }
 
-// The level, with pause beside it. A line under it only when Gmail cannot be
-// reached or the last check failed.
+// The level, with pause beside it. A line under it only when something is
+// wrong: a mailbox or the model does not answer, or a sign-in is over.
 function Engine() {
-  const { user, profile, updateProfile, mail, addToast } = useApp();
+  const { user, profile, updateProfile, mail, addToast, setView, setViewCache } = useApp();
   const supabase = createClient();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const level = mail.engine?.level ?? (profile.autonomy_level as string) ?? "observe";
   const paused = mail.engine?.paused ?? !!profile.engine_paused;
-  const failing = !!(mail.engine?.mailError || mail.engine?.lastError);
-  const note = paused ? "" : mail.engine?.mailError ? "Can't reach your mail" : mail.engine?.lastError ? "Last check failed" : "";
+  const e = mail.engine;
+  const settings = (tab: string) => () => {
+    setViewCache("settings:tab", tab);
+    setView("settings");
+  };
+  const problem: { text: string; why?: string | null; go?: () => void } | null = e?.down
+    ? { text: "Tabellar is not running" }
+    : e?.signIn
+      ? { text: "Sign in again", why: e.signIn, go: settings("accounts") }
+      : e?.mailError
+        ? { text: "Can't reach your mail", why: e.mailError }
+        : e?.lastError
+          ? { text: "Last check failed", why: e.lastError }
+          : e?.modelError
+            ? { text: "The model is not answering", why: e.modelError, go: settings("models") }
+            : null;
 
   useEffect(() => {
     if (!open) return;
@@ -102,7 +116,7 @@ function Engine() {
     <div ref={ref} className="relative grid grid-cols-[1fr_auto] items-center pl-2 pr-1">
       <button className="flex h-item items-center gap-2 justify-self-start rounded-md pr-1 font-medium" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className="grid w-4 place-items-center">
-          <i className="h-[7px] w-[7px] rounded-full" style={{ background: paused ? "var(--warn)" : failing ? "var(--danger)" : "var(--run)" }} />
+          <i className="h-[7px] w-[7px] rounded-full" style={{ background: paused && !e?.down ? "var(--warn)" : problem ? "var(--danger)" : "var(--run)" }} />
         </span>
         {paused ? "Paused" : LEVELS.find((l) => l.id === level)?.label}
         <Icon name="expand_more" size={12} className="text-ink3" />
@@ -110,7 +124,16 @@ function Engine() {
       <button className="iconbtn" title={paused ? "Resume" : "Pause"} aria-label={paused ? "Resume" : "Pause"} onClick={() => save({ engine_paused: !paused })}>
         <Icon name={paused ? "play_arrow" : "pause"} size={16} />
       </button>
-      {note && <small className="col-span-2 truncate pb-1 pl-6 text-xs text-danger">{note}</small>}
+      {problem &&
+        (problem.go ? (
+          <button className="col-span-2 truncate pb-1 pl-6 text-left text-xs text-danger underline decoration-danger/40 underline-offset-2 hover:decoration-danger" title={problem.why ?? undefined} onClick={problem.go}>
+            {problem.text}
+          </button>
+        ) : (
+          <small className="col-span-2 truncate pb-1 pl-6 text-xs text-danger" title={problem.why ?? undefined}>
+            {problem.text}
+          </small>
+        ))}
       {open && (
         <div className="pop absolute bottom-full left-0 mb-1 w-[336px]" role="menu">
           <LevelControl
@@ -149,7 +172,7 @@ function AccountSwitch() {
     setOpen(false);
   };
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative mx-2 mb-3 mt-0.5">
       <button
         className="flex h-item w-full items-center gap-2 rounded-md px-2 text-left text-ink2 transition-colors duration-150 hover:bg-sel/55"
         aria-haspopup="menu"
@@ -252,8 +275,9 @@ export default function Sidebar() {
             <Icon name="compose" size={16} />
           </button>
         </div>
+        {/* Above the scrolling part, which would clip its menu. */}
+        <AccountSwitch />
         <nav className="flex flex-1 flex-col gap-3 overflow-y-auto px-2 pb-2 pt-0.5">
-          <AccountSwitch />
           {groups.map((g) => (
             <div key={g[0].id}>
               {g.map((i) => (

@@ -204,7 +204,7 @@ export async function connectAccount(a: { provider: string; address: string; nam
   if (saved.error) throw new Error(saved.error.message);
   // The addresses it sends from, before the window first offers them.
   await refreshSendAs(saved.data as unknown as Account).catch((e) => console.error("[accounts] send-as list:", (e as Error).message));
-  if (!existing) void import("./engine.ts").then((m) => m.readNow(userId));
+  void import("./engine.ts").then((m) => (existing ? m.checkMail() : m.readNow(userId)));
   const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId);
   return (count ?? 0) === 0;
 }

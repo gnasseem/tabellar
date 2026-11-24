@@ -16,8 +16,11 @@
  */
 
 import type { Db } from "./db.ts";
-import { dateContextFor, llmWithTools, PROMPTS } from "./ai.ts";
+import { dateContextFor, LEAKED_CALL, llmWithTools, PROMPTS } from "./ai.ts";
 import { looksLikeInstructions } from "./policy.ts";
+import { parseWallClock } from "./agentExecute.ts";
+import { addressOf } from "./mime.ts";
+import { allPrefs, pick, stops } from "./profile.ts";
 import { isLocalModel } from "./llm.ts";
 import {
   AGENT_TOOLS,
@@ -112,7 +115,8 @@ function uid(): string {
 function mergeDraftsById(actions: DraftAction[]): DraftAction[] {
   const byKey = new Map<string, DraftAction>();
   for (const a of actions) {
-    byKey.set(a.linked_email_id && a.type !== "archive" ? `${a.type}:${a.linked_email_id}` : a.id, a);
+    const meeting = a.type === "meeting" ? `meeting:${String(a.payload.meeting_title ?? "").toLowerCase()}:${a.payload.start_iso ?? ""}` : "";
+    byKey.set(a.linked_email_id && a.type !== "archive" ? `${a.type}:${a.linked_email_id}` : meeting || a.id, a);
   }
   return [...byKey.values()];
 }
@@ -319,6 +323,7 @@ export async function getOrCreateBriefingSnapshot(
   ]);
   const drafted = new Set((drafts ?? []).map((d: Record<string, unknown>) => String(d.email_id ?? "")));
   const due = new Map((todos ?? []).filter((t: Record<string, unknown>) => t.email_id && t.due).map((t: Record<string, unknown>) => [String(t.email_id), String(t.due)]));
+  const prefs = await allPrefs(userId);
   const cards: AgentToolContext["briefingCards"] = { crucial: [], replyNeeded: [], deadlines: [], nonEssential: [] };
   for (const e of (mail ?? []) as Record<string, unknown>[]) {
     const raw = e.email_processed as Record<string, unknown> | Record<string, unknown>[] | null;
@@ -343,7 +348,11 @@ export async function getOrCreateBriefingSnapshot(
       // The lane that takes it (bucketSnapshot).
       suggestedAction: suggests("schedule_meeting") ? "meeting" : suggests("add_todo") || (category === "action-required" && !asksReply) ? "todo" : undefined,
     };
-    if (card.waitingForReply) cards.replyNeeded.push(card);
+    // What the user said about the sender and the topic.
+    const said = pick(prefs, String(e.sender_email ?? ""), `${e.subject ?? ""} ${card.summary}`);
+    card.never = [stops(said, "todo") && "todo", stops(said, "meeting") && "meeting", stops(said, "draft") && "reply"].filter((x): x is string => !!x);
+    if (said.some((r) => r.value === "quiet" || r.value === "ignore")) cards.nonEssential.push(card);
+    else if (card.waitingForReply) cards.replyNeeded.push(card);
     else if (card.deadline) cards.deadlines.push(card);
     else if (category === "action-required" || category === "important") cards.crucial.push(card);
     else cards.nonEssential.push(card);
@@ -509,7 +518,16 @@ function validateAndApplyPropose(
   ctx: AgentToolContext,
   bucket: AgentBucket | undefined,
 ): { actions: DraftAction[]; error?: string; merged?: boolean } {
-  const type = (args.type as DraftAction["type"]) ?? "todo";
+  // Small models leave the type out; what is filled in says which it is.
+  const type: DraftAction["type"] = ["reply", "todo", "meeting", "archive"].includes(String(args.type))
+    ? (args.type as DraftAction["type"])
+    : args.meeting_title ? "meeting" : args.body ? "reply" : Array.isArray(args.email_ids) ? "archive" : "todo";
+  args.type = type;
+  const lacks =
+    type === "todo" ? !String(args.title ?? "").trim() && "title"
+    : type === "meeting" ? (!String(args.meeting_title ?? "").trim() ? "meeting_title" : parseWallClock(String(args.start_iso ?? "")) === null && "start_iso (YYYY-MM-DDTHH:mm, the time the user picked)")
+    : type === "reply" && args.resolve_only !== true ? (!String(args.to ?? "").includes("@") ? "to (an address)" : !String(args.body ?? "").trim() && "body") : false;
+  if (lacks) return { actions: existing, error: `propose_action rejected: a ${type} needs ${lacks}.` };
   const reasoning = String(args.reasoning ?? "").trim();
   if (!reasoning) {
     return {
@@ -518,9 +536,20 @@ function validateAndApplyPropose(
         "propose_action rejected: reasoning is required. Write ONE first-person sentence explaining why this action is right for THIS user given their style and the email's ask. Call more read tools if you cannot.",
     };
   }
-  const linkedId = args.linked_email_id ? String(args.linked_email_id) : "";
+  const all = Object.values(ctx.briefingCards).flat();
+  let linkedId = args.linked_email_id ? String(args.linked_email_id) : "";
+  // A reply goes into the thread of the email it answers, so it has to say
+  // which; with one email from that address it can only be that one.
+  if (type === "reply" && !all.some((c) => c.email_id === linkedId)) {
+    const from = all.filter((c) => addressOf(String(c.sender ?? "")) === String(args.to ?? "").trim().toLowerCase());
+    if (from.length !== 1) return { actions: existing, error: "propose_action rejected: a reply needs linked_email_id, the id of the email it answers." };
+    linkedId = String(from[0].email_id);
+    args.linked_email_id = linkedId;
+  }
+  const card = all.find((c) => c.email_id === linkedId);
+  if (card?.never?.includes(type)) return { actions: existing, error: `propose_action rejected: the user wants no ${type} from this sender. Leave this email.` };
 
-  if (type === "todo" || type === "reply") {
+  if (type === "todo" || type === "reply" || type === "meeting") {
     if (linkedId) {
       const noise = ctx.briefingCards.nonEssential.some(
         (c) => c.email_id === linkedId,
@@ -831,7 +860,9 @@ export async function runAgentStep(
 
       // No tool calls: model replied with text.
       if (!completion.tool_calls?.length) {
-        const msg = (completion.content ?? "").trim();
+        // A short line on what it is doing is shown; a tool call written out as text is not.
+        const said = (completion.content ?? "").trim();
+        const msg = said.length <= 200 && !LEAKED_CALL.test(said) ? said : "";
         const curIdx = await allocTurnIdx(db, sessionId, msg ? 2 : 1);
         if (msg) {
           await persistTurn(db, sessionId, curIdx, {
@@ -1412,13 +1443,13 @@ async function _runAgentStepParallel(
   const bucketSummaries = results
     .map((r, i) =>
       r.status === "fulfilled" && (r.value as StepResult).summary
-        ? `${bucketPlans[i].bucket}: ${(r.value as StepResult).summary}`
+        ? String((r.value as StepResult).summary)
         : "",
     )
     .filter(Boolean);
   const finalSummary = bucketSummaries.length
-    ? bucketSummaries.join(" · ")
-    : `Planned ${draftActions.length} action${draftActions.length === 1 ? "" : "s"} across ${bucketPlans.length} bucket${bucketPlans.length === 1 ? "" : "s"}.`;
+    ? bucketSummaries.join(" ")
+    : `Planned ${draftActions.length} action${draftActions.length === 1 ? "" : "s"}.`;
 
   const plan = {
     actions: draftActions,

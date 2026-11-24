@@ -278,14 +278,18 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
   };
 
   const discard = async (draft: any) => {
-    await supabase.from("draft_emails").delete().eq("id", draft.id);
+    try {
+      await api("/drafts/discard", { ids: [draft.id] });
+    } catch (e) {
+      return addToast("error", (e as Error).message);
+    }
     notifyDraftChange();
     mail.reload();
     addToast("info", "Draft discarded", {
       action: {
         label: "Undo",
         onClick: async () => {
-          const { id: _id, ...rest } = draft;
+          const { id: _id, gmail_draft_id: _gone, ...rest } = draft;
           await supabase.from("draft_emails").insert(rest);
           notifyDraftChange();
           mail.reload();

@@ -364,13 +364,16 @@ export function ExamplesStep({ onNext }: { onNext: () => void }) {
     setFailed("");
     try {
       await api("/onboarding/examples/answer", { kind: e.kind, address: e.address, emailId: e.emailId, answer: a });
-      const next = { ...answers, [e.key]: a };
-      setAnswers(next);
-      try {
-        localStorage.setItem(ASKED, JSON.stringify(next));
-      } catch {
-        // Kept for this window only.
-      }
+      // Added to what is there by then: answers come faster than they are kept.
+      setAnswers((now) => {
+        const next = { ...now, [e.key]: a };
+        try {
+          localStorage.setItem(ASKED, JSON.stringify(next));
+        } catch {
+          // Kept for this window only.
+        }
+        return next;
+      });
     } catch (err) {
       setFailed((err as Error).message);
     }

@@ -4,6 +4,8 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
+import { api } from "@/lib/outcomes";
+import { reversible } from "@/lib/undo";
 import { replyFrom } from "@/lib/accounts";
 import { Countdown, Empty, Glyph, Menu, SearchBox, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen } from "../ui";
 
@@ -12,7 +14,7 @@ import { Countdown, Empty, Glyph, Menu, SearchBox, SkeletonRows, Tick, ViewBar, 
 // one after another or several at once.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-type Source = { id: string; gmail_id: string; thread_id: string | null; account_id: string | null; recipients?: string | null; cc_recipients?: string | null; sender: string; sender_email: string; subject: string; snippet: string; received_at: string; summary?: string };
+type Source = { id: string; gmail_id: string; thread_id: string | null; account_id: string | null; recipients?: string | null; cc_recipients?: string | null; sender: string; sender_email: string; subject: string; snippet: string; body_text?: string | null; received_at: string; summary?: string };
 type Reply = {
   id: string;
   going: boolean;
@@ -23,13 +25,14 @@ type Reply = {
   at: string; // when the email it answers arrived, else when it was drafted
   sendAt?: string;
   actionId?: string | null;
+  proposal?: { id: string; hash: string };
   source: Source | null;
   raw: any;
 };
 type Head = { head: true; key: string; name: string };
 
 function plain(html: string): string {
-  return (html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>\s*<p[^>]*>/gi, "\n\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"').trim();
+  return (html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>\s*<p[^>]*>/gi, "\n\n").replace(/<\/?(div|p|tr|table|li)\b[^>]*>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"').trim();
 }
 function nameOf(s: string): string {
   return (s || "").replace(/<.*>/, "").replace(/"/g, "").trim();
@@ -68,21 +71,23 @@ export default function RepliesView() {
   const listRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
-    const [d, s] = await Promise.all([
+    const [d, s, p] = await Promise.all([
       supabase.from("draft_emails").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
       supabase.from("scheduled_emails").select("*").eq("user_id", user.id).eq("status", "pending").eq("source", "autopilot").order("send_at", { ascending: true }),
+      supabase.from("action_log").select("id, hash, detail, email_id, created_at").eq("user_id", user.id).eq("kind", "draft").eq("status", "proposed").order("created_at", { ascending: false }),
     ]);
 
     const drafts = (d.data || []) as any[];
     const sched = (s.data || []) as any[];
-    const ids = [...new Set([...drafts, ...sched].map((x) => x.email_id).filter(Boolean))];
+    const proposed = (p.data || []) as any[];
+    const ids = [...new Set([...drafts, ...proposed, ...sched].map((x) => x.email_id).filter(Boolean))];
     const sources = new Map<string, Source>();
     if (ids.length) {
-      const [e, p] = await Promise.all([
-        supabase.from("emails").select("id, gmail_id, thread_id, account_id, sender, sender_email, recipients, cc_recipients, subject, snippet, received_at").in("id", ids),
+      const [e, sums] = await Promise.all([
+        supabase.from("emails").select("id, gmail_id, thread_id, account_id, sender, sender_email, recipients, cc_recipients, subject, snippet, body_text, received_at").in("id", ids),
         supabase.from("email_processed").select("email_id, summary").in("email_id", ids),
       ]);
-      const summary = new Map(((p.data || []) as any[]).map((x) => [x.email_id, x.summary]));
+      const summary = new Map(((sums.data || []) as any[]).map((x) => [x.email_id, x.summary]));
       for (const x of (e.data || []) as any[]) sources.set(x.id, { ...x, summary: summary.get(x.id) });
     }
     const out: Reply[] = [
@@ -91,13 +96,19 @@ export default function RepliesView() {
         const src = sources.get(x.email_id) || null;
         return { id: x.id, going: false, to: x.to_addresses || [], subject: x.subject || "", html: x.body_html || "", text: plain(x.body_html || ""), at: src?.received_at || x.created_at, source: src, raw: x };
       }),
+      // At Suggest a reply waits here to be approved, which sending it does.
+      ...proposed.map((x) => {
+        const src = sources.get(x.email_id) || null;
+        const text = String(x.detail?.body ?? "");
+        return { id: x.id, going: false, proposal: { id: x.id, hash: x.hash }, to: x.detail?.to || [], subject: x.detail?.subject || "", html: text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"), text, at: src?.received_at || x.created_at, source: src, raw: { account_id: x.detail?.accountId, from_address: x.detail?.from, email_id: x.email_id, source: "tabellar" } };
+      }),
     ];
     setReplies(out);
   }, [user.id]);
 
   useEffect(() => {
     load();
-  }, [load, liveChanges.draft_emails, liveChanges.scheduled_emails, draftVersion]);
+  }, [load, liveChanges.draft_emails, liveChanges.scheduled_emails, liveChanges.action_log, draftVersion]);
 
   // Arriving from the inbox with a particular reply to review.
   useEffect(() => {
@@ -172,10 +183,19 @@ export default function RepliesView() {
     anchor.current = r.id;
   };
 
+  // A reply still waiting for approval becomes a draft, exactly as it is shown.
+  const approved = async (r: Reply): Promise<Reply> => {
+    if (!r.proposal) return r;
+    const { draftId } = (await api("/actions/approve", r.proposal)) as { draftId: string };
+    const { data } = await supabase.from("draft_emails").select("*").eq("id", draftId).single();
+    return { ...r, id: draftId, proposal: undefined, html: data.body_html, raw: data };
+  };
+
   // Sending goes through the outbox with a short window, so a slip can be
   // taken back; the draft is restored if it is.
   const send = async (list: Reply[], at?: string) => {
     list = list.filter((r) => !r.going);
+    const asked = [...list];
     if (!list.length || sending) return;
     const bad = list.find((r) => !r.to.length);
     if (bad) return addToast("error", `"${bad.subject || "A reply"}" has no recipient. Open it with Edit to add one.`);
@@ -183,14 +203,15 @@ export default function RepliesView() {
     const sendAt = at || new Date(Date.now() + 15_000).toISOString();
     const queued: string[] = [];
     try {
-      for (const r of list) {
+      for (const [i, shownReply] of list.entries()) {
+        const r = (list[i] = await approved(shownReply));
         const { account, from } = sender(r);
         if (!account) throw new Error("No mailbox is connected");
         // A draft that is also in Gmail's Drafts is sent from there.
         const gmailDraftId = r.raw.gmail_draft_id && r.raw.account_id === account.id ? r.raw.gmail_draft_id : null;
         const { data, error } = await supabase
           .from("scheduled_emails")
-          .insert({ user_id: user.id, account_id: account.id, from_address: from, gmail_draft_id: gmailDraftId, to_addresses: r.to, subject: r.subject, body_html: r.html, in_reply_to: r.source?.gmail_id, thread_id: r.source?.thread_id, send_at: sendAt, email_id: r.source?.id, forward: r.raw.forward ?? null, read_receipt: !!r.raw.read_receipt })
+          .insert({ user_id: user.id, account_id: account.id, from_address: from, gmail_draft_id: gmailDraftId, to_addresses: r.to, cc_addresses: r.raw.cc_addresses?.length ? r.raw.cc_addresses : null, bcc_addresses: r.raw.bcc_addresses?.length ? r.raw.bcc_addresses : null, subject: r.subject, body_html: r.html, in_reply_to: r.source?.gmail_id, thread_id: r.source?.thread_id, send_at: sendAt, email_id: r.source?.id, forward: r.raw.forward ?? null, read_receipt: !!r.raw.read_receipt })
           .select("id")
           .single();
         if (error || !data?.id) throw new Error(error?.message || "Could not queue the reply");
@@ -203,9 +224,10 @@ export default function RepliesView() {
     const done = list.slice(0, queued.length);
     setSending(false);
     setPicked(new Set());
-    if (cursor && done.includes(cursor)) {
-      const rest = rows.filter((r) => !done.includes(r));
-      setCursorId((rest[rows.indexOf(cursor) - done.filter((d) => rows.indexOf(d) < rows.indexOf(cursor)).length] || rest[rest.length - 1])?.id ?? null);
+    const gone = asked.slice(0, queued.length);
+    if (cursor && gone.includes(cursor)) {
+      const rest = rows.filter((r) => !gone.includes(r));
+      setCursorId((rest[rows.indexOf(cursor) - gone.filter((d) => rows.indexOf(d) < rows.indexOf(cursor)).length] || rest[rest.length - 1])?.id ?? null);
     }
     notifyDraftChange();
     mail.reload();
@@ -236,19 +258,29 @@ export default function RepliesView() {
   };
   const restore = (r: Reply) => ({
     user_id: user.id, account_id: r.raw.account_id ?? null, from_address: r.raw.from_address ?? null, gmail_draft_id: r.raw.gmail_draft_id ?? null,
-    to_addresses: r.to, subject: r.subject, body_html: r.html, email_id: r.raw.email_id, source: r.raw.source, forward: r.raw.forward ?? null, read_receipt: !!r.raw.read_receipt,
+    to_addresses: r.to, cc_addresses: r.raw.cc_addresses ?? null, bcc_addresses: r.raw.bcc_addresses ?? null, subject: r.subject, body_html: r.html, email_id: r.raw.email_id, source: r.raw.source, forward: r.raw.forward ?? null, read_receipt: !!r.raw.read_receipt,
   });
 
   const discard = async (list: Reply[]) => {
     list = list.filter((r) => !r.going);
     if (!list.length) return;
-    await supabase.from("draft_emails").delete().in("id", list.map((r) => r.id));
+    const undoDismiss: (() => Promise<void>)[] = [];
+    try {
+      for (const r of list) if (r.proposal) undoDismiss.push(await reversible(user.id, () => api("/actions/dismiss", { id: r.proposal!.id })));
+      const ids = list.filter((r) => !r.proposal).map((r) => r.id);
+      const { discarded } = ids.length ? ((await api("/drafts/discard", { ids })) as { discarded: string[] }) : { discarded: [] };
+      if (discarded.length < ids.length) addToast("error", `${ids.length - discarded.length} could not be discarded: the mailbox could not be reached.`);
+      list = list.filter((r) => r.proposal || discarded.includes(r.id));
+    } catch (e) {
+      return addToast("error", (e as Error).message);
+    }
     setPicked(new Set());
     notifyDraftChange();
     mail.reload();
     await load();
     const undo = async () => {
-      for (const r of list) await supabase.from("draft_emails").insert(restore(r));
+      for (const r of list.filter((x) => !x.proposal)) await supabase.from("draft_emails").insert({ ...restore(r), gmail_draft_id: null });
+      for (const back of undoDismiss) await back();
       notifyDraftChange();
       mail.reload();
       await load();
@@ -256,9 +288,14 @@ export default function RepliesView() {
     addToast("info", list.length === 1 ? "Draft discarded" : `${list.length} drafts discarded`, { action: { label: "Undo", onClick: undo } });
   };
 
-  const edit = (r: Reply) => {
-    if (r.going) return;
-    openCompose(r.source ? { ...r.source, id: r.source.id } : undefined, r.raw);
+  const edit = async (shownReply: Reply) => {
+    if (shownReply.going) return;
+    try {
+      const r = await approved(shownReply);
+      openCompose(r.source ? { ...r.source, id: r.source.id } : undefined, r.raw);
+    } catch (e) {
+      addToast("error", (e as Error).message);
+    }
   };
 
   const cancel = (r: Reply) => {
@@ -393,6 +430,12 @@ export default function RepliesView() {
                   <dd>
                     <b className="font-medium text-ink">{recipient(cursor)}</b> {cursor.to.join(", ") !== recipient(cursor) && cursor.to.join(", ")}
                   </dd>
+                  {(cursor.raw.cc_addresses?.length || cursor.raw.bcc_addresses?.length) > 0 && (
+                    <>
+                      <dt className="text-ink3">{cursor.raw.cc_addresses?.length ? "Cc" : "Bcc"}</dt>
+                      <dd>{[...(cursor.raw.cc_addresses ?? []), ...(cursor.raw.bcc_addresses ?? []).map((b: string) => `${b} (Bcc)`)].join(", ")}</dd>
+                    </>
+                  )}
                   <dt className="text-ink3">Subject</dt>
                   <dd>{cursor.subject || "(no subject)"}</dd>
                   {sender(cursor).from && accounts.mine.size > 1 && (
@@ -412,7 +455,7 @@ export default function RepliesView() {
                         {showSource ? "Show summary" : "Show the email"}
                       </button>
                     </div>
-                    <p className="leading-normal text-ink2">{showSource ? cursor.source.snippet : cursor.source.summary || cursor.source.snippet}</p>
+                    <p className={`leading-normal text-ink2 ${showSource ? "max-h-80 overflow-y-auto whitespace-pre-line" : ""}`}>{showSource ? cursor.source.body_text || cursor.source.snippet : cursor.source.summary || cursor.source.snippet}</p>
                   </div>
                 )}
                 <div
@@ -461,7 +504,7 @@ export default function RepliesView() {
                   <button className="btn" onClick={() => edit(cursor)}>
                     Edit
                   </button>
-                  <small className="ml-1.5 hidden whitespace-nowrap text-xs text-ink3 xl:block">{cursor.source ? `To ${recipient(cursor).split(" ")[0]} only, same thread` : ""}</small>
+                  <small className="ml-1.5 hidden whitespace-nowrap text-xs text-ink3 xl:block">{cursor.source && !cursor.raw.cc_addresses?.length && !cursor.raw.bcc_addresses?.length ? `To ${recipient(cursor).split(" ")[0]} only, same thread` : ""}</small>
                 </>
               )}
               <span className="flex-1" />

@@ -107,7 +107,7 @@ export default function BriefingView() {
       if (n.kind === "approve") await mail.approve(n.id, n.hash || "");
       else if (n.kind === "meeting") {
         const r = (await api("/meetings/confirm", { id: n.id })) as { link: string | null };
-        addToast("success", "On your Google Calendar", r.link ? { action: { label: "Open", onClick: () => window.open(r.link!, "_blank", "noopener") } } : undefined);
+        addToast("success", "On your calendar", r.link ? { action: { label: "Open", onClick: () => window.open(r.link!, "_blank", "noopener") } } : undefined);
       } else if (n.kind === "todo") {
         const { error } = await supabase.from("todos").update({ is_completed: true }).eq("id", n.id).eq("user_id", user.id);
         if (error) throw new Error(`That was not saved: ${error.message}`);
@@ -245,7 +245,7 @@ export default function BriefingView() {
                   {events === null ? (
                     <SkeletonRows count={2} />
                   ) : calError ? (
-                    quiet("Google Calendar could not be read")
+                    quiet("The calendar could not be read")
                   ) : !events.length ? (
                     quiet("Nothing on the calendar")
                   ) : (

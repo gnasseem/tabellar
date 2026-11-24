@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { forwardRef, useImperativeHandle, useState, useEffect, useRef } from "react";
+import DOMPurify from "dompurify";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
@@ -52,9 +53,14 @@ const TONES = [
 type ComposeProps = {
   onClose: () => void;
   onMinimize: () => void;
+  minimized?: boolean; // still there, with everything typed, only not shown
   replyTo?: any;
   draft?: any;
 };
+
+// close: as the X does, keeping what was written. keep: the same, when
+// another message takes the window.
+export type ComposeHandle = { close: () => void; keep: () => void };
 
 interface Template {
   id: string;
@@ -65,7 +71,7 @@ interface Template {
 
 function getNow(): { date: string; time: string } {
   const now = new Date();
-  const date = now.toISOString().split("T")[0];
+  const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const h = String(now.getHours()).padStart(2, "0");
   const m = now.getMinutes() < 30 ? "00" : "30";
   return { date, time: `${h}:${m}` };
@@ -101,9 +107,17 @@ function isOutsideWorkingHours(isoStr: string, wh: WorkingHours): boolean {
   return mins < startH * 60 + startM || mins >= endH * 60 + endM;
 }
 
-// A saved draft's HTML as the text the editor holds; sending turns line breaks back into HTML.
+// The signature under a message, marked so a draft opened again can tell it
+// from the text.
+const SIGNATURE = '<div data-tabellar-sig="1" style="margin-top:16px;padding-top:12px;border-top:1px solid #e4e0da;">';
+
+const escapeHtml = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+// What is typed is text; this is what goes out of it.
+const textHtml = (text: string) => escapeHtml(text).replace(/\n/g, "<br>");
+
+// A saved draft's HTML as the text the editor holds; sending turns it back.
 function draftText(html: string): string {
-  if (!/<(p|br|div)\b/i.test(html)) return html;
   return html
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(p|div)>\s*/gi, "\n\n")
@@ -118,15 +132,11 @@ function draftText(html: string): string {
     .trim();
 }
 
-export default function ComposeModal({
-  onClose,
-  onMinimize,
-  replyTo,
-  draft,
-}: ComposeProps) {
+const ComposeModal = forwardRef<ComposeHandle, ComposeProps>(function ComposeModal({ onClose, onMinimize, minimized, replyTo, draft }, handle) {
   const {
     user,
     profile,
+    openCompose,
     addToast,
     notifyDraftChange,
     notifySent,
@@ -177,8 +187,8 @@ export default function ComposeModal({
     if (draft) return (draft.to_addresses || []).join(", ");
     if (replyTo?._replyAll) {
       const addrs = new Set<string>();
-      if (replyTo.sender_email) {
-        const raw = replyTo.sender_email.trim();
+      if (replyTo.reply_to_email || replyTo.sender_email) {
+        const raw = (replyTo.reply_to_email || replyTo.sender_email).trim();
         const angleMatch = raw.match(/^.*?<([^>]+)>\s*$/);
         const addr = (angleMatch ? angleMatch[1] : raw).toLowerCase();
         if (addr.includes("@") && !mine.has(addr)) addrs.add(addr);
@@ -190,7 +200,7 @@ export default function ComposeModal({
         addrs.add(addr);
       return Array.from(addrs).join(", ");
     }
-    return replyTo?._forward ? "" : replyTo?.sender_email || "";
+    return replyTo?._forward ? "" : replyTo?.reply_to_email || replyTo?.sender_email || "";
   });
   const [cc, setCc] = useState(() => {
     if (draft?.cc_addresses?.length)
@@ -227,14 +237,14 @@ export default function ComposeModal({
   );
   const [body, setBody] = useState<string>(
     draft
-      ? draftText(draft.body_html || "")
+      ? draftText((draft.body_html || "").split(SIGNATURE)[0])
       : replyTo?._autoGenerate
         ? ""
         : replyTo?._prefillBody || "",
   );
   // The last text Tabellar wrote here: what the user changes in it before
   // sending teaches their way of writing (server/writing.ts).
-  const drafted = useRef<string>(draft?.source === "tabellar" ? draftText(draft.body_html || "") : "");
+  const drafted = useRef<string>(draft?.source === "tabellar" ? draftText((draft.body_html || "").split(SIGNATURE)[0]) : "");
   const [sending, setSending] = useState(false);
   const [scheduleAt, setScheduleAt] = useState(draft?.send_at || "");
 
@@ -397,9 +407,11 @@ export default function ComposeModal({
   const [appliedSignatureId, setAppliedSignatureId] = useState<string | null>(
     null,
   );
-  const SIGNATURE_SEPARATOR =
-    '<div data-tabellar-sig="1" style="margin-top:16px;padding-top:12px;border-top:1px solid #e4e0da;">';
-
+  // Kept apart from the text, shown under it, and added when it goes out.
+  const [signature, setSignature] = useState<string>(() => {
+    const at = (draft?.body_html || "").indexOf(SIGNATURE);
+    return at < 0 ? "" : draft.body_html.slice(at + SIGNATURE.length).replace(/<\/div>$/, "");
+  });
   const getDefaultSignatureForAccount = (
     accountId: string,
     sigs: typeof allSignatures,
@@ -410,17 +422,6 @@ export default function ComposeModal({
       sigs.find((s) => s.is_default && !s.account_id) ??
       null
     );
-  };
-
-  const stripSignature = (html: string) => {
-    const idx = html.indexOf(SIGNATURE_SEPARATOR);
-    return idx >= 0 ? html.slice(0, idx) : html;
-  };
-
-  const appendSignature = (html: string, sig: { html: string } | null) => {
-    const base = stripSignature(html);
-    if (!sig) return base;
-    return base + SIGNATURE_SEPARATOR + sig.html + "</div>";
   };
 
   useEffect(() => {
@@ -464,19 +465,15 @@ export default function ComposeModal({
       effectiveAccountId,
       allSignatures,
     );
-    if (sig && sig.id !== appliedSignatureId) {
-      setBody((prev) => appendSignature(prev, sig));
-      setAppliedSignatureId(sig.id);
-    } else if (!sig && appliedSignatureId) {
-      setBody((prev) => stripSignature(prev));
-      setAppliedSignatureId(null);
-    }
+    if ((sig?.id ?? null) === appliedSignatureId) return;
+    setSignature(sig?.html ?? "");
+    setAppliedSignatureId(sig?.id ?? null);
   }, [selectedAccountId, allSignatures]);
 
   const applyTemplate = (t: Template) => {
     const newSubject = t.subject || t.name;
     if (newSubject) setSubject(newSubject);
-    setBody(t.body_html);
+    setBody(/<(p|br|div|span|a|ul|b|i)\b/i.test(t.body_html) ? draftText(t.body_html) : t.body_html);
     setMenu("");
   };
 
@@ -507,48 +504,27 @@ export default function ComposeModal({
     setGeneratingDraft(true);
 
     try {
-      const apiUrl = "/api";
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const res = await fetch(`${apiUrl}/draft-email`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({
-          intent: intent,
-          subject,
-          to,
-          senderName: profile?.display_name || "",
-          forward: forwarded ? { subject: forwarded.subject, from: forwarded.sender, body: forwarded.body_text || forwarded.snippet } : undefined,
-          replyTo: replyTo && !forwardId
-            ? {
-                subject: replyTo.subject,
-                body: replyTo.body_text?.slice(0, 1000),
-              }
-            : undefined,
-        }),
+      const data = await api("/draft-email", {
+        intent,
+        subject,
+        to,
+        senderName: profile?.display_name || "",
+        forward: forwarded ? { subject: forwarded.subject, from: forwarded.sender, body: forwarded.body_text || forwarded.snippet } : undefined,
+        replyTo: replyTo && !forwardId ? { subject: replyTo.subject, body: replyTo.body_text?.slice(0, 1000) } : undefined,
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (quiet && bodyNow.current.trim()) {
-          // The user wrote their own meanwhile.
-        } else if (data.draft) {
-          setBody(data.draft);
-          drafted.current = data.draft;
-          setAiGenerated(true);
-          setShowRefinePanel(false);
-          setRefineFeedback("");
-        } else if (!quiet) {
-          addToast("error", "Could not generate draft");
-        }
+      if (quiet && bodyNow.current.trim()) {
+        // The user wrote their own meanwhile.
+      } else if (data.draft) {
+        setBody(data.draft);
+        drafted.current = data.draft;
+        setAiGenerated(true);
+        setShowRefinePanel(false);
+        setRefineFeedback("");
       } else if (!quiet) {
-        addToast("error", "Could not generate draft");
+        addToast("error", "The draft came back empty. Try again.");
       }
-    } catch {
-      if (!quiet) addToast("error", "Network error");
+    } catch (e) {
+      if (!quiet) addToast("error", (e as Error).message);
     }
     setGeneratingDraft(false);
   };
@@ -572,41 +548,20 @@ export default function ComposeModal({
     if (!refineFeedback.trim() || !body) return;
     setRefining(true);
     try {
-      const apiUrl = "/api";
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const res = await fetch(`${apiUrl}/refine-draft`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({
-          currentDraft: body,
-          feedback: refineFeedback.trim(),
-          keep: keepFeedback,
-          to,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.draft) {
-          setBody(data.draft);
-          drafted.current = data.draft;
-          setAiGenerated(true);
-          setShowRefinePanel(false);
-          setRefineFeedback("");
-          setKeepFeedback(false);
-          addToast("success", data.kept ? "Changed, and kept as a writing rule" : "Changed");
-        } else {
-          addToast("error", "Could not refine draft");
-        }
+      const data = await api("/refine-draft", { currentDraft: body, feedback: refineFeedback.trim(), keep: keepFeedback, to });
+      if (data.draft) {
+        setBody(data.draft);
+        drafted.current = data.draft;
+        setAiGenerated(true);
+        setShowRefinePanel(false);
+        setRefineFeedback("");
+        setKeepFeedback(false);
+        addToast("success", data.kept ? "Changed, and kept as a writing rule" : "Changed");
       } else {
-        addToast("error", "Could not refine draft");
+        addToast("error", "The draft came back empty. Try again.");
       }
-    } catch {
-      addToast("error", "Network error");
+    } catch (e) {
+      addToast("error", (e as Error).message);
     }
     setRefining(false);
   };
@@ -640,28 +595,12 @@ export default function ComposeModal({
     };
 
     try {
-      let rewritten: string | null = null;
-      const apiUrl = "/api";
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const res = await fetch(`${apiUrl}/refine-draft`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({
-          currentDraft: current,
-          feedback: `Rewrite this so it reads ${tone.prompt}. Preserve every fact, name, date, question and commitment exactly, and keep roughly the same length. Return only the rewritten message.`,
-          to,
-        }),
+      const data = await api("/refine-draft", {
+        currentDraft: current,
+        feedback: `Rewrite this so it reads ${tone.prompt}. Preserve every fact, name, date, question and commitment exactly, and keep roughly the same length. Return only the rewritten message.`,
+        to,
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.draft?.trim()) rewritten = data.draft.trim();
-      }
-
+      const rewritten = data.draft?.trim();
       if (!rewritten) {
         addToast("error", "Could not rephrase this draft");
         setRephrasingTone(null);
@@ -674,8 +613,8 @@ export default function ComposeModal({
       addToast("success", `Rewritten to sound ${tone.label.toLowerCase()}`, {
         action: { label: "Undo", onClick: restore },
       });
-    } catch {
-      addToast("error", "Network error");
+    } catch (e) {
+      addToast("error", (e as Error).message);
     }
     setRephrasingTone(null);
   };
@@ -694,131 +633,141 @@ export default function ComposeModal({
   // The message this one answers: a forward starts a conversation of its own.
   const answers = forward ? null : replyTo;
 
-  // Kept here and in that mailbox's Gmail Drafts, From the address chosen.
+  // Whether there is anything here that was not here when it opened.
+  const snapshot = JSON.stringify([to, cc, bcc, subject, body, attachments.length, without]);
+  const started = useRef(snapshot);
+  const changed = snapshot !== started.current && !!(body.trim() || (to.trim() && subject.trim()) || attachments.length);
+  useEffect(() => {
+    if (!changed) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [changed]);
+
+  const outgoing = (text: string) => textHtml(text) + (signature ? `${SIGNATURE}${signature}</div>` : "");
+  const split = (v: string) => v.split(",").map((x: string) => x.trim()).filter(Boolean);
+
+  // Kept here and in that mailbox's Drafts, From the address chosen.
   const saveDraft = async () => {
-    if (!body && !forward) return;
-    const split = (v: string) => v.split(",").map((s: string) => s.trim()).filter(Boolean);
-    const html = /<br|<p|<div/.test(body) ? body : body.replace(/\n/g, "<br>");
     try {
+      const id = draft?._scheduledId ? crypto.randomUUID() : draftId.current;
       const { inGmail } = await api("/drafts/save", {
-        id: draftId.current,
+        id,
         account_id: from.accountId || undefined,
         from_address: from.address || undefined,
         to: split(to),
         cc: split(cc),
         bcc: split(bcc),
         subject,
-        body_html: html,
+        body_html: outgoing(body),
         email_id: draft?.email_id ?? (forward ? null : (replyTo?.id ?? null)),
-        in_reply_to: answers?.gmail_id,
-        thread_id: answers?.thread_id,
+        in_reply_to: answers?.gmail_id ?? draft?.in_reply_to,
+        thread_id: answers?.thread_id ?? draft?.thread_id,
         forward,
         read_receipt: readReceipt,
       });
+      // Scheduled before, a draft now: it no longer goes out.
+      if (draft?._scheduledId) await supabase.from("scheduled_emails").update({ status: "cancelled" }).eq("id", draft._scheduledId).in("status", ["pending", "failed"]);
       notifyDraftChange();
-      addToast(inGmail ? "success" : "info", inGmail ? "Draft saved" : "Draft saved here. The mailbox could not be reached, so it is not in its Drafts.");
+      const files = attachments.length ? ` Attach ${attachments.length === 1 ? `"${attachments[0].name}"` : `the ${attachments.length} files`} again before sending.` : "";
+      addToast(inGmail && !files ? "success" : "info", (inGmail ? "Draft saved." : "Draft saved here. The mailbox could not be reached, so it is not in its Drafts.") + files);
       onClose();
     } catch (e) {
       addToast("error", `Could not save the draft. ${(e as Error).message}`);
     }
   };
 
-  const createMeetingRecord = async () => {
-    if (!meetingDate || !meetingTime || !meetingDuration) return;
+  // The row a message is kept as when it comes back.
+  const asDraft = () => ({
+    user_id: user.id,
+    account_id: from.accountId || null,
+    from_address: from.address || null,
+    to_addresses: split(to),
+    cc_addresses: split(cc),
+    bcc_addresses: split(bcc),
+    subject,
+    body_html: outgoing(body),
+    email_id: draft?.email_id ?? (forward ? null : (replyTo?.id ?? null)),
+    source: draft?.source ?? null,
+    forward,
+    read_receipt: readReceipt,
+  });
 
-    const durationMin = parseInt(meetingDuration, 10);
-    if (isNaN(durationMin) || durationMin <= 0) {
-      addToast("error", "Enter a valid meeting duration");
-      return;
+  // The X keeps what was written; the bin does not, with Undo.
+  const close = () => {
+    if (!changed) return onClose();
+    if (draft?._scheduledId) return discard();
+    void saveDraft();
+  };
+  const discard = async () => {
+    const saved = draft?.id && !draft._scheduledId ? draft : null;
+    if (!saved && !changed) return onClose();
+    const row = saved ? { ...asDraft(), id: saved.id } : asDraft();
+    if (saved) {
+      try {
+        await api("/drafts/discard", { ids: [saved.id] });
+      } catch (e) {
+        return addToast("error", (e as Error).message);
+      }
+      notifyDraftChange();
+      mail.reload();
     }
+    onClose();
+    addToast("info", draft?._scheduledId ? "Changes not kept" : saved ? "Draft discarded" : "Discarded", {
+      action: {
+        label: "Undo",
+        onClick: async () => {
+          if (saved) {
+            await supabase.from("draft_emails").insert(row);
+            notifyDraftChange();
+            mail.reload();
+          }
+          openCompose(replyTo, draft?._scheduledId ? { ...draft, ...row, id: draft.id } : row);
+        },
+      },
+    });
+  };
+  useImperativeHandle(handle, () => ({ close, keep: () => void (changed && !draft?._scheduledId && saveDraft()) }));
+
+  const meetingOn = showMeetingPanel && !!meetingDate && !!meetingTime && Number(meetingDuration) > 0;
+  const meetingTimes = () => {
     const [yr, mo, dy] = meetingDate.split("-").map(Number);
     const [hr, mn] = meetingTime.split(":").map(Number);
-    const startTime = new Date(yr, mo - 1, dy, hr, mn);
-    const endTime = new Date(startTime.getTime() + durationMin * 60000);
-    const attendees = to
-      .split(",")
-      .map((s: string) => s.trim())
-      .filter(Boolean);
-    const title = subject || "Meeting";
-
-    const meetingData: Record<string, unknown> = {
-      user_id: user.id,
-      title,
-      start_time: startTime.toISOString(),
-      end_time: endTime.toISOString(),
-      attendees,
-      location: meetingLocation || null,
-      status: "proposed",
-    };
-
-    try {
-      const apiUrl = "/api";
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const calRes = await fetch(`${apiUrl}/calendar/create-event`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token}`,
-        },
-        body: JSON.stringify({
-          title,
-          start_time: startTime.toISOString(),
-          end_time: endTime.toISOString(),
-          attendees,
-          location: meetingLocation || "",
-          description: `Scheduled from Tabellar`,
-          sendUpdates: "all",
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        }),
-      });
-      if (calRes.ok) {
-        const cal = await calRes.json();
-        meetingData.calendar_event_id = cal.event_id;
-      }
-    } catch (err) {
-      console.error("[ComposeModal] Calendar creation:", err);
-    }
-
-    await supabase.from("meetings").insert(meetingData);
-
-    const startDt = new Date(`${meetingDate}T${meetingTime}`);
-    const endDt = endTime;
-    const dayName = startDt.toLocaleDateString("en-US", { weekday: "long" });
-    const dateStr = startDt.toLocaleDateString("en-US", {
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-    });
-    const timeStr = startDt.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-    const endTimeStr = endDt.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-    const locationLine = meetingLocation || "";
-
-    // A plain summary of the proposed meeting, written into the email. It is
-    // the user's own message, so it makes no claim to come from a calendar
-    // service and carries no buttons that do nothing.
-    const meetingBlock = `
-<div style="font-family:-apple-system,system-ui,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:20px 0;padding:16px 18px;border:1px solid #e4e0da;border-radius:10px;color:#1c1a18">
-  <div style="font-size:16px;font-weight:600;margin-bottom:6px">${title}</div>
-  <div style="font-size:14px;line-height:1.5">${dayName}, ${dateStr}</div>
-  <div style="font-size:14px;line-height:1.5;color:#6a655f">${timeStr} to ${endTimeStr} (${durationMin} min)</div>
-  ${locationLine ? `<div style="font-size:14px;line-height:1.5;color:#6a655f">${locationLine}</div>` : ""}
-</div>`;
-
-    setBody((prev) => prev + meetingBlock);
+    const start = new Date(yr, mo - 1, dy, hr, mn);
+    return { start, end: new Date(start.getTime() + Number(meetingDuration) * 60000) };
   };
 
-  const handleSend = async (bodyOverride?: string) => {
-    if (!to || !subject) return;
+  // A plain summary of the meeting under the message. It is the user's own
+  // message, so it makes no claim to come from a calendar service and carries
+  // no buttons that do nothing.
+  const meetingBlock = () => {
+    const { start, end } = meetingTimes();
+    const day = start.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    const time = (d: Date) => d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    return `<div style="font-family:-apple-system,system-ui,'Helvetica Neue',Arial,sans-serif;max-width:560px;margin:20px 0;padding:16px 18px;border:1px solid #e4e0da;border-radius:10px;color:#1c1a18">
+  <div style="font-size:16px;font-weight:600;margin-bottom:6px">${escapeHtml(subject || "Meeting")}</div>
+  <div style="font-size:14px;line-height:1.5">${day}</div>
+  <div style="font-size:14px;line-height:1.5;color:#6a655f">${time(start)} to ${time(end)} (${meetingDuration} min)</div>
+  ${meetingLocation ? `<div style="font-size:14px;line-height:1.5;color:#6a655f">${escapeHtml(meetingLocation)}</div>` : ""}
+</div>`;
+  };
+
+  // On the calendar, inviting the recipients, once the email has gone.
+  const createMeeting = async () => {
+    const { start, end } = meetingTimes();
+    const row: Record<string, unknown> = { user_id: user.id, title: subject || "Meeting", start_time: start.toISOString(), end_time: end.toISOString(), attendees: split(to), location: meetingLocation || null, status: "proposed" };
+    try {
+      const ev = await api("/calendar/create-event", { title: row.title, start_time: row.start_time, end_time: row.end_time, attendees: row.attendees, location: meetingLocation || "", timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+      row.calendar_event_id = ev.event_id;
+      row.status = "confirmed";
+    } catch {
+      addToast("error", "The email went out, but the meeting could not be put on the calendar. It waits in Meetings.");
+    }
+    await supabase.from("meetings").insert(row);
+  };
+
+  const handleSend = async () => {
+    if (!canSend) return;
     setSending(true);
 
     try {
@@ -860,26 +809,17 @@ export default function ComposeModal({
       // A saved draft that is in that mailbox's Gmail Drafts is sent from there.
       const gmailDraftId = draft?.gmail_draft_id && draft.account_id === effectiveAccountId ? draft.gmail_draft_id : null;
 
-      if (showMeetingPanel && meetingDate && meetingDuration) {
-        await createMeetingRecord();
-      }
-
       const apiUrl = "/api";
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      const rawBody = bodyOverride || body;
-      // Convert plain-text newlines to <br> for HTML email rendering
-      const sendBody =
-        rawBody.includes("<br") ||
-        rawBody.includes("<p") ||
-        rawBody.includes("<div")
-          ? rawBody
-          : rawBody.replace(/\n/g, "<br>");
+      const sendBody = textHtml(body) + (meetingOn ? meetingBlock() : "") + (signature ? `${SIGNATURE}${signature}</div>` : "");
+      const inReplyTo = answers?.gmail_id ?? draft?.in_reply_to ?? null;
+      const threadId = answers?.thread_id ?? draft?.thread_id ?? null;
 
       if (scheduleAt) {
         if (draft?._scheduledId) {
-          const { error: upErr } = await supabase
+          const { data: changedRow, error: upErr } = await supabase
             .from("scheduled_emails")
             .update({
               account_id: effectiveAccountId,
@@ -894,9 +834,11 @@ export default function ComposeModal({
               read_receipt: readReceipt,
               forward,
             })
-            .eq("id", draft._scheduledId);
-          if (upErr) {
-            addToast("error", "Failed to update scheduled email");
+            .eq("id", draft._scheduledId)
+            .in("status", ["pending", "failed"])
+            .select("id");
+          if (upErr || !changedRow?.length) {
+            addToast("error", upErr ? "Could not change the scheduled email" : "It has already gone out, so it was not changed");
             setSending(false);
             return;
           }
@@ -914,8 +856,8 @@ export default function ComposeModal({
               subject,
               body_html: sendBody,
               send_at: scheduleAt,
-              in_reply_to: answers?.gmail_id,
-              thread_id: answers?.thread_id,
+              in_reply_to: inReplyTo,
+              thread_id: threadId,
               read_receipt: readReceipt,
               forward,
             });
@@ -925,8 +867,8 @@ export default function ComposeModal({
             return;
           }
         }
-      } else if (attachments.length === 0) {
-        // Cancel Send: queue in scheduled_emails with 15-second window (no attachments)
+      } else if (attachments.length === 0 && !meetingOn) {
+        // Queued for 15 seconds, so it can be taken back.
         const { data: scheduled, error: undoErr } = await supabase
           .from("scheduled_emails")
           .insert({
@@ -939,8 +881,8 @@ export default function ComposeModal({
             bcc_addresses: parsedBcc.length ? parsedBcc : null,
             subject,
             body_html: sendBody,
-            in_reply_to: answers?.gmail_id,
-            thread_id: answers?.thread_id,
+            in_reply_to: inReplyTo,
+            thread_id: threadId,
             read_receipt: readReceipt,
             forward,
             send_at: new Date(Date.now() + 15_000).toISOString(),
@@ -956,19 +898,20 @@ export default function ComposeModal({
 
         const scheduledId = scheduled.id;
         const others = parsedTo.length - 1;
+        // Taken back, it is a draft again and opens as it was.
+        const row = { ...asDraft(), id: draft?.id && !draft._scheduledId ? draft.id : crypto.randomUUID(), gmail_draft_id: gmailDraftId };
         addToast("info", `Sending to ${parsedTo[0]}${others > 0 ? ` and ${others} more` : ""}`, {
           duration: 15_000,
           action: {
-            label: "Cancel",
+            label: "Undo",
             onClick: async () => {
-              if (scheduledId) {
-                await supabase
-                  .from("scheduled_emails")
-                  .update({ status: "cancelled" })
-                  .eq("id", scheduledId)
-                  .eq("status", "pending");
-                addToast("success", "Send cancelled");
-              }
+              const { data: stopped } = await supabase.from("scheduled_emails").update({ status: "cancelled" }).eq("id", scheduledId).eq("status", "pending").select("id");
+              if (!stopped?.length) return addToast("info", "Too late, already sent.");
+              await supabase.from("draft_emails").upsert(row, { onConflict: "id" });
+              notifyDraftChange();
+              mail.reload();
+              openCompose(replyTo, row);
+              addToast("success", "Not sent");
             },
           },
         });
@@ -1008,8 +951,8 @@ export default function ComposeModal({
               bcc: parsedBcc.length ? parsedBcc : undefined,
               subject,
               body_html: sendBody,
-              in_reply_to: answers?.gmail_id,
-              thread_id: answers?.thread_id,
+              in_reply_to: inReplyTo,
+              thread_id: threadId,
               read_receipt: readReceipt,
               forward,
               account_id: effectiveAccountId,
@@ -1036,14 +979,14 @@ export default function ComposeModal({
           setSending(false);
           return;
         }
+        if (meetingOn) await createMeeting();
       }
-      // Delete source record: scheduled email sent immediately, or regular draft
-      if (draft?._scheduledId && !scheduleAt) {
-        await supabase
-          .from("scheduled_emails")
-          .delete()
-          .eq("id", draft._scheduledId);
+      // The row it came from: a scheduled email sent now, or a draft. One that
+      // is in another account's Drafts is taken out there too.
+      if (draft?._scheduledId) {
+        if (!scheduleAt) await supabase.from("scheduled_emails").delete().eq("id", draft._scheduledId);
       } else if (draft?.id) {
+        if (draft.gmail_draft_id && !gmailDraftId) await api("/drafts/discard", { ids: [draft.id] }).catch(() => {});
         await supabase.from("draft_emails").delete().eq("id", draft.id);
         notifyDraftChange();
       }
@@ -1077,9 +1020,8 @@ export default function ComposeModal({
         .map((s: string) => s.trim())
         .join(", ");
       notifySent({ to: sentTo, subject, body_html: sendBody });
-      const sentText = draftText(stripSignature(rawBody));
-      if (drafted.current && sentText.trim() !== drafted.current.trim()) {
-        api("/writing/edited", { to: parsedTo[0], before: draftText(stripSignature(drafted.current)), after: sentText }).catch(() => {});
+      if (drafted.current && body.trim() !== drafted.current.trim()) {
+        api("/writing/edited", { to: parsedTo[0], before: drafted.current, after: body }).catch(() => {});
       }
 
       // Prepend to sent localStorage cache so SentView shows it immediately
@@ -1130,17 +1072,20 @@ export default function ComposeModal({
         : replyName
           ? `Reply to ${replyName}`
           : "Reply";
-  const canSend = !sending && !!to && !!subject;
+  // Files and meetings go out with the email itself, which a later send cannot hold.
+  const notLater = !!scheduleAt && (attachments.length > 0 || meetingOn);
+  const canSend = !sending && !!to && !!subject && !notLater;
   const row = "flex min-h-9 items-center gap-2 border-b border-line-soft";
   const rowLabel = "w-12 flex-none text-xs text-ink3";
   const menuItem = "pop-item disabled:pointer-events-none disabled:opacity-45";
 
   return (
     <div
-      data-compose-modal
+      {...(minimized ? {} : { "data-compose-modal": true })}
+      hidden={minimized}
       role="dialog"
       aria-label={title}
-      className="fixed bottom-4 z-50 flex flex-col rounded-[12px] bg-raised shadow-pop"
+      className={`fixed bottom-4 z-50 flex-col rounded-[12px] bg-raised shadow-pop ${minimized ? "hidden" : "flex"}`}
       style={{
         right: "1rem",
         width: "40rem",
@@ -1161,7 +1106,7 @@ export default function ComposeModal({
         <button className="iconbtn" onClick={onMinimize} title="Minimize" aria-label="Minimize">
           <Icon name="minimize" size={16} />
         </button>
-        <button className="iconbtn" onClick={onClose} title="Close" aria-label="Close">
+        <button className="iconbtn" onClick={close} title={changed && !draft?._scheduledId ? "Save and close" : "Close"} aria-label="Close">
           <Icon name="close" size={16} />
         </button>
       </div>
@@ -1277,7 +1222,9 @@ export default function ComposeModal({
             </div>
             <p className="mt-2 text-xs text-ink3">
               {meetingDuration
-                ? "Sending also adds this to your calendar and invites the recipients."
+                ? scheduleAt
+                  ? "A meeting goes out with the email. Send now, or remove it."
+                  : "Sending also adds this to your calendar and invites the recipients, without the 15 second undo."
                 : "Pick a length. Without one, no meeting is created."}
             </p>
           </div>
@@ -1293,6 +1240,15 @@ export default function ComposeModal({
           rows={showMeetingPanel || forward ? 6 : 10}
           className="block w-full resize-none bg-transparent py-3 text-sm leading-[1.6] text-ink outline-none"
         />
+
+        {signature && (
+          <div className="mb-3 flex items-start gap-2 border-t border-line-soft pt-3">
+            <div className="min-w-0 flex-1 text-[13px] leading-normal text-ink2 [&_img]:max-h-16" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(signature, { USE_PROFILES: { html: true } }) }} />
+            <button className="iconbtn -my-1" onClick={() => setSignature("")} title="Remove the signature" aria-label="Remove the signature">
+              <Icon name="close" size={14} />
+            </button>
+          </div>
+        )}
 
         {busy && (
           <p role="status" className="pb-2.5 text-xs text-ink3">
@@ -1398,7 +1354,7 @@ export default function ComposeModal({
               </div>
             ))}
             {scheduleAt ? (
-              <p className="pt-1 text-xs text-warn">A scheduled email goes out without its attachments. Send now to include them.</p>
+              <p className="pt-1 text-xs text-warn">Attachments cannot wait with a scheduled email. Send now, or remove them.</p>
             ) : (
               <p className="pt-1 text-xs text-ink3">With attachments the email goes out at once, without the 15 second undo.</p>
             )}
@@ -1600,13 +1556,15 @@ export default function ComposeModal({
 
         <span className="flex-1" />
 
-        <button className="btn btn-plain" onClick={saveDraft} disabled={!body && !forward} title="Keep this as a draft and close">
+        <button className="btn btn-plain" onClick={saveDraft} disabled={!body && !forward && !(to && subject)} title="Keep this as a draft and close">
           Save draft
         </button>
-        <button className="iconbtn" onClick={onClose} title="Discard" aria-label="Discard">
+        <button className="iconbtn" onClick={discard} title="Discard" aria-label="Discard">
           <Icon name="delete" size={16} />
         </button>
       </div>
     </div>
   );
-}
+});
+
+export default ComposeModal;

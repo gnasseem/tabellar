@@ -46,10 +46,6 @@ type Filter = "need" | "all";
 type Group = "priority" | "day" | "sender";
 
 const CHUNK = 300;
-// Narrow windows drop the subject column; the status stays.
-const COLUMNS = "!grid grid-cols-[26px_minmax(0,1fr)_minmax(0,auto)_44px] md:grid-cols-[26px_164px_minmax(0,1fr)_172px_46px]";
-// With several accounts the last column also holds the account's mark.
-const COLUMNS_MARKED = "!grid grid-cols-[26px_minmax(0,1fr)_minmax(0,auto)_66px] md:grid-cols-[26px_164px_minmax(0,1fr)_172px_68px]";
 const SELECT =
   "id, user_id, gmail_id, thread_id, account_id, subject, sender, sender_email, recipients, snippet, received_at, is_read, is_starred, is_archived, is_snoozed, snooze_until, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, attachments, resolved_at, email_processed(*)";
 const CATEGORY: Record<string, string> = { important: "Important", "action-required": "Action required", promotions: "Promotions", updates: "Updates" };
@@ -101,7 +97,8 @@ export default function InboxView() {
   const snoozeMail = useSnooze();
   // The sidebar's account switch: one account, or every account merged.
   const only = accounts.only;
-  const columns = accounts.list.length > 1 ? COLUMNS_MARKED : COLUMNS;
+  // With several accounts the last column also holds the account's mark.
+  const columns = `mail-row ${accounts.list.length > 1 ? "marked" : ""}`;
   const supabase = createClient();
   const [emails, setEmails] = useState<Email[]>(() => getViewCache("inbox")?.emails ?? []);
   const [loading, setLoading] = useState(() => !getViewCache("inbox"));
@@ -613,9 +610,9 @@ export default function InboxView() {
         </span>
         <span className="hidden min-w-0 items-center gap-2 pr-4 md:flex">
           <b className={`shrink truncate ${filed ? "font-normal text-ink3" : need ? "font-medium text-ink" : "font-normal text-ink"}`}>{e.subject || "(no subject)"}</b>
-          {!filed && <span className="min-w-0 flex-1 truncate text-ink3">{e.email_processed?.summary || e.snippet}</span>}
+          {!filed && <span className="mail-sum min-w-0 flex-1 truncate text-ink3">{e.email_processed?.summary || e.snippet}</span>}
         </span>
-        <span className={`truncate text-[12.5px] ${need ? "font-semibold text-wax-ink" : t.state === "going" ? "font-medium text-wax-ink" : t.state === "held" ? "font-medium text-warn" : t.state === "failed" ? "font-medium text-danger" : t.state === "done" ? "text-ink2" : "text-ink3"}`}>
+        <span className={`mail-state truncate text-[12.5px] ${filed ? "filed" : ""} ${need ? "font-semibold text-wax-ink" : t.state === "going" ? "font-medium text-wax-ink" : t.state === "held" ? "font-medium text-warn" : t.state === "failed" ? "font-medium text-danger" : t.state === "done" ? "text-ink2" : "text-ink3"}`}>
           {t.text}
           {t.state === "going" && t.sendAt && (
             <>
@@ -626,7 +623,7 @@ export default function InboxView() {
         </span>
         <span className="flex items-center justify-end gap-2">
           <AccountMark id={e.account_id} />
-          <time className="min-w-[30px] text-right text-xs text-ink3">{shortWhen(e.received_at)}</time>
+          <time className="min-w-[2.5rem] text-right text-xs text-ink3">{shortWhen(e.received_at)}</time>
         </span>
         {t.snoozed ? (
           <span className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded-md bg-hover pl-6 group-hover:flex group-aria-selected:bg-sel">
@@ -731,7 +728,7 @@ export default function InboxView() {
         </div>
       )}
       <div className="flex min-h-0 flex-1">
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="mail-list flex min-w-0 flex-1 flex-col">
           <Questions />
           <div className="flex min-h-0 min-w-0 flex-1 flex-col" role="listbox" aria-label="Inbox">
           {(loading || fetching) && !emails.length ? (

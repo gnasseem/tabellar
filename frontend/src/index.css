@@ -326,6 +326,51 @@
   .row.cur {
     @apply bg-sel;
   }
+  /* An inbox row: glyph, sender, subject and summary, status, time. The widths
+     follow the text size. A narrow list (the details panel open in a small
+     window, or large text) gives the subject the room: the summary goes, and
+     the status takes only what it needs. A narrow window drops the subject. */
+  .mail-list {
+    container: mail / inline-size;
+  }
+  .mail-row {
+    --when: 2.875rem;
+    display: grid !important;
+    grid-template-columns: 26px minmax(0, 1fr) minmax(0, auto) var(--when);
+  }
+  .mail-row.marked {
+    --when: 4.25rem;
+  }
+  @media (min-width: 768px) {
+    .mail-row {
+      grid-template-columns: 26px 10.25rem minmax(0, 1fr) 10.75rem var(--when);
+    }
+    @container mail (max-width: 44rem) {
+      .mail-row {
+        grid-template-columns: 26px 8.25rem minmax(0, 1fr) fit-content(9.5rem) var(--when);
+      }
+      .mail-row .mail-sum {
+        display: none;
+      }
+      .mail-row .mail-state {
+        padding-right: 0.5rem;
+        text-align: right;
+      }
+    }
+    @container mail (max-width: 34rem) {
+      .mail-row {
+        --when: 2.5rem;
+        grid-template-columns: 26px 6.25rem minmax(0, 1fr) fit-content(7.75rem) var(--when);
+      }
+      /* What was only filed says so by its group. */
+      .mail-row .mail-state.filed {
+        display: none;
+      }
+      .mail-row .mail-state.filed + * {
+        grid-column: 4 / 6;
+      }
+    }
+  }
   /* Two-line row with a hairline under it. */
   .row2 {
     @apply relative mx-2 rounded-[7px] py-row2 pl-1.5 pr-3;

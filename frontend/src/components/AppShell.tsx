@@ -10,7 +10,7 @@ import {
 } from "react";
 import Icon from "@/components/Icon";
 import Sidebar from "./Sidebar";
-import ComposeModal from "./ComposeModal";
+import ComposeModal, { type ComposeHandle } from "./ComposeModal";
 import { ToastContainer, type ToastItem } from "./Toast";
 import ShortcutsHelp from "./ShortcutsHelp";
 import { GO_TO_VIEWS, isTypingTarget } from "@/lib/shortcuts";
@@ -300,7 +300,14 @@ export default function AppShell({
 
   // Memoised: it goes into the context value and into the global shortcut
   // effect's dependencies, both of which would otherwise churn every render.
+  const composeRef = useRef<ComposeHandle>(null);
+  const [composeKey, setComposeKey] = useState(0);
+  const composeKeyRef = useRef(0);
+  composeKeyRef.current = composeKey;
   const openCompose = useCallback((replyTo?: any, draft?: any) => {
+    // A message being written is kept as a draft before another takes its place.
+    composeRef.current?.keep();
+    setComposeKey((k) => k + 1);
     setComposeReplyTo(replyTo || null);
     setComposeDraft(draft || null);
     setComposeOpen(true);
@@ -829,11 +836,16 @@ export default function AppShell({
         <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
       </div>
       <div>
-        {composeOpen && !composeMinimized && (
+        {composeOpen && (
           <ComposeModal
+            key={composeKey}
+            ref={composeRef}
+            minimized={composeMinimized}
             replyTo={composeReplyTo}
             draft={composeDraft}
             onClose={() => {
+              // A message kept while another took its place closes nothing.
+              if (composeKeyRef.current !== composeKey) return;
               setComposeOpen(false);
               setComposeDraft(null);
             }}
@@ -851,7 +863,7 @@ export default function AppShell({
             {composeReplyTo ? "Reply" : "New message"}
             <Icon name="close" size={16} className="ml-2 cursor-pointer text-ink3 hover:text-ink" onClick={(e) => {
                 e.stopPropagation();
-                setComposeOpen(false);
+                composeRef.current?.close();
               }} />
           </button>
         )}

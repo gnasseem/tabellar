@@ -412,6 +412,7 @@ export interface BriefingCard {
   waitingForReply?: boolean;
   tags?: string[];
   suggestedAction?: string;
+  never?: string[]; // what the user wants none of from this sender
 }
 
 export interface AgentToolContext {

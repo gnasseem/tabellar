@@ -34,6 +34,9 @@ export type EngineStatus = {
   lastCycleAt: string | null;
   lastError: string | null;
   mailError: string | null;
+  signIn: string | null; // the mailbox whose sign-in is no longer accepted
+  modelError: string | null; // what went wrong, while the model does not answer
+  down?: boolean; // the server itself does not answer
   running: boolean;
   model: boolean;
   autostart: boolean;
@@ -260,7 +263,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
   }, [userId, loadSnooze]);
 
   const refreshEngine = useCallback(() => {
-    api("/engine/status").then(setEngine).catch(() => {});
+    api("/engine/status").then(setEngine).catch((e) => e instanceof TypeError && setEngine((now) => now && { ...now, down: true }));
   }, []);
 
   useEffect(() => {
@@ -292,6 +295,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
     const byEmail = build(raw.log, raw.drafts, raw.meetings, raw.todos, auto, raw.cal, snooze.back);
     // A snoozed email waits on nobody until it is back.
     let need = 0;
+    const waiting = (kind: string) => raw.log.filter((r) => r.status === "proposed" && r.kind === kind).length;
     for (const [id, list] of byEmail) if (list[0]?.state === "need" && !snooze.hidden.has(id)) need++;
     return {
       byEmail,
@@ -300,9 +304,10 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
       outgoing: auto.map((s) => ({ id: s.id, actionId: s.action_id, emailId: s.email_id, to: s.to_name || (s.to_addresses || [])[0] || "", subject: s.subject || "", sendAt: s.send_at })),
       counts: {
         need,
-        replies: raw.drafts.length,
-        todos: raw.todos.length,
-        meetings: raw.meetings.filter((m) => m.status === "proposed").length,
+        // What waits on each page, approval included.
+        replies: raw.drafts.length + waiting("draft"),
+        todos: raw.todos.length + waiting("todo"),
+        meetings: raw.meetings.filter((m) => m.status === "proposed").length + waiting("meeting"),
         followups: raw.followups,
         proposals: raw.log.filter((r) => r.status === "proposed" && r.kind !== "label").length,
       },

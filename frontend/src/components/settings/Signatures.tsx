@@ -344,7 +344,7 @@ function Templates() {
           New template
         </button>
       }
-      note="Inserted from the page icon in compose."
+      note="Inserted from More in compose."
     >
       {open === "new" && editor}
       {!list

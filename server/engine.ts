@@ -39,7 +39,7 @@ import { tellMeetings } from "./prep.ts";
 import { firstReadState, relearnStyle, startFirstRead } from "./firstRead.ts";
 import { listAccounts, refreshStaleSendAs, replyFrom, type Account } from "./accounts.ts";
 import { gmailLabelOf, userLabels } from "./labels.ts";
-import { ask, covers, displayName, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
+import { ask, covers, PASSED, displayName, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
 
 const INTERVAL_MS = 2 * 60_000;
 const TICK_MS = 20_000;
@@ -441,6 +441,12 @@ export function readNow(userId: string): void {
   if (modelConfigured()) void readAll(userId).catch((e) => console.error("[engine] reading:", e));
 }
 
+// Ask the mailboxes now, not at the watcher's next turn (an account was signed
+// in to again).
+export function checkMail(): void {
+  wakeWatcher();
+}
+
 // Plan right away after the window triggered an analysis.
 export function kickEngine(): void {
   localUser()
@@ -499,6 +505,19 @@ export async function rereadUnderNewRules(userId: string): Promise<void> {
   console.log(`[engine] read ${ids.length} emails again under the current rules`);
 }
 
+// A meeting nobody confirmed in time no longer waits on the user.
+export async function closePastMeetings(userId: string): Promise<void> {
+  const now = new Date().toISOString();
+  const { data: proposals } = await db.from("action_log").select("id, detail").eq("user_id", userId).eq("kind", "meeting").eq("status", "proposed");
+  const past = (proposals ?? []).filter((r) => String((r.detail as { end_time?: string } | null)?.end_time ?? "9") < now).map((r) => String(r.id));
+  if (past.length) await db.from("action_log").update({ status: "dismissed", decided_at: now, reason: PASSED }).in("id", past);
+  const { data: gone } = await db.from("meetings").delete().eq("user_id", userId).eq("status", "proposed").lt("end_time", now).select("id");
+  if (!gone?.length) return;
+  const ids = new Set(gone.map((m) => String(m.id)));
+  const { data: made } = await db.from("action_log").select("id, detail").eq("user_id", userId).eq("kind", "meeting").eq("status", "done");
+  for (const r of made ?? []) if (ids.has(String((r.detail as { meetingId?: string }).meetingId))) await db.from("action_log").update({ status: "undone", undone_at: now, reason: PASSED }).eq("id", r.id);
+}
+
 // Sort and plan everything not read yet, a batch at a time.
 const readAll = (userId: string) => readBacklog(userId, () => planNew(userId));
 
@@ -520,6 +539,7 @@ export async function runCycle(): Promise<void> {
     // Until the first read of every mailbox is done, carry it on in the background.
     const unread = await db.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("paused", false).is("read_at", null);
     if ((await firstReadState(userId)).step !== "done" || unread.count) void startFirstRead(userId, () => planNew(userId));
+    await closePastMeetings(userId);
     await refreshStaleSendAs(userId);
     await applyWaitingLabels(userId);
     await syncMail(userId);
@@ -544,10 +564,11 @@ export async function runCycle(): Promise<void> {
 // connected to /events, every 20 seconds otherwise. One small request per
 // account (where the mailbox's change history stands); when it moved, the
 // change is synced at once and new mail is read and planned. Failures (no
-// network, a Mac just awake) back off up to 5 minutes.
+// network, a Mac just awake) back off up to 5 minutes, 30 seconds with a window open.
 const WATCH_OPEN_MS = 5_000;
 const WATCH_CLOSED_MS = 20_000;
 const WATCH_MAX_MS = 5 * 60_000;
+const WATCH_MAX_OPEN_MS = 30_000; // with someone looking at it
 
 let windowsOpen = 0;
 let wakeWatcher = () => {};
@@ -634,7 +655,7 @@ function startWatcher(): () => void {
       }
       // While none can be reached, ask less and less often.
       const { count } = await db.from("accounts").select("id", { count: "exact", head: true }).eq("paused", false);
-      if (failures.size && failures.size === count) delay = Math.min(WATCH_MAX_MS, delay * 2 ** Math.min(...failures.values()));
+      if (failures.size && failures.size === count) delay = Math.min(windowsOpen ? WATCH_MAX_OPEN_MS : WATCH_MAX_MS, delay * 2 ** Math.min(...failures.values()));
     } catch (e) {
       console.error("[engine] watching:", (e as Error).message);
     } finally {

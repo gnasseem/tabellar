@@ -214,15 +214,16 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     if (path.startsWith("/actions/") && req.method === "POST") {
       const { id, hash } = await req.json();
       if (typeof id !== "string" || !UUID_RE.test(id)) return json({ error: "id is required" }, 400);
+      let made: Record<string, unknown> = {};
       try {
-        if (path === "/actions/approve") await approve(userId, id, String(hash ?? ""));
+        if (path === "/actions/approve") made = await approve(userId, id, String(hash ?? ""));
         else if (path === "/actions/dismiss") await dismiss(userId, id);
         else if (path === "/actions/undo") await undo(userId, id);
         else return json({ error: "Not found" }, 404);
       } catch (e) {
         return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
       }
-      return json({ ok: true });
+      return json({ ok: true, ...made });
     }
 
     // ── What Tabellar knows about the user ─────────────────────────────────
@@ -741,7 +742,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
       // Return empty if not a working day (checked in user's timezone)
       if (!(wh.days || [1, 2, 3, 4, 5]).includes(dayOfWeek)) {
-        return json({ slots: [] }, 200, corsHeaders);
+        return json({ slots: [], busy: busyPeriods }, 200, corsHeaders);
       }
 
       // Working hours as UTC timestamps for the target date in user's timezone
@@ -791,7 +792,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         }
       }
 
-      return json({ slots }, 200, corsHeaders);
+      return json({ slots, busy: busyPeriods }, 200, corsHeaders);
     }
 
     // ── GET /calendar/events ───────────────────────────────────────────────

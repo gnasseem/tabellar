@@ -29,6 +29,7 @@ type Pending = {
   asWritten: string | null;
   quote: string | null;
   location: string | null;
+  attendees?: string[]; // who adding it to the calendar invites
 };
 type CalEvent = { id: string; title: string; start: string; end: string; allDay: boolean; attendees: string[]; people?: string[]; htmlLink: string | null };
 type Source = { sender: string; subject: string };
@@ -63,6 +64,8 @@ function dayName(iso: string): string {
 }
 const shortDay = (iso: string) => new Date(iso).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
+type Day = { slots: Slot[]; busy: Slot[] };
+
 // Quarter-hour free slots joined into the stretches they cover.
 function ranges(slots: Slot[]): Slot[] {
   const out: Slot[] = [];
@@ -78,14 +81,14 @@ function ranges(slots: Slot[]): Slot[] {
 // Free time per day and meeting length, as Google Calendar reports it within
 // the working hours. `get` asks once and returns null until the answer is in.
 function useFreeSlots() {
-  const [cache, setCache] = useState<Record<string, Slot[] | "failed">>({});
+  const [cache, setCache] = useState<Record<string, Day | "failed">>({});
   const asked = useRef(new Set<string>());
-  const get = useCallback((day: string, minutes: number): Slot[] | "failed" | null => {
+  const get = useCallback((day: string, minutes: number): Day | "failed" | null => {
     const key = `${day}|${minutes}`;
     if (!asked.current.has(key)) {
       asked.current.add(key);
       api(`/calendar/free-slots?duration=${minutes}&date=${day}&timezone=${encodeURIComponent(tz())}`)
-        .then((r: { slots?: Slot[]; error?: string }) => setCache((c) => ({ ...c, [key]: r.error ? "failed" : r.slots || [] })))
+        .then((r: { slots?: Slot[]; busy?: Slot[]; error?: string }) => setCache((c) => ({ ...c, [key]: r.error ? "failed" : { slots: r.slots || [], busy: r.busy || [] } })))
         .catch(() => setCache((c) => ({ ...c, [key]: "failed" })));
     }
     return cache[key] ?? null;
@@ -97,15 +100,16 @@ function useFreeSlots() {
   return { get, forget };
 }
 
-// The free time on the day of a meeting, in one line.
-function FreeLine({ slots, start, end }: { slots: Slot[] | "failed" | null; start: string; end: string }) {
-  if (slots === null) return <span className="skel inline-block h-2.5 w-48 align-middle" aria-label="Checking your calendar" />;
-  if (slots === "failed") return <span>Google Calendar could not be read</span>;
-  const free = ranges(slots);
+// Whether the time of a meeting is free, and the rest of that day, in one line.
+function FreeLine({ day, start, end }: { day: Day | "failed" | null; start: string; end: string }) {
+  if (day === null) return <span className="skel inline-block h-2.5 w-48 align-middle" aria-label="Checking your calendar" />;
+  if (day === "failed") return <span>The calendar could not be read</span>;
+  const free = ranges(day.slots);
   const s = new Date(start).getTime();
   const e = new Date(end).getTime();
-  const open = free.some((r) => new Date(r.start).getTime() <= s && new Date(r.end).getTime() >= e);
-  const rest = free.length ? `free ${free.map((r) => `${clock(r.start)} to ${clock(r.end)}`).join(", ")}` : "nothing else free in working hours";
+  const open = !day.busy.some((r) => new Date(r.start).getTime() < e && new Date(r.end).getTime() > s);
+  const inHours = free.some((r) => new Date(r.start).getTime() <= s && new Date(r.end).getTime() >= e);
+  const rest = open && !inHours ? "outside your working hours" : free.length ? `free ${free.map((r) => `${clock(r.start)} to ${clock(r.end)}`).join(", ")}` : "nothing else free in working hours";
   return (
     <span>
       {open ? <b className="font-medium text-ink2">Free then</b> : <b className="font-medium text-warn">Not free then</b>}, {rest}
@@ -139,7 +143,7 @@ export default function MeetingsView() {
       supabase.from("action_log").select("id, hash, detail, email_id").eq("user_id", user.id).eq("kind", "meeting").eq("status", "proposed"),
     ]);
     const list: Pending[] = [
-      ...((m.data || []) as any[]).map((x) => ({ key: x.id, meetingId: x.id, proposal: null, emailId: x.email_id, title: x.title, start: x.start_time, end: x.end_time, asWritten: x.as_written, quote: x.quote, location: x.location })),
+      ...((m.data || []) as any[]).map((x) => ({ key: x.id, meetingId: x.id, proposal: null, emailId: x.email_id, title: x.title, start: x.start_time, end: x.end_time, asWritten: x.as_written, quote: x.quote, location: x.location, attendees: Array.isArray(x.attendees) ? x.attendees : [] })),
       ...((p.data || []) as any[]).map((x) => {
         const d = x.detail || {};
         return { key: `p:${x.id}`, meetingId: null, proposal: { id: x.id, hash: x.hash || "" }, emailId: x.email_id, title: d.title || "Meeting", start: d.start_time, end: d.end_time, asWritten: d.as_written ?? null, quote: d.quote ?? null, location: d.location ?? null };
@@ -204,7 +208,7 @@ export default function MeetingsView() {
     setBusy(p.key);
     try {
       const r = (await api("/meetings/confirm", { id: p.meetingId ?? undefined, proposal: p.proposal ?? undefined, ...changes })) as { link: string | null };
-      addToast("success", "On your Google Calendar", r.link ? { action: { label: "Open", onClick: () => window.open(r.link!, "_blank", "noopener") } } : undefined);
+      addToast("success", "On your calendar", r.link ? { action: { label: "Open", onClick: () => window.open(r.link!, "_blank", "noopener") } } : undefined);
       free.forget();
       loadPending();
       loadEvents();
@@ -216,6 +220,14 @@ export default function MeetingsView() {
     } finally {
       setBusy(null);
     }
+  };
+
+  // One that came from no email has no sender to say no to; it just goes.
+  const remove = async (p: Pending) => {
+    const { data } = await supabase.from("meetings").delete().eq("id", p.meetingId).eq("status", "proposed").select("*");
+    loadPending();
+    const row = (data || [])[0];
+    if (row) addToast("info", "Meeting removed", { action: { label: "Undo", onClick: async () => (await supabase.from("meetings").insert(row), loadPending()) } });
   };
 
   // A meeting typed in by hand: kept here, then put on Google Calendar.
@@ -232,7 +244,7 @@ export default function MeetingsView() {
       addToast("error", `The meeting was not saved: ${error?.message || "the database did not answer"}.`);
       return false;
     }
-    const p: Pending = { key: data.id, meetingId: data.id, proposal: null, emailId: null, title: d.title, start: start.toISOString(), end: end.toISOString(), asWritten: null, quote: null, location: null };
+    const p: Pending = { key: data.id, meetingId: data.id, proposal: null, emailId: null, title: d.title, start: start.toISOString(), end: end.toISOString(), asWritten: null, quote: null, location: null, attendees };
     if (await confirm(p)) return true;
     // Not on the calendar: it waits in To confirm.
     return true;
@@ -323,6 +335,11 @@ export default function MeetingsView() {
                         <button className="link mx-1.5" onClick={(e) => (e.stopPropagation(), setForm({ mode: "change", pending: p }))}>
                           Change
                         </button>
+                        {!p.emailId && p.meetingId && (
+                          <button className="link mx-1.5" onClick={(e) => (e.stopPropagation(), remove(p))}>
+                            Remove
+                          </button>
+                        )}
                         {p.emailId && <NotThis thing="meeting" id={p.meetingId ?? undefined} proposal={p.proposal?.id} who={src?.sender} onDone={loadPending} />}
                       </span>
                       <button className="link !text-wax-ink" disabled={busy === p.key} onClick={(e) => (e.stopPropagation(), confirm(p))}>
@@ -336,12 +353,12 @@ export default function MeetingsView() {
                     </p>
                     <span />
                     <p className="col-span-2 truncate text-[12.5px] text-ink3">
-                      {p.quote ? `"${p.quote}"` : src?.subject || ""}
+                      {p.attendees?.length ? `Invites ${p.attendees.join(", ")}` : p.quote ? `"${p.quote}"` : src?.subject || ""}
                       {src?.sender && <span>, {src.sender}</span>}
                     </p>
                     <span />
                     <p className="col-span-2 truncate text-[12.5px] text-ink3">
-                      <FreeLine slots={free.get(dateKey(new Date(p.start)), minutes)} start={p.start} end={p.end} />
+                      <FreeLine day={free.get(dateKey(new Date(p.start)), minutes)} start={p.start} end={p.end} />
                     </p>
                   </div>
                 );
@@ -350,7 +367,7 @@ export default function MeetingsView() {
           )}
           {calError && (
             <p className="px-5 pt-4 text-danger" role="alert">
-              Google Calendar could not be read.{" "}
+              The calendar could not be read.{" "}
               <button className="link !text-danger" onClick={loadEvents}>
                 Try again
               </button>
@@ -435,13 +452,13 @@ export default function MeetingsView() {
 
 // The form for a new meeting or a changed time, beside the list: what, how
 // long, who, where, and when, picked from the day's free time or set by hand.
-function Scheduler({ form, free, onSubmit, onCancel }: { form: Form; free: (day: string, minutes: number) => Slot[] | "failed" | null; onSubmit: (d: Draft) => Promise<void>; onCancel: () => void }) {
+function Scheduler({ form, free, onSubmit, onCancel }: { form: Form; free: (day: string, minutes: number) => Day | "failed" | null; onSubmit: (d: Draft) => Promise<void>; onCancel: () => void }) {
   const { user } = useApp();
   const { contacts, primaryAccountId } = useContacts(user?.id ?? "");
   const [d, setD] = useState<Draft>(() => {
     if (form.mode === "change") {
       const p = form.pending;
-      return { title: p.title, minutes: String(minutesBetween(p.start, p.end)), attendees: "", location: p.location ?? "", start: toLocalInput(new Date(p.start)) };
+      return { title: p.title, minutes: String(minutesBetween(p.start, p.end)), attendees: (p.attendees ?? []).join(", "), location: p.location ?? "", start: toLocalInput(new Date(p.start)) };
     }
     const next = new Date();
     next.setDate(next.getDate() + 1);
@@ -452,7 +469,8 @@ function Scheduler({ form, free, onSubmit, onCancel }: { form: Form; free: (day:
   const set = (patch: Partial<Draft>) => setD((prev) => ({ ...prev, ...patch }));
 
   const day = d.start.slice(0, 10);
-  const slots = day ? free(day, Number(d.minutes)) : null;
+  const found = day ? free(day, Number(d.minutes)) : null;
+  const slots = found && found !== "failed" ? found.slots : found;
   const shift = (delta: number) => {
     const t = new Date(d.start);
     t.setDate(t.getDate() + delta);
@@ -504,7 +522,7 @@ function Scheduler({ form, free, onSubmit, onCancel }: { form: Form; free: (day:
           ) : slots === null ? (
             <div className="skel h-3 w-56" aria-label="Checking your calendar" />
           ) : slots === "failed" ? (
-            <p className="text-[12.5px] text-danger">Google Calendar could not be read</p>
+            <p className="text-[12.5px] text-danger">The calendar could not be read</p>
           ) : !slots.length ? (
             <p className="text-[12.5px] text-ink3">Nothing free in your working hours</p>
           ) : (

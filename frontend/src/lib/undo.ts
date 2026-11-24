@@ -27,7 +27,7 @@ export async function reversible(userId: string, change: () => Promise<unknown>)
   await change();
   const after = await read(userId);
   const gone = (name: "preferences" | "todos" | "meetings" | "draft_emails") => [...before[name].values()].filter((r) => !after[name].has(r.id));
-  const back = { preferences: gone("preferences"), todos: gone("todos"), meetings: gone("meetings"), draft_emails: gone("draft_emails") };
+  const back = { preferences: gone("preferences"), todos: gone("todos"), meetings: gone("meetings"), draft_emails: gone("draft_emails").map((r) => ({ ...r, gmail_draft_id: null })) };
   const added = [...after.preferences.keys()].filter((id) => !before.preferences.has(id));
   const changed = (name: "questions" | "action_log") => [...before[name].values()].filter((r) => after[name].has(r.id) && after[name].get(r.id).status !== r.status);
   const logs = changed("action_log");

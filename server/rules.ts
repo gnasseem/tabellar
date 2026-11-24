@@ -304,6 +304,25 @@ export function meetingOf(a: Action, m: Mail, userTz: string, sent = new Date())
   return out;
 }
 
+// A todo's wording without a date the email does not give. Models work out
+// "by Friday" or "by the end of the month" into dates of their own, often
+// wrong; the due day is worked out in code (dueOf).
+export function wording(label: string, text: string, userTz: string, sent = new Date()): string {
+  const today = todayIn(userTz, sent);
+  const said = daysIn(text, today);
+  const given = (d: Day) => said.some((x) => x.y === d.y && x.m === d.m && x.d === d.d);
+  const date = `20\\d\\d-\\d\\d-\\d\\d|${MONTH}\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?\\b(?:,?\\s+20\\d\\d\\b)?|\\d{1,2}(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MONTH}\\b\\.?(?:,?\\s+20\\d\\d\\b)?`;
+  return label
+    .replace(new RegExp(`(?:,?\\s*\\(?(?:by|before|due|on|until|no later than)\\s+(?:the\\s+)?)?(?:,?\\s*\\(?)(?:${date})\\)?`, "gi"), (whole) => {
+      const [d] = daysIn(whole, today);
+      return !d || given(d) ? whole : "";
+    })
+    .replace(/\s+([.,;])/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .replace(/[\s,]+(by|before|due|on|until)?\s*$/i, "")
+    .trim();
+}
+
 // What the analysis keeps of the model's suggestions: replies as they are, a
 // todo only when todoOf allows it, a meeting with its time worked out here.
 export function checkActions(actions: unknown, m: Mail & { is_calendar?: boolean | null }, category: string, userTz: string, sent = new Date()): Action[] {
@@ -312,7 +331,7 @@ export function checkActions(actions: unknown, m: Mail & { is_calendar?: boolean
   const out: Action[] = [];
   for (const a of list) {
     if (a.action === "reply" && !out.some((x) => x.action === "reply")) out.push(a);
-    else if (a.action === "add_todo" && a === todo) out.push({ action: "add_todo", label: String(a.label).trim(), quote: a.quote });
+    else if (a.action === "add_todo" && a === todo) out.push({ action: "add_todo", label: wording(String(a.label).trim(), textOf(m), userTz, sent), quote: a.quote });
     else if (a.action === "schedule_meeting" && !m.is_calendar && !out.some((x) => x.action === "schedule_meeting")) {
       const mt = meetingOf(a, m, userTz, sent);
       out.push({ action: "schedule_meeting", label: a.label, text: a.text, quote: mt.quote ?? undefined, meetingDetails: { ...(a.meetingDetails as object), ...mt } });
