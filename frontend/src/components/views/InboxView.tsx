@@ -10,7 +10,7 @@ import { useApp } from "../AppShell";
 import EmailBody from "../EmailBody";
 import EmailDetail from "../EmailDetail";
 import { Questions } from "../Profile";
-import { AccountMark, Countdown, Empty, Glyph, Menu, OutcomeLines, Seg, SkeletonRows, Tick, ViewBar, VirtualList, dayLabel, shortWhen, type MailState } from "../ui";
+import { AccountMark, Countdown, Empty, Glyph, Menu, OutcomeLines, Seg, SkeletonRows, Tick, ViewBar, VirtualList, useSizes, dayLabel, shortWhen, type MailState } from "../ui";
 
 // The inbox: every email on one quiet line that ends in what Tabellar did
 // with it. Only mail that needs the user is set in strong type and wax red.
@@ -316,7 +316,8 @@ export default function InboxView() {
   const rows = useMemo(() => items.filter((i): i is Thread => !("head" in i)), [items]);
   const cursor = rows.find((t) => t.key === cursorKey) || rows[0] || null;
   const cursorIndex = cursor ? items.indexOf(cursor) : -1;
-  const heightOf = useCallback((i: Item) => ("head" in i ? 34 : 32), []);
+  const { row, head } = useSizes();
+  const heightOf = useCallback((i: Item) => ("head" in i ? head : row), [row, head]);
 
   const move = (delta: number) => {
     if (!rows.length) return;
@@ -703,6 +704,7 @@ function readPanelWidth(): number {
 
 function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thread; primary: { label: string; run: () => void }; onOpen: () => void; onReply: () => void; onArchive: () => void }) {
   const { accounts } = useApp();
+  const { scale } = useSizes();
   const e = thread.latest;
   const [width, setWidth] = useState(readPanelWidth);
   const [room, setRoom] = useState(Infinity);
@@ -710,7 +712,7 @@ function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thre
   useEffect(() => {
     const parent = aside.current?.parentElement;
     if (!parent) return;
-    const ro = new ResizeObserver(() => setRoom(parent.clientWidth - LIST_MIN));
+    const ro = new ResizeObserver(() => setRoom(parent.clientWidth - LIST_MIN * scale));
     ro.observe(parent);
     return () => ro.disconnect();
   }, []);
@@ -810,7 +812,7 @@ function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thre
           )}
         </div>
       </div>
-      <div className="flex flex-none items-center gap-2 border-t border-line py-2.5 pl-5 pr-3.5">
+      <div className="flex flex-none flex-wrap items-center gap-2 border-t border-line py-2.5 pl-5 pr-3.5">
         {waiting && (
           <button className="btn btn-pri" onClick={primary.run}>
             {primary.label}

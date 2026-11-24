@@ -21,12 +21,15 @@ module.exports = {
         wax: token("wax"), "wax-ink": token("wax-ink"), "wax-soft": token("wax-soft"), "on-wax": token("on-wax"),
         warn: token("warn"), "warn-soft": token("warn-soft"), "warn-line": token("warn-line"),
         danger: token("danger"), "danger-soft": token("danger-soft"), "danger-line": token("danger-line"),
+        scrim: token("scrim"),
         ok: token("ok"), "ok-soft": token("ok-soft"), "ok-line": token("ok-line"),
       },
       fontFamily: {
         sans: ["system-ui", "-apple-system", '"SF Pro Text"', '"Helvetica Neue"', "sans-serif"],
         brand: ['"Ysabeau Office"', "system-ui", "sans-serif"],
       },
+      spacing: { row: "var(--row)", row2: "var(--row2)", head: "var(--head)", bar: "var(--bar)", item: "var(--item)", setting: "var(--setting)" },
+      minHeight: { row: "var(--row)", item: "var(--item)", setting: "var(--setting)" },
       fontSize: { base: ["13px", "1.4"] },
       boxShadow: {
         control: "var(--shadow-control)",

@@ -7,7 +7,7 @@ export function Mark({ size = 22, className = "" }: { size?: number; className?:
   const gap = small ? 6.5 : 5;
   const top = small ? 21 : 22;
   return (
-    <svg viewBox="0 0 64 64" width={size} height={size} className={`shrink-0 ${className}`} aria-hidden>
+    <svg viewBox="0 0 64 64" width={`${size / 16}rem`} height={`${size / 16}rem`} className={`shrink-0 ${className}`} aria-hidden>
       <clipPath id="tabellar-mark"><path d={SQUIRCLE} /></clipPath>
       <g clipPath="url(#tabellar-mark)">
         <rect width="64" height={top} fill="var(--ink)" />
@@ -20,7 +20,7 @@ export function Mark({ size = 22, className = "" }: { size?: number; className?:
 
 export default function Logo({ size = 22, className = "" }: { size?: number; className?: string }) {
   return (
-    <span className={`inline-flex items-center gap-[0.42em] text-ink ${className}`} style={{ fontSize: size * 0.78 }}>
+    <span className={`inline-flex items-center gap-[0.42em] text-ink ${className}`} style={{ fontSize: `${(size * 0.78) / 16}rem` }}>
       <Mark size={size} />
       <span className="font-brand font-[650] leading-none tracking-[0.004em] pb-px">Tabellar</span>
     </span>

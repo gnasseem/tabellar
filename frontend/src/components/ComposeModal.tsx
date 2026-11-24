@@ -6,6 +6,7 @@ import { api } from "@/lib/outcomes";
 import { replyFrom } from "@/lib/accounts";
 import { EmailField, useContacts } from "./EmailAutocomplete";
 import DateTimePicker from "./DateTimePicker";
+import { Tick } from "./ui";
 
 // Gmail rejects messages over 25 MB once encoded. Attachments go out base64
 // encoded (~4 bytes per 3 bytes of input), so cap the raw total below that to
@@ -209,6 +210,9 @@ export default function ComposeModal({
         ? ""
         : replyTo?._prefillBody || "",
   );
+  // The last text Tabellar wrote here: what the user changes in it before
+  // sending teaches their way of writing (server/writing.ts).
+  const drafted = useRef<string>(draft?.source === "tabellar" ? draftText(draft.body_html || "") : "");
   const [sending, setSending] = useState(false);
   const [scheduleAt, setScheduleAt] = useState(draft?.send_at || "");
 
@@ -244,6 +248,7 @@ export default function ComposeModal({
   const [aiGenerated, setAiGenerated] = useState(false);
   const [showRefinePanel, setShowRefinePanel] = useState(false);
   const [refineFeedback, setRefineFeedback] = useState("");
+  const [keepFeedback, setKeepFeedback] = useState(false);
   const [refining, setRefining] = useState(false);
   const [rephrasingTone, setRephrasingTone] = useState<string | null>(null);
 
@@ -505,6 +510,7 @@ export default function ComposeModal({
         const data = await res.json();
         if (data.draft) {
           setBody(data.draft);
+          drafted.current = data.draft;
           setAiGenerated(true);
           setShowRefinePanel(false);
           setRefineFeedback("");
@@ -537,20 +543,20 @@ export default function ComposeModal({
         body: JSON.stringify({
           currentDraft: body,
           feedback: refineFeedback.trim(),
-          senderName: profile?.display_name || "",
+          keep: keepFeedback,
+          to,
         }),
       });
       if (res.ok) {
         const data = await res.json();
         if (data.draft) {
           setBody(data.draft);
+          drafted.current = data.draft;
           setAiGenerated(true);
           setShowRefinePanel(false);
           setRefineFeedback("");
-          addToast(
-            "success",
-            "Draft updated. Feedback saved to your knowledge base.",
-          );
+          setKeepFeedback(false);
+          addToast("success", data.kept ? "Changed, and kept as a writing rule" : "Changed");
         } else {
           addToast("error", "Could not refine draft");
         }
@@ -578,9 +584,7 @@ export default function ComposeModal({
     };
   }, [menu]);
 
-  // Rewrite the current body in a different register. Unlike refineWithFeedback
-  // this is a one-off transformation, not a stated preference, so it asks the
-  // backend not to record it as a style learning.
+  // Rewrite the current body in a different register, this once.
   const rephraseInTone = async (tone: (typeof TONES)[number]) => {
     const current = body.trim();
     if (!current || rephrasingTone) return;
@@ -608,8 +612,7 @@ export default function ComposeModal({
         body: JSON.stringify({
           currentDraft: current,
           feedback: `Rewrite this so it reads ${tone.prompt}. Preserve every fact, name, date, question and commitment exactly, and keep roughly the same length. Return only the rewritten message.`,
-          senderName: profile?.display_name || "",
-          skip_learning: true,
+          to,
         }),
       });
       if (res.ok) {
@@ -624,6 +627,7 @@ export default function ComposeModal({
       }
 
       setBody(rewritten);
+      drafted.current = rewritten;
       setAiGenerated(true);
       addToast("success", `Rewritten to sound ${tone.label.toLowerCase()}`, {
         action: { label: "Undo", onClick: restore },
@@ -1018,6 +1022,10 @@ export default function ComposeModal({
         .map((s: string) => s.trim())
         .join(", ");
       notifySent({ to: sentTo, subject, body_html: sendBody });
+      const sentText = draftText(stripSignature(rawBody));
+      if (drafted.current && sentText.trim() !== drafted.current.trim()) {
+        api("/writing/edited", { to: parsedTo[0], before: draftText(stripSignature(drafted.current)), after: sentText }).catch(() => {});
+      }
 
       // Prepend to sent localStorage cache so SentView shows it immediately
       try {
@@ -1079,10 +1087,10 @@ export default function ComposeModal({
       aria-label={title}
       className="fixed bottom-4 z-50 flex flex-col rounded-[12px] bg-raised shadow-pop"
       style={{
-        right: "16px",
-        width: "640px",
-        maxWidth: "calc(100vw - 32px)",
-        maxHeight: "min(82vh, 700px)",
+        right: "1rem",
+        width: "40rem",
+        maxWidth: "calc(100vw - 2rem)",
+        maxHeight: "min(82vh, 43.75rem)",
         transition: "right 0.2s ease",
       }}
       onKeyDown={(e) => {
@@ -1273,7 +1281,10 @@ export default function ComposeModal({
               >
                 Cancel
               </button>
-              <span className="text-xs text-ink3">Kept for later drafts</span>
+              <span className="flex cursor-default items-center gap-2 pl-1 text-ink2" onClick={() => setKeepFeedback(!keepFeedback)}>
+                <Tick checked={keepFeedback} onChange={setKeepFeedback} label="For later drafts too" />
+                For later drafts too
+              </span>
             </div>
           </div>
         )}

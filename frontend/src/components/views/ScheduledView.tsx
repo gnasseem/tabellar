@@ -268,7 +268,7 @@ export default function ScheduledView() {
                   key={item.id}
                   role="option"
                   aria-selected={cursor === item}
-                  className="row2 grid scroll-mt-[34px] grid-cols-[26px_minmax(0,1fr)] gap-y-[3px]"
+                  className="row2 grid scroll-mt-head grid-cols-[26px_minmax(0,1fr)] gap-y-[3px]"
                   onClick={() => (setCursorId(item.id), setOpen(true))}
                   onDoubleClick={() => edit(item)}
                 >

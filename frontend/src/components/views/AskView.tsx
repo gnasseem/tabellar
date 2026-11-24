@@ -281,7 +281,7 @@ export default function AskView() {
 
   const conversations = (
     <nav className={`flex-none flex-col overflow-y-auto border-line px-2 py-2 md:flex md:w-[232px] md:border-r ${listOpen ? "flex w-full" : "hidden"}`} aria-label="Conversations">
-      <button className={`flex h-7 w-full flex-none items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${!openId ? "bg-sel font-medium text-ink" : "text-ink2 hover:bg-hover"}`} onClick={startNew}>
+      <button className={`flex h-item w-full flex-none items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${!openId ? "bg-sel font-medium text-ink" : "text-ink2 hover:bg-hover"}`} onClick={startNew}>
         <Icon name="add" size={16} className="text-ink3" />
         New conversation
       </button>
@@ -296,7 +296,7 @@ export default function AskView() {
           return (
             <div key={c.id}>
               {head && <p className="label px-2 pb-1 pt-3">{day.head}</p>}
-              <div className={`group flex h-7 items-center rounded-md transition-colors duration-150 ${openId === c.id ? "bg-sel" : "hover:bg-hover"}`}>
+              <div className={`group flex h-item items-center rounded-md transition-colors duration-150 ${openId === c.id ? "bg-sel" : "hover:bg-hover"}`}>
                 <button
                   aria-current={openId === c.id ? "page" : undefined}
                   className={`h-full min-w-0 flex-1 truncate px-2 text-left ${openId === c.id ? "font-medium text-ink" : "text-ink2"}`}

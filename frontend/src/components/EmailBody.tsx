@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import DOMPurify from "dompurify";
 import { emailFrameThemeCss, measureEmailIframeBodyHeight } from "@/lib/emailIframe";
 import { useApp } from "./AppShell";
+import { useSizes } from "./ui";
 
 // One email's own words, as the details panel and the reader show them: its
 // HTML sanitised in a sandboxed frame (remote images only on request), else
@@ -164,7 +165,7 @@ function hasRemoteImages(html: string): boolean {
   return [...doc.querySelectorAll("img, [background]")].some((el) => REMOTE.test(el.getAttribute("src") || el.getAttribute("background") || ""));
 }
 
-function frameDoc(html: string, dark: boolean, images: boolean): string {
+function frameDoc(html: string, dark: boolean, images: boolean, scale: number): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
   for (const a of doc.querySelectorAll("a[href]")) {
     a.setAttribute("target", "_blank");
@@ -185,7 +186,7 @@ function frameDoc(html: string, dark: boolean, images: boolean): string {
     `<meta http-equiv="Content-Security-Policy" content="${csp}"><base target="_blank">` +
     emailFrameThemeCss() +
     "<style>html,body{margin:0;padding:0;min-height:0!important;height:auto!important;overflow-x:hidden}" +
-    "body{font:14px/1.6 system-ui,-apple-system,'Helvetica Neue',sans-serif;word-break:break-word}" +
+    `body{font:${14 * scale}px/1.6 system-ui,-apple-system,'Helvetica Neue',sans-serif;word-break:break-word}` +
     "img,table{max-width:100%!important}img{height:auto!important}</style>" +
     doc.body.innerHTML
   );
@@ -195,15 +196,16 @@ function frameDoc(html: string, dark: boolean, images: boolean): string {
 // Mail laid out wider than the frame is scaled down to fit it.
 function EmailFrame({ html, images }: { html: string; images: boolean }) {
   const { theme } = useApp();
+  const { scale } = useSizes();
   const frame = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(120);
   const [srcDoc, setSrcDoc] = useState("");
 
   // The theme class changes on the root after this renders, so its colours are read a frame later.
   useEffect(() => {
-    const id = requestAnimationFrame(() => setSrcDoc(frameDoc(html, theme === "dark", images)));
+    const id = requestAnimationFrame(() => setSrcDoc(frameDoc(html, theme === "dark", images, scale)));
     return () => cancelAnimationFrame(id);
-  }, [html, theme, images]);
+  }, [html, theme, images, scale]);
 
   useLayoutEffect(() => {
     const iframe = frame.current;

@@ -4,6 +4,7 @@
 // from what they did:
 //   fact    free text about the user ("Studies computer science at NYU")
 //   rule    free text the user wants followed ("No todos from job application receipts")
+//   writing a rule for drafts only ("Never use bullet points"); see writing.ts
 //   sender  an address, domain a domain, topic a few words; each with one of
 //           VALUES as its value
 // Prompts read it through profileContext(), the engine through prefsFor() and
@@ -18,7 +19,7 @@ import { db } from "./db.ts";
 import { mail } from "./providers.ts";
 import type { Account } from "./accounts.ts";
 
-export const KINDS = ["fact", "rule", "sender", "domain", "topic"] as const;
+export const KINDS = ["fact", "rule", "writing", "sender", "domain", "topic"] as const;
 export const VALUES = ["vip", "normal", "quiet", "ignore", "never_todo", "never_meeting", "never_draft", "never_followup", "not_newsletter"] as const;
 
 // What each value stops. quiet: nothing is made from their mail and it never
@@ -234,7 +235,7 @@ export async function profileContext(
 
 export async function setPref(userId: string, kind: string, subject: string, value: string, source: string, evidence?: string): Promise<void> {
   if (!(KINDS as readonly string[]).includes(kind)) throw Object.assign(new Error(`Unknown kind "${kind}"`), { status: 400 });
-  const free = kind === "fact" || kind === "rule";
+  const free = kind === "fact" || kind === "rule" || kind === "writing";
   const subj = free ? "" : lc(subject);
   const val = free ? String(value).trim() : value;
   if (!val || (!free && !subj)) throw Object.assign(new Error("Nothing to save"), { status: 400 });
@@ -465,6 +466,16 @@ export async function answer(userId: string, id: string, index: number): Promise
   const replan = opt.pref && !STOPS[opt.pref.value] && q.email_id ? (q.email_id as string) : null;
   if (replan) await db.from("email_processed").update({ engine_at: null }).eq("email_id", replan);
   return { replan };
+}
+
+// Take an answer back: the preference it wrote goes and the question is open again.
+export async function reopen(userId: string, id: string): Promise<void> {
+  const { data: q } = await db.from("questions").select("*").eq("id", id).eq("user_id", userId).maybeSingle();
+  if (!q) throw Object.assign(new Error("No such question"), { status: 404 });
+  if (q.status !== "answered" && q.status !== "skipped") return;
+  const opt = ((q.options as Option[]) ?? []).find((o) => o.label === q.answer);
+  if (opt?.pref) await db.from("preferences").delete().eq("user_id", userId).eq("kind", opt.pref.kind).eq("subject", opt.pref.subject).eq("value", opt.pref.value).eq("source", "asked");
+  await db.from("questions").update({ status: "open", answer: null, answered_at: null }).eq("id", id);
 }
 
 // ── Knowledge ───────────────────────────────────────────────────────────────

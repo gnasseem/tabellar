@@ -6,7 +6,7 @@
 //   POST /refine-draft          Rewrite a draft
 //   POST /generate-draft        Draft a reply to a stored email
 //   POST /analyze-inbox         Re-analyze unprocessed or all emails
-//   POST /learn-style           Learn the user's writing style from sent mail
+//   POST /writing/...           How the user writes: learn, set a line, a sample reply
 //   GET  /briefing              The Brief
 //   GET  /calendar/free-slots   Free calendar slots
 //   GET  /calendar/events       Calendar events
@@ -36,20 +36,20 @@ import {
   chatWithAssistant,
   composeDraft,
   refineDraft,
-  generateDraft,
   processFullEmail,
   type ChatContext,
 } from "./ai.ts";
 import { syncMail, analyzeInbox } from "./sync.ts";
 import { accountById, accountFor, accountsForWindow, defaultAccount, fromLine, listAccounts, removeAccount, replyFrom, updateAccount } from "./accounts.ts";
 import { saveUserDraft } from "./drafts.ts";
-import { kickEngine, draftReply, engineStatus, planNew } from "./engine.ts";
+import { kickEngine, draftReply, engineStatus, planNew, sampleReply } from "./engine.ts";
+import { displayNameOf, isRule, keepRules, learnFromEdit, RECIPIENTS, setAvoid, setLine, stylePrompt, writingFor } from "./writing.ts";
 import { learnFromSent, startFirstRead } from "./firstRead.ts";
 import * as onboarding from "./onboarding.ts";
 import { approve, dismiss, undo, record, engineSettings, setMailState } from "./actions.ts";
-import { answer, applyPref, feedback, profileContext, setPref, type Feedback } from "./profile.ts";
+import { answer, applyPref, feedback, profileContext, reopen, setPref, type Feedback } from "./profile.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
-import { brief } from "./brief.ts";
+import { brief, prepareBrief } from "./brief.ts";
 import { applyLabel, labelsBySender, labelsForPrompt, suggestLabels, userLabels } from "./labels.ts";
 import {
   runAgentStep,
@@ -206,6 +206,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
     // ── What Tabellar knows about the user ─────────────────────────────────
     //   POST /questions/answer {id, option}       option is the index of the answer
+    //   POST /questions/reopen {id}               take an answer back
     //   POST /profile/feedback {thing, outcome, id?, sender?, topic?}
     //   POST /preferences {kind, subject, value, replace?}   replace: the id of the row it edits
     if (path === "/questions/answer" && req.method === "POST") {
@@ -214,6 +215,15 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       try {
         const { replan } = await answer(userId, id, option);
         if (replan) kickEngine();
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
+      return json({ ok: true });
+    }
+    if (path === "/questions/reopen" && req.method === "POST") {
+      const { id } = await req.json();
+      try {
+        await reopen(userId, String(id ?? ""));
       } catch (e) {
         return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
       }
@@ -250,7 +260,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     //   GET  /onboarding/examples              POST /onboarding/examples/answer {kind, address, emailId, answer}
     //   GET  /onboarding/people                POST {address, vip}
     //   GET  /onboarding/labels                suggestions once the sent mail is read, else null
-    //   POST /onboarding/finish {level, theme}
+    //   POST /onboarding/finish {level}
     if (path.startsWith("/onboarding")) {
       try {
         if (path === "/onboarding" && req.method === "GET") return json(await onboarding.onboardingState(userId));
@@ -346,17 +356,37 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ suggestions: left });
     }
 
-    // ── POST /learn-style ───────────────────────────────────────────────────
-    if (path === "/learn-style" && req.method === "POST") {
-      const account = await defaultAccount(userId);
-      if (!account) {
-        return json({ error: "No account connected" }, 400, corsHeaders);
+    // ── How the user writes (writing.ts) ────────────────────────────────────
+    //   POST /writing/learn                        from the last 200 sent emails
+    //   POST /writing/line {kind, field, value}    kind: all, org, known or stranger
+    //   POST /writing/avoid {phrases}
+    //   POST /writing/edited {to, before, after}   a draft changed before it was sent
+    //   POST /writing/sample {kind}                a reply to a real email, kept nowhere
+    if (path.startsWith("/writing/") && req.method === "POST") {
+      const b = await req.json().catch(() => ({}));
+      try {
+        if (path === "/writing/learn") {
+          const account = await defaultAccount(userId);
+          if (!account) return json({ error: "No mailbox connected" }, 400);
+          const { sent, style } = await learnFromSent(userId, account, { facts: false });
+          if (!style) return json({ error: "There are fewer than 3 sent emails to learn from" }, 400);
+          await style();
+          return json({ sent });
+        }
+        if (path === "/writing/line") {
+          await setLine(userId, String(b.kind ?? ""), String(b.field ?? ""), String(b.value ?? ""));
+          return json({ ok: true });
+        }
+        if (path === "/writing/avoid") {
+          await setAvoid(userId, Array.isArray(b.phrases) ? b.phrases : []);
+          return json({ ok: true });
+        }
+        if (path === "/writing/edited") return json({ learned: await learnFromEdit(userId, String(b.to ?? ""), String(b.before ?? ""), String(b.after ?? ""), await displayNameOf(userId)) });
+        if (path === "/writing/sample") return json(await sampleReply(userId, RECIPIENTS.find((k) => k === b.kind)));
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
       }
-
-      const { sent } = await learnFromSent(userId, account, { facts: false });
-      if (sent < 3) return json({ error: "Need at least 3 sent emails to analyze" }, 400, corsHeaders);
-      const { data: style } = await db.from("style_profiles").select("greeting_style, closing_style, tone, avg_length").eq("user_id", userId).maybeSingle();
-      return json({ learned: true, sample_count: sent, style }, 200, corsHeaders);
+      return json({ error: "Not found" }, 404);
     }
 
     // ── POST /send-email ───────────────────────────────────────────────────
@@ -474,23 +504,9 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         ? emailMatch[1].trim()
         : toRaw.split(/\s/)[0].trim();
 
-      // Fetch style + knowledge context in parallel
-      const [
-        { data: styleData },
-        { data: profileData },
-        { data: kbData },
-        { data: memData },
-      ] = await Promise.all([
-        db
-          .from("style_profiles")
-          .select("*")
-          .eq("user_id", userId)
-          .limit(1),
-        db
-          .from("profiles")
-          .select("style_notes")
-          .eq("id", userId)
-          .single(),
+      // The user's way of writing and what is known of the recipient
+      const [writing, { data: kbData }, { data: memData }] = await Promise.all([
+        writingFor(userId, recipientEmail),
         (async () => {
           // People and companies that match the recipient.
           const recipientDomain = recipientEmail?.split("@")[1] ?? "";
@@ -517,15 +533,6 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           : Promise.resolve({ data: null }),
       ]);
 
-      let styleContext: string | undefined;
-      if (styleData?.[0]) {
-        const s = styleData[0];
-        styleContext = `Greeting: ${s.greeting_style || "Hi"}. Closing: ${s.closing_style || "Best"}. Tone: ${s.tone || "professional"}.`;
-      }
-      if (profileData?.style_notes) {
-        styleContext = (styleContext || "") + " " + profileData.style_notes;
-      }
-
       let knowledgeContext: string | undefined;
       const kbParts: string[] = [];
       const about = await profileContext(userId, { sender_email: recipientEmail, subject: body.subject ?? "", text: body.replyTo?.body ?? "" });
@@ -547,111 +554,27 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       }
       if (kbParts.length) knowledgeContext = kbParts.join("\n");
 
-      const draft = await composeDraft({
-        intent: body.intent ?? "",
-        subject: body.subject ?? "",
-        recipientName,
-        senderName,
-        replyTo: body.replyTo,
-        styleContext,
-        knowledgeContext,
-      });
+      const draft = await keepRules(writing, (extra) =>
+        composeDraft({ intent: body.intent ?? "", subject: body.subject ?? "", recipientName, senderName, replyTo: body.replyTo, style: stylePrompt(writing), extra, knowledgeContext }),
+      );
 
       return json({ draft }, 200, corsHeaders);
     }
 
     // ── POST /refine-draft ─────────────────────────────────────────────────
-    // Refine an AI-generated draft based on user feedback. Also persists the
-    // feedback as a knowledge-base entry so future drafts learn from it.
+    // A draft rewritten as the user asks. With `keep`, what they asked is also
+    // kept as a writing rule for later drafts.
     if (path === "/refine-draft" && req.method === "POST") {
       const body = await req.json();
       const currentDraft: string = body.currentDraft ?? "";
-      const feedback: string = body.feedback ?? "";
-      const senderName: string = body.senderName ?? "";
-      // Tone rephrasing reuses this route but is a one-off transformation, not
-      // a statement of preference. Without this it would write a knowledge_base
-      // row on every click and skew all later drafts toward the last tone tried.
-      const skipLearning: boolean = body.skip_learning === true;
+      const feedback: string = String(body.feedback ?? "").trim();
+      if (!currentDraft || !feedback) return json({ error: "currentDraft and feedback are required" }, 400, corsHeaders);
 
-      if (!currentDraft || !feedback) {
-        return json(
-          { error: "currentDraft and feedback are required" },
-          400,
-          corsHeaders,
-        );
-      }
-
-      // Fetch style + top knowledge context in parallel
-      const [{ data: styleData3 }, { data: profileData3 }, { data: kbData3 }] =
-        await Promise.all([
-          db
-            .from("style_profiles")
-            .select("*")
-            .eq("user_id", userId)
-            .limit(1),
-          db
-            .from("profiles")
-            .select("style_notes")
-            .eq("id", userId)
-            .single(),
-          db
-            .from("knowledge_base")
-            .select("entity, entity_type, info")
-            .eq("user_id", userId)
-            .order("use_count", { ascending: false })
-            .order("updated_at", { ascending: false })
-            .limit(10),
-        ]);
-
-      let styleContext3: string | undefined;
-      if (styleData3?.[0]) {
-        const s = styleData3[0];
-        styleContext3 = `Greeting: ${s.greeting_style || "Hi"}. Closing: ${s.closing_style || "Best"}. Tone: ${s.tone || "professional"}.`;
-      }
-      if (profileData3?.style_notes) {
-        styleContext3 = (styleContext3 || "") + " " + profileData3.style_notes;
-      }
-
-      const knowledgeContext3 = kbData3?.length
-        ? kbData3
-            .map(
-              (k: { entity: string; entity_type: string; info: string }) =>
-                `${k.entity} (${k.entity_type}): ${k.info}`,
-            )
-            .join("\n")
-        : undefined;
-
-      // Save feedback as a knowledge-base learning entry so future drafts improve
-      if (!skipLearning) {
-        db
-          .from("knowledge_base")
-          .insert({
-            user_id: userId,
-            entity: `draft_feedback_${Date.now()}`,
-            entity_type: "style_preference",
-            info: `Writing preference: ${feedback}`,
-            source: "draft_refinement",
-            importance: "normal",
-            use_count: 1,
-          })
-          .then(({ error }) => {
-            if (error)
-              console.error(
-                "[refine-draft] knowledge insert error:",
-                error.message,
-              );
-          });
-      }
-
-      const refined = await refineDraft({
-        currentDraft,
-        feedback,
-        senderName,
-        styleContext: styleContext3,
-        knowledgeContext: knowledgeContext3,
-      });
-
-      return json({ draft: refined }, 200, corsHeaders);
+      const kept = body.keep === true && isRule(feedback);
+      if (kept) await setPref(userId, "writing", "", feedback, "user", "Said while changing a draft");
+      const [writing, about] = await Promise.all([writingFor(userId, String(body.to ?? "")), profileContext(userId)]);
+      const refined = await keepRules(writing, (extra) => refineDraft({ currentDraft, feedback, style: stylePrompt(writing, "rules"), extra, knowledgeContext: about || undefined }));
+      return json({ draft: refined, kept }, 200, corsHeaders);
     }
 
     // ── POST /generate-draft ───────────────────────────────────────────────
@@ -676,6 +599,10 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     // ── GET /briefing: what needs the user today (brief.ts) ──────────────
     if (path === "/briefing" && req.method === "GET") {
       return json(await brief(userId), 200, corsHeaders);
+    }
+    // The opening paragraph, written now if today's is not there yet.
+    if (path === "/briefing/summary" && req.method === "POST") {
+      return json({ summary: await prepareBrief(userId, { now: true }) });
     }
 
     // ── GET /calendar/free-slots ───────────────────────────────────────────
@@ -1095,12 +1022,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       // connected accounts stay, so the user remains signed in.
       for (const t of ["agent_sessions", "email_processed", "todos", "meetings", "follow_up_reminders",
         "scheduled_emails", "draft_emails", "email_memory", "contacts", "knowledge_base", "categories", "preferences", "questions", "conversations",
-        "delegation_rules", "style_profiles", "email_templates", "email_signatures", "newsletter_senders", "emails"]) {
+        "style_profiles", "email_templates", "email_signatures", "newsletter_senders", "emails"]) {
         const { error } = await db.from(t).delete().eq("user_id", userId);
         if (error) return json({ error: "Failed to delete data: " + error.message }, 500, corsHeaders);
       }
       await db.from("accounts").update({ history_id: null }).eq("user_id", userId);
-      await db.from("profiles").update({ style_notes: null }).eq("id", userId);
+      await db.from("profiles").update({ brief_summary: null }).eq("id", userId);
       return json({ deleted: true }, 200, corsHeaders);
     }
 
@@ -1147,12 +1074,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       }
 
       // Load only what's needed for the system prompt; everything else is fetched on demand by the AI via tools.
-      const [styleResult, profileResult] = await Promise.all([
-        db
-          .from("style_profiles")
-          .select("greeting_style, closing_style, tone, avg_length")
-          .eq("user_id", userId)
-          .maybeSingle(),
+      const [writing, profileResult] = await Promise.all([
+        writingFor(userId, null),
         db
           .from("profiles")
           .select("display_name")
@@ -1165,7 +1088,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           (profileResult.data as { display_name?: string } | null)
             ?.display_name || "User",
         timezone: timezone as string,
-        styleProfile: styleResult.data as ChatContext["styleProfile"],
+        style: stylePrompt(writing),
       };
 
       const { reply, tool_calls } = await chatWithAssistant(

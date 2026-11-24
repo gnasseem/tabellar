@@ -1118,6 +1118,116 @@ ok("finishing sets the level and plans under the answers", () => {
   assert.deepEqual(runTodos, ["Send the signed lease"]);
 });
 
+// ── Writing, notifications and the Brief ────────────────────────────────────
+console.log("\nWriting, notifications and the Brief");
+const writing = await import("./writing.ts");
+const { inQuietHours, worthNotifying } = await import("./notify.ts");
+const { briefDay, briefSettings, supported } = await import("./brief.ts");
+
+ok("the opening and the sign-off of an email are read as lines", () => {
+  const read = (t: string) => [writing.greetingOf(t), writing.closingOf(t, "Nadia Rahman")];
+  assert.deepEqual(read("Hi Maya,\n\nThe file is attached.\n\nBest,\nNadia"), ["Hi {name},", "Best,\nNadia"]);
+  assert.deepEqual(read("Dear Prof. Lee,\n\nThank you.\n\nKind regards,\nNadia Rahman\nLumen Studio"), ["Dear {name},", "Kind regards,\nNadia Rahman"]);
+  assert.deepEqual(read("Hi all,\nThanks for the notes, see you there"), ["Hi all,", ""]);
+  assert.deepEqual(read("Sounds good, I will send it."), ["", ""]);
+});
+ok("a phrase is found in other words, and not where it is not said", () => {
+  assert.ok(writing.says("Hello. I hope this email finds you well!", "I hope this finds you well"));
+  assert.ok(writing.says("I'm writing to inform you that", "I am writing to inform you"));
+  assert.ok(!writing.says("I hope this helps. The file finds its way to you", "I hope this finds you well"));
+  assert.equal(writing.bannedBy("never open with I hope this finds you well"), "I hope this finds you well");
+  assert.equal(writing.bannedBy("Always sign off with Cheers"), null);
+});
+ok("what is not a rule is not kept as one", () => {
+  for (const junk of ["nothing", "Nothing.", "ok", "looks good", "no changes", "never mind", "keep it as is", "?", "shorter"]) assert.ok(!writing.isRule(junk), junk);
+  for (const rule of ["Never use bullet points", "shorter, less formal", "No exclamation marks"]) assert.ok(writing.isRule(rule), rule);
+});
+const kept: string[] = [];
+const bannedDraft = await writing.keepRules({ kind: "known", greeting: "", closing: "", tone: "", length: "", avoid: [], rules: ["never open with I hope this finds you well"] }, async (extra) => {
+  kept.push(extra);
+  return "Hi Ann,\n\nI hope this email finds you well. The file is attached.";
+});
+ok("a draft that breaks a rule is written again, then loses the sentence", () => {
+  assert.equal(kept.length, 2);
+  assert.match(kept[1], /I hope this finds you well/);
+  assert.equal(bannedDraft, "Hi Ann,\n\nThe file is attached.");
+});
+
+const penUser = randomUUID();
+await db.from("profiles").insert({ id: penUser, email: "pen@lumen.example", display_name: "Pen Writer" });
+await db.from("accounts").insert({ user_id: penUser, provider: "fake", address: "pen@lumen.example", token_ref: "check:none" });
+await db.from("senders").insert([
+  { user_id: penUser, address: "ann@client.example", sent_to: 4 },
+  { user_id: penUser, address: "new@else.example", sent_to: 1 },
+]);
+const kindOf = await writing.recipients(penUser);
+ok("a recipient is of the user's organisation, known, or a stranger", () => {
+  assert.deepEqual(["Zed <zed@lumen.example>", "ann@client.example", "new@else.example"].map(kindOf), ["org", "known", "stranger"]);
+});
+const penMail = (to: string, own: string, n: number) => Array.from({ length: n }, () => ({ to, subject: "", own }));
+const learnedPen = writing.styleOf([...penMail("zed@lumen.example", "Hey Zed,\nDone.\nCheers,\nPen", 6), ...penMail("ann@client.example", "Dear Ann,\nIt is attached.\nBest regards,\nPen Writer", 15)], kindOf, "Pen Writer");
+ok("each kind of recipient keeps its own greeting and sign-off", () => {
+  assert.equal(learnedPen.all.greeting_style, "Dear {name},");
+  assert.deepEqual(learnedPen.kinds.org, { greeting_style: "Hey {name},", closing_style: "Cheers,\nPen" });
+  assert.deepEqual(learnedPen.kinds.known, {});
+  assert.ok(learnedPen.avoid.includes("Thank you for reaching out"));
+});
+await writing.setLine(penUser, "known", "greeting_style", "Dear {name},");
+const penDraft = "Hello Zed,\n\nThank you for reaching out. The file you asked for is attached to this email.\n\nBest,\nPen";
+const penSent = "Hey Zed,\n\nThe file you asked for is attached to this email.\n\nBest,\nPen";
+const firstEdit = await writing.learnFromEdit(penUser, "zed@lumen.example", penDraft, penSent, "Pen Writer");
+const secondEdit = await writing.learnFromEdit(penUser, "zed@lumen.example", penDraft, penSent, "Pen Writer");
+await writing.learnFromEdit(penUser, "ann@client.example", penDraft, penSent, "Pen Writer");
+const handSet = await writing.learnFromEdit(penUser, "ann@client.example", penDraft, penSent, "Pen Writer");
+const penStyle = await writing.styleRow(penUser);
+ok("the same change made twice to drafts is learned, and a line set by hand stays", () => {
+  assert.deepEqual(firstEdit, []);
+  assert.deepEqual(secondEdit, ["greeting_style Hey {name},", 'avoid "Thank you for reaching out"']);
+  assert.equal(penStyle.kinds.org?.greeting_style, "Hey {name},");
+  assert.deepEqual(handSet, []);
+  assert.equal(penStyle.kinds.known?.greeting_style, "Dear {name},");
+});
+
+ok("notifications: what needs the user, only their people, or nothing", () => {
+  const say = (level: string) => [{ vip: true, needsUser: false }, { vip: false, needsUser: true }, { vip: false, needsUser: false }].map((m) => worthNotifying(level, m));
+  assert.deepEqual(say("needs"), [true, true, false]);
+  assert.deepEqual(say("vip"), [true, false, false]);
+  assert.deepEqual(say("none"), [false, false, false]);
+});
+ok("quiet hours are the hours outside work, in the user's zone", () => {
+  const p = { notification_quiet: true, working_hours: { start: "09:00", end: "17:00", days: [1, 2, 3, 4, 5], timezone: "Asia/Dubai" } };
+  const at = (iso: string) => inQuietHours(p, new Date(iso));
+  assert.deepEqual(["2026-11-24T06:00:00Z", "2026-11-24T04:59:00Z", "2026-11-24T13:00:00Z", "2026-11-28T06:00:00Z"].map(at), [false, true, true, true]);
+  assert.equal(inQuietHours({ ...p, notification_quiet: false }, new Date("2026-11-28T06:00:00Z")), false);
+  const night = { notification_quiet: true, working_hours: { start: "22:00", end: "06:00", days: [1], timezone: "UTC" } };
+  assert.deepEqual(["2026-11-23T23:00:00Z", "2026-11-24T05:00:00Z", "2026-11-24T07:00:00Z"].map((x) => inQuietHours(night, new Date(x))), [false, false, true]);
+});
+ok("a Brief starts at its time, and counts from that time the day before", () => {
+  const s = briefSettings({ time: "08:30", length: "endless", sections: ["handled", "nope"], tone: "rude" });
+  assert.deepEqual(s, { time: "08:30", length: "standard", sections: ["handled"], summary: false, tone: "plain" });
+  assert.deepEqual(briefDay(s, "Asia/Dubai", new Date("2026-11-24T04:00:00Z")), { day: "2026-11-24", due: false, since: "2026-11-23T04:30:00.000Z" });
+  assert.deepEqual(briefDay(s, "Asia/Dubai", new Date("2026-11-24T18:00:00Z")), { day: "2026-11-24", due: true, since: "2026-11-23T04:30:00.000Z" });
+});
+ok("the Brief's paragraph may name only what its lines do", () => {
+  const lines = "Needs the user today (2):\n- Maya Okafor: Reply drafted: Contract for the spring pilot\n- Todo: Send the report, due 2026-11-24";
+  assert.ok(supported("You have 2 things today. Maya Okafor is waiting on the contract, and a report is due.", lines));
+  assert.ok(!supported("You have 3 things today.", lines));
+  assert.ok(!supported("Today Priya is waiting on the contract.", lines));
+});
+const q0 = await (await import("./profile.ts")).ask(penUser, { text: "Do you deal with Bo?", about: "bo@x.example", options: [{ label: "Yes", pref: { kind: "sender", subject: "bo@x.example", value: "normal" } }, { label: "Not now" }] });
+const { data: asked } = await db.from("questions").select("id").eq("user_id", penUser).single();
+const profileModule = await import("./profile.ts");
+await profileModule.answer(penUser, asked!.id as string, 0);
+const afterAnswer = (await profileModule.allPrefs(penUser)).length;
+await profileModule.reopen(penUser, asked!.id as string);
+const { data: reopened } = await db.from("questions").select("status, answer").eq("id", asked!.id).single();
+ok("an answer taken back is a question again, without its preference", () => {
+  assert.ok(q0);
+  assert.equal(afterAnswer, 1);
+  assert.deepEqual(reopened, { status: "open", answer: null });
+});
+assert.equal((await profileModule.allPrefs(penUser)).length, 0);
+
 if (modelConfigured()) {
   console.log("Rules through the configured model (this can take a minute)");
   const { processFullEmail, expectsAnswer } = await import("./ai.ts");
@@ -1144,6 +1254,18 @@ if (modelConfigured()) {
   console.log(`      sent mail that asks: ${judged[0]}, a thank-you: ${judged[1]}`);
   if (judged[0] !== true || judged[1] !== false) outcomes.push("follow-up judging");
   ok("the configured model's suggestions pass the rules on every case", () => assert.deepEqual(outcomes, []));
+
+  // A writing rule in a real draft: forbidden, the opening is not there.
+  const { draftReply } = await import("./engine.ts");
+  const { setPref } = await import("./profile.ts");
+  await setPref(penUser, "writing", "", "never open with I hope this finds you well", "user");
+  await setPref(penUser, "writing", "", "Sign off with Cheers, Pen", "user");
+  const ruled = await draftReply(penUser, { id: "", subject: "Dates", sender: "Ann Lee <ann@client.example>", sender_email: "ann@client.example", reply_to_email: null, body_text: "Hi Pen,\n\nI hope this email finds you well. Which day next week suits you?\n\nAnn", snippet: null, received_at: null }, "Tuesday suits. Open politely.");
+  console.log(`      ${ruled.replace(/\n+/g, " / ")}`);
+  ok("a draft from the configured model keeps the user's writing rules", () => {
+    assert.ok(!writing.says(ruled, "I hope this finds you well"), ruled);
+    assert.match(ruled, /Cheers,?\s+Pen/);
+  });
 } else {
   console.log("Rules through a model: skipped, no model is set up.");
 }

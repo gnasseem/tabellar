@@ -31,7 +31,7 @@ type Sender = {
 type Tab = "clean" | "kept" | "unsubscribed";
 type Ask = { name: string; to: string; subject: string; answer: (send: boolean) => void };
 
-const COLUMNS = "!grid grid-cols-[26px_minmax(0,1fr)_88px] md:grid-cols-[26px_minmax(0,220px)_minmax(0,1fr)_88px_252px]";
+const COLUMNS = "!grid grid-cols-[26px_minmax(0,1fr)_88px] md:grid-cols-[26px_minmax(0,220px)_minmax(0,1fr)_88px_288px]";
 const METHOD: Record<string, string> = { "one-click": "Unsubscribed by their link", mailto: "Unsubscribed by email", web: "Finish on their page if you have not" };
 
 function emails(n: number): string {
@@ -388,7 +388,7 @@ export default function NewslettersView() {
                   role="option"
                   aria-selected={isCursor}
                   aria-busy={isBusy}
-                  className={`row group scroll-mt-[34px] ${COLUMNS} ${isPicked && !isCursor ? "bg-hover" : ""}`}
+                  className={`row group scroll-mt-head ${COLUMNS} ${isPicked && !isCursor ? "bg-hover" : ""}`}
                   onClick={(e) => (e.shiftKey ? pick(s, true) : setCursorAddr(s.sender_email))}
                 >
                   <span className="grid place-items-center">
@@ -418,7 +418,7 @@ export default function NewslettersView() {
         </div>
       )}
       {ask && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onClick={() => ask.answer(false)}>
+        <div className="fixed inset-0 z-50 grid place-items-center bg-scrim p-4" onClick={() => ask.answer(false)}>
           <div className="w-full max-w-[440px] rounded-[12px] bg-raised p-5 shadow-pop" role="alertdialog" aria-modal="true" aria-labelledby="unsubscribe-title" onClick={(e) => e.stopPropagation()}>
             <h2 id="unsubscribe-title" className="text-[15px] font-[650] tracking-[-0.01em]">
               {ask.name} unsubscribes by email

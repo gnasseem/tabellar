@@ -251,11 +251,10 @@ export async function setVip(userId: string, address: string, on: boolean): Prom
 
 // The level is set, the first run is over, and everything read meanwhile is
 // planned now, under what the user said.
-export async function finish(userId: string, b: { level?: unknown; theme?: unknown }): Promise<void> {
+export async function finish(userId: string, b: { level?: unknown }): Promise<void> {
   const level = String(b.level ?? "suggest");
   if (!LEVELS.includes(level)) throw Object.assign(new Error(`Unknown level "${level}"`), { status: 400 });
   const patch: Record<string, unknown> = { autonomy_level: level, onboarding: "done", updated_at: new Date().toISOString() };
-  if (b.theme === "light" || b.theme === "dark") patch.theme = b.theme;
   await db.from("profiles").update(patch).eq("id", userId);
   void (async () => {
     // Labels kept in the first run, on the mail sorted before they existed.

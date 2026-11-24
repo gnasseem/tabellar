@@ -421,7 +421,7 @@ export default function RepliesView() {
                 />
               </div>
             </div>
-            <div className="flex flex-none items-center gap-2 border-t border-line py-[11px] pl-6 pr-4 md:pl-10">
+            <div className="flex flex-none flex-wrap items-center gap-2 border-t border-line py-[11px] pl-6 pr-4 md:pl-10">
               {cursor.going ? (
                 <>
                   <button className="btn" onClick={() => cancel(cursor)}>

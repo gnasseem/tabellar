@@ -3,7 +3,7 @@ import { createClient } from "@/lib/db";
 import { api } from "@/lib/outcomes";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import { Empty, Glyph, SkeletonRows, ViewBar, VirtualList } from "../ui";
+import { Empty, Glyph, SkeletonRows, ViewBar, VirtualList, useSizes } from "../ui";
 import { NotThis } from "../Profile";
 
 // Follow-ups: mail the user sent that still waits on an answer, one line
@@ -141,7 +141,8 @@ export default function FollowupsView() {
     return () => document.removeEventListener("keydown", onKey);
   });
 
-  const heightOf = useCallback(() => 32, []);
+  const { row } = useSizes();
+  const heightOf = useCallback(() => row, [row]);
   const reveal = "opacity-0 focus-within:opacity-100 group-hover:opacity-100 group-aria-selected:opacity-100 has-[[aria-expanded=true]]:opacity-100";
 
   const render = (f: Followup) => {

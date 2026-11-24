@@ -136,7 +136,7 @@ function People({ onFacts }: { onFacts: () => void }) {
             <Empty icon="group" title={contacts.length ? "Nobody matches" : "No people yet"} />
           ) : (
             <>
-              <div className={`${COLS} sticky top-0 z-[2] mx-2 h-[34px] items-end bg-canvas pb-[7px] pl-3 pr-3 text-xs text-ink3`}>
+              <div className={`${COLS} sticky top-0 z-[2] mx-2 h-head items-end bg-canvas pb-[7px] pl-3 pr-3 text-xs text-ink3`}>
                 <span>Person</span>
                 <span>What is known</span>
                 <span className="hidden text-right lg:block">Emails</span>

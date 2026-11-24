@@ -28,10 +28,7 @@ summary: one sentence, two at most, that leads with the most important fact: an 
 - {"action": "reply", "label": "Reply to John about the Q3 review", "text": "what the reply should say, in one line"}: only when a real person asked the user something or is waiting on their answer.
 - {"action": "add_todo", "label": "Sign the lease renewal for Dana by Dec 15", "quote": "the sentence that asks for it, copied word for word"}: only when someone the user deals with asks them personally to sign, pay what they owe, submit, send, prepare or fix something. Never for marketing or broadcast calls to action (register, sign up, apply, attend, nominate, buy), offers the user may take or leave, receipts, notifications, or things that happen on their own. The label names the task, the person when relevant, and a stated deadline.
 - {"action": "schedule_meeting", "label": "Call with Priya", "text": "what it is about", "quote": "the sentence that gives the meeting's time, or else the one that proposes it, word for word", "meetingDetails": {"title": "Call with Priya", "date": "YYYY-MM-DD resolved against today, or null when no day is named", "time": "the start time as written, e.g. 4:30pm, or null", "timezone": "as written next to the time, e.g. EST, or null", "duration": minutes or null, "location": "link or address, or null"}}: only when the email arranges or proposes a meeting, call, interview or appointment with the user, not an event advertised to many. Never supply a time or timezone the email does not state.`,
-  draft:
-    "You are an email drafting assistant. Write a professional, clear reply to the email below. Match the tone of the original. Keep it concise.",
-  style_analysis:
-    'Analyze the writing style of these sent emails (written BY the user). Return ONLY valid JSON with EXACTLY these four string keys and no extras: {"greeting_style":"<short>","closing_style":"<short>","tone":"formal|casual|mixed","avg_length":"short|medium|long"}. FIELD RULES  -  greeting_style: the exact most common opening word or phrase the user writes (e.g. "Hi", "Hey", "Hi {name}", "Hello", "Dear", "Good morning"). closing_style: the exact most common sign-off the user writes (e.g. "Best", "Thanks", "Cheers", "Best regards", "Talk soon", "Thanks,\\nGeorge"). NEVER return empty strings  -  if there is truly no greeting or closing, use "Hi" and "Thanks" as sensible defaults. tone: single word from formal/casual/mixed. avg_length: single word from short/medium/long. Do NOT wrap in markdown. Do NOT add commentary. Return JSON only.',
+  draft: `You write the user's email replies for them, in their own voice. Write only the body of the reply: no subject line, no notes about it, no placeholders like [Your Name]. Answer what the email asks and say nothing that the email, the instructions or the background do not support. Follow the user's way of writing below.`,
   agent_system: `You are Tabellar's Auto-Resolve executive agent. Your job is to completely clear the user's current inbox list by producing a fully confirmed action plan: drafted replies, todos, calendar events, and a single bulk archive. At the end, the user reviews and executes approved actions with one click.
 
 You have tools. You MUST use them. You never speak in plain prose to the user. Every output from you is either tool calls or, when you truly have nothing to say, a single short line of status text (one sentence, max 12 words, no lists, no options in text).
@@ -92,12 +89,6 @@ You follow every rule in the full Auto-Resolve agent system (think-like-user rea
 Finalize as soon as your bucket is resolved. Do NOT propose actions outside your bucket  -  the parent merges our outputs.
 
 Today is {TODAY}. User timezone: {TIMEZONE}.`,
-  draft_reply_in_context: `You are drafting one email reply on behalf of the user. Rules:
-- Write in the user's voice using the greeting, closing, tone, and length passed in context.
-- Keep it concise. Short if the user tends short, medium if medium.
-- Address the SPECIFIC ask from the original email.
-- Do not use placeholders like [Your Name] or [Company].
-- No preamble. Only the email body, including greeting and closing.`,
 };
 
 /**
@@ -541,102 +532,50 @@ export async function processFullEmail(
   };
 }
 
+// A new email or a reply from a few words on what to say. `style` is
+// stylePrompt() in writing.ts; `extra` what a first try got wrong.
 export async function composeDraft(opts: {
   intent: string;
   subject: string;
   recipientName: string;
   senderName: string;
   replyTo?: { subject: string; body?: string };
-  styleContext?: string;
+  style: string;
+  extra?: string;
   knowledgeContext?: string;
 }): Promise<string> {
-  const {
-    intent,
-    subject,
-    recipientName,
-    senderName,
-    replyTo,
-    styleContext,
-    knowledgeContext,
-  } = opts;
-  const closing = senderName ? `Best regards,\n${senderName}` : "Best regards,";
-  const greeting = recipientName ? `Hi ${recipientName},` : "Hi,";
-
-  let context: string;
-  if (replyTo) {
-    context = [
-      `Original email subject: "${replyTo.subject}"`,
-      `Original email content:`,
-      (replyTo.body ?? "").slice(0, 800),
-      ``,
-      `What to say in reply: ${intent || "Write a professional reply."}`,
-    ].join("\n");
-  } else {
-    context = [
-      subject ? `Topic: ${subject}` : "",
-      intent ? `Message intent: ${intent}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }
-
-  if (knowledgeContext) {
-    context += `\n\nBackground context about the recipient and related topics:\n${knowledgeContext}`;
-  }
-
-  if (styleContext) {
-    context += `\n\nWrite in this style: ${styleContext}`;
-  }
-
-  const systemPrompt = `You are an email drafting assistant writing on behalf of the sender. Rules:
-1. Write ONLY the email body  -  no subject line.
-2. Start with exactly this greeting: "${greeting}"
-3. Write 2-4 concise paragraphs covering the intent.
-4. End with exactly: "${closing}"
-5. Do NOT use any placeholder text like [Your Name] or [Company].`;
-
-  return draftBody(await llm(systemPrompt, context, 0.45, 1024));
+  const { intent, subject, recipientName, senderName, replyTo, style, extra, knowledgeContext } = opts;
+  const context = replyTo
+    ? [`Original email subject: "${replyTo.subject}"`, "Original email content:", (replyTo.body ?? "").slice(0, 800), "", `What to say in reply: ${intent || "Answer it."}`]
+    : [subject ? `Topic: ${subject}` : "", intent ? `What to say: ${intent}` : ""].filter(Boolean);
+  if (recipientName) context.push(`The recipient is ${recipientName}.`);
+  if (knowledgeContext) context.push("", `Background about the recipient and related topics:\n${knowledgeContext}`);
+  if (extra) context.push("", extra);
+  const system = `You write the user's emails for them, in their own voice. Write only the body of the email: no subject line, no notes about it, no placeholders like [Your Name]. Cover what they want to say and add no facts of your own.${senderName ? ` The user is ${senderName}.` : ""}`;
+  return draftBody(await llm(withStyle(system, style), context.join("\n"), 0.45, 1024));
 }
 
 export async function refineDraft(opts: {
   currentDraft: string;
   feedback: string;
-  senderName: string;
-  styleContext?: string;
+  style: string;
+  extra?: string;
   knowledgeContext?: string;
 }): Promise<string> {
-  const { currentDraft, feedback, senderName, styleContext, knowledgeContext } =
-    opts;
-  const closing = senderName ? `Best regards,\n${senderName}` : "Best regards,";
-
-  let context = `Current draft:\n${currentDraft}\n\nUser feedback on what to change: ${feedback}`;
-  if (knowledgeContext)
-    context += `\n\nBackground context:\n${knowledgeContext}`;
-  if (styleContext) context += `\n\nWrite in this style: ${styleContext}`;
-
-  const systemPrompt = `You are an email drafting assistant. The user reviewed an AI-generated draft and wants changes. Revise the draft according to their feedback exactly. Rules:
-1. Write ONLY the email body  -  no subject line.
-2. Keep the existing greeting and closing unless the feedback asks to change them.
-3. Apply the requested changes faithfully and completely.
-4. Do NOT use placeholder text like [Your Name] or [Company].
-5. End with: "${closing}"`;
-
-  return draftBody(await llm(systemPrompt, context, 0.4, 1024));
+  let context = `Current draft:\n${opts.currentDraft}\n\nWhat the user wants changed: ${opts.feedback}`;
+  if (opts.knowledgeContext) context += `\n\nBackground context:\n${opts.knowledgeContext}`;
+  if (opts.extra) context += `\n\n${opts.extra}`;
+  const system =
+    "The user wants a draft email changed. Make exactly the change they ask for and keep every other line as it is: the same greeting line first, the same sign-off and name last. Write the whole email again, and only that: no subject line, no notes about it, no placeholders.";
+  return draftBody(await llm(withStyle(system, opts.style), context, 0.4, 1024));
 }
 
-export async function generateDraft(
-  emailText: string,
-  instructions: string,
-  styleContext?: string,
-): Promise<string> {
-  let prompt = instructions
-    ? `${emailText}\n\nInstructions: ${instructions}`
-    : emailText;
-  if (styleContext) {
-    prompt = `${prompt}\n\nWrite in this style: ${styleContext}`;
-  }
-  return draftBody(await llm(PROMPTS.draft, prompt, 0.45, 1024));
+export async function generateDraft(emailText: string, instructions: string, style: string, extra?: string): Promise<string> {
+  const prompt = [emailText, instructions && `Instructions: ${instructions}`, extra].filter(Boolean).join("\n\n");
+  return draftBody(await llm(withStyle(PROMPTS.draft, style), prompt, 0.45, 1024));
 }
+
+const withStyle = (system: string, style: string) => (style ? `${system}\n\n${style}` : system);
 
 // Gemma models open a draft with a "Subject: Re: ..." line even when told to
 // write only the body; the subject comes from the thread, so drop it.
@@ -644,31 +583,16 @@ function draftBody(text: string): string {
   return text.replace(/^\s*\**subject:\**[^\n]*\n+/i, "").trim();
 }
 
-export async function analyzeWritingStyle(sentEmails: string): Promise<{
-  greeting_style: string;
-  closing_style: string;
-  tone: string;
-  avg_length: string;
-}> {
-  const raw = await llm(PROMPTS.style_analysis, sentEmails, 0.3, 512);
-  const parsed = parseJson(raw) as {
-    greeting_style?: string;
-    closing_style?: string;
-    tone?: string;
-    avg_length?: string;
-  } | null;
-  const greeting = (parsed?.greeting_style ?? "").trim();
-  const closing = (parsed?.closing_style ?? "").trim();
-  const tone = (parsed?.tone ?? "").trim().toLowerCase();
-  const length = (parsed?.avg_length ?? "").trim().toLowerCase();
-  return {
-    greeting_style: greeting || "Hi",
-    closing_style: closing || "Thanks",
-    tone: ["formal", "casual", "mixed"].includes(tone) ? tone : "mixed",
-    avg_length: ["short", "medium", "long"].includes(length)
-      ? length
-      : "medium",
-  };
+// The tone of emails the user wrote, in a few words; "" when the answer is not that.
+export async function toneOf(samples: string): Promise<string> {
+  const raw = await llm(
+    'These are emails one person wrote. Describe the tone they write in with 2 to 5 plain adjectives, such as "friendly and brief" or "formal, polite, direct". Only the tone: nothing about the topics, the greeting or the language. Return only JSON: {"tone": "..."}.',
+    samples,
+    0.2,
+    128,
+  );
+  const tone = String((parseJson(raw) as { tone?: unknown } | null)?.tone ?? "").replace(/\s+/g, " ").replace(/[."]+$/, "").trim();
+  return /^[\p{L}][\p{L}\s,'-]{2,60}$/u.test(tone) && tone.split(" ").length <= 8 ? tone[0].toUpperCase() + tone.slice(1) : "";
 }
 
 // Does an email the user sent wait on an answer: it asks something, asks
@@ -708,6 +632,17 @@ export async function factsFromSent(sample: string): Promise<{ role: string; wor
   };
 }
 
+// The Brief's opening paragraph, from its own lines.
+export async function briefParagraph(lines: string, tone: string): Promise<string> {
+  const raw = await llm(
+    `Write the opening of someone's daily mail brief from the lines below, to them, as "you". Two or three sentences, under 60 words, plain text. Lead with what needs them most and name the people. Only what the lines say: no greeting, no advice, no names, numbers or times of your own. ${tone}`,
+    lines,
+    0.3,
+    400,
+  );
+  return raw.replace(/\s+/g, " ").replace(/\*/g, "").trim().slice(0, 600);
+}
+
 // Labels the user would want, from who writes to them and about what. Each
 // names the senders from the list it would hold, so it can be checked.
 export async function labelsFromMail(sample: string): Promise<{ name: string; description: string; senders: string[] }[]> {
@@ -736,12 +671,7 @@ export async function labelsFromMail(sample: string): Promise<{ name: string; de
 export interface ChatContext {
   userDisplayName: string;
   timezone: string; // IANA timezone e.g. "Asia/Dubai"
-  styleProfile: {
-    greeting_style: string;
-    closing_style: string;
-    tone: string;
-    avg_length: string;
-  } | null;
+  style: string; // stylePrompt() in writing.ts
   topSenders?: {
     sender_email: string;
     sender_name?: string;
@@ -916,16 +846,7 @@ Exception: if you discover a new ID from a search result and need to fetch the f
 - "show follow-ups" / "my follow-up reminders" -> list_follow_ups`,
   ];
 
-  if (context.styleProfile) {
-    const s = context.styleProfile;
-    sections.push(
-      `## Writing Style\nGreeting pattern: ${s.greeting_style}\nClosing pattern: ${s.closing_style} (always follow with a new line containing only "${context.userDisplayName}")\nTone: ${s.tone}, Length: ${s.avg_length}`,
-    );
-  } else {
-    sections.push(
-      `## Writing Style\nAlways sign emails as:\nBest regards,\n${context.userDisplayName}`,
-    );
-  }
+  sections.push(`## Writing Style, for any email you write for the user\n${context.style || `Sign emails as:\nBest regards,\n${context.userDisplayName}`}`);
 
   return sections.join("\n\n");
 }

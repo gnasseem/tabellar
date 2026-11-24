@@ -10,9 +10,10 @@
   font-display: swap;
 }
 
-/* Tokens. Warm neutral surfaces, three steps of ink, and one sealing-wax red
-   that is kept for what needs the user: waiting decisions, primary actions
-   and replies about to go out. Amber is only for held mail and cautions. */
+/* Tokens. Warm neutral surfaces, three steps of ink, and one accent, sealing
+   wax red unless the user picks another, kept for what needs the user:
+   waiting decisions, primary actions and replies about to go out. Amber is
+   only for held mail and cautions. Sizes are at the default text size. */
 :root {
   --bg: oklch(1 0 0);
   --side: oklch(0.968 0.004 75);
@@ -26,9 +27,6 @@
   --ink2: oklch(0.4 0.006 60);
   --ink3: oklch(0.535 0.005 60);
   --ink4: oklch(0.7 0.004 60);
-  --wax: oklch(0.55 0.185 31);
-  --wax-ink: oklch(0.5 0.18 31);
-  --wax-soft: oklch(0.55 0.185 31 / 0.09);
   --on-wax: oklch(1 0 0);
   --warn: oklch(0.52 0.12 65);
   --warn-soft: oklch(0.7 0.14 75 / 0.13);
@@ -40,6 +38,14 @@
   --ok-soft: oklch(0.6 0.13 155 / 0.1);
   --ok-line: oklch(0.6 0.13 155 / 0.35);
   --run: oklch(0.62 0.13 150);
+  --scrim: oklch(0 0 0 / 0.3);
+  --row: 32px;
+  --row2: 9px;
+  --head: 34px;
+  --bar: 52px;
+  --item: 28px;
+  --setting: 52px;
+  --shadow-pri: 0 1px 2px color-mix(in oklch, var(--wax-ink) 35%, transparent);
   --shadow-control: 0 1px 2px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14);
   --shadow-pop: 0 10px 32px oklch(0.2 0.01 60 / 0.16), 0 2px 6px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14);
   color-scheme: light;
@@ -58,10 +64,6 @@
   --ink2: oklch(0.77 0.005 75);
   --ink3: oklch(0.64 0.005 75);
   --ink4: oklch(0.46 0.004 75);
-  --wax: oklch(0.7 0.165 35);
-  --wax-ink: oklch(0.76 0.14 38);
-  --wax-soft: oklch(0.7 0.165 35 / 0.13);
-  --on-wax: oklch(0.18 0.02 35);
   --warn: oklch(0.8 0.12 80);
   --warn-soft: oklch(0.8 0.12 80 / 0.12);
   --warn-line: oklch(0.8 0.12 80 / 0.35);
@@ -75,6 +77,74 @@
   --shadow-control: 0 1px 2px oklch(0 0 0 / 0.4), 0 0 0 0.5px oklch(1 0 0 / 0.12);
   --shadow-pop: 0 12px 36px oklch(0 0 0 / 0.5), 0 0 0 0.5px oklch(1 0 0 / 0.14);
   color-scheme: dark;
+}
+
+/* The accents to choose from; the one on the root is the window's, the others
+   show on their swatches in Settings. Amber and the danger pink are left out:
+   they mean something else. */
+[data-accent="red"] {
+  --wax: oklch(0.55 0.185 31);
+  --wax-ink: oklch(0.5 0.18 31);
+  --wax-soft: oklch(0.55 0.185 31 / 0.09);
+}
+[data-accent="blue"] {
+  --wax: oklch(0.52 0.17 256);
+  --wax-ink: oklch(0.46 0.15 256);
+  --wax-soft: oklch(0.52 0.17 256 / 0.09);
+}
+[data-accent="teal"] {
+  --wax: oklch(0.52 0.085 195);
+  --wax-ink: oklch(0.45 0.075 195);
+  --wax-soft: oklch(0.52 0.085 195 / 0.1);
+}
+[data-accent="violet"] {
+  --wax: oklch(0.53 0.19 300);
+  --wax-ink: oklch(0.47 0.19 300);
+  --wax-soft: oklch(0.53 0.19 300 / 0.09);
+}
+[data-accent="graphite"] {
+  --wax: oklch(0.42 0.006 60);
+  --wax-ink: oklch(0.32 0.006 60);
+  --wax-soft: oklch(0.42 0.006 60 / 0.09);
+}
+:is(.dark, .dark *)[data-accent="red"] {
+  --wax: oklch(0.7 0.165 35);
+  --wax-ink: oklch(0.76 0.14 38);
+  --wax-soft: oklch(0.7 0.165 35 / 0.13);
+  --on-wax: oklch(0.18 0.02 35);
+}
+:is(.dark, .dark *)[data-accent="blue"] {
+  --wax: oklch(0.72 0.13 252);
+  --wax-ink: oklch(0.78 0.1 252);
+  --wax-soft: oklch(0.72 0.13 252 / 0.14);
+  --on-wax: oklch(0.18 0.02 252);
+}
+:is(.dark, .dark *)[data-accent="teal"] {
+  --wax: oklch(0.74 0.1 195);
+  --wax-ink: oklch(0.8 0.09 195);
+  --wax-soft: oklch(0.74 0.1 195 / 0.14);
+  --on-wax: oklch(0.18 0.02 195);
+}
+:is(.dark, .dark *)[data-accent="violet"] {
+  --wax: oklch(0.72 0.14 302);
+  --wax-ink: oklch(0.79 0.11 302);
+  --wax-soft: oklch(0.72 0.14 302 / 0.14);
+  --on-wax: oklch(0.18 0.02 302);
+}
+:is(.dark, .dark *)[data-accent="graphite"] {
+  --wax: oklch(0.78 0.005 75);
+  --wax-ink: oklch(0.86 0.005 75);
+  --wax-soft: oklch(0.78 0.005 75 / 0.14);
+  --on-wax: oklch(0.2 0.004 60);
+}
+
+[data-density="compact"] {
+  --row: 28px;
+  --row2: 5px;
+  --head: 30px;
+  --bar: 44px;
+  --item: 25px;
+  --setting: 42px;
 }
 
 @layer base {
@@ -150,7 +220,7 @@
   }
   .btn-pri {
     @apply bg-wax text-on-wax;
-    box-shadow: 0 1px 2px oklch(0.3 0.1 31 / 0.3);
+    box-shadow: var(--shadow-pri);
   }
   .btn-pri:hover {
     background: var(--wax-ink);
@@ -188,7 +258,7 @@
 
   /* The bar at the top of every view: title, filters, search. */
   .bar {
-    @apply flex h-[52px] min-w-0 flex-none items-center gap-2 border-b border-line pl-5 pr-3.5 md:gap-3.5;
+    @apply flex h-bar min-w-0 flex-none items-center gap-2 border-b border-line pl-5 pr-3.5 md:gap-3.5;
   }
   .bar > .seg {
     @apply min-w-0 overflow-x-auto;
@@ -229,7 +299,7 @@
 
   /* Sticky group header inside a list: Today, Yesterday, Ready to send. */
   .day {
-    @apply sticky top-0 z-[2] flex h-[34px] items-end gap-2 bg-canvas px-5 pb-[7px] text-xs;
+    @apply sticky top-0 z-[2] flex h-head items-end gap-2 bg-canvas px-5 pb-[7px] text-xs;
   }
   .day > b {
     @apply font-[650] text-ink;
@@ -245,9 +315,9 @@
     box-shadow: inset 0 0 0 1px var(--line);
   }
 
-  /* One-line list row, 32px: the default for anything listed at volume. */
+  /* One-line list row: the default for anything listed at volume. */
   .row {
-    @apply mx-2 flex h-8 items-center rounded-md pl-1.5 pr-3 text-ink2;
+    @apply mx-2 flex h-row items-center rounded-md pl-1.5 pr-3 text-ink2;
   }
   .row:hover {
     @apply bg-hover;
@@ -258,7 +328,7 @@
   }
   /* Two-line row with a hairline under it. */
   .row2 {
-    @apply relative mx-2 rounded-[7px] py-[9px] pl-1.5 pr-3;
+    @apply relative mx-2 rounded-[7px] py-row2 pl-1.5 pr-3;
   }
   .row2::after {
     content: "";
@@ -305,7 +375,7 @@
     @apply z-50 rounded-[10px] bg-raised p-1 shadow-pop;
   }
   .pop-item {
-    @apply flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-ink;
+    @apply flex h-item w-full items-center gap-2 rounded-md px-2 text-left text-[13px] text-ink;
   }
   .pop-item:hover,
   .pop-item[data-active="true"] {

@@ -207,6 +207,8 @@ Density is high and calm. Rows are 32px and the top bar 52px, with no footer; hi
 
 The rejected direction is on record: a dashboard home of counts and cards, stat tiles, metaphor costumes, coloured pills on every row, and any trace of the Gmail-styled RuneMail look.
 
+Colours, sizes and measures in this file are the defaults: sealing wax red, Comfortable, the default text size. The user can change the accent, density, text size and theme in Settings, Appearance, and every view follows through the tokens; nothing is designed for one combination.
+
 **Key Characteristics:**
 - Warm neutral surfaces (hue 60 to 75, chroma under 0.007) with a tinted sidebar and white content.
 - Four ink steps carry all hierarchy; weight 650 marks a line that needs the user.
@@ -242,6 +244,9 @@ A warm, almost colourless paper-and-ink palette with one sealing-wax red, define
 - **Hover** (hover), **Selected** (sel), **Field** (field): row hover, the cursor row or active nav item, and input wells.
 - **Ink** (ink): titles, senders, subjects. **Ink 2** (ink2): body copy in panels, default nav and row text. **Ink 3** (ink3): summaries, times, labels, placeholders, icons at rest. **Ink 4** (ink4): tick borders, link underlines, scrollbars.
 
+### Accents
+Wax is the accent, whatever its hue. The choices are Red (the default), Blue, Teal, Violet and Graphite, each with its own wax, wax ink, wax wash and on-wax for light and dark, checked at 4.5:1 or better for text on the fill and for wax ink on paper and on the selected tone. They hang on `data-accent` on the root (and on the swatches in Settings). Amber, pink and green are not offered: they mean held, failed and done. The sealed tablet of the mark follows the accent. "Wax" and "red" elsewhere in this file mean the accent.
+
 ### Named Rules
 **The One Seal Rule.** Wax appears only where the user's decision is needed, on the one primary action in a region, or on a reply about to go out. A screen of handled mail has no red on it at all.
 
@@ -272,11 +277,15 @@ A warm, almost colourless paper-and-ink palette with one sealing-wax red, define
 
 **The Sentence Case Rule.** Labels and headings are plain sentence case at normal tracking. No uppercase, no letter-spaced small caps.
 
+**The Text Size Rule.** Small, Default, Large and Larger set the root font size (15, 16, 18, 20px). Lengths are written in px as they are at Default and turned into rem at build, so type, icons, controls and columns grow together; hairlines, outlines and shadows stay in px. A size set in code uses rem or `useSizes()`.
+
 ## Layout
 
 A three-column window: a 224px sidebar, a flexible list, and a details panel on the right (404px by default, dragged between 320 and 760px and remembered, never leaving the list under 600px), each separated by a single hairline. Every view stacks two bands: one 52px bar (title, two or three filter segments, a flexible gap, one wide search field, at most two icons or menus) and the scrolling content. There is no footer and no second bar; a selection replaces the bar with its own actions.
 
 Content is inset 20px from the left edge of the main column (bar, group headers, panel); list rows sit 8px in from each side so their rounded selection floats inside the column. The inbox row is a fixed grid: 26px glyph, 164px sender, flexible subject and summary, 172px status, 46px time (68px with several accounts, the account mark before the time). Sticky group headers are 34px and bottom-aligned, and show the name only (Today, Needs you, Going out): no notes, no counts. Lists are windowed, so row heights are fixed and exact (32px one-line, about 58px two-line).
+
+Density is Comfortable (the sizes above) or Compact, through tokens: row 32 or 28px, two-line row padding 9 or 5px, group header 34 or 30px, bar 52 or 44px, menu and sidebar item 28 or 25px, a setting 52 or 42px. Controls keep their height. A footer of actions wraps rather than clips.
 
 Rhythm is 2, 4, 8, 12 and 20px; controls are 24, 26 or 28px tall. Below 768px the filter segments collapse into a menu, the search becomes an icon button, the details panel hides, and the inbox grid drops to glyph, sender, status and time. Below 1024px the sidebar becomes a drawer over a 30% black scrim, sliding in over 200ms.
 
@@ -286,7 +295,8 @@ Flat by default. Depth comes from tone (tray sidebar beside paper content, raise
 
 ### Shadow Vocabulary
 - **Control** (`box-shadow: 0 1px 2px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14)`; dark `0 1px 2px oklch(0 0 0 / 0.4), 0 0 0 0.5px oklch(1 0 0 / 0.12)`): standard buttons. The half-pixel ring is the button's border.
-- **Primary** (`box-shadow: 0 1px 2px oklch(0.3 0.1 31 / 0.3)`): the wax button only.
+- **Primary** (`box-shadow: 0 1px 2px` wax ink at 35%): the wax button only.
+- **Scrim** (30% black): under a dialog, and beside the drawer on a narrow window.
 - **Pop** (`box-shadow: 0 10px 32px oklch(0.2 0.01 60 / 0.16), 0 2px 6px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14)`; dark `0 12px 36px oklch(0 0 0 / 0.5), 0 0 0 0.5px oklch(1 0 0 / 0.14)`): menus, popovers, compose, dialogs.
 - **Focus ring** (`outline: 2px solid` wax, offset 1px; fields use `box-shadow: 0 0 0 2px` wax at 55%): keyboard focus and focused fields.
 
@@ -332,7 +342,7 @@ The state of a piece of mail, drawn as the seal in a 16px box: a filled wax dot 
 ### Navigation
 - **Sidebar:** tray fill, hairline right edge, logo and compose button in a 52px head. Items are 28px, 6px corners, 16px icon in ink 3 then label in ink 2, count flushed right in 12px ink 3 (wax ink and semibold for the Inbox), shown only where something waits. Active item fills with the selected tone and goes to medium ink.
 - **Account switch:** only with several accounts, a 28px row above the groups: "All accounts" (mail icon) or the chosen account's mark and address, with a chevron; its popover lists All accounts and each account (check column, mark, address, "Paused" in ink 3). The choice filters the Inbox and Sent and is the From of new mail.
-- **Groups:** three, separated by 12px of space with no labels: Inbox, Replies, Todos, Meetings, Follow-ups; Brief, Ask; Sent, Scheduled, Labels, Newsletters.
+- **Groups:** three, separated by 12px of space with no labels: Inbox, Replies, Todos, Meetings, Follow-ups; Brief, Ask; Sent, Scheduled, Labels, Newsletters. Any but the Inbox can be hidden in Settings; a hidden one shows while it is open.
 - **Foot:** "Going out" with each reply's recipient, countdown in wax ink and an underlined Cancel; then, under a hairline, the level row (7px state dot: run green, amber paused, danger failed; the level name opening the level control; pause at the right), a 12px danger line only when Gmail cannot be reached or the last check failed, and Settings as a nav item. History is inside Settings.
 - **Level control:** four 28px rows, a check column, the level name in a 68px column and one short line in ink 3: Observe, Sorts only; Suggest, Asks first; Assist, Drafts, todos, meetings on its own; Autopilot, Also sends replies. The same control sits in the sidebar's popover and in Settings; choosing Autopilot asks to confirm.
 
@@ -359,7 +369,7 @@ What mail turned into, each on one screen with no side panel and no filter segme
 - **Follow-ups:** one-line rows, longest wait first: the wax dot, who (650 weight), what they were asked (the sentence of the sent mail that asks or promises), and how long ago. On hover: Nudge in wax ink (a drafted follow-up in the thread), Later (three days) and the "Not this" menu.
 
 ### Brief, Ask, History, Labels, Newsletters
-- **Brief:** one page, left-aligned at most 880px, under a bar with the title and the date in ink 3. Four group headers: "Needs you today" (at most five one-line rows: wax dot, who in 650 weight, what in 500 ink, when in ink 3, one action in wax ink: Review, Approve, Add to calendar, Done or Answer; then "N more in the inbox" as a link), "Waiting on others" (who, what they were asked, how long, Nudge), "Today's calendar" (time span, title, the other people; past events in ink 3) and "Handled for you" (one row with an ink 3 check, "18 emails since yesterday" and Show, opening to one row per email with what was done). An empty section is one ink 3 line. No paragraph of prose.
+- **Brief:** one page, left-aligned at most 880px, under a bar with the title and the date in ink 3. Four group headers: "Needs you today" (at most five one-line rows: wax dot, who in 650 weight, what in 500 ink, when in ink 3, one action in wax ink: Review, Approve, Add to calendar, Done or Answer; then "N more in the inbox" as a link), "Waiting on others" (who, what they were asked, how long, Nudge), "Today's calendar" (time span, title, the other people; past events in ink 3) and "Handled for you" (one row with an ink 3 check, "18 emails since yesterday" and Show, opening to one row per email with what was done). An empty section is one ink 3 line. Settings, Brief chooses the sections and whether they have 3, 5 or 10 lines; a settings icon in the bar opens it. Off by default, a paragraph of at most 60 words opens the page, 13px ink at line-height 1.625 and 68ch, a skeleton bar while it is written.
 - **Ask:** past conversations in a 232px column on the left (New conversation, then titles under day labels, delete on hover); the open one at 720px, user messages on a field-tone bubble at the right, answers as plain 14px text at line-height 1.6, what was done as one 12px ink 3 line with a link to its page. A cleanup plan sits in the answer that started it: "Cleanup plan" in medium ink with its state ("Has a question" in wax ink when it asks), its steps, its questions and, when ready, its proposals grouped by kind with ticks and Run in wax. Below 768px the conversation list becomes a button in the bar.
 - **History:** reached from Settings (a back chevron before the title). Newest first under day headers, one 32px row per action: glyph, what, the email, why when it was not done by Tabellar itself, then Undo (or "Working" while it runs, Cancel and the countdown for a reply going out). A Kind menu filters; there are no proposals here.
 - **Labels:** the user's labels as 32px rows: colour dot (a grip on hover, the row drags to reorder; Alt Up and Down move the cursor row), name, the line that says which mail belongs, the Gmail label it maps to, and how many emails carry it. "Suggested" rows below, with Add and, on hover, Not now. A label opens in a 400px column beside the list: name, eight colour swatches, which mail belongs, Gmail label (with the user's own labels offered), examples (senders and, for emails put in by hand, their subjects) and Save in wax, Delete in danger text.
@@ -368,6 +378,14 @@ What mail turned into, each on one screen with no side panel and no filter segme
 ### Questions and "Not this"
 - **Question row:** one 32px row at the top of the Inbox list, an ink 3 info ring, "A question" (or "2 questions") in medium ink and a chevron. It opens in place: each question in ink, what Tabellar would do in 12.5px ink 3, then its answers as small buttons, the last ("Not now") plain. No wax: a question is asked, not demanded. Hidden when nothing is open.
 - **Not this menu:** a 28px "more" icon button at the end of a todo, proposed meeting, follow-up or newsletter row, shown on hover, on the cursor row and while open. Its popover holds "Not this" (for a newsletter, "Not a newsletter"), "Never for <sender>" and "Not interested in this topic", which turns into a field and Save in place.
+
+### Settings
+- **Frame:** a 200px column of sections (28px items, the window's nav style), then one column of at most 680px: the section name as a 15px title, groups of rows under 12px labels between soft hairlines, at most one 12px ink 3 note under a group. Sections: General, Accounts, About you, Writing, Signatures and templates, Appearance, Brief, Notifications, Hours and calendar, Models, then History. Nothing has a save button except the signature and template editors: each control keeps what it shows at once and "Saved" shows in the bar for a moment.
+- **Row:** 52px, the name in ink and at most one line about it in ink 2 at 12px, the control at the right: a switch, segments, a select, a 120px time field, or a 260px text field that saves when left. Settings that only matter after another choice (Autopilot's limits, the Brief's tone) appear with it.
+- **Lines:** facts and rules as plain rows edited in place on click, the source in 12px ink 3 at the right, delete on hover; Add on the group's label line.
+- **Writing:** segments for Everyone, Your organisation, People you know and Strangers over the four lines (Greeting, Sign-off, Tone, Length); an empty line shows what everyone gets as its placeholder and says "As for everyone", a line set by hand says "You set this". Then Rules, Phrases to avoid (24px field-tone tags with a remove mark, the add field in the same run) and Sample reply: the email it answers in ink 2, the reply in an inset block.
+- **About you:** Role and Working on as fields, other facts, rules, open questions with their answers and the answered ones folded ("Ask again" takes one back), people (the most important first, by name and address, with what they are in a select), domains, topics.
+- **Appearance:** Theme, Accent (14px dots in 28px squares, the chosen one on the selected tone), Density, Text size, and ticks for what the sidebar shows.
 
 ### Accounts
 - **Compose From:** a row above To, only when there is more than one address to send from: every address of every account (grouped by account when there are several), "Name <address>" where Gmail gives a name. A reply starts on the address the email was sent to; new mail on the account the switch shows, else the default account's From.

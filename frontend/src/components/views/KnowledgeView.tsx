@@ -167,7 +167,7 @@ export default function KnowledgeView({ onPeople }: { onPeople?: () => void }) {
             </div>
           ) : (
             <>
-              <div className={`${COLS} sticky top-0 z-[2] mx-2 h-[34px] items-end bg-canvas pb-[7px] pl-3 pr-3 text-xs text-ink3`}>
+              <div className={`${COLS} sticky top-0 z-[2] mx-2 h-head items-end bg-canvas pb-[7px] pl-3 pr-3 text-xs text-ink3`}>
                 <span>About</span>
                 <span>What is known</span>
                 <span className="hidden lg:block">Importance</span>
@@ -176,7 +176,7 @@ export default function KnowledgeView({ onPeople }: { onPeople?: () => void }) {
               </div>
               {adding && (
                 <form
-                  className="mx-2 flex min-h-8 flex-wrap items-center gap-1.5 rounded-md bg-hover px-1.5 py-1"
+                  className="mx-2 flex min-h-row flex-wrap items-center gap-1.5 rounded-md bg-hover px-1.5 py-1"
                   onSubmit={(e) => {
                     e.preventDefault();
                     addKnowledge();

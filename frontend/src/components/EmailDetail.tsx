@@ -512,7 +512,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
           {(resolvedAt || tracked) && (
             <ul>
               {resolvedAt && (
-                <li className="flex h-7 items-center gap-1.5 text-ink2">
+                <li className="flex h-item items-center gap-1.5 text-ink2">
                   <Glyph state="done" />
                   <span className="flex-1">Done</span>
                   <button className="link" onClick={() => setResolved(null)}>
@@ -521,7 +521,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
                 </li>
               )}
               {tracked && (
-                <li className="flex h-7 items-center gap-1.5 text-ink2">
+                <li className="flex h-item items-center gap-1.5 text-ink2">
                   <Glyph state="info" />
                   <span className="flex-1">Reminder if no answer</span>
                   <button className="link" onClick={() => setView("followups")}>
@@ -576,7 +576,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
                     {atts.length > 0 && (
                       <div className="mt-5 border-t border-line-soft pt-2">
                         {atts.map((att) => (
-                          <div key={att.attachment_id} className="-mx-2 flex h-8 items-center gap-2 rounded-md px-2 hover:bg-hover">
+                          <div key={att.attachment_id} className="-mx-2 flex h-row items-center gap-2 rounded-md px-2 hover:bg-hover">
                             <Icon name={fileIcon(att.mime_type)} size={14} className="flex-none text-ink3" />
                             <button className="min-w-0 truncate text-left text-ink hover:underline" onClick={() => showAttachment(att, m.gmail_id)}>
                               {att.filename}
@@ -600,13 +600,13 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
       </div>
 
       {preview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setPreview(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4" onClick={() => setPreview(null)}>
           <div
             role="dialog"
             aria-modal="true"
             aria-label={preview.att.filename}
             className="flex flex-col overflow-hidden rounded-[12px] bg-raised shadow-pop"
-            style={{ width: "min(92vw, 900px)", height: "min(90vh, 700px)" }}
+            style={{ width: "min(92vw, 56.25rem)", height: "min(90vh, 43.75rem)" }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex h-11 flex-none items-center gap-2 border-b border-line-soft pl-4 pr-1.5">

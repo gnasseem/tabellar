@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { api } from "@/lib/outcomes";
 import { useApp } from "../AppShell";
@@ -6,18 +7,25 @@ import { ReaderById } from "../EmailDetail";
 import { Glyph, SkeletonRows, ViewBar, clock, shortWhen } from "../ui";
 
 // The Brief: one page, top to bottom. What needs the user today (five lines
-// at most, one action each), who they are waiting on, today's calendar, and
-// how much Tabellar handled since yesterday, which opens to the list. Every
-// line is something the engine stored (brief.ts), never a summary written
-// for the page.
+// unless they chose fewer or more, one action each), who they are waiting on,
+// today's calendar, and how much Tabellar handled since yesterday, which opens
+// to the list. Every line is something the engine stored (brief.ts). Settings,
+// Brief chooses the sections and whether a paragraph opens it.
 
 type Need = { key: string; kind: "reply" | "approve" | "meeting" | "todo" | "question"; who: string; text: string; email_id: string | null; id: string; hash?: string; start?: string; due?: string };
 type Waiting = { key: string; email_id: string; thread_id: string; who: string; address: string; text: string; subject: string; sent_at: string };
 type Handled = { email_id: string; who: string; subject: string; what: string; at: string };
-type Brief = { needs: Need[]; more: number; waiting: Waiting[]; handled: Handled[] };
+type Brief = {
+  settings: { sections: string[]; summary: boolean };
+  summary: string | null;
+  needs: Need[];
+  more: number;
+  waiting: Waiting[];
+  waitingMore: number;
+  handled: Handled[];
+};
 type CalEvent = { id: string; title: string; start: string; end: string; allDay: boolean; attendees: string[]; htmlLink: string | null };
 
-const WAITING_MAX = 5;
 const DAY = 86_400_000;
 
 const ACTION: Record<Need["kind"], string> = { reply: "Review", approve: "Approve", meeting: "Add to calendar", todo: "Done", question: "Answer" };
@@ -39,7 +47,7 @@ function when(n: Need): string {
 }
 
 export default function BriefingView() {
-  const { user, mail, setView, addToast, openCompose, liveChanges } = useApp();
+  const { user, mail, setView, setViewCache, addToast, openCompose, liveChanges } = useApp();
   const supabase = createClient();
   const [brief, setBrief] = useState<Brief | null>(null);
   const [failed, setFailed] = useState(false);
@@ -48,6 +56,8 @@ export default function BriefingView() {
   const [showHandled, setShowHandled] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [reading, setReading] = useState<string | null>(null);
+  const [writing, setWriting] = useState(false);
+  const asked = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -61,6 +71,21 @@ export default function BriefingView() {
   useEffect(() => {
     load();
   }, [load, liveChanges.action_log, liveChanges.draft_emails, liveChanges.todos, liveChanges.meetings, liveChanges.questions, liveChanges.email_processed, liveChanges.follow_up_reminders]);
+
+  // Today's opening paragraph, when it is on and not written yet, or when a
+  // line it was written from is dealt with.
+  useEffect(() => {
+    if (!brief?.settings.summary || brief.summary !== null || asked.current) return;
+    asked.current = true;
+    setWriting(true);
+    (api("/briefing/summary", {}) as Promise<{ summary: string | null }>)
+      .then((r) => setBrief((b) => b && { ...b, summary: r.summary ?? "" }))
+      .catch(() => setBrief((b) => b && { ...b, summary: "" }))
+      .finally(() => {
+        asked.current = false;
+        setWriting(false);
+      });
+  }, [brief]);
 
   useEffect(() => {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -113,12 +138,13 @@ export default function BriefingView() {
 
   if (reading) return <ReaderById emailId={reading} onClose={() => (setReading(null), load())} />;
 
+  const show = (section: string) => !!brief?.settings.sections.includes(section);
   const head = (name: string) => (
     <div className="day !static">
       <b>{name}</b>
     </div>
   );
-  const quiet = (text: string) => <p className="flex h-8 items-center pl-[46px] text-ink3">{text}</p>;
+  const quiet = (text: string) => <p className="flex h-row items-center pl-[46px] text-ink3">{text}</p>;
   const day = new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
 
   return (
@@ -131,6 +157,11 @@ export default function BriefingView() {
           </span>
         }
         search={false}
+        right={
+          <button className="iconbtn" title="Brief settings" aria-label="Brief settings" onClick={() => (setViewCache("settings:tab", "brief"), setView("settings"))}>
+            <Icon name="settings" size={16} />
+          </button>
+        }
       />
       <div className="min-h-0 flex-1 overflow-y-auto pb-10">
         <div className="w-full max-w-[880px]">
@@ -147,104 +178,125 @@ export default function BriefingView() {
             </div>
           ) : (
             <>
-              {head("Needs you today")}
-              {!brief.needs.length && quiet("Nothing needs you")}
-              {brief.needs.map((n) => (
-                <div key={n.key} className={`row group ${n.email_id ? "cursor-default" : ""}`} onClick={() => n.email_id && setReading(n.email_id)} title={n.text}>
-                  <span className="grid w-[26px] flex-none place-items-center">
-                    <Glyph state={n.kind === "question" ? "info" : "need"} />
-                  </span>
-                  <span className="w-[96px] flex-none truncate pr-3 font-[650] text-ink md:w-[164px]">{n.who}</span>
-                  <span className="min-w-0 flex-1 truncate font-medium text-ink">{n.text}</span>
-                  <span className="w-[72px] flex-none pl-3 text-right text-xs text-ink3 max-md:hidden">{when(n)}</span>
-                  <button className="link flex-none pl-3 text-right !text-wax-ink md:w-[108px]" disabled={busy === n.key} onClick={(e) => (e.stopPropagation(), act(n))}>
-                    {busy === n.key ? "Working" : ACTION[n.kind]}
-                  </button>
-                </div>
-              ))}
-              {brief.more > 0 && (
-                <p className="flex h-8 items-center pl-[46px]">
-                  <button className="link" onClick={() => setView("inbox")}>
-                    {brief.more.toLocaleString()} more in the inbox
-                  </button>
+              {brief.settings.summary && (brief.summary || writing) && (
+                <p className="max-w-[68ch] px-5 pb-1.5 pt-4 leading-relaxed text-ink" aria-busy={writing || undefined}>
+                  {brief.summary || <span className="skel mt-1 block h-2.5 w-[60%]" />}
                 </p>
               )}
-
-              {head("Waiting on others")}
-              {!brief.waiting.length && quiet("Nobody owes you an answer")}
-              {brief.waiting.slice(0, WAITING_MAX).map((w) => (
-                <div key={w.key} className="row group cursor-default" onClick={() => setReading(w.email_id)} title={w.subject}>
-                  <span className="w-[26px] flex-none" />
-                  <span className="w-[96px] flex-none truncate pr-3 text-ink md:w-[164px]" title={w.address}>
-                    {w.who}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-ink2">{w.text}</span>
-                  <span className="w-[72px] flex-none pl-3 text-right text-xs text-ink3 max-md:hidden">{ago(w.sent_at)}</span>
-                  <button className="link flex-none pl-3 text-right md:w-[108px]" onClick={(e) => (e.stopPropagation(), nudge(w))}>
-                    Nudge
-                  </button>
-                </div>
-              ))}
-              {brief.waiting.length > WAITING_MAX && (
-                <p className="flex h-8 items-center pl-[46px]">
-                  <button className="link" onClick={() => setView("followups")}>
-                    {(brief.waiting.length - WAITING_MAX).toLocaleString()} more in Follow-ups
-                  </button>
-                </p>
-              )}
-
-              {head("Today's calendar")}
-              {events === null ? (
-                <SkeletonRows count={2} />
-              ) : calError ? (
-                quiet("Google Calendar could not be read")
-              ) : !events.length ? (
-                quiet("Nothing on the calendar")
-              ) : (
-                events.map((ev) => {
-                  const over = !ev.allDay && new Date(ev.end).getTime() < Date.now();
-                  return (
-                    <a key={ev.id} className="row" href={ev.htmlLink || undefined} target="_blank" rel="noopener noreferrer">
-                      <span className="w-[26px] flex-none" />
-                      <span className={`w-[96px] flex-none truncate pr-3 md:w-[164px] ${over ? "text-ink3" : "text-ink"}`}>{ev.allDay ? (
-                          "All day"
-                        ) : (
-                          <>
-                            {clock(ev.start)}
-                            <span className="max-md:hidden"> to {clock(ev.end)}</span>
-                          </>
-                        )}</span>
-                      <span className={`min-w-0 flex-1 truncate ${over ? "text-ink3" : "text-ink"}`}>{ev.title}</span>
-                      {ev.attendees.length > 0 && <span className="min-w-0 max-w-[40%] flex-none truncate pl-3 text-ink3 max-md:hidden">{ev.attendees.join(", ")}</span>}
-                    </a>
-                  );
-                })
-              )}
-
-              {head("Handled for you")}
-              {!brief.handled.length ? (
-                quiet("Nothing since yesterday")
-              ) : (
+              {show("needs") && (
                 <>
-                  <button className="row w-[calc(100%-16px)] text-left" aria-expanded={showHandled} onClick={() => setShowHandled(!showHandled)}>
-                    <span className="grid w-[26px] flex-none place-items-center">
-                      <Glyph state="done" />
-                    </span>
-                    <span className="flex-1 text-ink">
-                      {brief.handled.length.toLocaleString()} email{brief.handled.length === 1 ? "" : "s"} since yesterday
-                    </span>
-                    <span className="text-xs text-ink3">{showHandled ? "Hide" : "Show"}</span>
-                  </button>
-                  {showHandled &&
-                    brief.handled.map((h) => (
-                      <div key={h.email_id} className="row cursor-default" onClick={() => setReading(h.email_id)} title={h.subject}>
-                        <span className="w-[26px] flex-none" />
-                        <span className="w-[96px] flex-none truncate pr-3 md:w-[164px]">{h.who}</span>
-                        <span className="min-w-0 flex-1 truncate">{h.subject}</span>
-                        <span className="w-[172px] flex-none truncate pl-3 text-[12.5px] text-ink3 max-md:hidden">{h.what}</span>
-                        <time className="w-[46px] flex-none text-right text-xs text-ink3">{shortWhen(h.at)}</time>
-                      </div>
-                    ))}
+                  {head("Needs you today")}
+                  {!brief.needs.length && quiet("Nothing needs you")}
+                  {brief.needs.map((n) => (
+                    <div key={n.key} className={`row group ${n.email_id ? "cursor-default" : ""}`} onClick={() => n.email_id && setReading(n.email_id)} title={n.text}>
+                      <span className="grid w-[26px] flex-none place-items-center">
+                        <Glyph state={n.kind === "question" ? "info" : "need"} />
+                      </span>
+                      <span className="w-[96px] flex-none truncate pr-3 font-[650] text-ink md:w-[164px]">{n.who}</span>
+                      <span className="min-w-0 flex-1 truncate font-medium text-ink">{n.text}</span>
+                      <span className="w-[72px] flex-none pl-3 text-right text-xs text-ink3 max-md:hidden">{when(n)}</span>
+                      <button className="link flex-none pl-3 text-right !text-wax-ink md:w-[108px]" disabled={busy === n.key} onClick={(e) => (e.stopPropagation(), act(n))}>
+                        {busy === n.key ? "Working" : ACTION[n.kind]}
+                      </button>
+                    </div>
+                  ))}
+                  {brief.more > 0 && (
+                    <p className="flex h-row items-center pl-[46px]">
+                      <button className="link" onClick={() => setView("inbox")}>
+                        {brief.more.toLocaleString()} more in the inbox
+                      </button>
+                    </p>
+                  )}
+                </>
+              )}
+
+              {show("waiting") && (
+                <>
+                  {head("Waiting on others")}
+                  {!brief.waiting.length && quiet("Nobody owes you an answer")}
+                  {brief.waiting.map((w) => (
+                    <div key={w.key} className="row group cursor-default" onClick={() => setReading(w.email_id)} title={w.subject}>
+                      <span className="w-[26px] flex-none" />
+                      <span className="w-[96px] flex-none truncate pr-3 text-ink md:w-[164px]" title={w.address}>
+                        {w.who}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-ink2">{w.text}</span>
+                      <span className="w-[72px] flex-none pl-3 text-right text-xs text-ink3 max-md:hidden">{ago(w.sent_at)}</span>
+                      <button className="link flex-none pl-3 text-right md:w-[108px]" onClick={(e) => (e.stopPropagation(), nudge(w))}>
+                        Nudge
+                      </button>
+                    </div>
+                  ))}
+                  {brief.waitingMore > 0 && (
+                    <p className="flex h-row items-center pl-[46px]">
+                      <button className="link" onClick={() => setView("followups")}>
+                        {brief.waitingMore.toLocaleString()} more in Follow-ups
+                      </button>
+                    </p>
+                  )}
+                </>
+              )}
+
+              {show("calendar") && (
+                <>
+                  {head("Today's calendar")}
+                  {events === null ? (
+                    <SkeletonRows count={2} />
+                  ) : calError ? (
+                    quiet("Google Calendar could not be read")
+                  ) : !events.length ? (
+                    quiet("Nothing on the calendar")
+                  ) : (
+                    events.map((ev) => {
+                      const over = !ev.allDay && new Date(ev.end).getTime() < Date.now();
+                      return (
+                        <a key={ev.id} className="row" href={ev.htmlLink || undefined} target="_blank" rel="noopener noreferrer">
+                          <span className="w-[26px] flex-none" />
+                          <span className={`w-[96px] flex-none truncate pr-3 md:w-[164px] ${over ? "text-ink3" : "text-ink"}`}>{ev.allDay ? (
+                              "All day"
+                            ) : (
+                              <>
+                                {clock(ev.start)}
+                                <span className="max-md:hidden"> to {clock(ev.end)}</span>
+                              </>
+                            )}</span>
+                          <span className={`min-w-0 flex-1 truncate ${over ? "text-ink3" : "text-ink"}`}>{ev.title}</span>
+                          {ev.attendees.length > 0 && <span className="min-w-0 max-w-[40%] flex-none truncate pl-3 text-ink3 max-md:hidden">{ev.attendees.join(", ")}</span>}
+                        </a>
+                      );
+                    })
+                  )}
+                </>
+              )}
+
+              {show("handled") && (
+                <>
+                  {head("Handled for you")}
+                  {!brief.handled.length ? (
+                    quiet("Nothing since yesterday")
+                  ) : (
+                    <>
+                      <button className="row w-[calc(100%-16px)] text-left" aria-expanded={showHandled} onClick={() => setShowHandled(!showHandled)}>
+                        <span className="grid w-[26px] flex-none place-items-center">
+                          <Glyph state="done" />
+                        </span>
+                        <span className="flex-1 text-ink">
+                          {brief.handled.length.toLocaleString()} email{brief.handled.length === 1 ? "" : "s"} since yesterday
+                        </span>
+                        <span className="text-xs text-ink3">{showHandled ? "Hide" : "Show"}</span>
+                      </button>
+                      {showHandled &&
+                        brief.handled.map((h) => (
+                          <div key={h.email_id} className="row cursor-default" onClick={() => setReading(h.email_id)} title={h.subject}>
+                            <span className="w-[26px] flex-none" />
+                            <span className="w-[96px] flex-none truncate pr-3 md:w-[164px]">{h.who}</span>
+                            <span className="min-w-0 flex-1 truncate">{h.subject}</span>
+                            <span className="w-[172px] flex-none truncate pl-3 text-[12.5px] text-ink3 max-md:hidden">{h.what}</span>
+                            <time className="w-[46px] flex-none text-right text-xs text-ink3">{shortWhen(h.at)}</time>
+                          </div>
+                        ))}
+                    </>
+                  )}
                 </>
               )}
             </>

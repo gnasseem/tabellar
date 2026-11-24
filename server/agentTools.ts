@@ -19,6 +19,7 @@
  */
 
 import type { Db } from "./db.ts";
+import { writingFor } from "./writing.ts";
 import { who } from "./ai.ts";
 
 /** Tool definitions in the OpenAI function-calling format (llm.ts translates them for Anthropic). */
@@ -573,25 +574,10 @@ export async function runReadTool(
     case "user_style_profile": {
       const { data: profile } = await db
         .from("profiles")
-        .select("display_name, style_notes, working_hours")
+        .select("display_name, working_hours")
         .eq("id", userId)
         .maybeSingle();
-      const styleNotes = (profile?.style_notes as string) || "";
-      let greeting = "Hi";
-      let closing = "Thanks";
-      let tone = "mixed";
-      let avgLength = "medium";
-      try {
-        if (styleNotes) {
-          const parsed = JSON.parse(styleNotes);
-          greeting = parsed.greeting_style ?? greeting;
-          closing = parsed.closing_style ?? closing;
-          tone = parsed.tone ?? tone;
-          avgLength = parsed.avg_length ?? avgLength;
-        }
-      } catch {
-        /* style_notes may be free text */
-      }
+      const w = await writingFor(userId, null);
       const workingHours =
         (profile?.working_hours as {
           start?: string;
@@ -600,10 +586,12 @@ export async function runReadTool(
         } | null) ?? null;
       return JSON.stringify({
         display_name: profile?.display_name ?? "",
-        greeting_style: greeting,
-        closing_style: closing,
-        tone,
-        avg_length: avgLength,
+        greeting: w.greeting || "Hi {name},",
+        sign_off: w.closing || "Thanks",
+        tone: w.tone,
+        length: w.length,
+        never_write: w.avoid,
+        rules: w.rules,
         working_hours: workingHours,
         timezone: ctx.timezone,
       });

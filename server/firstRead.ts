@@ -25,13 +25,15 @@
 
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
-import { analyzeWritingStyle, factsFromSent } from "./ai.ts";
+import { factsFromSent } from "./ai.ts";
 import { mail } from "./providers.ts";
 import { notStored, readBacklog, sentHeaderRow, storeInbox, storeSent, syncMail, type Account } from "./sync.ts";
 import { indexMail, isBulk, ownAddresses, rebuildSenders, writtenTo } from "./senders.ts";
 import { ROLE, WORK, setPref } from "./profile.ts";
 import { suggestLabels } from "./labels.ts";
+import { displayNameOf, learnStyle, ownWords, styleRow } from "./writing.ts";
 import { judgeSent } from "./followups.ts";
+import { defaultAccount } from "./accounts.ts";
 
 const HEADER_DAYS = 90;
 const HEADER_CAP = 5000;
@@ -114,6 +116,8 @@ function learnOnce(userId: string): Promise<void> {
     if (!account) return;
     const read = await learnFromSent(userId, account, { facts: true });
     await save(userId, { sent: read.sent, facts: read.facts, learned: true });
+    // About you waited for the facts; the style can follow.
+    await read.style?.().catch((e) => console.error("[first read] style:", (e as Error).message));
     // Enough senders to suggest labels from already: the headers come newest first.
     if ((await firstReadState(userId)).headers >= LABELS_FROM) await suggestLabels(userId).catch((e) => console.error("[first read] labels:", e));
     // Which of it waits on an answer, for Follow-ups.
@@ -219,60 +223,26 @@ async function readNewest(userId: string, plan: () => unknown): Promise<void> {
 
 // ── Sent mail ───────────────────────────────────────────────────────────────
 
-// The user's own words in a sent email: the quoted reply and forwarded mail cut off.
-function ownWords(body: string): string {
-  let text = body.replace(/\r/g, "");
-  const cut = text.search(/\n[^\n]*(\bOn [^\n]{0,200}\n?[^\n]{0,200}wrote:|-{3,} ?Forwarded message|-{3,} ?Original Message)/i);
-  if (cut > 0) text = text.slice(0, cut);
-  return text
-    .split("\n")
-    .filter((l) => !/^\s*>/.test(l))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}...` : s);
 
-// Read the last 200 sent emails: keep them, learn the writing style from all
-// of them, and with `facts` write the first facts about the user.
-export async function learnFromSent(userId: string, account: Account, opts: { facts: boolean }): Promise<{ sent: number; facts: number }> {
+// Read the last 200 sent emails: keep them, and with `facts` write the first
+// facts about the user. `style` learns how they write from all of them, in
+// several model calls; null with too few to learn from.
+export async function learnFromSent(userId: string, account: Account, opts: { facts: boolean }): Promise<{ sent: number; facts: number; style: (() => Promise<void>) | null }> {
   const fetching = mail(account).sent(account, SENT_CAP);
   sentFetch = fetching;
   const sent = await fetching;
   await storeSent(userId, account, sent);
   await indexMail(userId, account.id, sent.map((e) => sentHeaderRow(e, account)), await ownAddresses(userId));
+  const name = await displayNameOf(userId);
   const mine = sent.map((e) => ({ ...e, own: ownWords(e.body || e.snippet || "") })).filter((e) => e.own);
-  if (mine.length < 3) return { sent: sent.length, facts: 0 };
+  if (mine.length < 3) return { sent: sent.length, facts: 0, style: null };
 
-  // Style: how each email opens and closes, and how long it is.
-  const lines = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
-  const style = await analyzeWritingStyle(
-    mine
-      .map((e) => {
-        const l = lines(e.own);
-        return `${words(e.own)} words | opens: ${JSON.stringify(clip(l[0] ?? "", 60))} | ends: ${JSON.stringify(clip(l.slice(-2).join("\n"), 70))}`;
-      })
-      .join("\n"),
-  );
-  const median = mine.map((e) => words(e.own)).sort((a, b) => a - b)[Math.floor(mine.length / 2)];
-  await db.from("style_profiles").upsert(
-    {
-      user_id: userId,
-      greeting_style: style.greeting_style,
-      closing_style: style.closing_style,
-      tone: style.tone,
-      avg_length: median < 60 ? "short" : median < 150 ? "medium" : "long",
-      sample_count: sent.length,
-      last_learned_at: new Date().toISOString(),
-    },
-    { onConflict: "user_id" },
-  );
-  if (!opts.facts) return { sent: sent.length, facts: 0 };
+  await rebuildSenders(userId);
+  const style = () => learnStyle(userId, mine, name);
+  if (!opts.facts) return { sent: sent.length, facts: 0, style };
 
   // Facts: the newest emails in full, every subject, and who they write to most.
-  await rebuildSenders(userId);
   const { data: top } = await db.from("senders").select("address, name, sent_to, received").eq("user_id", userId).gt("sent_to", 0).order("sent_to", { ascending: false }).limit(15);
   const sample = [
     "Written to most (address, name, emails sent):",
@@ -287,7 +257,16 @@ export async function learnFromSent(userId: string, account: Account, opts: { fa
   const read = await factsFromSent(sample);
   const facts = [read.role && `${ROLE}${read.role}`, read.work && `${WORK}${read.work}`, ...read.facts].filter((f): f is string => !!f);
   for (const f of facts) await setPref(userId, "fact", "", f, "learned", "From your sent mail");
-  return { sent: sent.length, facts: facts.length };
+  return { sent: sent.length, facts: facts.length, style };
+}
+
+// A style learned before it was read per kind of recipient (its kinds are
+// empty; learning always fills them in) is learned again, once.
+export async function relearnStyle(userId: string): Promise<void> {
+  const style = await styleRow(userId);
+  if (!style.last_learned_at || Object.keys(style.kinds).length || !modelConfigured()) return;
+  const account = await defaultAccount(userId);
+  if (account) await (await learnFromSent(userId, account, { facts: false })).style?.();
 }
 
 // ── The last 30 days ────────────────────────────────────────────────────────

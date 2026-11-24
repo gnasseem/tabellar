@@ -1,7 +1,8 @@
-import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Logo from "@/components/Logo";
 import { Glyph } from "@/components/ui";
 import type { Session } from "@/lib/db";
+import { appearanceOf, applyAppearance, useTheme, type ThemeChoice } from "@/lib/appearance";
 import { api, formatBytes, setupPost, type Onboarding, type SetupState } from "@/lib/setup";
 import { CloudPanel, ErrorLine, Icon, LocalPanel, localPair, modelLabel, ProgressBar, RadioDot, ui, useLocalJob, useSetupState, useTimeLeft } from "./ModelSetup";
 import AddMailbox, { SignIn } from "./AddMailbox";
@@ -41,22 +42,6 @@ const store = (fn: () => void) => {
     // Storage blocked: the window then opens on the server's step.
   }
 };
-
-// Light or dark: the system's during the first run, the profile's when the
-// steps are opened again.
-function useTheme(fixed: string | null) {
-  useEffect(() => {
-    if (fixed === "light" || fixed === "dark") {
-      document.documentElement.classList.toggle("dark", fixed === "dark");
-      return;
-    }
-    const m = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = () => document.documentElement.classList.toggle("dark", m.matches);
-    apply();
-    m.addEventListener("change", apply);
-    return () => m.removeEventListener("change", apply);
-  }, [fixed]);
-}
 
 type AccountRow = { id: string; provider: string; choice: string; address: string };
 
@@ -103,7 +88,12 @@ function firstStep(session: Session | undefined, again: boolean): StepId {
 }
 
 export default function Welcome({ session, error, again = false }: { session?: Session; error?: string; again?: boolean }) {
-  useTheme(again ? (session?.profile?.theme ?? null) : null);
+  // The system's theme during the first run, the user's own look when the
+  // steps are opened again.
+  useTheme(again ? ((session?.profile?.theme as ThemeChoice | undefined) ?? "auto") : "auto");
+  useLayoutEffect(() => {
+    if (again) applyAppearance(appearanceOf(session?.profile as { appearance?: unknown } | null));
+  }, [again]);
   const { state, error: stateError, refresh } = useSetupState();
   const profile = session?.profile ?? null;
   const userId = session?.user?.id ?? null;
@@ -716,8 +706,7 @@ function LevelStep({ again, current }: { again: boolean; current: string }) {
     setBusy(true);
     setError("");
     try {
-      const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      await api("/onboarding/finish", { level, ...(again ? {} : { theme: dark ? "dark" : "light" }) });
+      await api("/onboarding/finish", { level });
       store(() => {
         localStorage.removeItem(WELCOMED);
         localStorage.removeItem("tabellar_first_run_answers");

@@ -25,7 +25,7 @@
  *   mail that arrives meanwhile is read before the rest of an older backlog.
  * - The user's labels (labels.ts) go to the model with their examples, and
  *   mail from an example's sender gets the label without it.
- * - Preamble DB reads (delegation rules, labels, sender memory) run in
+ * - Preamble DB reads (labels, sender memory) run in
  *   parallel via Promise.all.
  * - Results are flushed to email_processed / knowledge_base as they complete
  *   (micro-batched) so Realtime streams rows to the UI progressively instead
@@ -98,17 +98,11 @@ export async function analyzeEmailsForUser(
   ];
 
   const [
-    delegationRulesRes,
     labels,
     memRowsRes,
     profileRes,
     accountsRes,
   ] = await Promise.all([
-    db
-      .from("delegation_rules")
-      .select("pattern, target_email")
-      .eq("user_id", userId)
-      .eq("is_enabled", true),
     userLabels(userId),
     senderEmails.length > 0
       ? db
@@ -139,7 +133,6 @@ export async function analyzeEmailsForUser(
     ((profileRes.data?.working_hours as { timezone?: string } | null)
       ?.timezone) || "UTC";
 
-  const delegationRules = delegationRulesRes.data ?? [];
   const memRows = memRowsRes.data ?? [];
   const userTags = labelsForPrompt(labels);
   // Labels an email gets from its sender, whatever else is decided.
@@ -250,20 +243,6 @@ export async function analyzeEmailsForUser(
         recent(email),
       );
 
-      const delegationActions: { label: string; action: string; target: string }[] = [];
-      if (delegationRules.length) {
-        const searchText = `${subject} ${body}`.toLowerCase();
-        for (const rule of delegationRules) {
-          if (searchText.includes((rule.pattern as string).toLowerCase())) {
-            delegationActions.push({
-              label: `Delegate to ${rule.target_email}`,
-              action: "delegate",
-              target: rule.target_email as string,
-            });
-          }
-        }
-      }
-
       const finalCategory = result.category;
       const extraLabels = [...(result.tags || []), ...bySender(email)];
 
@@ -273,7 +252,7 @@ export async function analyzeEmailsForUser(
         category: finalCategory,
         urgency: result.urgency,
         summary: result.summary,
-        quick_actions: [...(result.quick_actions as object[]), ...delegationActions],
+        quick_actions: result.quick_actions as object[],
         extra_labels: extra(extraLabels),
       });
 

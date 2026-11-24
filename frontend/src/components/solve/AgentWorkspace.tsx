@@ -616,7 +616,7 @@ function StepRow({ step, showReasoning }: { step: ProgressStep; showReasoning?: 
   const running = step.status === "running";
   const extra = step.detail || step.suffix;
   return (
-    <li className="mx-2 grid min-h-7 grid-cols-[26px_minmax(0,1fr)] items-center pl-1.5 pr-3">
+    <li className="mx-2 grid min-h-item grid-cols-[26px_minmax(0,1fr)] items-center pl-1.5 pr-3">
       <span className="grid place-items-center">
         <Glyph state={step.status === "done" ? "done" : "filed"} />
       </span>

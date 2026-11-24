@@ -4,7 +4,7 @@ import { createClient } from "@/lib/db";
 import { api } from "@/lib/outcomes";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import { Countdown, Empty, Glyph, Menu, SkeletonRows, ViewBar, VirtualList, clock, dayLabel, shortWhen, type MailState } from "../ui";
+import { Countdown, Empty, Glyph, Menu, SkeletonRows, ViewBar, VirtualList, useSizes, clock, dayLabel, shortWhen, type MailState } from "../ui";
 
 // History: everything Tabellar, the agent and Ask did, newest first, with
 // undo. Proposals are not here; they wait on the page they belong to
@@ -30,8 +30,6 @@ type Item = Head | LogRow;
 type Kind = "all" | LogRow["kind"];
 
 const CHUNK = 1000;
-const HEAD = 34;
-const ROW = 32;
 const LINE = 20; // line height of detail text, so a block's height is known before it is drawn
 const UNDOABLE = new Set(["label", "archive", "draft", "todo", "meeting"]);
 const KINDS: { id: Kind; label: string }[] = [
@@ -203,7 +201,8 @@ export default function HistoryView() {
   const cursor = list.find((r) => r.id === cursorId) || null;
   const cursorIndex = cursor ? items.indexOf(cursor) : -1;
 
-  const heightOf = useCallback((i: Item) => ("head" in i ? HEAD : ROW + (open.has(i.id) ? detailHeight(i) + 8 : 0)), [open]);
+  const { row, head: headHeight, scale } = useSizes();
+  const heightOf = useCallback((i: Item) => ("head" in i ? headHeight : row + (open.has(i.id) ? (detailHeight(i) + 8) * scale : 0)), [open, row, headHeight, scale]);
 
   const move = (delta: number) => {
     if (!list.length) return;
@@ -322,7 +321,7 @@ export default function HistoryView() {
           <time className="text-right text-xs text-ink3">{shortWhen(r.created_at)}</time>
         </div>
         {isOpen && (
-          <div className="ml-10 mr-5 overflow-y-auto rounded-[9px] bg-side px-3.5 py-2.5 text-[13px] leading-5" style={{ height: detailHeight(r) }}>
+          <div className="ml-10 mr-5 overflow-y-auto rounded-[9px] bg-side px-3.5 py-2.5 text-[13px] leading-5" style={{ height: detailHeight(r) * scale }}>
             <dl className="grid grid-cols-[52px_minmax(0,1fr)] gap-x-3">
               {detailOf(r).map(([label, text, bad]) => (
                 <div key={label} className="contents">

@@ -294,7 +294,7 @@ export default function Icon({ name, size = 16, fill, className = "", style, tit
     <Glyph
       aria-hidden={title ? undefined : true}
       aria-label={title}
-      size={px}
+      size={`${px / 16}rem`}
       // about 1.4px on screen at any size
       strokeWidth={Math.min(2.4, Math.max(1.25, (1.4 * 24) / px))}
       fill={fill && SOLID.has(name) ? "currentColor" : "none"}

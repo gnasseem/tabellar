@@ -5,7 +5,7 @@ import { createClient } from "@/lib/db";
 import { measureEmailIframeBodyHeight } from "@/lib/emailIframe";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import { Empty, Glyph, SkeletonRows, ViewBar, VirtualList, dayLabel, shortWhen } from "../ui";
+import { Empty, Glyph, SkeletonRows, ViewBar, VirtualList, useSizes, dayLabel, shortWhen } from "../ui";
 
 // Sent: everything that went out, one line each, grouped by day. A line ends
 // in whether a follow-up is waiting on it. Opening one shows it on the right.
@@ -56,15 +56,16 @@ function followState(e: Sent, f: FollowUp | undefined): { text: string; due: boo
 
 // The email itself, in a frame of its own so its markup cannot touch the window.
 function SentEmailFrame({ html, isDark }: { html: string; isDark: boolean }) {
+  const { scale } = useSizes();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(200);
   const srcDoc = useMemo(() => {
-    const lightCss = `<style>html,body{margin:0;padding:0;box-sizing:border-box;min-height:0!important;height:auto!important;overflow-x:hidden}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.6;word-break:break-word;position:relative}img,table{max-width:100%!important;height:auto!important}</style>`;
+    const lightCss = `<style>html,body{margin:0;padding:0;box-sizing:border-box;min-height:0!important;height:auto!important;overflow-x:hidden}body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:${14 * scale}px;line-height:1.6;word-break:break-word;position:relative}img,table{max-width:100%!important;height:auto!important}</style>`;
     // In dark, the frame takes the system's dark colours and lets the window's ground show through.
     const darkCss = isDark ? `<style>:root{color-scheme:dark}html,body{background:transparent!important;color:CanvasText!important}img{opacity:.85}</style>` : "";
     const safe = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
     return `<base target="_blank">` + lightCss + darkCss + safe;
-  }, [html, isDark]);
+  }, [html, isDark, scale]);
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -201,7 +202,8 @@ export default function SentView() {
   const rows = emails;
   const cursor = rows.find((e) => e.id === cursorId) || rows[0] || null;
   const cursorIndex = cursor ? items.indexOf(cursor) : -1;
-  const heightOf = useCallback((i: Item) => ("head" in i ? 34 : 32), []);
+  const { row, head } = useSizes();
+  const heightOf = useCallback((i: Item) => ("head" in i ? head : row), [row, head]);
   const beside = reading && !!cursor;
 
   // The full text is fetched only for the email being read.
@@ -366,7 +368,7 @@ export default function SentView() {
                     {body.attachments.length} attachment{body.attachments.length === 1 ? "" : "s"}
                   </h3>
                   {body.attachments.map((att, i) => (
-                    <div key={i} className="flex h-7 items-center gap-2 text-ink2">
+                    <div key={i} className="flex h-item items-center gap-2 text-ink2">
                       <Icon name={att.mime_type?.startsWith("image/") ? "image" : att.mime_type?.includes("pdf") ? "picture_as_pdf" : "attach_file"} size={15} className="flex-none text-ink3" />
                       <span className="min-w-0 truncate text-ink">{att.filename}</span>
                       <span className="flex-none text-xs text-ink3">{size(att.size)}</span>

@@ -78,7 +78,7 @@ export function ToastContainer({ toasts, removeToast }: { toasts: ToastItem[]; r
   return (
     <div
       className="pointer-events-none fixed left-0 z-[200] flex flex-col items-center gap-2 px-4 lg:left-56"
-      style={{ right: 0, bottom: overCompose ? 76 : 16 }}
+      style={{ right: 0, bottom: overCompose ? "4.75rem" : "1rem" }}
     >
       {toasts.map((t) => (
         <SingleToast key={t.id} toast={t} onRemove={() => removeToast(t.id)} />

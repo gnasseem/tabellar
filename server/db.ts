@@ -23,9 +23,12 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
   profiles: {
     cols: {
       id: "uuid pk", email: "text", display_name: "text", avatar_url: "text",
-      theme: 'text ! ="light"', style_notes: "text", working_hours: "json",
+      theme: 'text ! ="auto"', appearance: "json ! ={}", working_hours: "json",
       calendar_send_invites: "bool ! =true",
-      notification_level: 'text ! ="important"', notification_preview: "bool ! =true",
+      // vip, needs or none (notify.ts); quiet outside the working hours.
+      notification_level: 'text ! ="needs"', notification_preview: "bool ! =true", notification_quiet: "bool ! =false",
+      // The Brief's settings and the paragraph written for today (brief.ts).
+      brief: "json ! ={}", brief_summary: "json",
       autonomy_level: 'text ! ="suggest"', engine_paused: "bool ! =false",
       autopilot_delay_min: "int ! =5", autopilot_daily_cap: "int ! =5", autopilot_known_only: "bool ! =true",
       first_read: "json", rules_version: "int ! =0", label_suggestions: "json",
@@ -142,16 +145,12 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
     },
     unique: [["user_id", "entity", "entity_type"]],
   },
-  delegation_rules: {
-    cols: {
-      id: "uuid pk =uuid", user_id: "uuid !", pattern: "text !", target_email: "text !",
-      is_enabled: "bool ! =true", weight: "int ! =1", created_at: "time ! =now", updated_at: "time ! =now",
-    },
-  },
+  // How the user writes: see writing.ts.
   style_profiles: {
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", greeting_style: "text", closing_style: "text",
-      tone: "text", avg_length: "text", patterns: "json =[]", sample_count: "int ! =0",
+      tone: "text", avg_length: "text", kinds: "json ! ={}", avoid: "json ! =[]",
+      edited: "json ! =[]", edits: "json ! =[]", sample_count: "int ! =0",
       last_learned_at: "time", created_at: "time ! =now", updated_at: "time ! =now",
     },
     unique: [["user_id"]],
@@ -349,8 +348,29 @@ function migrate() {
   }
 }
 
+// Columns and tables given up, once what they held has moved on.
+function retire() {
+  const cols = (t: string) => (sqlite.prepare(`PRAGMA table_info("${t}")`).all() as { name: string }[]).map((r) => r.name);
+  // Notes for drafts became writing rules, one per line.
+  if (cols("profiles").includes("style_notes")) {
+    const now = new Date().toISOString();
+    const add = sqlite.prepare(`INSERT OR IGNORE INTO preferences (id, user_id, kind, subject, value, source, created_at, updated_at) VALUES (?, ?, 'writing', '', ?, 'user', ?, ?)`);
+    for (const p of sqlite.prepare(`SELECT id, style_notes FROM profiles WHERE style_notes IS NOT NULL`).all() as { id: string; style_notes: string }[]) {
+      for (const line of p.style_notes.split("\n").map((l) => l.trim()).filter((l) => l.length > 4)) add.run(randomUUID(), p.id, line, now, now);
+    }
+    sqlite.exec(`ALTER TABLE profiles DROP COLUMN style_notes`);
+    // What "What should change?" once kept, such as "Writing preference: nothing".
+    sqlite.exec(`DELETE FROM knowledge_base WHERE entity_type = 'style_preference'`);
+    sqlite.exec(`UPDATE profiles SET notification_level = 'needs' WHERE notification_level IN ('important', 'all')`);
+  }
+  if (cols("style_profiles").includes("patterns")) sqlite.exec(`ALTER TABLE style_profiles DROP COLUMN patterns`);
+  // Forwarding rules only ever made a suggestion the window never showed.
+  sqlite.exec(`DROP TABLE IF EXISTS delegation_rules`);
+}
+
 migrate();
 createSchema();
+retire();
 
 // ── Encoding ────────────────────────────────────────────────────────────────
 

@@ -1,16 +1,59 @@
 // The Brief: what needs the user today, who they are waiting on, and what
 // Tabellar handled since yesterday. Built from what the engine already
 // decided and stored (drafts, proposals, meetings, todos, questions, the
-// action log), never from a new model call, so every line is something that
-// is there to act on. Today's calendar comes from /calendar/events.
+// action log), so every line is something that is there to act on. Today's
+// calendar comes from /calendar/events.
+//
+// profiles.brief holds the settings: the time of day a new Brief starts, how
+// long it is, which sections it has, and an optional opening paragraph with
+// its tone. The paragraph is one model call, made at that time from the
+// same lines and kept in profiles.brief_summary.
 
 import { db } from "./db.ts";
+import { briefParagraph } from "./ai.ts";
+import { modelConfigured } from "./llm.ts";
 import { followupList } from "./followups.ts";
+import { wallClock, minutes, type Hours } from "./notify.ts";
 import { allPrefs, displayName, pick, stops } from "./profile.ts";
 
-const NEED_MAX = 5;
 const HANDLED_MAX = 200;
 const DAY = 86_400_000;
+
+// ── Settings ────────────────────────────────────────────────────────────────
+
+export const SECTIONS = ["needs", "waiting", "calendar", "handled"] as const;
+const LENGTHS = { short: { needs: 3, waiting: 3 }, standard: { needs: 5, waiting: 5 }, long: { needs: 10, waiting: 10 } };
+export const TONES: Record<string, string> = {
+  plain: "Plain and factual.",
+  warm: "Warm and friendly, like a good assistant, without flattery.",
+  blunt: "Blunt: short sentences, the most pressing thing first, nothing else.",
+};
+
+export type BriefSettings = { time: string; length: keyof typeof LENGTHS; sections: string[]; summary: boolean; tone: string };
+
+export function briefSettings(stored: unknown): BriefSettings {
+  const b = (stored ?? {}) as Partial<BriefSettings>;
+  return {
+    time: /^([01]\d|2[0-3]):[0-5]\d$/.test(String(b.time)) ? String(b.time) : "08:00",
+    length: b.length && b.length in LENGTHS ? b.length : "standard",
+    sections: Array.isArray(b.sections) ? SECTIONS.filter((s) => b.sections!.includes(s)) : [...SECTIONS],
+    summary: b.summary === true,
+    tone: b.tone && b.tone in TONES ? b.tone : "plain",
+  };
+}
+
+const zoneOf = (profile: Record<string, unknown> | null | undefined) => (profile?.working_hours as Hours | null)?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+// The day today's Brief belongs to, in the user's zone, and whether its time
+// has come. `since` is the same time the day before: what was handled counts
+// from there, so a Brief always covers a whole night.
+export function briefDay(settings: BriefSettings, tz: string, at = new Date()): { day: string; due: boolean; since: string } {
+  const now = wallClock(tz, at);
+  const past = now.minute - minutes(settings.time);
+  return { day: now.day, due: past >= 0, since: new Date(at.getTime() - past * 60_000 - DAY).toISOString() };
+}
+
+// ── The lines ───────────────────────────────────────────────────────────────
 
 export type NeedItem = {
   key: string;
@@ -28,18 +71,9 @@ export type WaitingItem = { key: string; email_id: string; thread_id: string; wh
 
 export type HandledItem = { email_id: string; who: string; subject: string; what: string; at: string };
 
-export type Brief = { needs: NeedItem[]; more: number; waiting: WaitingItem[]; handled: HandledItem[]; at: string };
+export type Brief = { settings: BriefSettings; summary: string | null; needs: NeedItem[]; more: number; waiting: WaitingItem[]; waitingMore: number; handled: HandledItem[]; day: string; at: string };
 
 type Row = Record<string, unknown>;
-
-// "YYYY-MM-DD" in the user's zone.
-function dayIn(tz: string, at = new Date()): string {
-  try {
-    return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
-  } catch {
-    return at.toISOString().slice(0, 10);
-  }
-}
 
 const CATEGORY: Record<string, string> = { "action-required": "Action required", important: "Important", updates: "Updates", promotions: "Promotions" };
 
@@ -54,10 +88,11 @@ function proposalText(p: Row, subject: string | undefined): string {
 }
 
 export async function brief(userId: string): Promise<Brief> {
-  const { data: profile } = await db.from("profiles").select("working_hours").eq("id", userId).maybeSingle();
-  const tz = ((profile?.working_hours as { timezone?: string } | null)?.timezone) || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const today = dayIn(tz);
-  const since = new Date(Date.now() - DAY).toISOString();
+  const { data: profile } = await db.from("profiles").select("working_hours, brief, brief_summary").eq("id", userId).maybeSingle();
+  const settings = briefSettings(profile?.brief);
+  const { day: today, since } = briefDay(settings, zoneOf(profile));
+  const written = profile?.brief_summary as Summary | null;
+  const max = LENGTHS[settings.length];
 
   const [drafts, proposals, meetings, todos, questions, recent, prefs, waiting] = await Promise.all([
     db.from("draft_emails").select("id, email_id, subject, to_addresses, created_at").eq("user_id", userId).not("email_id", "is", null).order("created_at", { ascending: false }).limit(200),
@@ -121,7 +156,7 @@ export async function brief(userId: string): Promise<Brief> {
     all.push({ key: `question:${q.id}`, kind: "question", who: "Tabellar", text: open.length === 1 ? String(q.text) : `${open.length} questions, the first: ${String(q.text)}`, email_id: (q.email_id as string) ?? null, id: String(q.id), rank: 6, at: "" });
   }
   all.sort((a, b) => a.rank - b.rank || (a.kind === "meeting" || a.kind === "todo" ? a.at.localeCompare(b.at) : b.at.localeCompare(a.at)));
-  const needs = all.slice(0, NEED_MAX).map(({ rank: _rank, at: _at, ...n }) => n);
+  const needs = all.slice(0, max.needs).map(({ rank: _rank, at: _at, ...n }) => n);
   const needIds = new Set(all.map((n) => n.email_id).filter(Boolean) as string[]);
 
   // Handled: mail of the last day that needs nothing from the user, with
@@ -158,10 +193,77 @@ export async function brief(userId: string): Promise<Brief> {
   });
 
   return {
+    settings,
+    summary: settings.summary && current(written, today, settings, all.map((n) => n.key)) ? written!.text : null,
     needs,
-    more: Math.max(0, all.length - NEED_MAX),
-    waiting: waiting.map((f) => ({ key: f.key, email_id: f.email_id, thread_id: f.thread_id, who: f.recipient_name, address: f.recipient_email, text: f.asked || f.subject, subject: f.subject, sent_at: f.sent_at })),
+    more: Math.max(0, all.length - max.needs),
+    waitingMore: Math.max(0, waiting.length - max.waiting),
+    waiting: waiting.slice(0, max.waiting).map((f) => ({ key: f.key, email_id: f.email_id, thread_id: f.thread_id, who: f.recipient_name, address: f.recipient_email, text: f.asked || f.subject, subject: f.subject, sent_at: f.sent_at })),
     handled,
+    day: today,
     at: new Date().toISOString(),
   };
+}
+
+// ── The paragraph ───────────────────────────────────────────────────────────
+
+type Summary = { day: string; tone: string; text: string; keys: string[] };
+
+// Today's, in the tone chosen, and nothing it was written from has been dealt with since.
+function current(s: Summary | null, day: string, settings: BriefSettings, open: string[]): boolean {
+  return s?.day === day && s.tone === settings.tone && s.keys.every((k) => open.includes(k));
+}
+
+// Every number and name the paragraph gives is in the lines it was written from.
+export function supported(text: string, lines: string): boolean {
+  const have = lines.toLowerCase();
+  const numbers = text.match(/\d+(?:[:.]\d+)?/g) ?? [];
+  if (numbers.some((n) => !have.includes(n))) return false;
+  const names = [...text.matchAll(/(?<![.!?]\s|^|\n)\b\p{Lu}[\p{L}'-]+/gu)].map((m) => m[0].toLowerCase().replace(/'s$/, ""));
+  return names.every((n) => have.includes(n) || /^(i|today|tomorrow|yesterday|(mon|tues|wednes|thurs|fri|satur|sun)day|january|february|march|april|may|june|july|august|september|october|november|december|tabellar)$/.test(n));
+}
+
+function linesFor(b: Brief): string {
+  const line = (n: NeedItem): string => {
+    const about = n.text.replace(/^Reply drafted: |^Reply to approve: /, "");
+    if (n.kind === "reply" || /^Reply to approve/.test(n.text)) return `A reply to ${n.who} about "${about}" is drafted and waits for the user to send it`;
+    if (n.kind === "meeting") return `A meeting with ${n.who} waits to be confirmed: ${n.text}`;
+    if (n.kind === "todo") return `Todo: ${n.text}${n.due && n.due < b.day ? ", overdue" : ", due today"}`;
+    return `${n.who}: ${n.text}`;
+  };
+  const has = (section: string) => b.settings.sections.includes(section);
+  const out: string[] = [];
+  if (has("needs")) out.push(`Needs the user today (${b.needs.length + b.more} things, the first ${b.needs.length}):`, ...b.needs.map((n) => `- ${line(n)}`));
+  if (has("waiting") && b.waiting.length) out.push(`The user waits for an answer from (${b.waiting.length + b.waitingMore}):`, ...b.waiting.map((w) => `- ${w.who}, asked: ${w.text}`));
+  if (has("handled")) out.push(`Handled without the user since yesterday: ${b.handled.length} emails`);
+  return out.join("\n");
+}
+
+// Today's paragraph, from the Brief's own lines: written once its time has
+// come, and again when the window asks because a line it was written from is
+// dealt with. A text that names something the lines do not is written once
+// more, then left out.
+let writing: Promise<string | null> | null = null;
+export function prepareBrief(userId: string, opts: { now?: boolean } = {}): Promise<string | null> {
+  writing ??= (async () => {
+    const { data: profile } = await db.from("profiles").select("working_hours, brief, brief_summary, onboarding").eq("id", userId).maybeSingle();
+    const settings = briefSettings(profile?.brief);
+    if (!settings.summary || !modelConfigured() || profile?.onboarding !== "done") return null;
+    const { day, due } = briefDay(settings, zoneOf(profile));
+    const have = profile?.brief_summary as Summary | null;
+    if (!opts.now && (!due || have?.day === day)) return null;
+    const b = await brief(userId);
+    if (b.summary !== null) return b.summary;
+    const lines = linesFor(b);
+    let text = "";
+    for (let i = 0; i < 2 && !text; i++) {
+      const t = await briefParagraph(lines, TONES[settings.tone]);
+      if (t && supported(t, lines)) text = t;
+    }
+    await db.from("profiles").update({ brief_summary: { day, tone: settings.tone, text, keys: b.needs.map((n) => n.key) } }).eq("id", userId);
+    return text || null;
+  })().finally(() => {
+    writing = null;
+  });
+  return writing;
 }

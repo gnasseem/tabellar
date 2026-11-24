@@ -24,6 +24,8 @@
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { generateDraft } from "./ai.ts";
+import { keepRules, ownWords, recipients, stylePrompt, writingFor, type Recipient } from "./writing.ts";
+import { isBulk, writtenTo } from "./senders.ts";
 import { calendarAccount, mail, type LinkedEvent } from "./providers.ts";
 import { syncMail, readBacklog, serial, fillMissingBodies, refreshStored } from "./sync.ts";
 import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions.ts";
@@ -31,11 +33,12 @@ import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
 import { ACT_WITHIN_MS, dueOf, meetingOf, RULES_VERSION, todoOf } from "./rules.ts";
 import { judgeSent } from "./followups.ts";
-import { notify } from "./notify.ts";
-import { firstReadState, startFirstRead } from "./firstRead.ts";
+import { inQuietHours, notify, worthNotifying } from "./notify.ts";
+import { prepareBrief } from "./brief.ts";
+import { firstReadState, relearnStyle, startFirstRead } from "./firstRead.ts";
 import { listAccounts, refreshStaleSendAs, replyFrom, type Account } from "./accounts.ts";
 import { gmailLabelOf, userLabels } from "./labels.ts";
-import { ask, covers, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
+import { ask, covers, displayName, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
 
 const INTERVAL_MS = 2 * 60_000;
 const TICK_MS = 20_000;
@@ -100,26 +103,47 @@ const DRAFT_BODY_CHARS = 4000;
 
 // A reply to one email in the user's writing style, with what Tabellar knows
 // about the sender. Used by the engine and by /generate-draft.
-export async function draftReply(userId: string, e: EmailRow, instructions: string): Promise<string> {
+export async function draftReply(userId: string, e: EmailRow, instructions: string, kind?: Recipient): Promise<string> {
   const emailText = `Subject: ${e.subject}\nFrom: ${e.sender}\n\n${String(e.body_text || e.snippet || "").slice(0, DRAFT_BODY_CHARS)}`;
   const senderName = e.sender?.split("<")[0]?.trim().replace(/"/g, "") || "";
-  const [{ data: style }, { data: profile }, { data: known }, about] = await Promise.all([
-    db.from("style_profiles").select("*").eq("user_id", userId).limit(1),
-    db.from("profiles").select("style_notes").eq("id", userId).single(),
+  const [writing, { data: known }, about] = await Promise.all([
+    writingFor(userId, e.reply_to_email || e.sender_email, kind),
     senderName.length > 1
       ? db.from("knowledge_base").select("entity, entity_type, info").eq("user_id", userId).in("entity_type", ["person", "company"]).ilike("entity", `%${senderName.replace(/[%_]/g, "")}%`).limit(5)
       : Promise.resolve({ data: [] as Record<string, unknown>[] }),
     profileContext(userId, { sender_email: e.sender_email, subject: e.subject, text: e.body_text || e.snippet }),
   ]);
-
-  let styleContext: string | undefined;
-  if (style?.[0]) {
-    const s = style[0];
-    styleContext = `Greeting: ${s.greeting_style || "Hi"}. Closing: ${s.closing_style || "Best"}. Tone: ${s.tone || "professional"}.`;
-  }
-  if (profile?.style_notes) styleContext = (styleContext || "") + " " + profile.style_notes;
   const background = [about, (known ?? []).map((k) => `${k.entity} (${k.entity_type}): ${k.info}`).join("\n")].filter(Boolean).join("\n\n");
-  return generateDraft(background ? `${emailText}\n\nBackground context:\n${background}` : emailText, instructions, styleContext);
+  const prompt = background ? `${emailText}\n\nBackground context:\n${background}` : emailText;
+  return keepRules(writing, (extra) => generateDraft(prompt, instructions, stylePrompt(writing), extra));
+}
+
+// A reply to a real email from that kind of sender, to show how Tabellar
+// writes now. Kept nowhere. With no such email it answers a made-up one.
+export async function sampleReply(userId: string, kind?: Recipient): Promise<{ who: string; subject: string; text: string; example: boolean; draft: string }> {
+  const [kindOf, written, { data }] = await Promise.all([
+    recipients(userId),
+    writtenTo(userId),
+    db
+      .from("email_processed")
+      .select("category, quick_actions, emails!inner(id, subject, sender, sender_email, reply_to_email, body_text, body_html, snippet, received_at, label_ids, is_calendar, has_list_unsubscribe, list_id, precedence_header)")
+      .eq("user_id", userId)
+      .in("category", ["action-required", "important"])
+      .order("processed_at", { ascending: false })
+      .limit(300),
+  ]);
+  const asked = (r: Record<string, unknown>) => ((r.quick_actions as QuickAction[] | null) ?? []).find((a) => a.action === "reply");
+  const rows = ((data ?? []) as Record<string, unknown>[])
+    .map((r) => ({ reply: asked(r), e: r.emails as EmailRow & Parameters<typeof isBulk>[0] & { label_ids: string[] | null } }))
+    .filter(({ e }) => {
+      const a = e.sender_email ?? "";
+      return a && !NO_REPLY.test(a) && !e.is_calendar && !e.label_ids?.includes("SENT") && !isBulk(e, written) && String(e.body_text ?? "").trim().length > 40 && !looksLikeInstructions(e.subject, e.body_text, e.body_html) && (!kind || kindOf(a) === kind);
+    })
+    .sort((a, b) => Number(!!b.reply) - Number(!!a.reply) || String(b.e.received_at).localeCompare(String(a.e.received_at)));
+  const made = { id: "", subject: "Thursday", sender: "Sam Lee <sam@example.org>", sender_email: "sam@example.org", reply_to_email: null, snippet: null, received_at: null, body_text: "Hi,\n\nAre you free on Thursday at 3 to go over the draft? If not, tell me what suits you better.\n\nSam" };
+  const e: EmailRow = rows[0]?.e ?? made;
+  const draft = await draftReply(userId, e, String(rows[0]?.reply?.text ?? ""), kind);
+  return { who: displayName(e.sender, e.sender_email ?? ""), subject: e.subject ?? "", text: ownWords(String(e.body_text ?? "")).slice(0, 600), example: !rows[0], draft };
 }
 
 // ── Planning ────────────────────────────────────────────────────────────────
@@ -176,7 +200,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
 
   const { data: profile } = await db
     .from("profiles")
-    .select("working_hours, notification_level, notification_preview, autopilot_delay_min, autopilot_daily_cap, autopilot_known_only")
+    .select("working_hours, notification_level, notification_preview, notification_quiet, autopilot_delay_min, autopilot_daily_cap, autopilot_known_only")
     .eq("id", userId)
     .maybeSingle();
   const delayMinutes = Math.min(Math.max(Number(profile?.autopilot_delay_min) || 5, 1), 120);
@@ -210,9 +234,12 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     const already = new Set((before ?? []).map((r) => r.kind as string));
     // Labels count one by one: an email carries its sort and the user's own.
     const labelled = new Set((before ?? []).filter((r) => r.kind === "label").map((r) => String((r.detail as { label?: string } | null)?.label ?? "")));
+    let waiting = false;
     const run = async (p: Planned, send?: AutoSend) => {
       if (p.kind === "label" ? labelled.has(String(p.detail?.label ?? "")) : already.has(p.kind)) return "refused";
       const r = await act(userId, p, { ...settings, source: "engine", suspicious, todayCount: today[p.kind] ?? 0, cycleCount, send, sendCap });
+      // A proposal, a drafted reply or a meeting to confirm waits on the user.
+      if (r === "proposed" || (r === "done" && (p.kind === "draft" || p.kind === "meeting"))) waiting = true;
       if (r === "done" || r === "proposed") {
         today[p.kind] = (today[p.kind] ?? 0) + 1;
         cycleCount++;
@@ -358,9 +385,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
       }
     }
 
-    const level = String(profile?.notification_level ?? "important");
-    const vip = prefs.some((r) => r.value === "vip");
-    const worthIt = !stopped("notify") && (level === "all" || (level !== "none" && vip) || (level === "important" && (category === "action-required" || category === "important")));
+    const worthIt = !stopped("notify") && worthNotifying(profile?.notification_level, { vip: prefs.some((r) => r.value === "vip"), needsUser: category === "action-required" || waiting || asked });
     if (replying) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted: false, replying: true });
     else if (worthIt && !suspicious) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted });
   }
@@ -375,7 +400,8 @@ export const planNew = serial(async (userId: string): Promise<void> => {
       body: preview ? `${n.summary} Cancel it in Replies.` : "Autopilot will send a reply. Cancel it in Replies.",
     });
   }
-  const rest = notes.filter((n) => !n.replying);
+  // Nothing else outside the working hours, when the user asked for that.
+  const rest = inQuietHours(profile) ? [] : notes.filter((n) => !n.replying);
   notes.length = 0;
   notes.push(...rest);
   if (notes.length > 3) {
@@ -471,6 +497,7 @@ export async function runCycle(): Promise<void> {
       await fillMissingBodies(userId);
       await retireTrivia(userId);
       await rereadUnderNewRules(userId);
+      void relearnStyle(userId).catch((e) => console.error("[engine] style:", (e as Error).message));
       startedUp = true;
     }
     // Until the first read of every mailbox is done, carry it on in the background.
@@ -483,6 +510,7 @@ export async function runCycle(): Promise<void> {
       await readAll(userId);
       await judgeSent(userId);
     }
+    if (!(await engineSettings(userId)).paused) void prepareBrief(userId).catch((e) => console.error("[engine] brief:", (e as Error).message));
     engineStatus.lastError = null;
   } catch (e) {
     engineStatus.lastError = (e as Error).message;

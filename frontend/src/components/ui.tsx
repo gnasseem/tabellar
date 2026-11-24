@@ -4,6 +4,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Icon from "./Icon";
 import { useApp } from "./AppShell";
+import { appearanceOf, sizesOf } from "@/lib/appearance";
 import type { Outcome } from "@/lib/outcomes";
 
 // The state of a piece of mail, drawn as the seal: filled when it needs the
@@ -201,13 +202,20 @@ export function SkeletonRows({ count = 12, tall = false }: { count?: number; tal
   return (
     <div aria-busy="true" aria-label="Loading">
       {Array.from({ length: count }, (_, i) => (
-        <div key={i} className={`mx-2 flex items-center gap-3 px-3 ${tall ? "h-[58px]" : "h-8"}`}>
+        <div key={i} className={`mx-2 flex items-center gap-3 px-3 ${tall ? "min-h-[58px]" : "h-row"}`}>
           <span className="skel h-2.5 w-28" />
           <span className="skel h-2.5 flex-1" style={{ maxWidth: `${38 + ((i * 37) % 45)}%` }} />
         </div>
       ))}
     </div>
   );
+}
+
+// Row and group header heights in px, as the density and text size make them.
+export function useSizes(): { scale: number; row: number; head: number } {
+  const { profile } = useApp();
+  const { density, text } = appearanceOf(profile);
+  return useMemo(() => sizesOf({ density, text, accent: "red", hidden: [] }), [density, text]);
 }
 
 // A windowed list: only the rows on screen are in the page, so ten thousand
@@ -230,6 +238,7 @@ export function VirtualList<T>({
   sticky?: (firstVisible: number) => ReactNode; // header pinned above the rows
   className?: string;
 }) {
+  const { head: headHeight } = useSizes();
   const ref = useRef<HTMLDivElement>(null);
   const [scroll, setScroll] = useState(0);
   const [height, setHeight] = useState(800);
@@ -275,7 +284,7 @@ export function VirtualList<T>({
     if (!el || !el.clientHeight || cursor === undefined || cursor < 0 || cursor >= items.length) return;
     const top = offsets[cursor];
     const bottom = offsets[cursor + 1];
-    const pinned = sticky ? 34 : 0;
+    const pinned = sticky ? headHeight : 0;
     if (top < el.scrollTop + pinned) el.scrollTop = Math.max(0, top - pinned);
     else if (bottom > el.scrollTop + el.clientHeight) el.scrollTop = bottom - el.clientHeight;
   }, [cursor]);
@@ -361,7 +370,7 @@ export function OutcomeLines({ outcomes, className = "" }: { outcomes: Outcome[]
   return (
     <ul className={className}>
       {shown.map((o) => (
-        <li key={o.key} className="flex h-7 items-center gap-1.5">
+        <li key={o.key} className="flex h-item items-center gap-1.5">
           <Glyph state={o.state} />
           <span className={`min-w-0 flex-1 truncate ${o.state === "need" || o.state === "going" ? "font-medium text-ink" : "text-ink2"}`} title={o.why || o.title}>
             {o.title}

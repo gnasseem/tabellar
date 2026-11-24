@@ -3,6 +3,7 @@ import Icon from "@/components/Icon";
 import Logo from "@/components/Logo";
 import { Countdown } from "@/components/ui";
 import { createClient } from "@/lib/db";
+import { appearanceOf } from "@/lib/appearance";
 import { useApp } from "./AppShell";
 
 // Levels, in the order of how much Tabellar does on its own.
@@ -35,7 +36,7 @@ export function LevelControl({ value, onChange }: { value: string; onChange: (le
           type="button"
           role="radio"
           aria-checked={l.id === value}
-          className="grid h-7 w-full grid-cols-[13px_68px_minmax(0,1fr)] items-center gap-x-2 rounded-md px-2 text-left hover:bg-sel"
+          className="grid h-item w-full grid-cols-[13px_68px_minmax(0,1fr)] items-center gap-x-2 rounded-md px-2 text-left hover:bg-sel"
           onClick={() => l.id !== value && confirmLevel(l.id) && onChange(l.id)}
         >
           <Icon name="check" size={13} className={l.id === value ? "text-ink" : "invisible"} />
@@ -57,7 +58,7 @@ function NavItem({ id, icon, label, count, need, on: forced }: { id: string; ico
         setView(id);
         setSidebarOpen(false);
       }}
-      className={`flex h-7 w-full items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${on ? "bg-sel font-medium text-ink" : "text-ink2 hover:bg-sel/55"}`}
+      className={`flex h-item w-full items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${on ? "bg-sel font-medium text-ink" : "text-ink2 hover:bg-sel/55"}`}
     >
       <Icon name={icon} size={16} className={on ? "text-ink" : "text-ink3"} />
       <span className="flex-1 truncate">{label}</span>
@@ -99,7 +100,7 @@ function Engine() {
 
   return (
     <div ref={ref} className="relative grid grid-cols-[1fr_auto] items-center pl-2 pr-1">
-      <button className="flex h-7 items-center gap-2 justify-self-start rounded-md pr-1 font-medium" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button className="flex h-item items-center gap-2 justify-self-start rounded-md pr-1 font-medium" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className="grid w-4 place-items-center">
           <i className="h-[7px] w-[7px] rounded-full" style={{ background: paused ? "var(--warn)" : failing ? "var(--danger)" : "var(--run)" }} />
         </span>
@@ -150,7 +151,7 @@ function AccountSwitch() {
   return (
     <div ref={ref} className="relative">
       <button
-        className="flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-ink2 transition-colors duration-150 hover:bg-sel/55"
+        className="flex h-item w-full items-center gap-2 rounded-md px-2 text-left text-ink2 transition-colors duration-150 hover:bg-sel/55"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Account"
@@ -161,7 +162,7 @@ function AccountSwitch() {
         <Icon name="expand_more" size={12} className="text-ink3" />
       </button>
       {open && (
-        <div className="pop absolute left-0 top-8 z-50 w-max min-w-full max-w-[320px]" role="menu">
+        <div className="pop absolute left-0 top-full z-50 mt-1 w-max min-w-full max-w-[320px]" role="menu">
           <button role="menuitemradio" aria-checked={!current} className="pop-item" onClick={() => choose("")}>
             <Icon name="check" size={13} className={!current ? "text-ink" : "invisible"} />
             All accounts
@@ -210,17 +211,41 @@ function GoingOut() {
   );
 }
 
+// The views in the sidebar, in their three groups. Settings, Appearance can
+// hide any but the Inbox; a hidden view still shows while it is open.
+type Item = { id: string; icon: string; label: string; count?: "need" | "replies" | "todos" | "meetings" | "followups" };
+export const NAV: Item[][] = [
+  [
+    { id: "inbox", icon: "inbox", label: "Inbox", count: "need" },
+    { id: "replies", icon: "reply", label: "Replies", count: "replies" },
+    { id: "todos", icon: "checklist", label: "Todos", count: "todos" },
+    { id: "meetings", icon: "event", label: "Meetings", count: "meetings" },
+    { id: "followups", icon: "schedule_send", label: "Follow-ups", count: "followups" },
+  ],
+  [
+    { id: "briefing", icon: "description", label: "Brief" },
+    { id: "ask", icon: "chat_bubble", label: "Ask" },
+  ],
+  [
+    { id: "sent", icon: "send", label: "Sent" },
+    { id: "scheduled", icon: "schedule", label: "Scheduled" },
+    { id: "labels", icon: "label", label: "Labels" },
+    { id: "newsletters", icon: "newspaper", label: "Newsletters" },
+  ],
+];
+
 export default function Sidebar() {
-  const { view, sidebarOpen, setSidebarOpen, openCompose, mail } = useApp();
-  const c = mail.counts;
+  const { view, profile, sidebarOpen, setSidebarOpen, openCompose, mail } = useApp();
+  const { hidden } = appearanceOf(profile);
+  const groups = NAV.map((g) => g.filter((i) => i.id === "inbox" || i.id === view || !hidden.includes(i.id))).filter((g) => g.length);
 
   return (
     <>
-      {sidebarOpen && <div className="fixed inset-0 z-40 bg-black/30 lg:hidden" onClick={() => setSidebarOpen(false)} />}
+      {sidebarOpen && <div className="fixed inset-0 z-40 bg-scrim lg:hidden" onClick={() => setSidebarOpen(false)} />}
       <aside
         className={`fixed inset-y-0 left-0 z-50 flex w-56 flex-none flex-col border-r border-line bg-side transition-transform duration-200 ease-out lg:static lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
-        <div className="flex h-[52px] flex-none items-center pl-4 pr-2.5">
+        <div className="flex h-bar flex-none items-center pl-4 pr-2.5">
           <Logo size={22} className="flex-1" />
           <button className="iconbtn" title="New message (C)" aria-label="New message" onClick={() => openCompose()}>
             <Icon name="compose" size={16} />
@@ -228,23 +253,13 @@ export default function Sidebar() {
         </div>
         <nav className="flex flex-1 flex-col gap-3 overflow-y-auto px-2 pb-2 pt-0.5">
           <AccountSwitch />
-          <div>
-            <NavItem id="inbox" icon="inbox" label="Inbox" count={c.need} need />
-            <NavItem id="replies" icon="reply" label="Replies" count={c.replies} />
-            <NavItem id="todos" icon="checklist" label="Todos" count={c.todos} />
-            <NavItem id="meetings" icon="event" label="Meetings" count={c.meetings} />
-            <NavItem id="followups" icon="schedule_send" label="Follow-ups" count={c.followups} />
-          </div>
-          <div>
-            <NavItem id="briefing" icon="description" label="Brief" />
-            <NavItem id="ask" icon="chat_bubble" label="Ask" />
-          </div>
-          <div>
-            <NavItem id="sent" icon="send" label="Sent" />
-            <NavItem id="scheduled" icon="schedule" label="Scheduled" />
-            <NavItem id="labels" icon="label" label="Labels" />
-            <NavItem id="newsletters" icon="newspaper" label="Newsletters" />
-          </div>
+          {groups.map((g) => (
+            <div key={g[0].id}>
+              {g.map((i) => (
+                <NavItem key={i.id} id={i.id} icon={i.icon} label={i.label} count={i.count && mail.counts[i.count]} need={i.id === "inbox"} />
+              ))}
+            </div>
+          ))}
         </nav>
         <GoingOut />
         <div className="mx-2 border-t border-line pb-2 pt-1.5">

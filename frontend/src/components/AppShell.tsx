@@ -5,6 +5,7 @@ import {
   useContext,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
 } from "react";
 import Icon from "@/components/Icon";
@@ -18,6 +19,7 @@ import { createClient } from "@/lib/db";
 import { useLiveUpdates, type LiveChangeCounters } from "@/lib/useLiveUpdates";
 import { useOverview, type Overview } from "@/lib/outcomes";
 import { useAccounts, type Accounts } from "@/lib/accounts";
+import { appearanceOf, applyAppearance, useTheme, type ThemeChoice } from "@/lib/appearance";
 import {
   stepAgent as apiStepAgent,
   answerAgent as apiAnswerAgent,
@@ -42,8 +44,9 @@ type Profile = {
   email: string;
   display_name: string;
   avatar_url: string | null;
-  theme: "light" | "dark";
-  style_notes?: string | null;
+  theme: ThemeChoice;
+  appearance?: unknown;
+  brief?: unknown;
   working_hours?: Record<string, unknown> | null;
   calendar_send_invites?: boolean | null;
   autonomy_level?: string | null;
@@ -53,6 +56,7 @@ type Profile = {
   autopilot_known_only?: boolean | null;
   notification_level?: string | null;
   notification_preview?: boolean | null;
+  notification_quiet?: boolean | null;
 };
 
 // In-memory view data cache for instant view switching
@@ -67,7 +71,6 @@ export type AppContextType = {
   sidebarOpen: boolean;
   setSidebarOpen: (v: boolean) => void;
   theme: "light" | "dark";
-  setTheme: (v: "light" | "dark") => void;
   openCompose: (replyTo?: any, draft?: any) => void;
   addToast: (
     type: ToastItem["type"],
@@ -155,9 +158,9 @@ export default function AppShell({
   // The view is kept in the address (#todos), so a reload stays where it was.
   const [viewRaw, setViewRaw] = useState(() => window.location.hash.slice(1) || "inbox");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">(
-    profile?.theme || "light",
-  );
+  const theme = useTheme(profileState.theme);
+  const appearance = JSON.stringify(profileState.appearance ?? null);
+  useLayoutEffect(() => applyAppearance(appearanceOf(profileState)), [appearance]);
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeReplyTo, setComposeReplyTo] = useState<any>(null);
   const [composeDraft, setComposeDraft] = useState<any>(null);
@@ -321,10 +324,6 @@ export default function AppShell({
   const reportError = useCallback((m: string) => addToast("error", m), [addToast]);
   const mail = useOverview(user.id, liveChanges, reportError);
   const accounts = useAccounts();
-  // The theme class sits on the root element so menus and the page ground follow it too.
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-  }, [theme]);
   addToastRef.current = addToast;
 
   const removeToast = useCallback((id: string) => {
@@ -733,7 +732,6 @@ export default function AppShell({
         sidebarOpen,
         setSidebarOpen,
         theme,
-        setTheme,
         openCompose,
         addToast,
         search,
@@ -788,7 +786,7 @@ export default function AppShell({
           <button
             onClick={() => setComposeMinimized(false)}
             className="fixed bottom-0 z-50 flex h-9 items-center gap-2 rounded-t-[10px] bg-raised px-3.5 text-[13px] font-medium text-ink shadow-pop"
-            style={{ right: "16px" }}
+            style={{ right: "1rem" }}
           >
             <Icon name="edit" size={18} />
             {composeReplyTo ? "Reply" : "New message"}

@@ -4,7 +4,7 @@ import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { ReaderById } from "../EmailDetail";
-import { Empty, SkeletonRows, Tick, ViewBar, VirtualList } from "../ui";
+import { Empty, SkeletonRows, Tick, ViewBar, VirtualList, useSizes } from "../ui";
 import { NotThis } from "../Profile";
 
 // Todos: a plain checklist, grouped by when each is due. A todo Tabellar
@@ -206,7 +206,8 @@ export default function TodosView() {
     return () => document.removeEventListener("keydown", onKey);
   });
 
-  const heightOf = useCallback((i: Head | Row) => ("head" in i ? 34 : 32), []);
+  const { row, head } = useSizes();
+  const heightOf = useCallback((i: Head | Row) => ("head" in i ? head : row), [row, head]);
 
   if (reading) return <ReaderById emailId={reading} onClose={() => setReading(null)} />;
 
