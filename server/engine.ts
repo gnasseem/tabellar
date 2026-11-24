@@ -24,9 +24,7 @@
 import { HOME } from "./config.ts";
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
-import { generateDraft } from "./ai.ts";
-import { keepRules, ownWords, recipients, stylePrompt, writingFor, type Recipient } from "./writing.ts";
-import { isBulk, writtenTo } from "./senders.ts";
+import { draftReply, HOLD, type EmailRow } from "./replies.ts";
 import { calendarAccount, mail, type LinkedEvent } from "./providers.ts";
 import { syncMail, syncErrors, readBacklog, serial, fillMissingBodies, refreshStored } from "./sync.ts";
 import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions.ts";
@@ -39,6 +37,8 @@ import { prepareBrief, tellBrief } from "./brief.ts";
 import { tellMeetings } from "./prep.ts";
 import { firstReadState, relearnStyle, startFirstRead } from "./firstRead.ts";
 import { listAccounts, refreshStaleSendAs, replyFrom, type Account } from "./accounts.ts";
+import { syncDrafts, threadDrafts, withdrawAnswered } from "./drafts.ts";
+import { ownWords } from "./writing.ts";
 import { gmailLabelOf, userLabels } from "./labels.ts";
 import { ask, covers, MOVED_ON, PASSED, displayName, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
 
@@ -69,33 +69,6 @@ async function localUser(): Promise<string | null> {
 
 // ── Drafting ────────────────────────────────────────────────────────────────
 
-type EmailRow = {
-  id: string;
-  subject: string | null;
-  sender: string | null;
-  sender_email: string | null;
-  reply_to_email: string | null;
-  body_text: string | null;
-  body_html?: string | null;
-  snippet: string | null;
-  received_at: string | null;
-  thread_id?: string | null;
-  gmail_id?: string | null;
-  account_id?: string | null;
-  recipients?: string | null;
-  cc_recipients?: string | null;
-  is_calendar?: boolean | null;
-};
-
-// Added to the drafting instructions when the reply will go out without the
-// user reading it. The model's answer is only text; who it goes to is fixed in
-// code. HOLD turns the reply back into a draft for the user.
-const AUTOPILOT_INSTRUCTIONS =
-  "This reply will be sent automatically, without the user reading it first. Answer only what the email and the background context let you answer. " +
-  "If a good reply needs a decision, a commitment (money, a date, attending something, agreeing to something), an attachment, or facts you do not have, write only the word HOLD and nothing else.";
-
-const HOLD = /^\W*HOLD\W*$/;
-
 // A draft the model failed to write is tried again, this often in all.
 const DRAFT_TRIES = 3;
 const draftTries = new Map<string, number>();
@@ -103,57 +76,7 @@ const draftTries = new Map<string, number>();
 const NEWS_MS = 24 * 3600_000;
 
 // `tabellar check` swaps this for canned text so Autopilot can be run without a model.
-export const drafter = { draft: (userId: string, e: EmailRow, instructions: string) => draftReply(userId, e, instructions) };
-
-// The part of an email a reply answers: its own text and the newest of the
-// thread quoted under it. A local model reads the prompt at about a hundred
-// tokens a second, so a long quoted thread cost more time than anything else.
-const DRAFT_BODY_CHARS = 4000;
-
-// A reply to one email in the user's writing style, with what Tabellar knows
-// about the sender. Used by the engine and by /generate-draft.
-export async function draftReply(userId: string, e: EmailRow, instructions: string, kind?: Recipient): Promise<string> {
-  const emailText = `Subject: ${e.subject}\nFrom: ${e.sender}\n\n${String(e.body_text || e.snippet || "").slice(0, DRAFT_BODY_CHARS)}`;
-  const senderName = e.sender?.split("<")[0]?.trim().replace(/"/g, "") || "";
-  const [writing, { data: known }, about] = await Promise.all([
-    writingFor(userId, e.reply_to_email || e.sender_email, kind),
-    senderName.length > 1
-      ? db.from("knowledge_base").select("entity, entity_type, info").eq("user_id", userId).in("entity_type", ["person", "company"]).ilike("entity", `%${senderName.replace(/[%_]/g, "")}%`).limit(5)
-      : Promise.resolve({ data: [] as Record<string, unknown>[] }),
-    profileContext(userId, { sender_email: e.sender_email, subject: e.subject, text: e.body_text || e.snippet }),
-  ]);
-  const background = [about, (known ?? []).map((k) => `${k.entity} (${k.entity_type}): ${k.info}`).join("\n")].filter(Boolean).join("\n\n");
-  const prompt = background ? `${emailText}\n\nBackground context:\n${background}` : emailText;
-  return keepRules(writing, (extra) => generateDraft(prompt, instructions, stylePrompt(writing), extra));
-}
-
-// A reply to a real email from that kind of sender, to show how Tabellar
-// writes now. Kept nowhere. With no such email it answers a made-up one.
-export async function sampleReply(userId: string, kind?: Recipient): Promise<{ who: string; subject: string; text: string; example: boolean; draft: string }> {
-  const [kindOf, written, { data }] = await Promise.all([
-    recipients(userId),
-    writtenTo(userId),
-    db
-      .from("email_processed")
-      .select("category, quick_actions, emails!inner(id, subject, sender, sender_email, reply_to_email, body_text, body_html, snippet, received_at, label_ids, is_calendar, has_list_unsubscribe, list_id, precedence_header)")
-      .eq("user_id", userId)
-      .in("category", ["action-required", "important"])
-      .order("processed_at", { ascending: false })
-      .limit(300),
-  ]);
-  const asked = (r: Record<string, unknown>) => ((r.quick_actions as QuickAction[] | null) ?? []).find((a) => a.action === "reply");
-  const rows = ((data ?? []) as Record<string, unknown>[])
-    .map((r) => ({ reply: asked(r), e: r.emails as EmailRow & Parameters<typeof isBulk>[0] & { label_ids: string[] | null } }))
-    .filter(({ e }) => {
-      const a = e.sender_email ?? "";
-      return a && !NO_REPLY.test(a) && !e.is_calendar && !e.label_ids?.includes("SENT") && !isBulk(e, written) && String(e.body_text ?? "").trim().length > 40 && !looksLikeInstructions(e.subject, e.body_text, e.body_html) && (!kind || kindOf(a) === kind);
-    })
-    .sort((a, b) => Number(!!b.reply) - Number(!!a.reply) || String(b.e.received_at).localeCompare(String(a.e.received_at)));
-  const made = { id: "", subject: "Thursday", sender: "Sam Lee <sam@example.org>", sender_email: "sam@example.org", reply_to_email: null, snippet: null, received_at: null, body_text: "Hi,\n\nAre you free on Thursday at 3 to go over the draft? If not, tell me what suits you better.\n\nSam" };
-  const e: EmailRow = rows[0]?.e ?? made;
-  const draft = await draftReply(userId, e, String(rows[0]?.reply?.text ?? ""), kind);
-  return { who: displayName(e.sender, e.sender_email ?? ""), subject: e.subject ?? "", text: ownWords(String(e.body_text ?? "")).slice(0, 600), example: !rows[0], draft };
-}
+export const drafter = { draft: (userId: string, e: EmailRow, auto: boolean) => draftReply(userId, e, "", { auto }) };
 
 // ── Planning ────────────────────────────────────────────────────────────────
 
@@ -214,7 +137,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
 
   const { data: rows } = await db
     .from("email_processed")
-    .select("id, category, urgency, summary, quick_actions, calendar, extra_labels, emails!inner(id, subject, sender, sender_email, reply_to_email, recipients, cc_recipients, body_text, body_html, snippet, received_at, thread_id, gmail_id, account_id, is_calendar)")
+    .select("id, category, urgency, summary, quick_actions, calendar, extra_labels, emails!inner(id, subject, sender, sender_email, reply_to_email, recipients, cc_recipients, body_text, body_html, snippet, received_at, thread_id, gmail_id, account_id, is_calendar, attachments)")
     .eq("user_id", userId)
     .is("engine_at", null)
     .limit(100);
@@ -290,8 +213,10 @@ export const planNew = serial(async (userId: string): Promise<void> => {
 
     const replyTo = (email.reply_to_email || email.sender_email || "").trim();
     const reply = actions.find((a) => a.action === "reply");
+    // Someone waits on the user: a reply the model thought of, or a question.
+    const waits = !!reply || ownWords(String(email.body_text ?? "")).includes("?");
     const wantsDraft =
-      category === "action-required" && !!reply && !!replyTo && !NO_REPLY.test(replyTo) && !already.has("draft") && !already.has("send") && !stopped("draft") && !(await laterInThread(email));
+      category === "action-required" && waits && !!replyTo && !NO_REPLY.test(replyTo) && !already.has("draft") && !already.has("send") && !stopped("draft") && !(await laterInThread(email));
     const todo = todoOf(actions, email, category);
     const wantsTodo = !!todo && !already.has("todo") && !stopped("todo") && !(await sameTodo(userId, String(todo.label), sender));
 
@@ -314,7 +239,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     // Autopilot when everything allows it, otherwise saved as a draft.
     let drafted = false;
     let replying = false;
-    if (wantsDraft && !asked && reply) {
+    if (wantsDraft && !asked) {
       const subject = /^re:/i.test(email.subject ?? "") ? email.subject! : `Re: ${email.subject ?? ""}`;
       // From the address the email was sent to (an alias, another account).
       const account = accounts.get(email.account_id ?? "");
@@ -329,17 +254,17 @@ export const planNew = serial(async (userId: string): Promise<void> => {
         (!profile?.autopilot_known_only || (await wroteTo(userId, replyTo, asker)));
       // Ask before paying for the model call; a refusal is logged by act().
       const pre = decide({ kind: "draft", ...settings, source: "engine", suspicious, todayCount: today.draft ?? 0, cycleCount });
-      const { count: existing } = await db.from("draft_emails").select("id", { count: "exact", head: true }).eq("email_id", email.id);
+      // A draft for this email is there, or the user is at one in the thread.
+      const existing = (await threadDrafts(userId, email.id)).some((x) => x.email_id === email.id || x.source !== "tabellar" || x.edited_at);
       if (pre.verdict === "refuse" && !trySend) await run(base);
       else if (!existing) {
         try {
-          const instructions = String(reply.text || reply.label || "");
-          let body = (await drafter.draft(userId, email, trySend ? `${instructions}\n\n${AUTOPILOT_INSTRUCTIONS}` : instructions)).trim();
+          let body = (await drafter.draft(userId, email, trySend)).trim();
           if (trySend && GAP.test(body)) {
             // Kept as a draft, for the user to fill in.
             if (pre.verdict === "refuse") body = "";
           } else if (trySend && HOLD.test(body)) {
-            body = pre.verdict === "refuse" ? "" : (await drafter.draft(userId, email, instructions)).trim();
+            body = pre.verdict === "refuse" ? "" : (await drafter.draft(userId, email, false)).trim();
           } else if (trySend && body) {
             let inReplyTo: string | null = null;
             try {
@@ -537,20 +462,21 @@ export async function closePastMeetings(userId: string): Promise<void> {
 
 // A reply that waits on an email the conversation has moved past is no longer
 // the reply to send: a proposal goes once anyone has written since, a draft
-// Tabellar wrote (and the user has not saved) once the user has answered.
+// Tabellar wrote (and the user has not changed) once the user has answered.
 export async function withdrawStale(userId: string): Promise<void> {
   const now = new Date().toISOString();
   const { data: proposals } = await db.from("action_log").select("id, emails!inner(id, thread_id, received_at)").eq("user_id", userId).eq("kind", "draft").eq("status", "proposed");
   for (const r of proposals ?? []) {
     if (await laterInThread(r.emails as EmailRow)) await db.from("action_log").update({ status: "dismissed", decided_at: now, reason: MOVED_ON }).eq("id", r.id).eq("status", "proposed");
   }
-  const { data: drafts } = await db.from("draft_emails").select("id, created_at, emails!inner(id, thread_id, received_at)").eq("user_id", userId).eq("source", "tabellar").is("gmail_draft_id", null);
-  for (const d of drafts ?? []) {
-    const e = d.emails as EmailRow;
-    if (!e.thread_id) continue;
-    const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("thread_id", e.thread_id).contains("label_ids", ["SENT"]).gt("received_at", d.created_at);
-    if (count) await db.from("draft_emails").delete().eq("id", d.id);
+  const { data: drafts } = await db.from("draft_emails").select("*, emails!inner(gmail_id, thread_id, account_id)").eq("user_id", userId).eq("source", "tabellar").is("edited_at", null);
+  const answered: Parameters<typeof withdrawAnswered>[1] = [];
+  for (const d of (drafts ?? []) as unknown as Parameters<typeof withdrawAnswered>[1]) {
+    if (!d.emails?.thread_id) continue;
+    const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("thread_id", d.emails.thread_id).contains("label_ids", ["SENT"]).gt("received_at", d.created_at);
+    if (count) answered.push(d);
   }
+  if (answered.length) await withdrawAnswered(userId, answered);
 }
 
 // Sort and plan everything not read yet, a batch at a time.
@@ -575,10 +501,11 @@ export async function runCycle(): Promise<void> {
     const unread = await db.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("paused", false).is("read_at", null);
     if ((await firstReadState(userId)).step !== "done" || unread.count) void startFirstRead(userId, () => planNew(userId));
     await closePastMeetings(userId);
-    await withdrawStale(userId);
     await refreshStaleSendAs(userId);
     await applyWaitingLabels(userId);
     await syncMail(userId);
+    await syncDrafts(userId);
+    await withdrawStale(userId);
     if (modelConfigured()) {
       await readAll(userId);
       await judgeSent(userId);
@@ -687,6 +614,7 @@ function startWatcher(): () => void {
       const changed = !!userId && (await mailboxChanged(userId, failures));
       if (userId && changed) {
         const fresh = await syncMail(userId);
+        await syncDrafts(userId);
         await withdrawStale(userId);
         if (fresh.length && modelConfigured()) void readNew(userId);
       }

@@ -560,6 +560,21 @@ export const microsoftMailbox: Mail = {
     return { id };
   },
 
+  drafts: async (a) => (await pages(a, "/me/mailFolders/drafts/messages?$select=id,conversationId,changeKey&$top=200")).map((m) => ({ id: m.id, threadId: m.conversationId ?? "", version: m.changeKey ?? "" })),
+
+  async readDraft(a, draftId) {
+    try {
+      const m = await graph(a, `/me/messages/${draftId}?$select=isDraft,subject,body,toRecipients,ccRecipients,bccRecipients`);
+      if (m?.isDraft !== true) return null;
+      const html = m.body?.contentType === "text" ? "" : (m.body?.content ?? "");
+      const all = (list: Who[] | undefined) => (list ?? []).map(who).join(", ");
+      return { text: html ? htmlToText(html) : (m.body?.content ?? ""), html, subject: m.subject ?? "", to: all(m.toRecipients), cc: all(m.ccRecipients), bcc: all(m.bccRecipients) };
+    } catch (e) {
+      if ((e as { status?: number }).status === 404) return null;
+      throw e;
+    }
+  },
+
   saveDraft,
 
   // A sent draft keeps its id, so it is asked first whether it still is one.

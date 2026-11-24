@@ -4,7 +4,6 @@
 //   POST /send-email            Send an email now
 //   POST /draft-email           Draft a new email or reply
 //   POST /refine-draft          Rewrite a draft
-//   POST /generate-draft        Draft a reply to a stored email
 //   POST /analyze-inbox         Re-analyze unprocessed or all emails
 //   POST /writing/...           How the user writes: learn, set a line, a sample reply
 //   GET  /briefing              The Brief
@@ -52,7 +51,8 @@ import { realAttendees } from "./senders.ts";
 import { answered, snooze, unsnooze } from "./snooze.ts";
 import { prepFor } from "./prep.ts";
 import { filesInMailboxes } from "./files.ts";
-import { kickEngine, draftReply, engineStatus, planNew, sampleReply } from "./engine.ts";
+import { kickEngine, engineStatus, planNew } from "./engine.ts";
+import { draftReply, sampleReply, type EmailRow } from "./replies.ts";
 import { displayNameOf, isRule, keepRules, learnFromEdit, RECIPIENTS, setAvoid, setLine, stylePrompt, writingFor } from "./writing.ts";
 import { learnFromSent, startFirstRead } from "./firstRead.ts";
 import * as onboarding from "./onboarding.ts";
@@ -512,6 +512,13 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     if (path === "/draft-email" && req.method === "POST") {
       const body = await req.json();
 
+      // An answer to an email Tabellar has.
+      if (body.email_id) {
+        const { data: e } = await db.from("emails").select("*").eq("id", body.email_id).eq("user_id", userId).maybeSingle();
+        if (!e) return json({ error: "Email not found" }, 404, corsHeaders);
+        return json({ draft: await draftReply(userId, e as unknown as EmailRow, String(body.intent ?? "")) }, 200, corsHeaders);
+      }
+
       // Fetch sender's display name
       let senderName: string = body.senderName || "";
       if (!senderName) {
@@ -607,25 +614,6 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       const [writing, about] = await Promise.all([writingFor(userId, String(body.to ?? "")), profileContext(userId)]);
       const refined = await keepRules(writing, (extra) => refineDraft({ currentDraft, feedback, style: stylePrompt(writing, "rules"), extra, knowledgeContext: about || undefined }));
       return json({ draft: refined, kept }, 200, corsHeaders);
-    }
-
-    // ── POST /generate-draft ───────────────────────────────────────────────
-    if (path === "/generate-draft" && req.method === "POST") {
-      const body = await req.json();
-
-      const { data: emails } = await db
-        .from("emails")
-        .select("*")
-        .eq("id", body.email_id ?? "")
-        .eq("user_id", userId);
-
-      if (!emails?.length) {
-        return json({ error: "Email not found" }, 404, corsHeaders);
-      }
-
-      const draft = await draftReply(userId, emails[0] as Parameters<typeof draftReply>[1], body.instructions ?? "");
-
-      return json({ draft }, 200, corsHeaders);
     }
 
     // ── GET /briefing: what needs the user today (brief.ts) ──────────────

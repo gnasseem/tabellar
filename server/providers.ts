@@ -134,6 +134,11 @@ export type Outgoing = {
   receipt?: boolean; // ask for a read receipt, sent to the From address
 };
 
+// A draft in the mailbox's Drafts: the thread it is in, and something that
+// changes whenever the draft does. And what it says.
+export type DraftStub = { id: string; threadId: string; version: string };
+export type DraftText = { text: string; html: string; subject: string; to: string; cc: string; bcc: string };
+
 export type SendAs = { address: string; name: string; default: boolean };
 
 // An event on the user's calendar, as an email is linked to it.
@@ -185,6 +190,10 @@ export type Mail = {
   headers(a: Box, id: string, names: string[]): Promise<Record<string, string>>;
   threadOf(a: Box, id: string): Promise<string>;
   send(a: Box, m: Outgoing, threadId?: string): Promise<{ id: string }>;
+  // Every draft in the mailbox's Drafts, and one of them in full (null when it
+  // is no longer there).
+  drafts(a: Box): Promise<DraftStub[]>;
+  readDraft(a: Box, draftId: string): Promise<DraftText | null>;
   // Put a draft in the mailbox's Drafts, replacing `draftId`. Returns its id.
   saveDraft(a: Box, draftId: string | null, m: Outgoing, threadId?: string): Promise<string>;
   // Take one draft out of Drafts: only a draft, and only one whose id

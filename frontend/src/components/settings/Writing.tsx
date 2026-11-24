@@ -7,7 +7,7 @@ import { createClient } from "@/lib/db";
 import { api } from "@/lib/outcomes";
 import { useApp } from "../AppShell";
 import { Seg } from "../ui";
-import { AddButton, Group, LineField, Lines, loadingLines, Row, Saved } from "./parts";
+import { AddButton, Group, LineField, Lines, loadingLines, Row, Saved, Switch, useProfile } from "./parts";
 
 const supabase = createClient();
 
@@ -32,6 +32,7 @@ const LENGTHS = [
 export default function Writing() {
   const { user, addToast, liveChanges } = useApp();
   const flash = useContext(Saved);
+  const { profile, save } = useProfile();
   const [style, setStyle] = useState<Style | null>(null);
   const [rules, setRules] = useState<Rule[]>([]);
   const [kind, setKind] = useState<Kind>("all");
@@ -124,6 +125,12 @@ export default function Writing() {
               </option>
             ))}
           </select>
+        </Row>
+      </Group>
+
+      <Group title="Drafts">
+        <Row name="Keep reply drafts in the mailbox's Drafts too">
+          <Switch label="Keep reply drafts in the mailbox's Drafts too" on={profile?.mailbox_drafts !== false} onChange={(v) => save({ mailbox_drafts: v })} />
         </Row>
       </Group>
 

@@ -82,6 +82,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "k", description: "Previous reply" },
       { keys: "x", description: "Select (Shift for a range)" },
       { keys: "Cmd Enter", description: "Send" },
+      { keys: "1 2 3", description: "Choose an answer" },
       { keys: "e", description: "Edit" },
       { keys: "Backspace", description: "Discard" },
     ],

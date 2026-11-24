@@ -2,6 +2,7 @@ import { forwardRef, useImperativeHandle, useState, useEffect, useRef } from "re
 import DOMPurify from "dompurify";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
+import { choicesOf, choose } from "../../../server/choices.ts";
 import { useApp } from "./AppShell";
 import { api } from "@/lib/outcomes";
 import { replyFrom } from "@/lib/accounts";
@@ -510,7 +511,8 @@ const ComposeModal = forwardRef<ComposeHandle, ComposeProps>(function ComposeMod
         to,
         senderName: profile?.display_name || "",
         forward: forwarded ? { subject: forwarded.subject, from: forwarded.sender, body: forwarded.body_text || forwarded.snippet } : undefined,
-        replyTo: replyTo && !forwardId ? { subject: replyTo.subject, body: replyTo.body_text?.slice(0, 1000) } : undefined,
+        email_id: replyTo && !forwardId ? replyTo.id : undefined,
+        replyTo: replyTo && !forwardId && !replyTo.id ? { subject: replyTo.subject, body: replyTo.body_text?.slice(0, 1000) } : undefined,
       });
       if (quiet && bodyNow.current.trim()) {
         // The user wrote their own meanwhile.
@@ -766,8 +768,16 @@ const ComposeModal = forwardRef<ComposeHandle, ComposeProps>(function ComposeMod
     await supabase.from("meetings").insert(row);
   };
 
+  // A decision the draft leaves open; taking an answer puts it in the text.
+  const open = choicesOf(body)[0];
+  const answer = (i: number) => {
+    if (body === drafted.current) drafted.current = choose(body, [i]);
+    setBody(choose(body, [i]));
+  };
+
   const handleSend = async () => {
     if (!canSend) return;
+    if (open) return addToast("error", "Choose an answer first.");
     setSending(true);
 
     try {
@@ -1020,7 +1030,7 @@ const ComposeModal = forwardRef<ComposeHandle, ComposeProps>(function ComposeMod
         .map((s: string) => s.trim())
         .join(", ");
       notifySent({ to: sentTo, subject, body_html: sendBody });
-      if (drafted.current && body.trim() !== drafted.current.trim()) {
+      if (drafted.current && !choicesOf(drafted.current).length && body.trim() !== drafted.current.trim()) {
         api("/writing/edited", { to: parsedTo[0], before: drafted.current, after: body }).catch(() => {});
       }
 
@@ -1276,6 +1286,16 @@ const ComposeModal = forwardRef<ComposeHandle, ComposeProps>(function ComposeMod
                   </button>
                 </div>
               ))}
+          </div>
+        )}
+
+        {open && (
+          <div className="flex flex-wrap items-center gap-1.5 pb-3" role="group" aria-label="Answer">
+            {open.map((c, i) => (
+              <button key={c.label} className="btn btn-sm" title={c.text} onClick={() => answer(i)}>
+                {c.label}
+              </button>
+            ))}
           </div>
         )}
 

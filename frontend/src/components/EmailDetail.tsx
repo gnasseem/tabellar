@@ -3,6 +3,8 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { api, setMailState, type Outcome } from "@/lib/outcomes";
 import { assessSuspicion, type SuspicionVerdict } from "@/lib/suspicion";
+import Answers, { type Picks } from "./Answers";
+import { choicesOf, choose } from "../../../server/choices.ts";
 import { useApp } from "./AppShell";
 import DateTimePicker from "./DateTimePicker";
 import EmailBody from "./EmailBody";
@@ -290,7 +292,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
       action: {
         label: "Undo",
         onClick: async () => {
-          const { id: _id, gmail_draft_id: _gone, ...rest } = draft;
+          const { id: _id, gmail_draft_id: _gone, mailbox_version: _seen, ...rest } = draft;
           await supabase.from("draft_emails").insert(rest);
           notifyDraftChange();
           mail.reload();
@@ -574,11 +576,17 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
   );
 }
 
+const escaped = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
+
 // Tabellar's reply under the message it answers: a draft with Edit and
 // Discard, or one Autopilot is about to send, with Cancel.
 function InlineReply({ reply, source, onDiscard }: { reply: { draft?: any; going?: any }; source: any; onDiscard: (draft: any) => void }) {
   const { openCompose, mail, addToast } = useApp();
+  const [picks, setPicks] = useState<Picks>([]);
   const r = reply.going || reply.draft;
+  const text = plain(r.body_html || r.body_text || "");
+  const open = !reply.going && choicesOf(text).length > 0;
+  const edit = () => openCompose(source, open && picks.length ? { ...reply.draft, body_html: escaped(choose(text, picks)) } : reply.draft);
   const to = (r.to_addresses || []).join(", ");
   return (
     <section className="inset mt-2" aria-label="Reply">
@@ -588,7 +596,13 @@ function InlineReply({ reply, source, onDiscard }: { reply: { draft?: any; going
         {reply.going && <Countdown until={reply.going.send_at} className="font-medium text-wax-ink" />}
         <span className="min-w-0 flex-1 truncate text-xs text-ink3">{to && `to ${to}`}</span>
       </div>
-      <p className="mt-2 whitespace-pre-wrap break-words leading-[1.6] text-ink2">{plain(r.body_html || r.body_text || "")}</p>
+      {open ? (
+        <div className="mt-2 leading-[1.6] text-ink2">
+          <Answers text={text} picks={picks} onPick={setPicks} />
+        </div>
+      ) : (
+        <p className="mt-2 whitespace-pre-wrap break-words leading-[1.6] text-ink2">{text}</p>
+      )}
       <div className="mt-3 flex gap-1.5">
         {reply.going ? (
           reply.going.action_id && (
@@ -598,7 +612,7 @@ function InlineReply({ reply, source, onDiscard }: { reply: { draft?: any; going
           )
         ) : (
           <>
-            <button className="btn btn-pri" onClick={() => openCompose(source, reply.draft)}>
+            <button className="btn btn-pri" onClick={edit}>
               Edit and send
             </button>
             <button className="btn btn-plain" onClick={() => onDiscard(reply.draft)}>

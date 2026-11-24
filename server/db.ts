@@ -33,6 +33,8 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       // Before a meeting (prep.ts): whether to tell, and the events told about.
       notify_meetings: "bool ! =true", meetings_told: "json ! =[]",
       menu_bar: "bool ! =true",
+      // Reply drafts Tabellar makes are also in the mailbox's own Drafts (drafts.ts).
+      mailbox_drafts: "bool ! =true",
       autonomy_level: 'text ! ="suggest"', engine_paused: "bool ! =false",
       autopilot_delay_min: "int ! =5", autopilot_daily_cap: "int ! =5", autopilot_known_only: "bool ! =true",
       first_read: "json", rules_version: "int ! =0", label_suggestions: "json",
@@ -173,7 +175,9 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       id: "uuid pk =uuid", user_id: "uuid !", account_id: "uuid >accounts:cascade", from_address: "text",
       to_addresses: "json ! =[]", subject: "text", body_html: "text", email_id: "uuid >emails:null", source: "text",
       cc_addresses: "json", bcc_addresses: "json",
-      gmail_draft_id: "text", // the same draft in Gmail's Drafts, when the user saved it
+      // The same draft in the mailbox's Drafts, how it stood there when last
+      // looked at, and when the user changed it, here or there (drafts.ts).
+      gmail_draft_id: "text", mailbox_version: "text", edited_at: "time",
       forward: "json", read_receipt: "bool ! =false",
       created_at: "time ! =now",
     },

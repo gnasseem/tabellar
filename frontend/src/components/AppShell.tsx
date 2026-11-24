@@ -58,6 +58,7 @@ type Profile = {
   notification_preview?: boolean | null;
   notification_quiet?: boolean | null;
   notify_meetings?: boolean | null;
+  mailbox_drafts?: boolean | null;
   menu_bar?: boolean | null;
 };
 

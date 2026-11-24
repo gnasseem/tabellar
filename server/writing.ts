@@ -201,8 +201,8 @@ export async function keepRules(w: Writing, write: (extra: string) => Promise<st
 
 const GREETING = /^(hi|hey|hello|dear|good (?:morning|afternoon|evening)|greetings|salam|bonjour|bonsoir|salut|hola|hallo|liebe[r]?|ciao|ol[áa])\b(.*?)\s*([,!:.]|[-–])?$/i;
 const GROUP = /^(all|everyone|everybody|team|there|folks|both|guys)$/i;
-const CLOSING =
-  /^(?:all the best|best(?: regards| wishes)?|(?:kind|warm|warmest|with kind) regards|kindest regards|regards|many thanks|thanks(?: again| so much| a lot)?|thank you(?: so much| very much)?|cheers|sincerely|yours(?: sincerely| truly| faithfully)?|warmly|respectfully|take care|talk soon|speak soon|see you(?: soon)?|cordialement|bien à vous|merci|saludos|un saludo|abrazos?|mit freundlichen grüßen|viele grüße|lg)[,!.]?$/i;
+export const CLOSING =
+  /^(?:all the best|best(?: regards| wishes)?|(?:kind|warm|warmest|with kind) regards|kindest regards|regards|many thanks|thanks(?: again| so much| a lot)?|thank you(?: so much| very much)?|cheers|sincerely|yours(?: sincerely| truly| faithfully)?|warmly|respectfully|take care|talk soon|speak soon|see you(?: soon)?|cordialement|bien à vous|merci|saludos|un saludo|abrazos?|mit freundlichen grüßen|viele grüße|à bientôt|bien cordialement|met vriendelijke groet|com os melhores cumprimentos|cordiali saluti|lg)[,!.]?$/i;
 
 const linesOf = (s: string) => s.split("\n").map((l) => l.trim()).filter(Boolean);
 
@@ -230,18 +230,28 @@ export function closingOf(text: string, name: string): string {
   return "";
 }
 
-// The user's own words in a sent email: the quoted reply and forwarded mail cut off.
-export function ownWords(body: string): string {
-  let text = body.replace(/\r/g, "");
-  const cut = text.search(/\n[^\n]*(\bOn [^\n]{0,200}\n?[^\n]{0,200}wrote:|-{3,} ?Forwarded message|-{3,} ?Original Message)/i);
-  if (cut > 0) text = text.slice(0, cut);
-  return text
+// Where the mail quoted under an email starts: "On Monday, Ann wrote:" in the
+// languages mail programs write it in, Outlook's block of headers, a forward.
+const QUOTE =
+  /\n[^\n]*(?:\bOn [^\n]{0,200}\n?[^\n]{0,200}wrote:|\bLe [^\n]{0,200}\n?[^\n]{0,200}a écrit\s*:|\b(?:Am|Den) [^\n]{0,200}\n?[^\n]{0,200}(?:schrieb|skrev)[^\n]{0,80}:|\bEl [^\n]{0,200}\n?[^\n]{0,200}escribió:|\bIl [^\n]{0,200}\n?[^\n]{0,200}ha scritto:|\bEm [^\n]{0,200}\n?[^\n]{0,200}escreveu:|\bOp [^\n]{0,200}\n?[^\n]{0,200}schreef[^\n]{0,80}:|-{3,} ?(?:Forwarded message|Original Message))|\n_{10,}\s*\n|\n\*?(?:From|De|Von|Da)\s*:\*? [^\n]+\n\*?(?:Sent|Date|Envoyé|Gesendet|Enviado|Inviato)\s*:/i;
+
+export function splitQuoted(body: string): { own: string; quoted: string } {
+  const text = body.replace(/\r/g, "");
+  const at = text.search(QUOTE);
+  const [own, quoted] = at > 0 ? [text.slice(0, at), text.slice(at)] : [text, ""];
+  return { own: unquoted(own), quoted: `${at > 0 ? "" : text.split("\n").filter((l) => /^\s*>/.test(l)).join("\n")}${quoted}`.replace(/^[ \t]*>+ ?/gm, "").replace(/\n{3,}/g, "\n\n").trim() };
+}
+
+const unquoted = (s: string) =>
+  s
     .split("\n")
     .filter((l) => !/^\s*>/.test(l))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
-}
+
+// The user's own words in a sent email: the quoted reply and forwarded mail cut off.
+export const ownWords = (body: string): string => splitQuoted(body).own;
 
 export const wordCount = (s: string) => s.split(/\s+/).filter(Boolean).length;
 const lengthOf = (n: number) => (n < 60 ? "short" : n < 150 ? "medium" : "long");

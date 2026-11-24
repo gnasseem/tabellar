@@ -6,7 +6,7 @@ import { act, engineSettings } from "./actions.ts";
 import { discardDrafts } from "./drafts.ts";
 import { userCalendar } from "./providers.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
-import { chatCompletion, modelFailure, modelTimeoutMs, requireModel } from "./llm.ts";
+import { chatCompletion, isLocalModel, modelFailure, modelTimeoutMs, requireModel } from "./llm.ts";
 import type { Slot } from "./config.ts";
 import { checkActions, wording } from "./rules.ts";
 import { realAttendees } from "./senders.ts";
@@ -29,10 +29,192 @@ urgency, exactly one: critical (act today), high (within 1 to 3 days: an offer o
 
 summary: one sentence, two at most, that leads with the most important fact: an amount, a deadline, the decision or the ask. Name the sender only if a person. No filler such as "This email informs you".`,
   process_email_actions: `actions: what the user would do about it. Most email needs nothing: [] unless a rule below clearly applies. At most one of each kind.
-- {"action": "reply", "label": "Reply to John about the Q3 review", "text": "what the reply should say, in one line"}: only when a real person asked the user something or is waiting on their answer.
+- {"action": "reply", "label": "Reply to John about the Q3 review"}: only when a real person asked the user something or is waiting on their answer.
 - {"action": "add_todo", "label": "Sign the lease renewal for Dana by Friday", "quote": "the sentence that asks for it, copied word for word"}: only when someone the user deals with asks them personally to sign, pay what they owe, submit, send, prepare or fix something. Never for marketing or broadcast calls to action (register, sign up, apply, attend, nominate, buy), offers the user may take or leave, receipts, notifications, or things that happen on their own. The label names the task, the person when relevant, and a deadline only in the email's own words ("by Friday"), never worked out into a date.
 - {"action": "schedule_meeting", "label": "Call with Priya", "text": "what it is about", "quote": "the sentence that gives the meeting's time, or else the one that proposes it, word for word", "meetingDetails": {"title": "Call with Priya", "date": "YYYY-MM-DD resolved against today, or null when no day is named", "time": "the start time as written, e.g. 4:30pm, or null", "timezone": "as written next to the time, e.g. EST, or null", "duration": minutes or null, "location": "link or address, or null"}}: only when the email arranges or proposes a meeting, call, interview or appointment with the user, not an event advertised to many. Never supply a time or timezone the email does not state.`,
-  draft: `You write the user's email replies for them, in their own voice. Write only the body of the reply: no subject line, no notes about it, no placeholders like [Your Name]. Answer what the email asks and say nothing that the email, the instructions or the background do not support. Follow the user's way of writing below.`,
+  // Over 1,100 tokens on purpose: a local model with a sliding window reuses
+  // the work on a fixed start of that length, and starts over on a shorter one.
+  draft: `You write the user's email replies for them, in their own voice, so that they can send them without changing a word. Write only the body of the reply: no subject line, no notes about it.
+
+Answer what the email asks, from what you are given and nothing else. When the answer is in the thread, in another email, in an attached file or under "Now", give it plainly. Never state a number, name, address, date, price, reason or plan you were not given, and never say that something was sent, signed, checked, booked or attached unless you were told it was. A fact the email asks for that you were not given: name it and say that the user does not have it to hand, in one short sentence. That is only for facts. A request, an offer or a complaint is never answered with it.
+
+Never decide for the user. Whether a time suits them, whether they come, pay, refund, approve, agree to terms, introduce, lend their name, share, sign or send something, or do a favour is theirs to say, unless their own earlier message in the thread already said exactly that. Promise nothing on their behalf. When the email asks the user for such a decision, leave it to them: write the greeting, then anything else the reply has to say, then each possible answer as its own paragraph under a label in square brackets, then the sign-off. The labels are [Yes] and [No]; when the email offers several times or options, one label for each of them and one that takes none. Three at most. Each answer is one or two sentences, gives no reason and makes no offer of its own. Two decisions in one email get their answers one after the other, with a few words between that say what the second is about. An email that asks for no decision gets a plain reply with no labels.
+
+As short as a busy person writes: no small talk, no thanks beyond a word, no repeating the email, no closing offer of help. The style lines given with the email say how the user greets and signs off; use them once each.
+
+Examples. They show the form; their facts belong to other people.
+
+Email: "Hi Dana, can we meet Tuesday at 4 to go over the budget? Omar"
+Reply:
+Hi Omar,
+
+[Yes]
+Tuesday at 4 works for me.
+
+[No]
+I can't make Tuesday at 4. Could we find another time?
+
+Best,
+Dana
+
+Email: "Hi Dana, would Monday at 9 or Thursday at 11 suit you? Omar"
+Reply:
+Hi Omar,
+
+[Monday]
+Monday at 9 works for me.
+
+[Thursday]
+Thursday at 11 works for me.
+
+[Neither]
+I can't make either of those. Could you suggest another time?
+
+Best,
+Dana
+
+Email: "Dana, the printer wants 900 euros more for the thicker paper. OK to go ahead? And what was the page count again? Omar"
+In the thread Dana wrote: "It will be 64 pages."
+Reply:
+Hi Omar,
+
+It is 64 pages.
+
+[Yes]
+Please go ahead with the thicker paper for 900 euros more.
+
+[No]
+Please don't go ahead with the thicker paper for now.
+
+Best,
+Dana
+
+Email: "Hi Dana, could you put me in touch with your landlord? Vera"
+Reply:
+Hi Vera,
+
+[Yes]
+I'd be glad to put you in touch.
+
+[No]
+I'd rather not make that introduction, sorry.
+
+Best,
+Dana
+
+Email: "Dana, can you get the lease back to us by Friday? Ines"
+Reply:
+Hi Ines,
+
+[Yes]
+I'll get the lease back to you by Friday.
+
+[No]
+I won't be able to get it to you by Friday. Is there any room on the date?
+
+Best,
+Dana
+
+Email: "Hi Dana, the paint comes a week late, is that all right? Omar"
+Reply:
+Hi Omar,
+
+[Yes]
+That's fine.
+
+[No]
+A week late is a problem for us. Can anything be done to bring it forward?
+
+Best,
+Dana
+
+Email: "Hi Dana, what is the code for the side door, and who cleans on Sundays? Omar"
+In another email Dana wrote: "Vera cleans on Sundays."
+Reply:
+Hi Omar,
+
+Vera cleans on Sundays. I don't have the code to hand.
+
+Best,
+Dana
+
+Email: "Dana, the heating broke down again and I had to pay for a hotel (210 euros). Nobody told me anything. Will you pay it back? And please send me the new contract. Omar"
+Reply:
+Hi Omar,
+
+I'm sorry about the heating, and that nobody told you.
+
+[Yes]
+We'll pay the 210 euros back.
+
+[No]
+We can't pay the 210 euros back.
+
+About the new contract:
+
+[Yes]
+I'll send it to you.
+
+[No]
+I can't send it yet.
+
+Best,
+Dana
+
+Email: "Hi Dana, I'm hiring for a bakery in Lyon. Would you be open to a chat, and what would you want to earn? Nico"
+Reply:
+Hi Nico,
+
+[Yes]
+I'm open to a chat.
+
+[No]
+I'm not looking at the moment, thanks.
+
+Best,
+Dana
+
+Email: "Dana, did the keys go out to Vera? Omar"
+Now: not done yet: Post the keys to Vera.
+Reply:
+Hi Omar,
+
+Not yet, the keys are still to go out.
+
+Best,
+Dana
+
+Email: "Are we still on for tomorrow? Omar"
+In the thread Dana wrote: "Wednesday at 2 works, see you there."
+Reply:
+Hi Omar,
+
+Yes, see you tomorrow at 2.
+
+Best,
+Dana
+
+Email: "Dana, here are the minutes. I put the vote first, tell me if you mind. Omar"
+Reply:
+Hi Omar,
+
+Got them, thanks.
+
+Best,
+Dana
+
+Email: "Bonjour Dana, pourriez-vous venir à l'inauguration jeudi ? Claire"
+Reply:
+Bonjour Claire,
+
+[Oui]
+Je viendrai jeudi avec plaisir.
+
+[Non]
+Je ne pourrai pas venir jeudi.
+
+Cordialement,
+Dana`,
   agent_system: `You are Tabellar's Auto-Resolve executive agent. Your job is to completely clear the user's current inbox list by producing a fully confirmed action plan: drafted replies, todos, calendar events, and a single bulk archive. At the end, the user reviews and executes approved actions with one click.
 
 You have tools. You MUST use them. You never speak in plain prose to the user. Every output from you is either tool calls or, when you truly have nothing to say, a single short line of status text (one sentence, max 12 words, no lists, no options in text).
@@ -467,7 +649,8 @@ export async function processFullEmail(
   };
 }
 
-// A new email or a reply from a few words on what to say. `style` is
+// A new email, one in a thread the user wrote last in, or the note on one
+// handed on, from a few words on what to say. `style` is
 // stylePrompt() in writing.ts; `extra` what a first try got wrong.
 export async function composeDraft(opts: {
   intent: string;
@@ -490,7 +673,7 @@ export async function composeDraft(opts: {
         "",
       ]
     : replyTo
-    ? [`Original email subject: "${replyTo.subject}"`, "Original email content:", (replyTo.body ?? "").slice(0, 800), "", `What to say in reply: ${intent || "Answer it."}`]
+    ? [`The thread so far: "${replyTo.subject}"`, (replyTo.body ?? "").slice(0, 800), "", `What to say: ${intent || "Write again."}`]
     : [subject ? `Topic: ${subject}` : "", intent ? `What to say: ${intent}` : ""].filter(Boolean);
   if (recipientName) context.push(`The recipient is ${recipientName}.`);
   if (knowledgeContext) context.push("", `Background about the recipient and related topics:\n${knowledgeContext}`);
@@ -514,9 +697,17 @@ export async function refineDraft(opts: {
   return draftBody(await llm(withStyle(system, opts.style), context, 0.4, 1024));
 }
 
-export async function generateDraft(emailText: string, instructions: string, style: string, extra?: string): Promise<string> {
-  const prompt = [emailText, instructions && `Instructions: ${instructions}`, extra].filter(Boolean).join("\n\n");
-  return draftBody(await llm(withStyle(PROMPTS.draft, style), prompt, 0.45, 1024));
+// The body of a reply (replies.ts). `who` is what is true of every reply and
+// `prompt` the rest, so that the start of the request is the same each time. A
+// local model has to have read that start alone once to keep it.
+let readAt = { start: "", at: 0 };
+const READ_FOR_MS = 25 * 60_000; // Ollama unloads a model after 30 idle minutes
+
+export async function generateDraft(prompt: string, who: string, extra?: string): Promise<string> {
+  const start = who ? `${PROMPTS.draft}\n\n${who}` : PROMPTS.draft;
+  if (isLocalModel() && (readAt.start !== start || Date.now() - readAt.at > READ_FOR_MS)) await llm(start, "Answer with the word ok.", 0, 8);
+  readAt = { start, at: Date.now() };
+  return draftBody(await llm(start, [prompt, extra].filter(Boolean).join("\n\n"), 0.2, 1024));
 }
 
 const withStyle = (system: string, style: string) => (style ? `${system}\n\n${style}` : system);

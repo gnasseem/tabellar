@@ -107,7 +107,7 @@ export function rowStatus(outcomes: Outcome[] | undefined): { state: MailState; 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // What a draft says, in a line.
 function draftLine(draft: any): string {
-  const text = String(draft.body_html || "").replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+  const text = String(draft.body_html || "").replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\[(\p{L}[^\]]{0,39})\] /gu, "$1: ").replace(/\s+/g, " ").trim();
   const said = text.replace(/^(hi|hello|dear|hey)\b[^,.]*[,.]\s*/i, "");
   return said.length > 140 ? `${said.slice(0, 140).replace(/\s+\S*$/, "")}...` : said;
 }

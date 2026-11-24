@@ -953,6 +953,33 @@ export const imapMailbox: Mail = {
     return { id };
   },
 
+  drafts: (a) =>
+    session(a, async (c) => {
+      const f = await folders(c, a);
+      if (!f.names.includes(f.drafts)) return [];
+      const { validity } = await c.select(f.drafts);
+      const uids = (await c.search("ALL")).slice(-500);
+      const got = uids.length ? await c.fetch(uids, "BODY.PEEK[HEADER.FIELDS (MESSAGE-ID REFERENCES IN-REPLY-TO)]") : [];
+      return got.map((x) => {
+        const h = parseHeaders(x.head?.toString("utf8") ?? "");
+        const id = idOf(h, f.drafts, validity, x.uid);
+        return { id, threadId: threadOf(h, id), version: `${validity}:${x.uid}` };
+      });
+    }),
+
+  readDraft: (a, draftId) =>
+    session(a, async (c) => {
+      const f = await folders(c, a);
+      if (!f.names.includes(f.drafts)) return null;
+      await c.select(f.drafts);
+      const uid = (await c.search(`HEADER MESSAGE-ID ${quote(bare(draftId))}`)).at(-1);
+      const [x] = uid ? await c.fetch([uid], "BODY.PEEK[]") : [];
+      if (!x?.body) return null;
+      const r = readMessage(x.body);
+      const h = r.headers;
+      return { text: r.text || htmlToText(r.html), html: r.html, subject: h.subject ?? "", to: h.to ?? "", cc: h.cc ?? "", bcc: h.bcc ?? "" };
+    }),
+
   saveDraft: (a, draftId, m, threadId) =>
     session(a, async (c) => {
       const f = await folders(c, a);

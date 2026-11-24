@@ -96,7 +96,7 @@ const MONTH = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?
 type Day = { y: number; m: number; d: number };
 
 // Today in a timezone, with its weekday (0 is Sunday).
-function todayIn(tz: string, now: Date): Day & { dow: number } {
+export function todayIn(tz: string, now: Date): Day & { dow: number } {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "numeric", day: "numeric", weekday: "short" }).formatToParts(now).map((x) => [x.type, x.value]));
   return { y: Number(p.year), m: Number(p.month), d: Number(p.day), dow: DAYS.indexOf(String(p.weekday).toLowerCase().slice(0, 3)) };
 }

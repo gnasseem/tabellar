@@ -7,6 +7,8 @@ import { useApp } from "../AppShell";
 import { api } from "@/lib/outcomes";
 import { reversible } from "@/lib/undo";
 import { replyFrom } from "@/lib/accounts";
+import { choicesOf, choose, inLine } from "../../../../server/choices.ts";
+import Answers, { type Picks } from "../Answers";
 import { Countdown, Empty, Glyph, Menu, SearchBox, SkeletonRows, Tick, ViewBar, dayLabel, shortWhen, clock } from "../ui";
 
 // Replies: every answer Tabellar has written, ready to read and send, and the
@@ -57,6 +59,8 @@ function later(choice: "hour" | "evening" | "morning"): string {
   return d.toISOString();
 }
 
+const toHtml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
+
 export default function RepliesView() {
   const { user, search, liveChanges, mail, addToast, openCompose, getViewCache, setViewCache, notifyDraftChange, draftVersion, accounts } = useApp();
   const supabase = createClient();
@@ -69,6 +73,13 @@ export default function RepliesView() {
   const [sending, setSending] = useState(false);
   // A reply to someone the user has never written to is marked New sender.
   const isNew = (r: Reply) => mail.written.size > 0 && !!r.to[0] && !mail.written.has(r.to[0].toLowerCase());
+  // The answers taken in drafts that leave a decision open.
+  const [picks, setPicks] = useState<Record<string, Picks>>({});
+  const answered = (r: Reply): Reply => {
+    if (!picks[r.id]?.length || !choicesOf(r.text).length) return r;
+    const text = choose(r.text, picks[r.id]);
+    return { ...r, text, html: toHtml(text) };
+  };
   const anchor = useRef<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -102,7 +113,7 @@ export default function RepliesView() {
       ...proposed.map((x) => {
         const src = sources.get(x.email_id) || null;
         const text = String(x.detail?.body ?? "");
-        return { id: x.id, going: false, proposal: { id: x.id, hash: x.hash }, to: x.detail?.to || [], subject: x.detail?.subject || "", html: text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>"), text, at: src?.received_at || x.created_at, source: src, raw: { account_id: x.detail?.accountId, from_address: x.detail?.from, email_id: x.email_id, source: "tabellar" } };
+        return { id: x.id, going: false, proposal: { id: x.id, hash: x.hash }, to: x.detail?.to || [], subject: x.detail?.subject || "", html: toHtml(text), text, at: src?.received_at || x.created_at, source: src, raw: { account_id: x.detail?.accountId, from_address: x.detail?.from, email_id: x.email_id, source: "tabellar" } };
       }),
     ];
     setReplies(out);
@@ -201,14 +212,17 @@ export default function RepliesView() {
     if (!list.length || sending) return;
     const bad = list.find((r) => !r.to.length);
     if (bad) return addToast("error", `"${bad.subject || "A reply"}" has no recipient. Open it with Edit to add one.`);
-    const gap = list.map((r) => r.text.match(GAP)?.[0]).find(Boolean);
+    const open = list.find((r) => choicesOf(answered(r).text).length);
+    if (open) return addToast("error", list.length > 1 ? `"${open.subject || "A reply"}" has an answer to choose.` : "Choose an answer first.");
+    const gap = list.map((r) => answered(r).text.match(GAP)?.[0]).find(Boolean);
     if (gap) return addToast("error", `"${gap}" is still to be filled in. Open the reply with Edit.`);
     setSending(true);
     const sendAt = at || new Date(Date.now() + 15_000).toISOString();
     const queued: string[] = [];
     try {
       for (const [i, shownReply] of list.entries()) {
-        const r = (list[i] = await approved(shownReply));
+        const kept = (list[i] = await approved(shownReply));
+        const r = { ...kept, html: choicesOf(shownReply.text).length ? answered(shownReply).html : kept.html };
         const { account, from } = sender(r);
         if (!account) throw new Error("No mailbox is connected");
         // A draft that is also in Gmail's Drafts is sent from there.
@@ -262,7 +276,7 @@ export default function RepliesView() {
   };
   const restore = (r: Reply) => ({
     user_id: user.id, account_id: r.raw.account_id ?? null, from_address: r.raw.from_address ?? null, gmail_draft_id: r.raw.gmail_draft_id ?? null,
-    to_addresses: r.to, cc_addresses: r.raw.cc_addresses ?? null, bcc_addresses: r.raw.bcc_addresses ?? null, subject: r.subject, body_html: r.html, email_id: r.raw.email_id, source: r.raw.source, forward: r.raw.forward ?? null, read_receipt: !!r.raw.read_receipt,
+    to_addresses: r.to, cc_addresses: r.raw.cc_addresses ?? null, bcc_addresses: r.raw.bcc_addresses ?? null, subject: r.subject, body_html: r.html, email_id: r.raw.email_id, source: r.raw.source, edited_at: r.raw.edited_at ?? null, forward: r.raw.forward ?? null, read_receipt: !!r.raw.read_receipt,
   });
 
   const discard = async (list: Reply[]) => {
@@ -296,7 +310,7 @@ export default function RepliesView() {
     if (shownReply.going) return;
     try {
       const r = await approved(shownReply);
-      openCompose(r.source ? { ...r.source, id: r.source.id } : undefined, r.raw);
+      openCompose(r.source ? { ...r.source, id: r.source.id } : undefined, picks[shownReply.id]?.length ? { ...r.raw, body_html: answered(shownReply).html } : r.raw);
     } catch (e) {
       addToast("error", (e as Error).message);
     }
@@ -319,6 +333,17 @@ export default function RepliesView() {
       else if (k === "k" || e.key === "ArrowUp") move(-1);
       else if (k === "x" && cursor) pick(cursor, e.shiftKey);
       else if (k === "e" && cursor) edit(cursor);
+      else if (/^[1-3]$/.test(k) && cursor && !cursor.going) {
+        // The first answer still open, or the last one again.
+        const open = choicesOf(cursor.text);
+        const mine = picks[cursor.id] ?? [];
+        const at = open.findIndex((_, i) => mine[i] === undefined);
+        const place = at < 0 ? open.length - 1 : at;
+        if (!open[place]?.[Number(k) - 1]) return;
+        const next = [...mine];
+        next[place] = Number(k) - 1;
+        setPicks({ ...picks, [cursor.id]: next });
+      }
       else if (e.key === "Backspace" && (selected.length || cursor)) discard(selected.length ? selected : [cursor!]);
       else if (e.key === "Escape" && picked.size) setPicked(new Set());
       else return;
@@ -406,12 +431,14 @@ export default function RepliesView() {
                     <time className="pl-2.5 text-xs text-ink3">{shortWhen(item.at)}</time>
                   )}
                   <div className="col-span-2 flex min-w-0 gap-2.5 text-ink3">
-                    <span className="min-w-0 flex-1 truncate">{item.text.replace(/\s+/g, " ") || "Empty draft"}</span>
+                    <span className="min-w-0 flex-1 truncate">{inLine(item.text) || "Empty draft"}</span>
                     {item.going ? (
                       <button className="link" onClick={(e) => (e.stopPropagation(), cancel(item))}>
                         Cancel
                       </button>
-                    ) : GAP.test(item.text) ? (
+                    ) : choicesOf(answered(item).text).length ? (
+                      <em className="flex-none text-xs font-medium not-italic text-wax-ink">To decide</em>
+                    ) : GAP.test(answered(item).text) ? (
                       <em className="flex-none text-xs font-medium not-italic text-warn">To fill in</em>
                     ) : !item.to.length ? (
                       <em className="flex-none text-xs font-medium not-italic text-warn">No recipient</em>
@@ -464,10 +491,16 @@ export default function RepliesView() {
                     <p className={`leading-normal text-ink2 ${showSource ? "max-h-80 overflow-y-auto whitespace-pre-line" : ""}`}>{showSource ? cursor.source.body_text || cursor.source.snippet : cursor.source.summary || cursor.source.snippet}</p>
                   </div>
                 )}
-                <div
-                  className="mt-4 text-sm leading-[1.6] tracking-[-0.006em] [&_a]:underline [&_p]:mb-3"
-                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(cursor.html || "<p>This draft is empty.</p>", { FORBID_TAGS: ["style", "img"], FORBID_ATTR: ["style"] }) }}
-                />
+                {choicesOf(cursor.text).length ? (
+                  <div className="mt-4 text-sm leading-[1.6] tracking-[-0.006em]">
+                    <Answers text={cursor.text} picks={picks[cursor.id] ?? []} onPick={(p) => setPicks({ ...picks, [cursor.id]: p })} />
+                  </div>
+                ) : (
+                  <div
+                    className="mt-4 text-sm leading-[1.6] tracking-[-0.006em] [&_a]:underline [&_p]:mb-3"
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(cursor.html || "<p>This draft is empty.</p>", { FORBID_TAGS: ["style", "img"], FORBID_ATTR: ["style"] }) }}
+                  />
+                )}
               </div>
             </div>
             <div className="flex flex-none flex-wrap items-center gap-2 border-t border-line py-[11px] pl-6 pr-4 md:pl-10">

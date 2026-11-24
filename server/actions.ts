@@ -10,10 +10,9 @@ import { randomUUID } from "node:crypto";
 import { db } from "./db.ts";
 import { mail } from "./providers.ts";
 import type { Account } from "./accounts.ts";
-import { escapeHtml } from "./mime.ts";
 import { decide, normalizeLevel, proposalHash, type AutoSend, type Kind, type Source } from "./policy.ts";
 import { learn, type Signal } from "./profile.ts";
-import { discardDrafts } from "./drafts.ts";
+import { discardDrafts, putInDrafts, textToHtml, threadDrafts } from "./drafts.ts";
 
 export type Planned = {
   kind: Kind;
@@ -56,10 +55,6 @@ async function relabel(email: Awaited<ReturnType<typeof emailWithAccount>>, add:
   await mail(email.account).modify(email.account, [email.gmail_id as string], add, remove);
   const labels = [...new Set([...email.labelIds.filter((l) => !remove.includes(l)), ...add])];
   await db.from("emails").update({ label_ids: labels, ...patch }).eq("id", email.id);
-}
-
-function textToHtml(text: string): string {
-  return escapeHtml(text).split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
 }
 
 // Archive or return to the inbox, mark read or unread, a batch of emails: in
@@ -132,12 +127,22 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
     return {};
   }
   if (p.kind === "draft") {
+    // One draft per thread: the reply takes the place of an earlier one the
+    // user has not changed, in the mailbox's Drafts too.
+    const before = (await threadDrafts(userId, p.emailId)).filter((x) => x.source === "tabellar" && !x.edited_at);
     const { data, error } = await db
       .from("draft_emails")
-      .insert({ user_id: userId, account_id: d.accountId ?? null, from_address: d.from ?? null, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body)), email_id: p.emailId, source: "tabellar" })
+      .insert({
+        user_id: userId, account_id: d.accountId ?? null, from_address: d.from ?? null, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body)), email_id: p.emailId, source: "tabellar",
+        gmail_draft_id: before[0]?.gmail_draft_id ?? null, mailbox_version: before[0]?.mailbox_version ?? null,
+      })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
+    if (before.length) await db.from("draft_emails").delete().eq("id", before[0].id);
+    if (before.length > 1) await discardDrafts(userId, before.slice(1).map((x) => x.id));
+    // Without the mailbox the draft is here, and the next sync puts it there.
+    await putInDrafts(userId, data.id as string).catch((e) => console.error("[drafts] not in the mailbox yet:", (e as Error).message));
     return { draftId: data.id };
   }
   if (p.kind === "todo") {

@@ -6,7 +6,7 @@
 import { loadTokens, saveTokens, refreshAccessToken, revokeGoogleTokens, type TokenData } from "./google.ts";
 import { calendarHeaders, parseIcs } from "./rules.ts";
 import { addressOf, bodyOf, htmlToText, writeMessage, type BodyNode } from "./mime.ts";
-import type { AttachmentInfo, Calendar, CalEvent, EmailData, HeaderRow, LinkedEvent, Mail, MailboxChanges, NewEvent, Outgoing, Sent, SendAs } from "./providers.ts";
+import type { AttachmentInfo, Calendar, CalEvent, DraftStub, DraftText, EmailData, HeaderRow, LinkedEvent, Mail, MailboxChanges, NewEvent, Outgoing, Sent, SendAs } from "./providers.ts";
 import { isReceipt, receiptOf } from "./receipts.ts";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
@@ -600,6 +600,33 @@ async function saveDraft(tokenRef: string, draftId: string | null, m: Outgoing, 
   return (await res.json()).id as string;
 }
 
+async function listDrafts(tokenRef: string): Promise<DraftStub[]> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const out: DraftStub[] = [];
+  for (let page = ""; ; ) {
+    const res = await gmailRequest(tokenData.token, `/drafts?maxResults=500&fields=nextPageToken,drafts(id,message(id,threadId))${page ? `&pageToken=${page}` : ""}`);
+    if (!res.ok) throw new Error(`Gmail drafts list failed (${res.status})`);
+    const text = await res.text();
+    const data = (text ? JSON.parse(text) : {}) as { drafts?: { id: string; message: { id: string; threadId: string } }[]; nextPageToken?: string };
+    // Every save gives the draft a new message.
+    for (const d of data.drafts ?? []) out.push({ id: d.id, threadId: d.message.threadId, version: d.message.id });
+    page = data.nextPageToken ?? "";
+    if (!page) return out;
+  }
+}
+
+async function readDraft(tokenRef: string, draftId: string): Promise<DraftText | null> {
+  const { tokenData } = await resolveTokens(tokenRef);
+  const res = await gmailRequest(tokenData.token, `/drafts/${encodeURIComponent(draftId)}?format=full`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Gmail draft lookup failed (${res.status})`);
+  const msg = (await res.json()).message;
+  const headers: Record<string, string> = {};
+  for (const h of (msg?.payload?.headers ?? []) as { name: string; value: string }[]) headers[h.name.toLowerCase()] = h.value;
+  const body = bodyOf(extractParts(msg?.payload ?? {}, newState()));
+  return { text: body.text || htmlToText(body.html), html: body.html, subject: headers.subject ?? "", to: headers.to ?? "", cc: headers.cc ?? "", bcc: headers.bcc ?? "" };
+}
+
 // Take out a draft Tabellar put there. The id is a draft's, which no message
 // has; one sent or discarded in Gmail meanwhile is gone already.
 async function discardDraft(tokenRef: string, draftId: string): Promise<void> {
@@ -1053,6 +1080,8 @@ export const gmailMailbox: Mail = {
   headers: (a, id, names) => messageHeaders(a.token_ref, id, names),
   threadOf: (a, id) => threadIdOf(a.token_ref, id),
   send: (a, m, threadId) => sendEmail(a.token_ref, m, threadId),
+  drafts: (a) => listDrafts(a.token_ref),
+  readDraft: (a, draftId) => readDraft(a.token_ref, draftId),
   saveDraft: (a, draftId, m, threadId) => saveDraft(a.token_ref, draftId, m, threadId),
   discardDraft: (a, draftId) => discardDraft(a.token_ref, draftId),
   sendDraft: (a, draftId, m, threadId) => sendDraft(a.token_ref, draftId, m, threadId),
