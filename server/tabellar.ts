@@ -5,6 +5,7 @@
 //   tabellar setup    The AI model, in the terminal (the window walks through
 //                     the same steps on first start)
 //   tabellar setup google   Sign in to Google through your own client
+//   tabellar setup microsoft   The Azure app for Outlook and Microsoft 365
 //   tabellar start    Run Tabellar and open its window (Ctrl-C stops it)
 //   tabellar open     Open the window of a running Tabellar
 //   tabellar status   Is it running, which accounts and model it uses
@@ -19,7 +20,7 @@ import { basename, dirname, join } from "node:path";
 import { loadConfig, saveConfig, keychainSet, modelKeyName, accessToken, googleClient, sibling, BUILT_IN_GOOGLE, HOME, type Config, type ModelConfig, type Slot } from "./config.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
 import {
-  findClientFiles, saveGoogleClient, useBuiltInGoogleClient, moveToTrash, OLLAMA_URL, LOCAL_CHOICES, SMALL_MAC_GB, memoryGb, recommendedLocalModel,
+  findClientFiles, saveGoogleClient, saveMicrosoftClient, useBuiltInGoogleClient, moveToTrash, OLLAMA_URL, LOCAL_CHOICES, SMALL_MAC_GB, memoryGb, recommendedLocalModel,
   ollamaInstalled, ollamaModels, startOllama, installOllama, pullOllamaModel, PROVIDERS, listModels, savedKeyFor, type Progress,
 } from "./setup.ts";
 
@@ -252,14 +253,25 @@ async function setupModel(config: Config) {
   if (config.fastModel) console.log(`   Reading mail with ${config.fastModel.model}.`);
 }
 
+// The Application (client) ID of the app registered in the Azure portal.
+async function setupMicrosoft() {
+  const current = loadConfig().microsoftClientId;
+  console.log(`Outlook and Microsoft 365 sign in through an app you register in Microsoft's Azure portal (the README lists the steps).${current ? `\nIn use now: ${current}` : ""}`);
+  const id = (await ask("Paste its Application (client) ID, or press Enter to keep what is there:")).trim();
+  if (id) saveMicrosoftClient(id);
+  console.log(id ? "Saved. Add the account in the window: Settings, Accounts, Add an account, Outlook." : "Nothing changed.");
+  process.stdin.pause();
+}
+
 async function setup() {
+  if (args.includes("microsoft")) return setupMicrosoft();
   const config = loadConfig();
   console.log("Tabellar setup. Press Enter to accept the answer in brackets.\n");
   await setupGoogle(config);
   await setupModel(config);
   console.log(`\nSettings are in ${HOME}/config.json; secrets are in the macOS Keychain.`);
   if (!config.model) console.log("No AI model is set up yet, so Tabellar can sync mail but not sort or draft it. Run `tabellar setup` again when ready.");
-  console.log("Next: run `tabellar start`, then sign in with Google in the window that opens.");
+  console.log("Next: run `tabellar start`, then add your mail in the window that opens.");
   process.stdin.pause();
 }
 
@@ -280,6 +292,7 @@ async function status() {
   console.log(`Running:  ${up ? `yes, http://127.0.0.1:${config.port}` : "no"}`);
   const client = googleClient();
   console.log(`Google:   ${client ? (client.own ? "your own sign-in client" : "built-in sign-in client") : "not set up (tabellar setup)"}`);
+  console.log(`Outlook:  ${config.microsoftClientId ? `app ${config.microsoftClientId}` : "no Azure app yet (tabellar setup microsoft)"}`);
   const where = (m: ModelConfig) => (m.format === "ollama" ? "on this Mac (Ollama)" : `via ${PROVIDERS.find((p) => p.id === m.provider)?.name ?? m.baseUrl}`);
   const m = config.model;
   console.log(`Model:    ${m ? `${m.model} ${where(m)}` : "not set up (tabellar setup)"}`);

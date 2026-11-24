@@ -30,15 +30,8 @@ import { followupList, judgeSent } from "./followups.ts";
 import { listNewsletters, unsubscribe, archiveSender, keepSender } from "./newsletters.ts";
 import { db, type Db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
-import { freshAccessToken } from "./google.ts";
-import {
-  searchGoogleContacts,
-  listAllGoogleContacts,
-  fetchAttachment,
-  sendEmail,
-  sendDraft,
-  userLabelNames,
-} from "./gmail.ts";
+import { searchGoogleContacts, listAllGoogleContacts } from "./gmail.ts";
+import { mail, userCalendar } from "./providers.ts";
 import {
   chatWithAssistant,
   composeDraft,
@@ -121,21 +114,6 @@ async function getUserId(_req: Request): Promise<string> {
   return data.id as string;
 }
 
-// An access token for Calendar calls: the default account's calendar.
-async function getCalendarAccessTokenSafe(
-  _db: Db,
-  userId: string,
-): Promise<string | null> {
-  const account = await defaultAccount(userId);
-  if (!account) return null;
-  try {
-    return await freshAccessToken(account.token_ref);
-  } catch (err) {
-    console.error("[calendar] token refresh failed:", err);
-    return null;
-  }
-}
-
 // ─── Main handler ────────────────────────────────────────────────────────────
 
 // `path` is the route without its /api prefix.
@@ -165,7 +143,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         .select("id", { count: "exact", head: true })
         .eq("user_id", userId);
       if (!accountCount) {
-        return json({ error: "No Gmail account connected" }, 400, corsHeaders);
+        return json({ error: "No mailbox connected" }, 400, corsHeaders);
       }
 
       const allNew = await syncMail(userId, isInitialFetch);
@@ -305,9 +283,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       }
     }
     if (path === "/labels/gmail" && req.method === "GET") {
-      const { data: accounts } = await db.from("accounts").select("token_ref").eq("user_id", userId);
       const names = new Set<string>();
-      for (const a of accounts ?? []) for (const n of await userLabelNames(String(a.token_ref)).catch(() => [])) names.add(n);
+      for (const a of await listAccounts(userId)) for (const n of await mail(a).labelNames(a).catch(() => [])) names.add(n);
       return json({ labels: [...names].sort((x, y) => x.localeCompare(y)) });
     }
     if (path === "/labels/suggestions" && req.method === "GET") {
@@ -386,27 +363,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       }
 
       const from = await fromLine(userId, account, body.from_address);
-      // A saved draft in that mailbox's Gmail Drafts is sent from there, so it leaves Drafts.
+      const m = { from, to: body.to ?? [], cc: body.cc, bcc: body.bcc, subject: body.subject ?? "", html: body.body_html ?? "", inReplyTo: body.in_reply_to, attachments: body.attachments ?? undefined };
+      // A saved draft in that mailbox's Drafts is sent from there, so it leaves Drafts.
       const result =
         typeof body.gmail_draft_id === "string"
-          ? await sendDraft(
-              account.token_ref,
-              body.gmail_draft_id,
-              { from, to: body.to ?? [], cc: body.cc, bcc: body.bcc, subject: body.subject ?? "", html: body.body_html ?? "", inReplyTo: body.in_reply_to, attachments: body.attachments ?? undefined },
-              body.thread_id,
-            )
-          : await sendEmail(
-              account.token_ref,
-              body.to ?? [],
-              body.subject ?? "",
-              body.body_html ?? "",
-              body.in_reply_to,
-              body.thread_id,
-              body.attachments ?? undefined,
-              body.cc,
-              body.bcc,
-              from,
-            );
+          ? await mail(account).sendDraft(account, body.gmail_draft_id, m, body.thread_id)
+          : await mail(account).send(account, m, body.thread_id);
 
       // Persist sent email to DB so SentView reads from local storage
       {
@@ -672,8 +634,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
     // ── GET /calendar/free-slots ───────────────────────────────────────────
     if (path === "/calendar/free-slots" && req.method === "GET") {
-      const accessToken = await getCalendarAccessTokenSafe(db, userId);
-      if (!accessToken) {
+      const cal = await userCalendar(userId);
+      if (!cal) {
         return json({ error: "No calendar access" }, 400, corsHeaders);
       }
 
@@ -750,32 +712,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       const dayMax = zonedToUtc(y, mo - 1, d, 23, 59, timezone);
       dayMax.setSeconds(59, 999);
 
-      const busyRes = await fetch(
-        "https://www.googleapis.com/calendar/v3/freeBusy",
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            timeMin: dayMin.toISOString(),
-            timeMax: dayMax.toISOString(),
-            items: [{ id: "primary" }],
-          }),
-        },
-      );
-
-      if (!busyRes.ok) {
-        return json(
-          { error: "Calendar API failed", slots: [] },
-          200,
-          corsHeaders,
-        );
+      let busyPeriods: { start: string; end: string }[];
+      try {
+        busyPeriods = await cal.calendar.busy(cal.account, dayMin, dayMax);
+      } catch {
+        return json({ error: "Calendar API failed", slots: [] }, 200, corsHeaders);
       }
-
-      const busyData = await busyRes.json();
-      const busyPeriods = busyData.calendars?.primary?.busy || [];
 
       // Get working hours from profile
       const { data: profileData } = await db
@@ -851,8 +793,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
 
     // ── GET /calendar/events ───────────────────────────────────────────────
     if (path === "/calendar/events" && req.method === "GET") {
-      const accessToken = await getCalendarAccessTokenSafe(db, userId);
-      if (!accessToken) {
+      const cal = await userCalendar(userId);
+      if (!cal) {
         return json({ error: "No calendar access", events: [] }, 200, corsHeaders);
       }
       const url = new URL(req.url);
@@ -882,42 +824,13 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       const timeMin = zonedMidnight(y, mo - 1, d, timezone, false);
       const timeMax = zonedMidnight(y, mo - 1, d + days - 1, timezone, true);
 
-      const calRes = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/primary/events?` +
-          new URLSearchParams({
-            timeMin: timeMin.toISOString(),
-            timeMax: timeMax.toISOString(),
-            singleEvents: "true",
-            orderBy: "startTime",
-            maxResults: String(Math.min(25 * days, 250)),
-            fields: "items(id,summary,start,end,attendees,location,hangoutLink,conferenceData,htmlLink,status,description)",
-          }),
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
-
-      if (!calRes.ok) {
-        console.error("[calendar/events] google error:", await calRes.text());
+      let events;
+      try {
+        events = await cal.calendar.events(cal.account, timeMin, timeMax, Math.min(25 * days, 250));
+      } catch (e) {
+        console.error("[calendar/events]", (e as Error).message);
         return json({ error: "Calendar API failed", events: [] }, 200, corsHeaders);
       }
-      const calData = await calRes.json();
-      const items = (calData.items ?? []) as any[];
-      const events = items
-        .filter((ev: any) => ev.status !== "cancelled")
-        .map((ev: any) => ({
-          id: ev.id,
-          title: ev.summary ?? "(No title)",
-          start: ev.start?.dateTime ?? ev.start?.date ?? null,
-          end: ev.end?.dateTime ?? ev.end?.date ?? null,
-          allDay: !ev.start?.dateTime,
-          // The other people: not the user, not a room.
-          attendees: (ev.attendees ?? []).filter((a: any) => !a.self && !a.resource).map((a: any) => a.displayName || a.email).filter(Boolean),
-          location: ev.location ?? null,
-          meetingLink: ev.hangoutLink ?? ev.conferenceData?.entryPoints?.[0]?.uri ?? null,
-          htmlLink: ev.htmlLink ?? null,
-          status: ev.status ?? "confirmed",
-          source: "google_calendar",
-        }));
-
       return json({ events }, 200, corsHeaders);
     }
 
@@ -942,159 +855,46 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       if (Array.isArray(body.attendees)) changes.attendees = body.attendees.map(String).filter(Boolean);
       if (Object.keys(changes).length) await db.from("meetings").update(changes).eq("id", m.id);
       const meeting = { ...m, ...changes };
-      const accessToken = await getCalendarAccessTokenSafe(db, userId);
-      if (!accessToken) return json({ error: "Google Calendar cannot be reached. Reconnect the account in Settings." }, 502);
+      const cal = await userCalendar(userId);
+      if (!cal) return json({ error: "No calendar is connected. Connect a Google or Outlook account in Settings." }, 502);
       const attendees = Array.isArray(meeting.attendees) ? (meeting.attendees as string[]) : [];
-      const calRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=${attendees.length ? "all" : "none"}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          summary: meeting.title,
-          description: meeting.description ?? "",
-          start: { dateTime: meeting.start_time },
-          end: { dateTime: meeting.end_time },
-          ...(meeting.location ? { location: meeting.location } : {}),
-          ...(attendees.length ? { attendees: attendees.map((email) => ({ email })) } : {}),
-        }),
-      });
-      if (!calRes.ok) {
-        console.error(`[meetings/confirm] google error status=${calRes.status} body=${await calRes.text().catch(() => "")}`);
-        return json({ error: "Google Calendar did not accept it" }, 502);
+      let ev: { id: string; link: string | null };
+      try {
+        // Only the people the user added are invited.
+        ev = await cal.calendar.create(
+          cal.account,
+          { title: meeting.title, description: meeting.description ?? "", start: meeting.start_time, end: meeting.end_time, ...(meeting.location ? { location: meeting.location } : {}), attendees },
+          attendees.length > 0,
+        );
+      } catch {
+        return json({ error: "The calendar did not accept it" }, 502);
       }
-      const ev = await calRes.json();
       await db.from("meetings").update({ status: "confirmed", calendar_event_id: ev.id }).eq("id", m.id);
-      return json({ ok: true, meetingId: m.id, link: ev.htmlLink ?? null });
+      return json({ ok: true, meetingId: m.id, link: ev.link });
     }
 
-    // ── POST /calendar/create-event ────────────────────────────────────────
-    if (path === "/calendar/create-event" && req.method === "POST") {
+    // ── POST /calendar/create-event, /calendar/update-event ────────────────
+    if ((path === "/calendar/create-event" || path === "/calendar/update-event") && req.method === "POST") {
       const body = await req.json();
-      const accessToken = await getCalendarAccessTokenSafe(db, userId);
-      if (!accessToken) {
-        return json({ error: "No calendar access" }, 400, corsHeaders);
-      }
-
-      // Check user preference for sending invites
-      const { data: calProfile } = await db
-        .from("profiles")
-        .select("calendar_send_invites")
-        .eq("id", userId)
-        .single();
-      const sendUpdates =
-        calProfile?.calendar_send_invites === false ? "none" : "all";
-
-      const event: Record<string, unknown> = {
-        summary: body.title,
-        description: body.description || "",
-        start: { dateTime: body.start_time, timeZone: body.timezone || "UTC" },
-        end: { dateTime: body.end_time, timeZone: body.timezone || "UTC" },
+      const update = path === "/calendar/update-event";
+      if (update && !body.event_id) return json({ error: "event_id required" }, 400, corsHeaders);
+      const cal = await userCalendar(userId);
+      if (!cal) return json({ error: "No calendar access" }, 400, corsHeaders);
+      const event = {
+        ...(body.title ? { title: body.title } : {}),
+        ...(body.description !== undefined || !update ? { description: body.description || "" } : {}),
+        ...(body.start_time ? { start: body.start_time } : {}),
+        ...(body.end_time ? { end: body.end_time } : {}),
+        timeZone: body.timezone || "UTC",
+        ...(body.location !== undefined && (update || body.location) ? { location: body.location } : {}),
+        ...(Array.isArray(body.attendees) && (update || body.attendees.length) ? { attendees: body.attendees as string[] } : {}),
       };
-
-      if (body.location) {
-        event.location = body.location;
-      }
-
-      if (body.attendees?.length) {
-        event.attendees = body.attendees.map((email: string) => ({ email }));
-      }
-
-      const calRes = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=${sendUpdates}`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(event),
-        },
-      );
-
-      if (!calRes.ok) {
-        try {
-          console.error(
-            `[calendar/create-event] google error status=${calRes.status} body=${await calRes.text()}`,
-          );
-        } catch {
-          /* ignore */
-        }
+      try {
+        const ev = update ? await cal.calendar.update(cal.account, String(body.event_id), event, cal.invite) : await cal.calendar.create(cal.account, event, cal.invite);
+        return json({ event_id: ev.id, html_link: ev.link }, 200, corsHeaders);
+      } catch {
         return json({ error: "Calendar API error" }, 400, corsHeaders);
       }
-
-      const calEvent = await calRes.json();
-      return json(
-        { event_id: calEvent.id, html_link: calEvent.htmlLink },
-        200,
-        corsHeaders,
-      );
-    }
-
-    // ── POST /calendar/update-event ────────────────────────────────────────
-    if (path === "/calendar/update-event" && req.method === "POST") {
-      const body = await req.json();
-      if (!body.event_id) {
-        return json({ error: "event_id required" }, 400, corsHeaders);
-      }
-      const accessToken = await getCalendarAccessTokenSafe(db, userId);
-      if (!accessToken) {
-        return json({ error: "No calendar access" }, 400, corsHeaders);
-      }
-
-      // Check user preference for sending invites
-      const { data: calUpdateProfile } = await db
-        .from("profiles")
-        .select("calendar_send_invites")
-        .eq("id", userId)
-        .single();
-      const sendUpdatesVal =
-        calUpdateProfile?.calendar_send_invites === false ? "none" : "all";
-
-      const patch: Record<string, unknown> = {};
-      if (body.title) patch.summary = body.title;
-      if (body.description !== undefined) patch.description = body.description;
-      if (body.start_time)
-        patch.start = {
-          dateTime: body.start_time,
-          timeZone: body.timezone || "UTC",
-        };
-      if (body.end_time)
-        patch.end = {
-          dateTime: body.end_time,
-          timeZone: body.timezone || "UTC",
-        };
-      if (body.location !== undefined) patch.location = body.location;
-      if (body.attendees)
-        patch.attendees = body.attendees.map((email: string) => ({ email }));
-
-      const calRes = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${body.event_id}?sendUpdates=${sendUpdatesVal}`,
-        {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(patch),
-        },
-      );
-
-      if (!calRes.ok) {
-        try {
-          console.error(
-            `[calendar/update-event] google error status=${calRes.status} body=${await calRes.text()}`,
-          );
-        } catch {
-          /* ignore */
-        }
-        return json({ error: "Calendar API error" }, 400, corsHeaders);
-      }
-
-      const calEvent = await calRes.json();
-      return json(
-        { event_id: calEvent.id, html_link: calEvent.htmlLink },
-        200,
-        corsHeaders,
-      );
     }
 
     // ── POST /rethink-email ────────────────────────────────────────────────
@@ -1155,11 +955,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       }
       const { data: account } = await db
         .from("accounts")
-        .select("token_ref")
+        .select("token_ref, provider")
         .eq("id", accountId)
         .eq("user_id", userId)
         .single();
-      if (!account?.token_ref) {
+      // Only Google keeps a contact list Tabellar can search.
+      if (!account?.token_ref || account.provider !== "gmail") {
         return json({ contacts: [] }, 200, corsHeaders);
       }
       const contacts = await searchGoogleContacts(
@@ -1176,7 +977,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       const { data: accounts } = await db
         .from("accounts")
         .select("id, token_ref")
-        .eq("user_id", userId);
+        .eq("user_id", userId)
+        .eq("provider", "gmail");
 
       if (!accounts?.length) {
         return json({ synced: 0 }, 200, corsHeaders);
@@ -1507,18 +1309,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
             const account = await defaultAccount(userId);
             if (account) {
               const bodyHtml = (args.body ?? "").replace(/\n/g, "<br>");
-              const result = await sendEmail(
-                account.token_ref,
-                toCheck.emails!,
-                args.subject,
-                bodyHtml,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                await fromLine(userId, account, null),
-              );
+              const result = await mail(account).send(account, { from: await fromLine(userId, account, null), to: toCheck.emails!, subject: args.subject, html: bodyHtml });
               console.log("[chat/send_email] sent OK, message_id:", result.id);
               await record(userId, { kind: "send", emailId: null, summary: `Sent "${args.subject}" to ${toCheck.emails!.join(", ")} (asked in chat)`, detail: { to: toCheck.emails, subject: args.subject } }, "assistant");
 
@@ -1549,12 +1340,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
               });
             } else {
               console.error(
-                "[chat/send_email] no active Gmail account found for userId:",
+                "[chat/send_email] no account found for userId:",
                 userId,
               );
               actions.push({
                 type: "send_email_failed",
-                data: { error: "No Gmail account connected" },
+                data: { error: "No mailbox connected" },
               });
             }
           } catch (err) {
@@ -1591,17 +1382,16 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
                 const subject = (original as any).subject?.startsWith("Re:")
                   ? (original as any).subject
                   : `Re: ${(original as any).subject}`;
-                const result = await sendEmail(
-                  account.token_ref,
-                  [(original as any).sender_email],
-                  subject,
-                  args.body.replace(/\n/g, "<br>"),
-                  (original as any).gmail_id,
+                const result = await mail(account).send(
+                  account,
+                  {
+                    from: await fromLine(userId, account, replyFrom(account, original as any)),
+                    to: [(original as any).sender_email],
+                    subject,
+                    html: args.body.replace(/\n/g, "<br>"),
+                    inReplyTo: (original as any).gmail_id,
+                  },
                   (original as any).thread_id,
-                  undefined,
-                  undefined,
-                  undefined,
-                  await fromLine(userId, account, replyFrom(account, original as any)),
                 );
                 actions.push({
                   type: "send_email",
@@ -1770,43 +1560,14 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
             const startIso = toUtcIso(startDt, userTz);
             const endIso = toUtcIso(endDt, userTz);
 
-            const accessToken = await getCalendarAccessTokenSafe(
-              db,
-              userId,
-            );
-            if (accessToken) {
-              const { data: calProfile } = await db
-                .from("profiles")
-                .select("calendar_send_invites")
-                .eq("id", userId)
-                .single();
-              const sendUpdates =
-                calProfile?.calendar_send_invites === false ? "none" : "all";
-
-              const event: Record<string, unknown> = {
-                summary: args.title,
-                description: args.description || "",
-                start: { dateTime: startDt, timeZone: userTz },
-                end: { dateTime: endDt, timeZone: userTz },
-              };
-              if (args.attendees?.length) {
-                event.attendees = args.attendees.map((email: string) => ({
-                  email,
-                }));
-              }
-              const calRes = await fetch(
-                `https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=${sendUpdates}`,
-                {
-                  method: "POST",
-                  headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify(event),
-                },
-              );
-              if (calRes.ok) {
-                const calEvent = await calRes.json();
+            const cal = await userCalendar(userId);
+            if (cal) {
+              try {
+                const ev = await cal.calendar.create(
+                  cal.account,
+                  { title: args.title, description: args.description || "", start: startDt, end: endDt, timeZone: userTz, attendees: args.attendees ?? [] },
+                  cal.invite,
+                );
                 await db.from("meetings").insert({
                   user_id: userId,
                   title: args.title,
@@ -1814,7 +1575,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
                   end_time: endIso,
                   attendees: args.attendees ?? [],
                   description: args.description || "",
-                  calendar_event_id: calEvent.id,
+                  calendar_event_id: ev.id,
                   status: "confirmed",
                 });
                 actions.push({
@@ -1825,14 +1586,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
                     attendees: args.attendees,
                   },
                 });
-              } else {
-                try {
-                  console.error(
-                    `[chat/create-meeting] google error status=${calRes.status} body=${await calRes.text()}`,
-                  );
-                } catch {
-                  /* ignore */
-                }
+              } catch {
                 actions.push({
                   type: "create_meeting_failed",
                   data: { error: "Calendar API error" },
@@ -2085,21 +1839,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return json({ error: "Email not found" }, 404, corsHeaders);
       }
 
-      const { data: account } = await db
-        .from("accounts")
-        .select("token_ref")
-        .eq("id", emailRow.account_id)
-        .eq("user_id", userId)
-        .maybeSingle();
+      const account = await accountById(userId, emailRow.account_id as string);
       if (!account) {
-        return json({ error: "Gmail account not found" }, 404, corsHeaders);
+        return json({ error: "The account for this email is not connected" }, 404, corsHeaders);
       }
 
-      const result = await fetchAttachment(
-        account.token_ref as string,
-        gmailId,
-        attachmentId,
-      );
+      const result = await mail(account).attachment(account, gmailId, attachmentId);
       if (!result)
         return json({ error: "Failed to fetch attachment" }, 502, corsHeaders);
 

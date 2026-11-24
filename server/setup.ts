@@ -1,6 +1,7 @@
 // First-run setup, shared by the window's onboarding and `tabellar setup`:
-// the Google sign-in client, Ollama (install, start, download models) and the
-// cloud providers. handleSetup serves it to the window under /api/setup/.
+// the Google sign-in client, the Microsoft app, mailboxes signed in to with
+// an app password, Ollama (install, start, download models) and the cloud
+// providers. handleSetup serves it to the window under /api/setup/.
 
 import { spawn, spawnSync } from "node:child_process";
 import { accessSync, closeSync, constants, createWriteStream, openSync, writeFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
@@ -10,6 +11,9 @@ import { homedir, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, saveConfig, keychainGet, keychainSet, keychainDelete, googleClient, BUILT_IN_GOOGLE, modelKey, modelKeyName, HOME, type ModelConfig, type Slot } from "./config.ts";
+// providers.ts, imap.ts and accounts.ts open the database, so they are
+// imported only when used: `tabellar setup`, `status` and `check` must not
+// touch it.
 
 // ── Google sign-in client ───────────────────────────────────────────────────
 
@@ -89,6 +93,41 @@ export function moveToTrash(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+// ── Other mailboxes ─────────────────────────────────────────────────────────
+
+// The Application (client) ID of the app registered in Azure, a GUID.
+export function saveMicrosoftClient(id: string): void {
+  const clientId = id.trim().toLowerCase();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(clientId)) throw new Error("That is not an Application (client) ID. Copy it from the app's Overview page in the Azure portal.");
+  saveConfig({ ...loadConfig(), microsoftClientId: clientId });
+}
+
+// Add a mailbox that signs in with an app password: one of CHOICES with
+// its servers, or "imap" with the servers given. Returns whether nothing is
+// stored yet (the first mailbox).
+export async function addPasswordAccount(b: Record<string, unknown>): Promise<boolean> {
+  const [{ CHOICES }, { connectImap }, { connectAccount }] = await Promise.all([import("./providers.ts"), import("./imap.ts"), import("./accounts.ts")]);
+  const choice = CHOICES.find((c) => c.id === b.choice && c.provider === "imap");
+  if (!choice) throw new Error("Choose a mailbox.");
+  const address = String(b.address ?? "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address)) throw new Error("Enter the email address.");
+  // App passwords are shown in groups; the spaces are not part of them.
+  const password = choice.id === "imap" ? String(b.password ?? "").trim() : String(b.password ?? "").replace(/\s+/g, "");
+  if (!password) throw new Error("Paste the app password.");
+  const server = (host: unknown, port: unknown, fallback?: { host: string; port: number }) => {
+    const h = String(host ?? "").trim() || fallback?.host || "";
+    const p = Number(port) || fallback?.port || 0;
+    if (!/^[a-z0-9.-]+$/i.test(h) || !p) throw new Error("Enter the IMAP and SMTP servers and ports.");
+    return { host: h, port: p };
+  };
+  const imap = server(b.imapHost, b.imapPort, choice.imap);
+  const smtp = server(b.smtpHost, b.smtpPort, choice.smtp);
+  const user = String(b.user ?? "").trim();
+  const users = [...new Set([user || address, ...(choice.id === "icloud" ? [address.split("@")[0]] : [])])];
+  const { server: saved, tokenRef } = await connectImap({ address, password, imap, smtp, users, choice: choice.id });
+  return connectAccount({ provider: "imap", address, name: address.split("@")[0], tokenRef, server: saved });
 }
 
 // ── Ollama ──────────────────────────────────────────────────────────────────
@@ -415,6 +454,9 @@ async function state() {
     ollama: { installed: models !== null || ollamaInstalled(), running: models !== null, models: models ?? [] },
     local: { choices: LOCAL_CHOICES, recommended: recommendedLocalModel("careful"), recommendedFast: recommendedLocalModel("fast"), memoryGb: memoryGb(), small: memoryGb() < SMALL_MAC_GB },
     providers: PROVIDERS.map(({ id, name, keyUrl, suggested }) => ({ id, name, keyUrl, suggested, hasKey: !!savedKeyFor(id) })),
+    // What can be added as a mailbox, and whether it can be now.
+    mailboxes: (await import("./providers.ts")).choicesForWindow(),
+    microsoft: { clientId: config.microsoftClientId ?? null },
   };
 }
 
@@ -442,6 +484,12 @@ export async function handleSetup(req: Request, path: string): Promise<Response>
       const trashed = file && body.trash ? moveToTrash(file) : false;
       return json({ ...saved, trashed });
     }
+
+    if (path === "/microsoft" && req.method === "POST") {
+      saveMicrosoftClient(String(body.clientId ?? ""));
+      return json({ ok: true });
+    }
+    if (path === "/mailbox" && req.method === "POST") return json({ first: await addPasswordAccount(body) });
 
     if (path === "/ollama/install" && req.method === "POST") return stream(installOllama());
     if (path === "/ollama/start" && req.method === "POST") return json({ running: await startOllama() });

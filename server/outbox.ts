@@ -8,14 +8,11 @@
 // checkAutoSend, it is not sent and is kept as a draft instead.
 
 import { db } from "./db.ts";
-import { sendDraft, sendEmail } from "./gmail.ts";
+import { mail } from "./providers.ts";
 import { checkAutoSend } from "./policy.ts";
 import { engineSettings } from "./actions.ts";
 import { notify } from "./notify.ts";
 import { fromLine, type Account } from "./accounts.ts";
-
-// `tabellar check` swaps these for recorders so nothing reaches Gmail.
-export const transport = { send: sendEmail, sendDraft };
 
 type Row = Record<string, any>;
 
@@ -68,15 +65,11 @@ export async function sendDueEmails(): Promise<void> {
     try {
       if (!account?.token_ref) throw new Error("The account for this email is no longer connected");
       const from = await fromLine(row.user_id, account, row.from_address);
-      // A draft that is also in Gmail's Drafts is sent from there, so it leaves Drafts.
+      const m = { from, to: row.to_addresses, cc: row.cc_addresses ?? undefined, bcc: row.bcc_addresses ?? undefined, subject: row.subject, html: row.body_html, inReplyTo: row.in_reply_to ?? undefined };
+      // A draft that is also in the mailbox's Drafts is sent from there, so it leaves Drafts.
       const result = row.gmail_draft_id
-        ? await transport.sendDraft(
-            account.token_ref,
-            row.gmail_draft_id,
-            { from, to: row.to_addresses, cc: row.cc_addresses ?? undefined, bcc: row.bcc_addresses ?? undefined, subject: row.subject, html: row.body_html, inReplyTo: row.in_reply_to ?? undefined },
-            row.thread_id ?? undefined,
-          )
-        : await transport.send(account.token_ref, row.to_addresses, row.subject, row.body_html, row.in_reply_to ?? undefined, row.thread_id ?? undefined, undefined, row.cc_addresses ?? undefined, row.bcc_addresses ?? undefined, from);
+        ? await mail(account).sendDraft(account, row.gmail_draft_id, m, row.thread_id ?? undefined)
+        : await mail(account).send(account, m, row.thread_id ?? undefined);
       await db.from("scheduled_emails").update({ status: "sent" }).eq("id", row.id);
       await db.from("emails").upsert(
         {

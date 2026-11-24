@@ -80,22 +80,6 @@ export async function refreshAccessToken(refreshToken: string): Promise<TokenDat
   };
 }
 
-// A valid access token for an account, refreshing it if needed.
-const refreshing = new Map<string, Promise<string>>();
-export function freshAccessToken(ref: string): Promise<string> {
-  const pending = refreshing.get(ref);
-  if (pending) return pending;
-  const p = (async () => {
-    const t = await loadTokens(ref);
-    if (t.token && t.expiry && new Date(t.expiry).getTime() > Date.now() + 60_000) return t.token;
-    const fresh = await refreshAccessToken(t.refresh_token!);
-    await saveTokens({ ...t, ...fresh });
-    return fresh.token;
-  })();
-  refreshing.set(ref, p);
-  p.finally(() => refreshing.delete(ref)).catch(() => {});
-  return p;
-}
 
 export async function revokeGoogleTokens(ref: string): Promise<void> {
   try {

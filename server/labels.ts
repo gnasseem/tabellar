@@ -129,7 +129,7 @@ export async function applyLabel(userId: string, emailId: string, slug: string, 
   const name = gmailLabelOf(label);
   if (on) {
     const r = await act(userId, { kind: "label", emailId, summary: `Label "${label.display_name}"`, detail: { label: name } }, { ...settings, source: "user" });
-    if (r === "failed") throw new Error("Gmail did not take the label. Try again.");
+    if (r === "failed") throw new Error("The mailbox did not take the label. Try again.");
   } else {
     const { data: rows } = await db.from("action_log").select("id, detail").eq("user_id", userId).eq("email_id", emailId).eq("kind", "label").eq("status", "done");
     for (const r of (rows ?? []) as Record<string, unknown>[]) if ((r.detail as { label?: string } | null)?.label === name) await undo(userId, String(r.id));

@@ -39,16 +39,17 @@ import { isLocalModel } from "./llm.ts";
 import { correspondents, profileContext } from "./profile.ts";
 import { readWithoutModel, writtenTo } from "./senders.ts";
 import { labelsBySender, labelsForPrompt, userLabels } from "./labels.ts";
-import { findCalendarEvent, type LinkedEvent } from "./gmail.ts";
+import { calendarAccount, type LinkedEvent } from "./providers.ts";
+import type { Account } from "./accounts.ts";
 import { ACT_WITHIN_MS, type CalendarEvent } from "./rules.ts";
 
-// The event a calendar email is about: on the user's calendar when Google
-// Calendar has it, otherwise what its .ics says.
-async function linkCalendar(tokenRef: string | undefined, e: Record<string, unknown>): Promise<LinkedEvent | null> {
+// The event a calendar email is about: on the user's calendar when it has
+// it, otherwise what its .ics says.
+async function linkCalendar(cal: ReturnType<typeof calendarAccount>, e: Record<string, unknown>): Promise<LinkedEvent | null> {
   const ics = e.calendar_event as CalendarEvent | null;
   try {
-    if (tokenRef && (ics?.uid || ics?.start)) {
-      const found = await findCalendarEvent(tokenRef, { uid: ics.uid, start: ics.start, people: [String(e.sender_email ?? "")] });
+    if (cal && (ics?.uid || ics?.start)) {
+      const found = await cal.calendar.find(cal.account, { uid: ics.uid, start: ics.start, people: [String(e.sender_email ?? "")] });
       if (found) return { ...found, method: ics.method };
     }
   } catch (err) {
@@ -121,9 +122,9 @@ export async function analyzeEmailsForUser(
       .select("working_hours")
       .eq("id", userId)
       .maybeSingle(),
-    db.from("accounts").select("id, token_ref").eq("user_id", userId),
+    db.from("accounts").select("*").eq("user_id", userId),
   ]);
-  const tokenRefs = new Map<string, string>((accountsRes.data ?? []).map((a) => [String(a.id), String(a.token_ref)]));
+  const cal = calendarAccount((accountsRes.data ?? []) as unknown as Account[]);
 
   const [known, written] = await Promise.all([correspondents(userId, senderEmails as string[]), writtenTo(userId)]);
   // Mail new enough that todos, drafts and meetings are made from it.
@@ -200,7 +201,7 @@ export async function analyzeEmailsForUser(
           summary: null,
           quick_actions: [],
           extra_labels: extra(bySender(email)),
-          calendar: await linkCalendar(tokenRefs.get(String(email.account_id)), email),
+          calendar: await linkCalendar(cal, email),
         });
         processed += 1;
         if (rowBuffer.length >= FLUSH_SIZE) await flushRows();

@@ -1,13 +1,13 @@
 // A draft the user saves in compose is kept in draft_emails and in the
-// mailbox's own Drafts, From the address chosen, so it is in Gmail too. When
-// it is sent from Tabellar it goes out through Gmail's drafts.send, which
-// takes it out of Drafts (outbox.ts). Tabellar never deletes a Gmail draft:
-// one discarded here stays in Gmail.
+// mailbox's own Drafts, From the address chosen, so it is in the mailbox too.
+// When it is sent from Tabellar it goes out from Drafts, which takes it out
+// of Drafts (outbox.ts). Tabellar never deletes a draft in the mailbox: one
+// discarded here stays there.
 //
 // Tabellar's own reply drafts stay in draft_emails only.
 
 import { db } from "./db.ts";
-import { saveDraft as saveGmailDraft } from "./gmail.ts";
+import { mail } from "./providers.ts";
 import { accountById, defaultAccount, fromLine } from "./accounts.ts";
 
 export type DraftInput = {
@@ -26,8 +26,8 @@ export type DraftInput = {
 
 const list = (v: unknown) => (Array.isArray(v) ? v.map(String).map((s) => s.trim()).filter(Boolean) : []);
 
-// Save the draft here and in Gmail. Returns the row id, and whether Gmail
-// has it (a failure there keeps the draft in Tabellar).
+// Save the draft here and in the mailbox. Returns the row id, and whether
+// the mailbox has it (a failure there keeps the draft in Tabellar).
 export async function saveUserDraft(userId: string, d: DraftInput): Promise<{ id: string; inGmail: boolean }> {
   const account = (await accountById(userId, d.account_id)) ?? (await defaultAccount(userId));
   if (!account) throw Object.assign(new Error("No account connected"), { status: 400 });
@@ -48,11 +48,11 @@ export async function saveUserDraft(userId: string, d: DraftInput): Promise<{ id
   const { data, error } = await db.from("draft_emails").upsert(row, { onConflict: "id" }).select("id").single();
   if (error) throw new Error(error.message);
   const id = data.id as string;
-  // The same Gmail draft is updated while it stays in the same mailbox.
+  // The same draft is updated while it stays in the same mailbox.
   const gmailId = before?.account_id === account.id ? ((before?.gmail_draft_id as string | null) ?? null) : null;
   try {
-    const saved = await saveGmailDraft(
-      account.token_ref,
+    const saved = await mail(account).saveDraft(
+      account,
       gmailId,
       { from, to: row.to_addresses, cc: list(d.cc), bcc: list(d.bcc), subject: row.subject, html: row.body_html, inReplyTo: d.in_reply_to },
       d.thread_id,
@@ -60,7 +60,7 @@ export async function saveUserDraft(userId: string, d: DraftInput): Promise<{ id
     await db.from("draft_emails").update({ gmail_draft_id: saved }).eq("id", id);
     return { id, inGmail: true };
   } catch (e) {
-    console.error("[drafts] Gmail draft:", (e as Error).message);
+    console.error("[drafts] mailbox draft:", (e as Error).message);
     return { id, inGmail: false };
   }
 }

@@ -392,7 +392,7 @@ export default function InboxView() {
     if (!ids.length) return;
     setEmails((prev) => prev.map((e) => (ids.includes(e.id) ? { ...e, is_read: read } : e)));
     setPicked(new Set());
-    await setMailState(ids, { read }).catch(() => addToast("error", read ? "Could not mark it read in Gmail." : "Could not mark it unread in Gmail."));
+    await setMailState(ids, { read }).catch(() => addToast("error", read ? "Could not mark it read in the mailbox." : "Could not mark it unread in the mailbox."));
   };
 
   // Done: dealt with, kept in the inbox. Done again takes it back.
@@ -628,7 +628,7 @@ export default function InboxView() {
               <SkeletonRows count={22} />
             </div>
           ) : noAccountsConnected && !emails.length ? (
-            <Empty icon="link_off" title="No Gmail account connected">
+            <Empty icon="link_off" title="No mailbox connected">
               <button className="link" onClick={() => setView("settings")}>
                 Connect one in Settings
               </button>

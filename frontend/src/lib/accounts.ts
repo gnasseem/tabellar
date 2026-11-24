@@ -7,6 +7,8 @@ import { api } from "./outcomes";
 export type Account = {
   id: string;
   provider: string;
+  // Which of the mailbox choices it was added as: gmail, microsoft, icloud, ...
+  choice: string;
   address: string;
   is_default: boolean;
   paused: boolean;

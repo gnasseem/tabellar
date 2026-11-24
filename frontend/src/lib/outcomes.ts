@@ -31,7 +31,7 @@ export type EngineStatus = {
   paused: boolean;
   lastCycleAt: string | null;
   lastError: string | null;
-  gmailError: string | null;
+  mailError: string | null;
   running: boolean;
   model: boolean;
   autostart: boolean;

@@ -665,7 +665,7 @@ export default function ComposeModal({
         thread_id: replyTo?.thread_id,
       });
       notifyDraftChange();
-      addToast(inGmail ? "success" : "info", inGmail ? "Draft saved" : "Draft saved here. Gmail could not be reached, so it is not in Gmail's Drafts.");
+      addToast(inGmail ? "success" : "info", inGmail ? "Draft saved" : "Draft saved here. The mailbox could not be reached, so it is not in its Drafts.");
       onClose();
     } catch (e) {
       addToast("error", `Could not save the draft. ${(e as Error).message}`);
@@ -802,7 +802,7 @@ export default function ComposeModal({
 
       const effectiveAccountId = selectedAccountId;
       if (!effectiveAccountId) {
-        addToast("error", "Connect a Gmail account first");
+        addToast("error", "Connect a mailbox first");
         setSending(false);
         return;
       }

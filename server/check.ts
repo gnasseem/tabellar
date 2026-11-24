@@ -9,12 +9,30 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { decide, normalizeLevel, proposalHash, looksLikeInstructions, checkAutoSend, CAP_PER_CYCLE, CAP_PER_DAY, type AutoSend } from "./policy.ts";
 import * as gmail from "./gmail.ts";
+import { htmlToText } from "./mime.ts";
+import { MAILBOXES, mail as mailbox, type HeaderRow, type Mail, type Outgoing } from "./providers.ts";
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { CHANNELS } from "./notify.ts";
 import { sibling } from "./config.ts";
 
 CHANNELS.length = 0;
+
+// A mailbox that records what is sent instead of sending it. The accounts
+// made here use it, so nothing in this file reaches a real mailbox.
+const sent: { to: string[]; threadId?: string; cc?: string[]; bcc?: string[]; from?: string }[] = [];
+const record = async (m: Outgoing, threadId?: string) => {
+  sent.push({ to: m.to, threadId, cc: m.cc, bcc: m.bcc, from: m.from });
+  return { id: `sent-${sent.length}` };
+};
+const nothing = async () => [];
+MAILBOXES.fake = {
+  cursor: async () => "0", changes: async () => ({ tooOld: false, historyId: "0", added: [], sentAdded: false, labels: [], deleted: [] }), moved: async () => false,
+  list: nothing, fetch: nothing, headerRows: nothing, sent: nothing, headers: async () => ({}), threadOf: async () => "",
+  send: (_a, m, t) => record(m, t), saveDraft: async () => "draft-1", sendDraft: (_a, _d, m, t) => record(m, t),
+  label: async (_a, name) => name, labelNames: nothing, modify: async () => {}, sendAs: nothing, hasSentTo: async () => false, attachment: async () => null, disconnect: async () => {},
+  calendar: { busy: nothing, events: nothing, create: async () => ({ id: "event-1", link: null }), update: async () => ({ id: "event-1", link: null }), find: async () => null },
+} satisfies Mail;
 
 let passed = 0;
 function ok(name: string, fn: () => void) {
@@ -160,7 +178,7 @@ console.log("Planted emails through the engine");
 const { planNew } = await import("./engine.ts");
 const userId = randomUUID();
 await db.from("profiles").insert({ id: userId, email: "me@example.com", notification_level: "none", autonomy_level: "suggest" });
-const { data: account } = await db.from("accounts").insert({ user_id: userId, address: "me@example.com", token_ref: "check:none" }).select("id").single();
+const { data: account } = await db.from("accounts").insert({ user_id: userId, provider: "fake", address: "me@example.com", token_ref: "check:none" }).select("id").single();
 const now = Date.now();
 const ids: string[] = [];
 for (const [i, e] of PLANTED.entries()) {
@@ -233,21 +251,12 @@ if (modelConfigured()) {
 
 // ── Autopilot ───────────────────────────────────────────────────────────────
 // An ordinary email from someone the user has written to. The reply text is
-// canned and the Gmail transport records instead of sending, so this runs
-// without a model or a mailbox.
+// canned and the account's mailbox is the recorder, so this runs without a
+// model or a mailbox.
 console.log("Autopilot");
 const { drafter } = await import("./engine.ts");
-const { sendDueEmails, transport } = await import("./outbox.ts");
+const { sendDueEmails } = await import("./outbox.ts");
 const { undo } = await import("./actions.ts");
-const sent: { to: string[]; threadId?: string; cc?: string[]; bcc?: string[]; from?: string }[] = [];
-transport.send = async (_ref, to, _subject, _html, _inReplyTo, threadId, _att, cc, bcc, from) => {
-  sent.push({ to, threadId, cc, bcc, from });
-  return { id: `sent-${sent.length}` };
-};
-transport.sendDraft = async (_ref, _draftId, m, threadId) => {
-  sent.push({ to: m.to, threadId, cc: m.cc, bcc: m.bcc, from: m.from });
-  return { id: `sent-${sent.length}` };
-};
 drafter.draft = async () => "Hi Ann,\n\nYes, Thursday works. See you then.\n\nBest";
 await db.from("profiles").update({ autonomy_level: "autopilot", autopilot_delay_min: 5, autopilot_daily_cap: 10, autopilot_known_only: true }).eq("id", userId);
 await db.from("action_log").delete().eq("user_id", userId);
@@ -395,7 +404,7 @@ await db.from("accounts").update({ send_as: [] }).eq("id", account!.id);
 // again does not get its actions twice.
 console.log("Suggest");
 ok("HTML is read as text, without its styles", () => {
-  const text = gmail.htmlToText("<html><head><style>.a{color:red}</style></head><body><!-- x --><p>Hi&nbsp;George,</p>\r\n\r\n<div>Your API key &amp; credits</div><script>var a=1</script><ul><li>One</li></ul></body></html>");
+  const text = htmlToText("<html><head><style>.a{color:red}</style></head><body><!-- x --><p>Hi&nbsp;George,</p>\r\n\r\n<div>Your API key &amp; credits</div><script>var a=1</script><ul><li>One</li></ul></body></html>");
   assert.equal(text, "Hi George,\n\nYour API key & credits\n\n- One");
 });
 await db.from("profiles").update({ autonomy_level: "suggest" }).eq("id", userId);
@@ -576,7 +585,7 @@ console.log(block.replace(/^/gm, "      | "));
 console.log("\nSenders");
 const senders = await import("./senders.ts");
 const day = (n: number) => new Date(Date.UTC(2026, 9, n)).toISOString();
-const hdr = (gmail_id: string, thread_id: string, n: number, from: string, to: string, labels: string[], extra: Partial<gmail.HeaderRow> = {}): gmail.HeaderRow =>
+const hdr = (gmail_id: string, thread_id: string, n: number, from: string, to: string, labels: string[], extra: Partial<HeaderRow> = {}): HeaderRow =>
   ({ gmail_id, thread_id, at: day(n), labels, from, to, cc: "", list_unsubscribe: false, list_id: "", precedence: "", ...extra });
 await senders.indexMail(userId, account!.id as string, [
   // Prof writes, the user answers; the prof writes again, still unread.
@@ -695,7 +704,7 @@ ok("a todo is due on the day its sentence names after by, before or due, and on 
 // makes no todo; a meeting without a time is not proposed.
 const ruleUser = randomUUID();
 await db.from("profiles").insert({ id: ruleUser, email: "me@example.com", notification_level: "none", autonomy_level: "assist", working_hours: { timezone: TZ } });
-const { data: ruleAccount } = await db.from("accounts").insert({ user_id: ruleUser, address: "me@example.com", token_ref: "check:none" }).select("id").single();
+const { data: ruleAccount } = await db.from("accounts").insert({ user_id: ruleUser, provider: "fake", address: "me@example.com", token_ref: "check:none" }).select("id").single();
 let rn = 0;
 async function ruleMail(x: Record<string, unknown>) {
   rn++;
@@ -749,7 +758,7 @@ ok("no todo or meeting comes from calendar mail, from mail sorted as updates, or
 ok("a todo from a no-reply address whose mail was opened is asked about, not made", () => assert.equal(boardQuestions.length, 1));
 
 // Newsletters: bulk by headers, two emails or more, never someone written to.
-const nlHdr = (id: string, from: string, x: Partial<gmail.HeaderRow> = {}): gmail.HeaderRow => ({ gmail_id: id, thread_id: id, at: new Date().toISOString(), labels: ["INBOX"], from, to: "me@example.com", cc: "", list_unsubscribe: false, list_id: "", precedence: "", ...x });
+const nlHdr = (id: string, from: string, x: Partial<HeaderRow> = {}): HeaderRow => ({ gmail_id: id, thread_id: id, at: new Date().toISOString(), labels: ["INBOX"], from, to: "me@example.com", cc: "", list_unsubscribe: false, list_id: "", precedence: "", ...x });
 await indexMail(ruleUser, ruleAccount!.id as string, [
   nlHdr("n1", "Digest <digest@news.example>", { list_unsubscribe: true, list_id: "<d.news.example>" }),
   nlHdr("n2", "Digest <digest@news.example>", { list_unsubscribe: true, list_id: "<d.news.example>" }),
@@ -810,6 +819,246 @@ ok("Follow-ups: what asks a person something, two days on, unanswered, not muted
 
 // The same failures through the configured model: what it says is printed,
 // and what code allows of it is checked.
+// ── IMAP and SMTP ───────────────────────────────────────────────────────────
+// A fake mail server on loopback ports, with just enough IMAP and SMTP for
+// one mailbox, so the IMAP provider syncs, labels, archives, drafts and sends
+// against something real without a real mailbox.
+console.log("\nIMAP and SMTP");
+const net = await import("node:net");
+type Socket = import("node:net").Socket;
+type Server = import("node:net").Server;
+const imap = await import("./imap.ts");
+type Msg = { uid: number; flags: Set<string>; raw: string; date: Date };
+const store = new Map<string, { next: number; msgs: Msg[] }>();
+const folder = (name: string) => store.get(name) ?? store.set(name, { next: 1, msgs: [] }).get(name)!;
+const idling = new Set<Socket>();
+const put = (name: string, raw: string, flags: string[] = [], date = new Date()) => {
+  const f = folder(name);
+  f.msgs.push({ uid: f.next++, flags: new Set(flags), raw: raw.replace(/\r?\n/g, "\r\n"), date });
+  if (name === "INBOX") for (const s of idling) s.write(`* ${f.msgs.length} EXISTS\r\n`);
+};
+for (const n of ["INBOX", "Sent", "Drafts", "Archive"]) folder(n);
+const textOf = (raw: string) => Buffer.from(raw.split("\r\n\r\n")[1] ?? "", "base64").toString();
+const copiesOf = (mid: string) => [...store].flatMap(([n, f]) => f.msgs.filter((m) => m.raw.includes(`<${mid}>`)).map(() => n));
+const PASS = "abcd-efgh-ijkl-mnop";
+const imapServer = net.createServer((sock) => {
+  let box = "";
+  let buf = Buffer.alloc(0);
+  let append: { tag: string; name: string; flags: string[]; size: number } | null = null;
+  const say = (s: string) => sock.write(`${s}\r\n`);
+  const uidsIn = (set: string) => {
+    const all = folder(box).msgs.map((m) => m.uid);
+    return all.filter((u) => set.split(",").some((r) => { const [a, b] = r.split(":"); return b === undefined ? u === +a : u >= +a && (b === "*" || u <= +b); }));
+  };
+  const literal = (s: string) => `{${Buffer.byteLength(s)}}\r\n${s}`;
+  sock.write("* OK [CAPABILITY IMAP4rev1 IDLE MOVE UIDPLUS] ready\r\n");
+  sock.on("data", (d: Buffer) => {
+    buf = Buffer.concat([buf, d]);
+    for (;;) {
+      if (append) {
+        if (buf.length < append.size + 2) return;
+        put(append.name, buf.subarray(0, append.size).toString("utf8"), append.flags);
+        buf = buf.subarray(append.size + 2);
+        say(`${append.tag} OK APPEND done`);
+        append = null;
+        continue;
+      }
+      const nl = buf.indexOf("\r\n");
+      if (nl < 0) return;
+      const line = buf.subarray(0, nl).toString("utf8");
+      buf = buf.subarray(nl + 2);
+      if (line === "DONE") { idling.delete(sock); say("I OK IDLE done"); continue; }
+      const [, tag, rest] = line.match(/^(\S+) (.*)$/) ?? [];
+      const [cmd, ...args] = (rest ?? "").replace(/^UID /i, "").split(" ");
+      const arg = args.join(" ");
+      const name = (arg.match(/^"([^"]*)"/)?.[1] ?? args[0] ?? "").replace(/"/g, "");
+      const C = cmd?.toUpperCase();
+      if (C === "CAPABILITY") say("* CAPABILITY IMAP4rev1 IDLE MOVE UIDPLUS");
+      if (C === "LOGIN") { if (arg.endsWith(`"${PASS}"`)) say(`${tag} OK logged in`); else say(`${tag} NO [AUTHENTICATIONFAILED] wrong password`); continue; }
+      if (C === "LIST") for (const n of store.keys()) say(`* LIST (${{ Sent: "\\Sent", Drafts: "\\Drafts", Archive: "\\Archive" }[n] ?? ""}) "/" "${n}"`);
+      if (C === "SELECT") { if (!store.has(name)) { say(`${tag} NO no such folder`); continue; } box = name; const f = folder(box); say(`* ${f.msgs.length} EXISTS`); say("* OK [UIDVALIDITY 7] ok"); say(`* OK [UIDNEXT ${f.next}] ok`); }
+      if (C === "STATUS") { const f = folder(name); say(`* STATUS "${name}" (MESSAGES ${f.msgs.length} UIDNEXT ${f.next} UNSEEN ${f.msgs.filter((m) => !m.flags.has("\\Seen")).length})`); }
+      if (C === "CREATE") folder(name);
+      if (C === "IDLE") { idling.add(sock); say("+ idling"); continue; }
+      if (C === "SEARCH") {
+        const f = folder(box).msgs;
+        const q = arg.match(/^HEADER MESSAGE-ID "(.*)"$/i)?.[1] ?? arg.match(/^TO "(.*)"$/i)?.[1];
+        const since = arg.match(/^SINCE (\S+)/i)?.[1];
+        const range = arg.match(/^UID (\S+)/i)?.[1];
+        const hits = range ? uidsIn(range) : f.filter((m) => (q ? m.raw.split("\r\n\r\n")[0].includes(q) : since ? m.date >= new Date(since) : true)).map((m) => m.uid);
+        say(`* SEARCH ${hits.join(" ")}`.trim());
+      }
+      if (C === "FETCH") {
+        const f = folder(box).msgs;
+        for (const u of uidsIn(args[0])) {
+          const m = f.find((x) => x.uid === u)!;
+          const head = m.raw.split("\r\n\r\n")[0] + "\r\n\r\n";
+          let items = `UID ${u} FLAGS (${[...m.flags].join(" ")}) INTERNALDATE "${m.date.getUTCDate()}-${m.date.toUTCString().slice(8, 11)}-${m.date.getUTCFullYear()} ${m.date.toISOString().slice(11, 19)} +0000"`;
+          if (/HEADER\.FIELDS/i.test(arg)) items += ` BODY[HEADER.FIELDS (X)] ${literal(head)}`;
+          else if (/BODY\.PEEK\[\]/i.test(arg)) items += ` BODY[] ${literal(m.raw)}`;
+          say(`* ${f.indexOf(m) + 1} FETCH (${items})`);
+        }
+      }
+      if (C === "STORE") {
+        const flags = arg.match(/\((.*)\)/)![1].split(" ");
+        for (const m of folder(box).msgs) if (uidsIn(args[0]).includes(m.uid)) for (const fl of flags) args[1].startsWith("+") ? m.flags.add(fl) : m.flags.delete(fl);
+      }
+      if (C === "COPY" || C === "MOVE") {
+        const to = arg.match(/"([^"]*)"$/)![1];
+        const moving = folder(box).msgs.filter((m) => uidsIn(args[0]).includes(m.uid));
+        for (const m of moving) put(to, m.raw, [...m.flags], m.date);
+        if (C === "MOVE") folder(box).msgs = folder(box).msgs.filter((m) => !moving.includes(m));
+      }
+      if (C === "EXPUNGE") folder(box).msgs = folder(box).msgs.filter((m) => !(m.flags.has("\\Deleted") && (!args[0] || uidsIn(args[0]).includes(m.uid))));
+      if (C === "APPEND") { append = { tag, name, flags: arg.match(/\((.*)\)/)![1].split(" "), size: Number(arg.match(/\{(\d+)\}$/)![1]) }; say("+ go"); continue; }
+      if (C === "LOGOUT") say("* BYE");
+      say(`${tag} OK done`);
+    }
+  });
+  sock.on("error", () => {});
+  sock.on("close", () => idling.delete(sock));
+});
+const smtpGot: { from: string; to: string[]; data: string }[] = [];
+const smtpServer = net.createServer((sock) => {
+  let msg = { from: "", to: [] as string[], data: "" };
+  let inData = false;
+  let buf = "";
+  sock.write("220 fake\r\n");
+  sock.on("data", (d: Buffer) => {
+    buf += d.toString("utf8");
+    if (inData) {
+      const end = buf.indexOf("\r\n.\r\n");
+      if (end < 0) return;
+      smtpGot.push({ ...msg, data: buf.slice(0, end) });
+      buf = buf.slice(end + 5);
+      inData = false;
+      msg = { from: "", to: [], data: "" };
+      sock.write("250 queued\r\n");
+    }
+    let nl;
+    while (!inData && (nl = buf.indexOf("\r\n")) >= 0) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 2);
+      if (/^EHLO/i.test(line)) sock.write("250-fake\r\n250 AUTH PLAIN\r\n");
+      else if (/^AUTH PLAIN/i.test(line)) sock.write(Buffer.from(line.slice(11), "base64").toString().endsWith(PASS) ? "235 ok\r\n" : "535 no\r\n");
+      else if (/^MAIL FROM/i.test(line)) (msg.from = line.match(/<(.*)>/)![1]), sock.write("250 ok\r\n");
+      else if (/^RCPT TO/i.test(line)) msg.to.push(line.match(/<(.*)>/)![1]), sock.write("250 ok\r\n");
+      else if (/^DATA/i.test(line)) (inData = true), sock.write("354 go\r\n");
+      else if (/^QUIT/i.test(line)) sock.end("221 bye\r\n");
+    }
+  });
+  sock.on("error", () => {});
+});
+const listen = (s: Server) => new Promise<number>((r) => s.listen(0, "127.0.0.1", () => r((s.address() as import("node:net").AddressInfo).port)));
+const ports = { imap: await listen(imapServer), smtp: await listen(smtpServer) };
+imap.secrets.get = (ref: string) => (ref.startsWith("imap:") ? PASS : null);
+imap.secrets.set = () => {};
+imap.secrets.delete = () => {};
+
+const mailUser = randomUUID();
+await db.from("profiles").insert({ id: mailUser, email: "me@fake.example", notification_level: "none", autonomy_level: "suggest" });
+put("INBOX", [
+  "Message-ID: <one@fake.example>", "From: =?UTF-8?Q?Ana_Mar=C3=ADa?= <ana@people.example>", "To: me@fake.example", "Subject: =?UTF-8?B?Q2Fmw6k=?= on Friday",
+  'Content-Type: multipart/mixed; boundary="b1"', "", "--b1", 'Content-Type: multipart/alternative; boundary="b2"', "", "--b2",
+  "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: quoted-printable", "", "Shall we meet at the caf=C3=A9 on Friday?", "--b2",
+  "Content-Type: text/html; charset=utf-8", "Content-Transfer-Encoding: base64", "", Buffer.from("<p>Shall we meet at the café on Friday?</p>").toString("base64"), "--b2--",
+  "--b1", 'Content-Type: application/pdf; name="plan.pdf"', "Content-Disposition: attachment", "Content-Transfer-Encoding: base64", "", Buffer.from("%PDF-1.4 plan").toString("base64"), "--b1--", "",
+].join("\n"));
+put("INBOX", "Message-ID: <two@list.example>\nFrom: News <news@list.example>\nTo: me@fake.example\nSubject: This week\nList-Unsubscribe: <https://list.example/u>\nList-Id: <week.list.example>\n\nThe news.\n");
+put("INBOX", "Message-ID: <three@people.example>\nFrom: Bo <bo@people.example>\nTo: me@fake.example\nSubject: Lunch\n\nLunch tomorrow?\n");
+put("Sent", "Message-ID: <mine@fake.example>\nFrom: me@fake.example\nTo: Bo <bo@people.example>\nSubject: Hi Bo\nDate: Mon, 23 Nov 2026 10:00:00 +0000\n\nHello Bo.\n", ["\\Seen"]);
+
+const servers = { imap: { host: "127.0.0.1", port: ports.imap }, smtp: { host: "127.0.0.1", port: ports.smtp } };
+await assert.rejects(imap.connectImap({ address: "me@fake.example", password: "wrong", ...servers, users: ["me@fake.example"], choice: "imap" }));
+const linked = await imap.connectImap({ address: "me@fake.example", password: PASS, ...servers, users: ["me@fake.example"], choice: "imap" });
+ok("an app password is checked against both servers before the account is kept", () => assert.ok(linked.tokenRef.startsWith("imap:") && linked.server.user === "me@fake.example"));
+const { data: imapRow } = await db.from("accounts").insert({ user_id: mailUser, provider: "imap", address: "me@fake.example", token_ref: linked.tokenRef, server: linked.server, is_default: true }).select("*").single();
+const imapAccount = imapRow as unknown as import("./accounts.ts").Account;
+const { syncMail } = await import("./sync.ts");
+const { act, setMailState } = await import("./actions.ts");
+const { saveUserDraft } = await import("./drafts.ts");
+const box = mailbox(imapAccount);
+
+await syncMail(mailUser, true);
+const stored = async () => (await db.from("emails").select("*").eq("user_id", mailUser).order("received_at")).data ?? [];
+const synced = await stored();
+const one = synced.find((e) => e.gmail_id === "one@fake.example")!;
+ok("the first sync stores the Inbox and Sent, read from raw MIME", () => {
+  assert.equal(synced.filter((e) => !(e.label_ids as string[]).includes("SENT")).length, 3);
+  assert.equal(one.subject, "Café on Friday");
+  assert.equal(one.sender_email, "ana@people.example");
+  assert.match(String(one.body_text), /café on Friday/);
+  assert.match(String(one.body_html), /<p>Shall we meet/);
+  assert.deepEqual((one.attachments as { filename: string }[]).map((a) => a.filename), ["plan.pdf"]);
+  assert.ok(synced.find((e) => e.gmail_id === "two@list.example")!.has_list_unsubscribe);
+  assert.ok(synced.some((e) => e.gmail_id === "mine@fake.example" && (e.label_ids as string[]).includes("SENT")));
+});
+const att = await box.attachment(imapAccount, "one@fake.example", (one.attachments as { attachment_id: string }[])[0].attachment_id);
+ok("an attachment is read from its part", () => assert.equal(Buffer.from(att!.data, "base64url").toString(), "%PDF-1.4 plan"));
+
+await act(mailUser, { kind: "label", emailId: one.id, summary: "Label Work", detail: { label: "Tabellar/Work" } }, { level: "suggest", paused: false, source: "engine" });
+const { data: labelled } = await db.from("action_log").select("id, status").eq("user_id", mailUser).eq("kind", "label").single();
+ok("a label is a folder holding a copy, the email stays in the Inbox", () => {
+  assert.equal(labelled!.status, "done");
+  assert.deepEqual(copiesOf("one@fake.example").sort(), ["INBOX", "Tabellar/Work"]);
+});
+await undo(mailUser, labelled!.id as string);
+ok("undoing the label deletes only the folder's copy", () => assert.deepEqual(copiesOf("one@fake.example"), ["INBOX"]));
+await setMailState(mailUser, [one.id], { archived: true, read: true });
+ok("archiving moves it to Archive, and read is \\Seen", () => {
+  assert.deepEqual(copiesOf("one@fake.example"), ["Archive"]);
+  assert.ok(folder("Archive").msgs[0].flags.has("\\Seen"));
+});
+await setMailState(mailUser, [one.id], { archived: false });
+ok("unarchiving moves it back", () => assert.deepEqual(copiesOf("one@fake.example"), ["INBOX"]));
+await box.modify(imapAccount, ["three@people.example"], ["Tabellar/Work"], []);
+folder("INBOX").msgs = folder("INBOX").msgs.filter((m) => !m.raw.includes("<three@"));
+await box.modify(imapAccount, ["three@people.example"], [], ["Tabellar/Work"]);
+ok("taking a label off the only copy moves it to Archive instead of deleting it", () => assert.deepEqual(copiesOf("three@people.example"), ["Archive"]));
+
+let woke = 0;
+box.watch!(imapAccount, () => woke++);
+await new Promise((r) => setTimeout(r, 300));
+folder("INBOX").msgs.find((m) => m.raw.includes("<two@"))!.flags.add("\\Seen");
+put("INBOX", "Message-ID: <four@people.example>\nFrom: Cy <cy@people.example>\nTo: me@fake.example\nSubject: New\n\nJust in.\n");
+await new Promise((r) => setTimeout(r, 300));
+const { data: imapNow } = await db.from("accounts").select("*").eq("id", imapAccount.id).single();
+const moved = await box.moved(imapNow as unknown as import("./accounts.ts").Account);
+ok("IDLE wakes the watcher and the mailbox says it moved", () => assert.ok(woke > 0 && moved));
+const fresh = await syncMail(mailUser);
+const later = await stored();
+ok("the next sync brings new mail and what changed elsewhere", () => {
+  assert.equal(fresh.length, 1);
+  assert.ok(later.find((e) => e.gmail_id === "two@list.example")!.is_read);
+  assert.ok(later.find((e) => e.gmail_id === "three@people.example")!.is_archived);
+});
+
+const draft = await saveUserDraft(mailUser, { account_id: imapAccount.id, to: ["bo@people.example"], subject: "Lunch", body_html: "<p>Yes, noon.</p>" });
+const resaved = await saveUserDraft(mailUser, { id: draft.id, account_id: imapAccount.id, to: ["bo@people.example"], bcc: ["me2@fake.example"], subject: "Lunch", body_html: "<p>Yes, at noon.</p>" });
+ok("a draft is in Drafts, and saving it again replaces it", () => {
+  assert.ok(draft.inGmail && resaved.inGmail);
+  assert.equal(folder("Drafts").msgs.length, 1);
+  assert.match(textOf(folder("Drafts").msgs[0].raw), /at noon/);
+});
+const { data: savedDraft } = await db.from("draft_emails").select("gmail_draft_id").eq("id", draft.id).single();
+await db.from("scheduled_emails").insert({
+  user_id: mailUser, account_id: imapAccount.id, to_addresses: ["bo@people.example"], bcc_addresses: ["me2@fake.example"], subject: "Lunch", body_html: "<p>Yes, at noon.</p>",
+  gmail_draft_id: savedDraft!.gmail_draft_id, in_reply_to: "three@people.example", send_at: new Date(Date.now() - 1000).toISOString(),
+});
+await sendDueEmails();
+ok("sending goes through SMTP, Bcc only in the envelope, and leaves Drafts for Sent", () => {
+  assert.equal(smtpGot.length, 1);
+  assert.deepEqual(smtpGot[0].to, ["bo@people.example", "me2@fake.example"]);
+  assert.equal(smtpGot[0].from, "me@fake.example");
+  assert.ok(!/^Bcc:/im.test(smtpGot[0].data) && /^In-Reply-To: <three@people\.example>/m.test(smtpGot[0].data));
+  assert.equal(folder("Drafts").msgs.length, 0);
+  assert.ok(folder("Sent").msgs.some((m) => textOf(m.raw).includes("at noon")));
+});
+await box.disconnect(imapAccount);
+imapServer.close();
+smtpServer.close();
+for (const s of idling) s.destroy();
+
 if (modelConfigured()) {
   console.log("Rules through the configured model (this can take a minute)");
   const { processFullEmail, expectsAnswer } = await import("./ai.ts");

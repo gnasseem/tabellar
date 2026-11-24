@@ -32,13 +32,15 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       created_at: "time ! =now", updated_at: "time ! =now",
     },
   },
-  // One row per connected mailbox. send_as is the addresses it can send
-  // from ({address, name, default}), as Gmail lists them; default_from is the
-  // user's pick among them. See accounts.ts.
+  // One row per connected mailbox. provider names its implementation
+  // (providers.ts); token_ref is the Keychain item with its sign-in or app
+  // password; server holds an IMAP account's servers and user name. send_as
+  // is the addresses it can send from ({address, name, default}); default_from
+  // is the user's pick among them. See accounts.ts.
   accounts: {
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", provider: 'text ! ="gmail"', address: "text !", token_ref: "text !",
-      history_id: "text", send_as: "json ! =[]", send_as_at: "time", default_from: "text",
+      history_id: "text", server: "json", send_as: "json ! =[]", send_as_at: "time", default_from: "text",
       is_default: "bool ! =false", paused: "bool ! =false", read_at: "time", created_at: "time ! =now",
     },
     unique: [["user_id", "address"]],

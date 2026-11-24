@@ -17,7 +17,7 @@
 // headers whether mail is bulk, so the model never reads it.
 
 import { db } from "./db.ts";
-import type { HeaderRow } from "./gmail.ts";
+import type { HeaderRow } from "./providers.ts";
 
 const lc = (s: unknown) => String(s ?? "").trim().toLowerCase();
 const ADDRESS = /[^\s<>,;:"'()[\]]+@[^\s<>,;:"'()[\]]+\.[a-z]{2,}/gi;

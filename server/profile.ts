@@ -15,7 +15,8 @@
 // most MAX_OPEN are open at a time; the rest wait their turn.
 
 import { db } from "./db.ts";
-import { hasSentTo } from "./gmail.ts";
+import { mail } from "./providers.ts";
+import type { Account } from "./accounts.ts";
 
 export const KINDS = ["fact", "rule", "sender", "domain", "topic"] as const;
 export const VALUES = ["vip", "normal", "quiet", "ignore", "never_todo", "never_meeting", "never_draft", "never_followup", "not_newsletter"] as const;
@@ -103,8 +104,8 @@ export const covers = (rows: Pref[]) => rows.some((r) => r.kind === "sender" || 
 // ── Who the user knows ──────────────────────────────────────────────────────
 
 // Has the user written to this address? Sent mail in the database first; for
-// anything else Gmail answers, since sync keeps little sent mail.
-export async function wroteTo(userId: string, address: string, tokenRef: string | null): Promise<boolean> {
+// anything else the mailbox answers, since sync keeps little sent mail.
+export async function wroteTo(userId: string, address: string, account: Account | null): Promise<boolean> {
   const { count } = await db
     .from("emails")
     .select("id", { count: "exact", head: true })
@@ -112,12 +113,12 @@ export async function wroteTo(userId: string, address: string, tokenRef: string 
     .contains("label_ids", ["SENT"])
     .ilike("recipients", `%${like(address)}%`);
   if (count) return true;
-  if (!tokenRef || !/^[^\s@"]+@[^\s@"]+$/.test(address)) return false;
+  if (!account || !/^[^\s@"]+@[^\s@"]+$/.test(address)) return false;
   // That mailbox first, then the user's other mailboxes.
-  const { data: accounts } = await db.from("accounts").select("token_ref").eq("user_id", userId);
-  for (const ref of new Set([tokenRef, ...(accounts ?? []).map((a) => String(a.token_ref))])) {
+  const { data: accounts } = await db.from("accounts").select("*").eq("user_id", userId);
+  for (const a of [account, ...((accounts ?? []) as unknown as Account[]).filter((x) => x.id !== account.id)]) {
     try {
-      if (await hasSentTo(ref, address)) return true;
+      if (await mail(a).hasSentTo(a, address)) return true;
     } catch {
       // A mailbox that cannot be asked counts as not written to.
     }
@@ -149,7 +150,7 @@ export async function correspondents(userId: string, addresses: string[]): Promi
 
 // Does the user know this sender: a contact, someone they wrote to, or someone
 // whose mail they have opened before?
-export async function knowsSender(userId: string, address: string, opts: { exceptEmailId?: string; tokenRef?: string | null } = {}): Promise<boolean> {
+export async function knowsSender(userId: string, address: string, opts: { exceptEmailId?: string; account?: Account | null } = {}): Promise<boolean> {
   const a = lc(address);
   if (!a) return false;
   if ((await correspondents(userId, [a])).size) return true;
@@ -169,7 +170,7 @@ export async function knowsSender(userId: string, address: string, opts: { excep
     .eq("is_read", true)
     .neq("id", opts.exceptEmailId ?? "");
   if (opened) return true;
-  return wroteTo(userId, a, opts.tokenRef ?? null);
+  return wroteTo(userId, a, opts.account ?? null);
 }
 
 // ── The prompt block ────────────────────────────────────────────────────────

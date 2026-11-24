@@ -1,22 +1,26 @@
 // The user's mailboxes and the addresses each one sends from.
 //
-// An account is one connected mailbox (Gmail for now; `provider` says which).
-// Gmail keeps a "Send mail as" list per mailbox: its own address and every
-// alias the user added there. Tabellar reads it at sign-in and once a day
-// into accounts.send_as, so the compose From menu lists every address, a
-// reply goes out from the address the email was sent to, and every "is this
-// me" check knows all of them (senders.ownAddresses).
+// An account is one connected mailbox: Gmail, Outlook, or an IMAP server
+// (`provider` names it; see providers.ts). Gmail keeps a "Send mail as" list
+// per mailbox: its own address and every alias the user added there; other
+// mailboxes send from their own address. Tabellar reads the list at sign-in
+// and once a day into accounts.send_as, so the compose From menu lists every
+// address, a reply goes out from the address the email was sent to, and
+// every "is this me" check knows all of them (senders.ownAddresses).
 //
 // One account is the default: new mail goes out from it, and the calendar is
 // its calendar. A paused account is not synced and its mail is not read; what
 // is already in Tabellar stays.
 
+import { randomUUID } from "node:crypto";
 import { db } from "./db.ts";
-import { listSendAs, type SendAs } from "./gmail.ts";
+import { mail, type SendAs } from "./providers.ts";
 import { addressesIn } from "./senders.ts";
-import { forgetTokens, revokeGoogleTokens } from "./google.ts";
+import { keychainDelete } from "./config.ts";
 
 export type { SendAs };
+// An IMAP account's servers and the user name it signs in with.
+export type ImapServer = { choice: string; imap: { host: string; port: number }; smtp: { host: string; port: number; user?: string }; user: string };
 export type Account = {
   id: string;
   user_id: string;
@@ -24,6 +28,7 @@ export type Account = {
   address: string;
   token_ref: string;
   history_id: string | null;
+  server: ImapServer | null;
   send_as: SendAs[];
   send_as_at: string | null;
   default_from: string | null;
@@ -98,9 +103,9 @@ export async function fromLine(userId: string, a: Account, address: string | nul
   return fromHeader(a, address, String(data?.display_name ?? ""));
 }
 
-// Read the account's send-as list from Gmail now.
+// Read the account's send-as list from the mailbox now.
 export async function refreshSendAs(a: Account): Promise<SendAs[]> {
-  const list = await listSendAs(a.token_ref);
+  const list = await mail(a).sendAs(a);
   await db.from("accounts").update({ send_as: list, send_as_at: new Date().toISOString() }).eq("id", a.id);
   return list;
 }
@@ -124,6 +129,7 @@ export async function accountsForWindow(userId: string) {
   return all.map((a) => ({
     id: a.id,
     provider: a.provider,
+    choice: a.server?.choice ?? a.provider,
     address: a.address,
     is_default: a.id === def?.id,
     paused: a.paused,
@@ -148,20 +154,52 @@ export async function updateAccount(userId: string, id: string, patch: { paused?
   if (Object.keys(out).length) await db.from("accounts").update(out).eq("id", id);
 }
 
-// Disconnect an account: its Google sign-in is revoked and its mail, drafts
-// and signatures leave Tabellar. Gmail itself is not changed.
+// Disconnect an account: its sign-in leaves this Mac and its mail, drafts
+// and signatures leave Tabellar. The mailbox itself is not changed.
 export async function removeAccount(userId: string, id: string): Promise<void> {
   const a = await accountById(userId, id);
   if (!a) return;
   try {
-    await revokeGoogleTokens(a.token_ref);
+    await mail(a).disconnect(a);
   } catch (e) {
-    console.error("[accounts] revoke:", (e as Error).message);
-    forgetTokens(a.token_ref);
+    console.error("[accounts] disconnect:", (e as Error).message);
+    keychainDelete(a.token_ref);
   }
   await db.from("accounts").delete().eq("id", id);
   if (a.is_default) {
     const next = (await listAccounts(userId))[0];
     if (next) await db.from("accounts").update({ is_default: true }).eq("id", next.id);
   }
+}
+
+// Keep a mailbox that was just signed in to: the profile is made with the
+// first one, an account signed in to again keeps its row and settings, and
+// one more mailbox gets its own first read. Returns whether nothing is
+// stored yet, so the window shows the first fetch.
+export async function connectAccount(a: { provider: string; address: string; name: string; picture?: string | null; tokenRef: string; server?: ImapServer | null }): Promise<boolean> {
+  const address = a.address.toLowerCase();
+  let { data: profile } = await db.from("profiles").select("id").limit(1).maybeSingle();
+  if (!profile) {
+    const created = await db.from("profiles").insert({ id: randomUUID(), email: address, display_name: a.name, avatar_url: a.picture ?? null }).select("id").single();
+    if (created.error) throw new Error(created.error.message);
+    profile = created.data;
+  }
+  const userId = profile.id as string;
+  const { data: existing } = await db.from("accounts").select("id, token_ref").eq("user_id", userId).eq("address", address).maybeSingle();
+  if (existing && existing.token_ref !== a.tokenRef) keychainDelete(existing.token_ref as string);
+  const { count: others } = await db.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", userId).neq("address", address);
+  const saved = await db
+    .from("accounts")
+    .upsert(
+      { user_id: userId, provider: a.provider, address, token_ref: a.tokenRef, server: a.server ?? null, ...(existing ? {} : { is_default: !others }) },
+      { onConflict: "user_id,address" },
+    )
+    .select("*")
+    .single();
+  if (saved.error) throw new Error(saved.error.message);
+  // The addresses it sends from, before the window first offers them.
+  await refreshSendAs(saved.data as unknown as Account).catch((e) => console.error("[accounts] send-as list:", (e as Error).message));
+  if (!existing && others) void import("./engine.ts").then((m) => m.kickEngine());
+  const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId);
+  return (count ?? 0) === 0;
 }

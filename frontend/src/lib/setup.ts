@@ -22,6 +22,21 @@ export type SetupState = {
   ollama: { installed: boolean; running: boolean; models: LocalModel[] };
   local: { choices: LocalModel[]; recommended: string; recommendedFast: string; memoryGb: number; small: boolean };
   providers: { id: string; name: string; keyUrl: string; suggested?: string; hasKey: boolean }[];
+  // What can be added as a mailbox (server/providers.ts CHOICES).
+  mailboxes: MailboxChoice[];
+  microsoft: { clientId: string | null };
+};
+
+export type MailboxChoice = {
+  id: string;
+  name: string;
+  provider: "gmail" | "microsoft" | "imap";
+  imap?: { host: string; port: number };
+  smtp?: { host: string; port: number };
+  passwordUrl?: string;
+  calendar: boolean;
+  // Google with a sign-in client, Outlook with a registered app.
+  ready: boolean;
 };
 
 export type Progress = { status: string; completed?: number; total?: number };

@@ -8,7 +8,7 @@ web
 
 ## Users
 
-Primary: someone on a Mac who installed Tabellar from npm and lets it handle their Gmail. They open the window a few times a day to see what Tabellar did, approve what it is waiting on, and step in when something needs them. The design is judged first against this release user, a newcomer who must understand the window without a guide. The author uses it daily on his own NYU mailbox and comes second.
+Primary: someone on a Mac who installed Tabellar from npm and lets it handle their mail (Gmail first, also Outlook and IMAP mailboxes). They open the window a few times a day to see what Tabellar did, approve what it is waiting on, and step in when something needs them. The design is judged first against this release user, a newcomer who must understand the window without a guide. The author uses it daily on his own NYU mailbox and comes second.
 
 ## Product Purpose
 
@@ -30,7 +30,7 @@ Local and personal: mail stays in one SQLite file on the Mac, the model can run 
 - History (in Settings): the action log, with undo. Proposals wait on the page they belong to (Replies, Todos, Meetings, the Inbox), and approval is bound to a hash of the exact proposal.
 - A profile of the user (facts, people, domains, topics, rules) that every prompt reads and every "Not this" feeds. Before a todo or draft from a sender the user does not know, Tabellar asks one question instead of guessing; at most three questions are open at once. Settings > About you lists and edits all of it.
 - The Brief (what needs the user today, who owes them an answer, today's calendar, what was handled), drafts, todos, meetings with calendar free slots, follow-ups for unanswered sent mail, newsletter cleanup (unsubscribe, archive a sender), the user's own labels (with examples, mapped to Gmail labels, ordering the Inbox), and Ask: questions about the inbox, kept as conversations, and a cleanup plan started there that runs only what is approved.
-- Several Gmail accounts in one merged inbox, with a switch to one account, a default account and a pause per account; every alias in Gmail's "Send mail as" list can be the From, and a reply goes out from the address the mail was sent to. Local or cloud models in two slots.
+- Several mailboxes in one merged inbox (Gmail; Outlook and Microsoft 365 through Graph once the user registers an Azure app; iCloud, Fastmail, Yahoo and any IMAP mailbox with an app password, which have no calendar), with a switch to one account, a default account and a pause per account; every alias in Gmail's "Send mail as" list can be the From, and a reply goes out from the address the mail was sent to. Local or cloud models in two slots.
 - Direction from the author (2026-11-23): the inbox stays a list of emails one after another, but each row shows its status, what Tabellar did with it and where the result went. Most of the user's time is spent on the pages that show what their mail turned into (replies to send, todos, meetings, follow-ups and more) rather than on reading messages. It must hold up for a busy mailbox: hundreds of emails a day, long todo and draft lists. A separate dashboard of counts and cards was tried and rejected.
 - macOS only for the first release.
 

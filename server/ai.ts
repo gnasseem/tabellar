@@ -2152,7 +2152,7 @@ export async function chatWithAssistant(
           toolResult = "Failed to archive email: not found.";
         } else {
           const outcome = await act(userId, { kind: "archive", emailId: id, summary: "Archive (asked in chat)", detail: {} }, { ...(await engineSettings(userId)), source: "assistant" });
-          toolResult = outcome === "done" ? "Email archived." : outcome === "refused" ? "Not archived: Tabellar is paused." : "Failed to archive email in Gmail.";
+          toolResult = outcome === "done" ? "Email archived." : outcome === "refused" ? "Not archived: Tabellar is paused." : "Failed to archive the email in the mailbox.";
         }
       } else if (
         tc.function?.name === "get_email_thread" &&

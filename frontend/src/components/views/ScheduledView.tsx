@@ -311,7 +311,7 @@ export default function ScheduledView() {
                 </dl>
                 {failed && (
                   <p className="mt-4 leading-normal text-danger" role="alert">
-                    Gmail did not send this: {cursor.error_message || "no reason was given"}. Try again, or edit it first.
+                    The mailbox did not send this: {cursor.error_message || "no reason was given"}. Try again, or edit it first.
                   </p>
                 )}
                 {cursor.body_html ? (

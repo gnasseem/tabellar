@@ -6,7 +6,8 @@ import { useApp } from "../AppShell";
 import { LevelControl } from "../Sidebar";
 import { api } from "@/lib/outcomes";
 import { EmailField, useContacts } from "../EmailAutocomplete";
-import { ModelSettings, RadioDot } from "../ModelSetup";
+import { ModelSettings, RadioDot, useSetupState } from "../ModelSetup";
+import AddMailbox from "../AddMailbox";
 import { Menu, Seg, ViewBar } from "../ui";
 import { AboutYou } from "../Profile";
 
@@ -363,16 +364,21 @@ function SignatureBody({ initial, onChange }: { initial: string; onChange: (html
   );
 }
 
-// Where Settings opens after Google sends the window back from adding an account.
+// Where Settings opens after Google or Microsoft sends the window back from
+// adding an account.
 const RETURN_TAB = "tabellar_settings_tab";
 
-function addAccount() {
+function returnHere() {
   try {
     sessionStorage.setItem(RETURN_TAB, "accounts");
   } catch {
     // the window then opens on General
   }
-  window.location.assign("/oauth/start");
+}
+
+function signInAgain(provider: string) {
+  returnHere();
+  window.location.assign(provider === "microsoft" ? "/oauth/start?provider=microsoft" : "/oauth/start");
 }
 
 // Settings > Accounts: each mailbox, its default From, whether it is read,
@@ -381,6 +387,9 @@ function AccountsSettings() {
   const { accounts, addToast } = useApp();
   const [busy, setBusy] = useState<string | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const setup = useSetupState();
+  const nameOf = (choice: string) => setup.state?.mailboxes.find((c) => c.id === choice)?.name ?? "";
   const several = accounts.list.length > 1;
 
   useEffect(() => {
@@ -409,7 +418,7 @@ function AccountsSettings() {
   const remove = async (id: string, address: string) => {
     setMenu(null);
     const last = accounts.list.length === 1;
-    if (!window.confirm(`Remove ${address} from Tabellar?\n\nIts mail leaves Tabellar; Gmail is not changed.${last ? " It is the only account, so this window signs out." : ""}`)) return;
+    if (!window.confirm(`Remove ${address} from Tabellar?\n\nIts mail leaves Tabellar; the mailbox itself is not changed.${last ? " It is the only account, so this window signs out." : ""}`)) return;
     setBusy(id);
     try {
       await api("/accounts/remove", { id });
@@ -425,12 +434,30 @@ function AccountsSettings() {
     <Group
       title="Accounts"
       right={
-        <button className="btn btn-sm" onClick={addAccount}>
-          Add an account
+        <button className="btn btn-sm" aria-expanded={adding} onClick={() => setAdding(!adding)}>
+          {adding ? "Cancel" : "Add an account"}
         </button>
       }
-      note="Addresses to send from come from each Gmail account's Send mail as list."
+      note="A Gmail account also sends from the addresses in its Send mail as list."
     >
+      {adding && (
+        <div className="border-b border-line-soft pb-5 pt-1">
+          {setup.state ? (
+            <AddMailbox
+              state={setup.state}
+              refresh={setup.refresh}
+              beforeSignIn={returnHere}
+              onAdded={async () => {
+                setAdding(false);
+                await accounts.reload();
+                addToast("success", "Account added. Its mail is being read.");
+              }}
+            />
+          ) : (
+            <p className="py-2 text-ink3">{setup.error || "Loading"}</p>
+          )}
+        </div>
+      )}
       {!accounts.loaded ? (
         <div className="space-y-3 py-4" aria-busy="true" aria-label="Loading">
           <span className="skel block h-2.5 w-48" />
@@ -449,7 +476,10 @@ function AccountsSettings() {
                 {several && a.is_default && <span className="flex-none text-xs text-ink3">Default</span>}
               </span>
             }
-            text={a.paused ? "Paused" : a.from.length > 1 ? `Also sends as ${a.from.filter((f) => f.address !== a.address.toLowerCase()).map((f) => f.address).join(", ")}` : undefined}
+            text={[
+              nameOf(a.choice),
+              a.paused ? "Paused" : a.from.length > 1 ? `Also sends as ${a.from.filter((f) => f.address !== a.address.toLowerCase()).map((f) => f.address).join(", ")}` : "",
+            ].filter(Boolean).join(". ") || undefined}
           >
             {a.from.length > 1 && (
               <Menu label="From" value={a.default_from} onChange={(v) => change(a.id, { default_from: v })} options={a.from.map((f) => ({ id: f.address, label: f.address }))} />
@@ -466,8 +496,8 @@ function AccountsSettings() {
                       Make default
                     </button>
                   )}
-                  <button role="menuitem" className="pop-item" onClick={addAccount}>
-                    Sign in again
+                  <button role="menuitem" className="pop-item" onClick={() => (a.provider === "imap" ? (setMenu(null), setAdding(true)) : signInAgain(a.provider))}>
+                    {a.provider === "imap" ? "Change the app password" : "Sign in again"}
                   </button>
                   <button role="menuitem" className="pop-item text-danger" onClick={() => remove(a.id, a.address)}>
                     Remove

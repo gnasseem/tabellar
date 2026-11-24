@@ -23,7 +23,7 @@
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { analyzeWritingStyle, factsFromSent } from "./ai.ts";
-import { fetchHeaderRows, fetchMessages, fetchSentEmails, listMessageIds } from "./gmail.ts";
+import { mail } from "./providers.ts";
 import { notStored, readBacklog, sentHeaderRow, storeInbox, storeSent, syncMail, type Account } from "./sync.ts";
 import { indexMail, isBulk, ownAddresses, rebuildSenders, writtenTo } from "./senders.ts";
 import { setPref } from "./profile.ts";
@@ -132,7 +132,7 @@ async function firstRead(userId: string, plan: () => unknown): Promise<void> {
 // The first read of one more account.
 async function readAccount(userId: string, account: Account, plan: () => unknown): Promise<void> {
   await indexHeaders(userId, [account], false);
-  const sent = await fetchSentEmails(account.token_ref, SENT_CAP);
+  const sent = await mail(account).sent(account, SENT_CAP);
   await storeSent(userId, account, sent);
   await indexMail(userId, account.id, sent.map((e) => sentHeaderRow(e, account)), await ownAddresses(userId));
   await rebuildSenders(userId);
@@ -149,7 +149,7 @@ async function indexHeaders(userId: string, accounts: Account[], progress = true
   let total = 0;
   let done = 0;
   for (const account of accounts) {
-    const ids = await listMessageIds(account.token_ref, `newer_than:${HEADER_DAYS}d -in:chats -in:drafts`, HEADER_CAP);
+    const ids = await mail(account).list(account, { days: HEADER_DAYS, cap: HEADER_CAP, inbox: false });
     const have = new Set<string>();
     for (let i = 0; i < ids.length; i += 500) {
       const { data } = await db.from("mail_index").select("gmail_id").eq("user_id", userId).in("gmail_id", ids.slice(i, i + 500));
@@ -162,7 +162,7 @@ async function indexHeaders(userId: string, accounts: Account[], progress = true
   if (progress) await save(userId, { headers: done, headers_total: total });
   for (const { account, ids } of todo) {
     for (let i = 0; i < ids.length; i += 200) {
-      const rows = await fetchHeaderRows(account.token_ref, ids.slice(i, i + 200));
+      const rows = await mail(account).headerRows(account, ids.slice(i, i + 200));
       await indexMail(userId, account.id, rows, own);
       done += Math.min(200, ids.length - i);
       if (progress) await save(userId, { headers: done });
@@ -197,7 +197,7 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}...` : s
 // Read the last 200 sent emails: keep them, learn the writing style from all
 // of them, and with `facts` write the first facts about the user.
 export async function learnFromSent(userId: string, account: Account, opts: { facts: boolean }): Promise<{ sent: number; facts: number }> {
-  const sent = await fetchSentEmails(account.token_ref, SENT_CAP);
+  const sent = await mail(account).sent(account, SENT_CAP);
   await storeSent(userId, account, sent);
   await indexMail(userId, account.id, sent.map((e) => sentHeaderRow(e, account)), await ownAddresses(userId));
   const mine = sent.map((e) => ({ ...e, own: ownWords(e.body || e.snippet || "") })).filter((e) => e.own);
@@ -281,7 +281,7 @@ async function fetchDeep(userId: string, account: Account): Promise<void> {
   const want = rows.filter((r) => missing.has(r.gmail_id as string));
   const ordered = [...want.filter((r) => !bulk(r)), ...want.filter(bulk)].slice(0, room).map((r) => r.gmail_id as string);
   for (let i = 0; i < ordered.length; i += 50) {
-    await storeInbox(userId, account, await fetchMessages(account.token_ref, ordered.slice(i, i + 50)));
+    await storeInbox(userId, account, await mail(account).fetch(account, ordered.slice(i, i + 50)));
   }
 }
 

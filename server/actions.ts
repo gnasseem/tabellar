@@ -8,7 +8,8 @@
 
 import { randomUUID } from "node:crypto";
 import { db } from "./db.ts";
-import { batchModifyLabels, ensureLabel, modifyLabels } from "./gmail.ts";
+import { mail } from "./providers.ts";
+import type { Account } from "./accounts.ts";
 import { decide, normalizeLevel, proposalHash, type AutoSend, type Kind, type Source } from "./policy.ts";
 import { learn, type Signal } from "./profile.ts";
 
@@ -36,16 +37,23 @@ async function log(userId: string, p: Planned, row: Record<string, unknown>, id:
   return data.id as string;
 }
 
-async function emailWithToken(emailId: string) {
+async function emailWithAccount(emailId: string) {
   const { data, error } = await db
     .from("emails")
-    .select("id, gmail_id, label_ids, account_id, accounts(token_ref)")
+    .select("id, gmail_id, label_ids, account_id, accounts(*)")
     .eq("id", emailId)
     .single();
   if (error || !data) throw new Error("The email is no longer in Tabellar");
-  const tokenRef = (data.accounts as { token_ref?: string } | null)?.token_ref;
-  if (!tokenRef) throw new Error("The Gmail account for this email is no longer connected");
-  return { ...data, tokenRef, labelIds: (data.label_ids as string[] | null) ?? [] };
+  const account = data.accounts as unknown as Account | null;
+  if (!account?.token_ref) throw new Error("The account for this email is no longer connected");
+  return { ...data, account, labelIds: (data.label_ids as string[] | null) ?? [] };
+}
+
+// Change one email's labels in its mailbox and in the stored copy.
+async function relabel(email: Awaited<ReturnType<typeof emailWithAccount>>, add: string[], remove: string[], patch: Record<string, unknown> = {}) {
+  await mail(email.account).modify(email.account, [email.gmail_id as string], add, remove);
+  const labels = [...new Set([...email.labelIds.filter((l) => !remove.includes(l)), ...add])];
+  await db.from("emails").update({ label_ids: labels, ...patch }).eq("id", email.id);
 }
 
 function textToHtml(text: string): string {
@@ -54,12 +62,13 @@ function textToHtml(text: string): string {
 }
 
 // Archive or return to the inbox, mark read or unread, a batch of emails: in
-// Gmail first, grouped by account, then in the stored copies. Mail changed
-// here and mail changed in Gmail itself end up the same way (sync.ts).
+// the mailbox first, grouped by account, then in the stored copies. Mail
+// changed here and mail changed in the mailbox itself end up the same way
+// (sync.ts).
 export async function setMailState(userId: string, emailIds: string[], state: { archived?: boolean; read?: boolean }) {
   const { data } = await db
     .from("emails")
-    .select("id, gmail_id, label_ids, accounts(token_ref)")
+    .select("id, gmail_id, label_ids, account_id, accounts(*)")
     .eq("user_id", userId)
     .in("id", emailIds);
   const add: string[] = [];
@@ -69,12 +78,12 @@ export async function setMailState(userId: string, emailIds: string[], state: { 
   if (!add.length && !drop.length) return;
   const byAccount = new Map<string, typeof data>();
   for (const e of data ?? []) {
-    const ref = (e.accounts as { token_ref?: string } | null)?.token_ref;
-    if (!ref) continue;
-    byAccount.set(ref, [...(byAccount.get(ref) ?? []), e]);
+    if (!(e.accounts as Account | null)?.token_ref) continue;
+    byAccount.set(String(e.account_id), [...(byAccount.get(String(e.account_id)) ?? []), e]);
   }
-  for (const [ref, rows] of byAccount) {
-    await batchModifyLabels(ref, rows!.map((e) => e.gmail_id as string), add, drop);
+  for (const rows of byAccount.values()) {
+    const account = rows![0].accounts as unknown as Account;
+    await mail(account).modify(account, rows!.map((e) => e.gmail_id as string), add, drop);
     for (const e of rows!) {
       const labels = [...new Set([...((e.label_ids as string[] | null) ?? []).filter((l) => !drop.includes(l)), ...add])];
       const patch: Record<string, unknown> = { label_ids: labels };
@@ -110,15 +119,13 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
     return { scheduledId: data.id, sendAt };
   }
   if (p.kind === "label" || p.kind === "archive") {
-    const email = await emailWithToken(p.emailId!);
+    const email = await emailWithAccount(p.emailId!);
     if (p.kind === "label") {
-      const labelId = await ensureLabel(email.tokenRef, String(d.label));
-      const labels = await modifyLabels(email.tokenRef, email.gmail_id as string, [labelId], []);
-      await db.from("emails").update({ label_ids: labels }).eq("id", email.id);
+      const labelId = await mail(email.account).label(email.account, String(d.label));
+      await relabel(email, [labelId], []);
       return { labelId };
     }
-    const labels = await modifyLabels(email.tokenRef, email.gmail_id as string, [], ["INBOX"]);
-    await db.from("emails").update({ label_ids: labels, is_archived: true }).eq("id", email.id);
+    await relabel(email, [], ["INBOX"], { is_archived: true });
     return {};
   }
   if (p.kind === "draft") {
@@ -287,11 +294,9 @@ export async function undo(userId: string, id: string): Promise<void> {
   } else if (kind === "archive" && Array.isArray(d.emailIds)) {
     await setMailState(userId, d.emailIds as string[], { archived: false });
   } else if (kind === "label" || kind === "archive") {
-    const email = await emailWithToken(row.email_id as string);
-    const labels = kind === "label"
-      ? await modifyLabels(email.tokenRef, email.gmail_id as string, [], [String(d.labelId)])
-      : await modifyLabels(email.tokenRef, email.gmail_id as string, ["INBOX"], []);
-    await db.from("emails").update(kind === "archive" ? { label_ids: labels, is_archived: false } : { label_ids: labels }).eq("id", email.id);
+    const email = await emailWithAccount(row.email_id as string);
+    if (kind === "label") await relabel(email, [], [String(d.labelId)]);
+    else await relabel(email, ["INBOX"], [], { is_archived: false });
   } else if (kind === "draft") {
     await db.from("draft_emails").delete().eq("id", String(d.draftId)).eq("user_id", userId);
   } else if (kind === "todo") {

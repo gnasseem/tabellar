@@ -65,7 +65,7 @@ export function RadioDot({ on }: { on: boolean }) {
 }
 
 // One choice in a list of them: a radio mark, a name and a line about it.
-function Choice({ on, onClick, disabled, title, hint, right, mono }: { on: boolean; onClick: () => void; disabled?: boolean; title: string; hint?: string; right?: string; mono?: boolean }) {
+export function Choice({ on, onClick, disabled, title, hint, right, mono }: { on: boolean; onClick: () => void; disabled?: boolean; title: string; hint?: string; right?: string; mono?: boolean }) {
   return (
     <button
       type="button"

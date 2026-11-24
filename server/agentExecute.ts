@@ -4,10 +4,10 @@
  * Takes a session id + a selection of approved action ids (with optional
  * edits the user made in the review UI) and runs each action against the
  * appropriate backend:
- *   - reply     -> /send-email flow (Gmail) OR draft_emails row
+ *   - reply     -> sent from the mailbox OR a draft_emails row
  *   - todo      -> todos row
  *   - meeting   -> meetings row + Google Calendar event
- *   - archive   -> archived in Gmail and logged in action_log (undoable)
+ *   - archive   -> archived in the mailbox and logged in action_log (undoable)
  *
  * Every action first asks the policy, so nothing runs while Tabellar is paused.
  *
@@ -16,9 +16,8 @@
  */
 
 import type { Db } from "./db.ts";
-import { sendEmail } from "./gmail.ts";
+import { mail, userCalendar } from "./providers.ts";
 import { accountById, defaultAccount, fromLine, replyFrom } from "./accounts.ts";
-import { freshAccessToken } from "./google.ts";
 import { decide } from "./policy.ts";
 import { act, record, engineSettings } from "./actions.ts";
 
@@ -89,20 +88,6 @@ export function wallClockToUtc(wallMs: number, tz: string): Date {
   let instant = wallMs - offsetAt(wallMs);
   instant = wallMs - offsetAt(instant);
   return new Date(instant);
-}
-
-// The default account's calendar.
-async function getCalendarAccessToken(
-  _db: Db,
-  userId: string,
-): Promise<string | null> {
-  const account = await defaultAccount(userId);
-  if (!account) return null;
-  try {
-    return await freshAccessToken(account.token_ref);
-  } catch {
-    return null;
-  }
 }
 
 function plainToHtml(body: string): string {
@@ -178,18 +163,7 @@ export async function executeAgentPlan(
           const account = (await accountById(userId, linked?.account_id as string | undefined)) ?? (await defaultAccount(userId));
           if (!account) throw new Error("No account connected");
           const from = linked ? replyFrom(account, linked) : null;
-          const result = await sendEmail(
-            account.token_ref,
-            [to],
-            subject,
-            plainToHtml(body),
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            await fromLine(userId, account, from),
-          );
+          const result = await mail(account).send(account, { from: await fromLine(userId, account, from), to: [to], subject, html: plainToHtml(body) });
           await db.from("emails").insert({
             user_id: userId,
             gmail_id: result.id,
@@ -301,33 +275,14 @@ export async function executeAgentPlan(
           .select("id")
           .single();
 
-        // Create Google Calendar event (best effort).
+        // Put it on the calendar (best effort).
         try {
-          const accessToken = await getCalendarAccessToken(db, userId);
-          if (accessToken) {
-            const { data: calProfile } = await db
-              .from("profiles")
-              .select("calendar_send_invites")
-              .eq("id", userId)
-              .single();
-            const sendUpdates =
-              calProfile?.calendar_send_invites === false ? "none" : "all";
-            await fetch(
-              `https://www.googleapis.com/calendar/v3/calendars/primary/events?sendUpdates=${sendUpdates}`,
-              {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${accessToken}`,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({
-                  summary: title,
-                  description: (action.reasoning as string) ?? "",
-                  start: { dateTime: startLocal, timeZone: userTimezone },
-                  end: { dateTime: endLocal, timeZone: userTimezone },
-                  attendees: attendees.map((email) => ({ email })),
-                }),
-              },
+          const cal = await userCalendar(userId);
+          if (cal) {
+            await cal.calendar.create(
+              cal.account,
+              { title, description: (action.reasoning as string) ?? "", start: startLocal, end: endLocal, timeZone: userTimezone, attendees },
+              cal.invite,
             );
           }
         } catch (calErr) {
@@ -365,7 +320,7 @@ export async function executeAgentPlan(
           .is("resolved_at", null);
         results[action.id] = {
           status: "success",
-          info: `Archived ${ids.length} email${ids.length === 1 ? "" : "s"}${failed ? ` (${failed} only in Tabellar, Gmail refused)` : ""}`,
+          info: `Archived ${ids.length} email${ids.length === 1 ? "" : "s"}${failed ? ` (${failed} only in Tabellar, the mailbox refused)` : ""}`,
         };
       } else {
         throw new Error(`Unknown action type: ${action.type}`);

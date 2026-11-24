@@ -130,7 +130,7 @@ export default function LabelsView() {
   };
 
   const remove = async (l: Label) => {
-    if (!window.confirm(`Delete the label ${l.display_name}?\n\nMail keeps the Gmail label ${mappedTo(l)} where it has it; Tabellar stops adding it.`)) return;
+    if (!window.confirm(`Delete the label ${l.display_name}?\n\nMail keeps the mailbox label ${mappedTo(l)} where it has it; Tabellar stops adding it.`)) return;
     const { error } = await supabase.from("categories").delete().eq("id", l.id);
     if (error) return addToast("error", `The label was not deleted: ${error.message}`);
     setEditing(null);
@@ -225,7 +225,7 @@ export default function LabelsView() {
               </span>
               <span className="truncate pr-3 text-ink">{l.display_name}</span>
               <span className="truncate pr-3 text-ink3">{l.description}</span>
-              <span className="hidden truncate pr-3 text-[12.5px] text-ink3 md:block" title="Gmail label">
+              <span className="hidden truncate pr-3 text-[12.5px] text-ink3 md:block" title="Mailbox label">
                 {mappedTo(l)}
               </span>
               <span className="text-right text-xs text-ink3">{(counts[l.slug] || 0).toLocaleString()}</span>
@@ -365,7 +365,7 @@ function Editor({ label, next, gmailLabels, onSave, onCancel, onDelete, onMove }
         <input id="label-description" className="input w-full" value={d.description} maxLength={200} placeholder="Replies from companies I applied to" onChange={(e) => set({ description: e.target.value })} />
 
         <label className={field} htmlFor="label-gmail">
-          Gmail label
+          Mailbox label
         </label>
         <input id="label-gmail" className="input w-full" list="gmail-labels" value={d.gmail} placeholder={d.name ? `Tabellar/${d.name}` : "Tabellar/Name"} onChange={(e) => set({ gmail: e.target.value })} />
         <datalist id="gmail-labels">

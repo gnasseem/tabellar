@@ -13,18 +13,19 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { loadConfig, accessToken, googleClient } from "./config.ts";
 import { db, execute, callRpc, changes, type Change } from "./db.ts";
 import type { QuerySpec } from "./query.ts";
 import { handleApi } from "./api.ts";
 import { handleSetup, startOllama } from "./setup.ts";
-import { signInUrl, finishSignIn, forgetTokens } from "./google.ts";
+import { signInUrl, finishSignIn } from "./google.ts";
+import { finishMicrosoftSignIn, isMicrosoftState, microsoftClientId, microsoftSignInUrl } from "./microsoft.ts";
 import { sendDueEmails } from "./outbox.ts";
 import { modelConfigured } from "./llm.ts";
-import { kickEngine, startEngine, windowClosed, windowOpened } from "./engine.ts";
-import { refreshSendAs, type Account } from "./accounts.ts";
+import { startEngine, windowClosed, windowOpened } from "./engine.ts";
+import { connectAccount } from "./accounts.ts";
 
 const DIST = fileURLToPath(new URL("../frontend/dist/", import.meta.url));
 const MAX_BODY = 50 * 1024 * 1024; // attachments arrive base64-encoded in JSON
@@ -99,39 +100,15 @@ function useLoginCode(code: string): boolean {
 
 // ── Sign-in ─────────────────────────────────────────────────────────────────
 
+// Google and Microsoft send the browser back to /oauth/callback; the state
+// says which one started it.
 async function completeSignIn(code: string, state: string): Promise<boolean> {
-  const g = await finishSignIn(code, state);
-  let { data: profile } = await db.from("profiles").select("id").limit(1).maybeSingle();
-  if (!profile) {
-    const created = await db
-      .from("profiles")
-      .insert({ id: randomUUID(), email: g.email, display_name: g.name, avatar_url: g.picture })
-      .select("id")
-      .single();
-    if (created.error) throw new Error(created.error.message);
-    profile = created.data;
+  if (isMicrosoftState(state)) {
+    const m = await finishMicrosoftSignIn(code, state);
+    return connectAccount({ provider: "microsoft", address: m.email, name: m.name, tokenRef: m.tokenRef });
   }
-  const userId = profile.id as string;
-  const { data: existing } = await db
-    .from("accounts")
-    .select("id, token_ref")
-    .eq("user_id", userId)
-    .eq("address", g.email)
-    .maybeSingle();
-  if (existing && existing.token_ref !== g.tokenRef) forgetTokens(existing.token_ref as string);
-  const { count: others } = await db.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", userId).neq("address", g.email);
-  const saved = await db
-    .from("accounts")
-    .upsert({ user_id: userId, provider: "gmail", address: g.email, token_ref: g.tokenRef, ...(existing ? {} : { is_default: !others }) }, { onConflict: "user_id,address" })
-    .select("*")
-    .single();
-  if (saved.error) throw new Error(saved.error.message);
-  // The addresses it sends from, before the window first offers them.
-  await refreshSendAs(saved.data as unknown as Account).catch((e) => console.error("[sign-in] send-as list:", (e as Error).message));
-  // One more mailbox: the engine gives it its own first read.
-  if (!existing && others) kickEngine();
-  const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId);
-  return (count ?? 0) === 0;
+  const g = await finishSignIn(code, state);
+  return connectAccount({ provider: "gmail", address: g.email, name: g.name, picture: g.picture, tokenRef: g.tokenRef });
 }
 
 // ── Server ──────────────────────────────────────────────────────────────────
@@ -206,6 +183,12 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
 
       if (path === "/oauth/start") {
         if (!hasCookie) return send(res, 401, page("Not signed in", "<p>Open Tabellar from the terminal with <code>tabellar open</code>.</p>"), "text/html; charset=utf-8");
+        if (url.searchParams.get("provider") === "microsoft") {
+          if (!microsoftClientId()) return send(res, 400, page("Outlook sign-in is not set up", "<p>Add the Microsoft app's client ID first. <a href=\"/\">Back to Tabellar</a></p>"), "text/html; charset=utf-8");
+          // Microsoft only lets a desktop app come back to localhost.
+          res.writeHead(302, { Location: microsoftSignInUrl(`http://localhost:${port}/oauth/callback`) });
+          return res.end();
+        }
         if (!googleClient()) {
           return send(res, 400, page("Google sign-in is not set up", "<p>Add your Google client first. <a href=\"/\">Back to Tabellar</a></p>"), "text/html; charset=utf-8");
         }
@@ -217,16 +200,18 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
         // Reached from Google, so it is authenticated by the one-time state
         // that only this server knows, not by the cookie.
         const err = url.searchParams.get("error");
-        if (err) return send(res, 400, page("Sign-in cancelled", `<p>Google said: ${err.replace(/[<>&]/g, "")}. <a href="/">Back to Tabellar</a></p>`), "text/html; charset=utf-8");
+        const home = `http://127.0.0.1:${port}/`;
+        if (err) return send(res, 400, page("Sign-in cancelled", `<p>The sign-in said: ${err.replace(/[<>&]/g, "")}. <a href="${home}">Back to Tabellar</a></p>`), "text/html; charset=utf-8");
         let first: boolean;
         try {
           first = await completeSignIn(url.searchParams.get("code") ?? "", url.searchParams.get("state") ?? "");
         } catch (e) {
           const msg = (e as Error).message.replace(/[<>&]/g, "");
-          return send(res, 400, page("Sign-in failed", `<p>${msg}</p><p><a href="/">Back to Tabellar</a></p>`), "text/html; charset=utf-8");
+          return send(res, 400, page("Sign-in failed", `<p>${msg}</p><p><a href="${home}">Back to Tabellar</a></p>`), "text/html; charset=utf-8");
         }
-        // A second account is added from Settings, so the window goes back there.
-        res.writeHead(302, { Location: first ? "/?initial=1" : "/#settings" });
+        // A second account is added from Settings, so the window goes back
+        // there, on 127.0.0.1 where its session cookie is.
+        res.writeHead(302, { Location: first ? `${home}?initial=1` : `${home}#settings` });
         return res.end();
       }
 

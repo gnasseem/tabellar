@@ -75,11 +75,11 @@ function bodyOf(r: LogRow): string {
 // The thing an action is about, for the detail of a finished or refused row.
 function about(r: LogRow): string {
   const d = r.detail;
-  if (r.kind === "label") return `Gmail label ${String(d.label ?? "")}`;
+  if (r.kind === "label") return `Label ${String(d.label ?? "")}`;
   if (r.kind === "todo") return String(d.text ?? r.summary);
   if (r.kind === "meeting") return `${String(d.title ?? "Meeting")}${typeof d.start_time === "string" ? `, ${dayTime(d.start_time)}` : ""}${typeof d.end_time === "string" ? ` to ${clock(d.end_time)}` : ""}${d.location ? `, ${String(d.location)}` : ""}`;
   if (r.kind === "draft" || r.kind === "send") return `To ${recipients(r)}${d.subject ? `, ${String(d.subject)}` : ""}`;
-  if (r.kind === "archive") return Array.isArray(d.emailIds) ? `${d.emailIds.length} emails, archived in Gmail` : "This email, archived in Gmail";
+  if (r.kind === "archive") return Array.isArray(d.emailIds) ? `${d.emailIds.length} emails, archived` : "This email, archived";
   return r.summary;
 }
 
@@ -91,7 +91,7 @@ function undoNote(r: LogRow): string {
   if (r.status !== "done") return "";
   if (pendingSend(r)) return "Cancel stops it from being sent.";
   if (r.kind === "send") return "A sent reply cannot be taken back.";
-  if (r.kind === "label") return "Undo removes the label in Gmail.";
+  if (r.kind === "label") return "Undo removes the label in the mailbox.";
   if (r.kind === "archive") return "Undo returns it to the inbox.";
   if (r.kind === "draft") return "Undo deletes the draft.";
   if (r.kind === "todo") return "Undo removes the todo.";

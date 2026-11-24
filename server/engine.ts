@@ -1,6 +1,7 @@
 // The background engine: works while the window is closed.
 //
-// A watcher asks Gmail every few seconds whether the mailbox changed, and
+// A watcher asks each mailbox every few seconds whether it changed (IMAP
+// mailboxes also say so at once through IDLE), and
 // when it did, brings the change in at once: new mail is stored (the window
 // shows it straight away), then the model sorts and summarises it, and the
 // engine plans what to do with each new email: a Tabellar label, a reply draft, a todo, a meeting
@@ -23,7 +24,7 @@
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { generateDraft } from "./ai.ts";
-import { currentHistoryId, findCalendarEvent, messageHeaders, type LinkedEvent } from "./gmail.ts";
+import { calendarAccount, mail, type LinkedEvent } from "./providers.ts";
 import { syncMail, readBacklog, serial, fillMissingBodies, refreshStored } from "./sync.ts";
 import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions.ts";
 import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
@@ -32,7 +33,7 @@ import { ACT_WITHIN_MS, dueOf, meetingOf, todoOf } from "./rules.ts";
 import { judgeSent } from "./followups.ts";
 import { notify } from "./notify.ts";
 import { firstReadState, startFirstRead } from "./firstRead.ts";
-import { listAccounts, refreshStaleSendAs, replyFrom } from "./accounts.ts";
+import { listAccounts, refreshStaleSendAs, replyFrom, type Account } from "./accounts.ts";
 import { gmailLabelOf, userLabels } from "./labels.ts";
 import { ask, covers, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
 
@@ -51,7 +52,7 @@ const NO_REPLY = /no.?reply|noreply|donotreply|do-not-reply|notifications?@|mail
 export const engineStatus = {
   lastCycleAt: null as string | null,
   lastError: null as string | null,
-  gmailError: null as string | null, // set after a few failed checks in a row
+  mailError: null as string | null, // set after a few failed checks in a row
   running: false,
 };
 
@@ -183,7 +184,8 @@ export const planNew = serial(async (userId: string): Promise<void> => {
   const notes: { sender: string; summary: string; drafted: boolean; replying?: boolean }[] = [];
 
   const accounts = new Map((await listAccounts(userId)).map((a) => [a.id, a]));
-  const tokenFor = async (accountId: string | null | undefined): Promise<string | null> => accounts.get(accountId ?? "")?.token_ref ?? null;
+  const accountOf = (accountId: string | null | undefined) => accounts.get(accountId ?? "") ?? null;
+  const calendar = calendarAccount([...accounts.values()]);
 
   const sorted = [...rows].sort((a, b) =>
     String((a.emails as EmailRow).received_at).localeCompare(String((b.emails as EmailRow).received_at)),
@@ -245,7 +247,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     if ((wantsDraft || wantsTodo) && sender && !covers(prefs)) {
       const kind = wantsDraft ? "draft" : "todo";
       const would = decide({ kind, ...settings, source: "engine", suspicious, todayCount: today[kind] ?? 0, cycleCount }).verdict !== "refuse";
-      if (would && (NO_REPLY.test(sender) || !(await knowsSender(userId, sender, { exceptEmailId: email.id, tokenRef: await tokenFor(email.account_id) })))) {
+      if (would && (NO_REPLY.test(sender) || !(await knowsSender(userId, sender, { exceptEmailId: email.id, account: accountOf(email.account_id) })))) {
         const plan = [wantsDraft && `draft a reply to "${email.subject ?? ""}"`, wantsTodo && `add the todo "${todo!.label}"`].filter(Boolean).join(" and ");
         await ask(userId, senderQuestion(email.sender, sender, `Tabellar would ${plan}.`, email.id));
         asked = true;
@@ -264,11 +266,11 @@ export const planNew = serial(async (userId: string): Promise<void> => {
       const base: Planned = { kind: "draft", emailId: email.id, summary: `Draft a reply to ${from}`, detail: { to: [replyTo], subject, accountId: email.account_id, from: fromAddress } };
       const autoSend: AutoSend = { to: [replyTo], threadId: email.thread_id, writer: replyTo };
       const sendCtx = { ...settings, source: "engine" as const, suspicious, todayCount: today.send ?? 0, cycleCount, send: autoSend, sendCap };
-      const tokenRef = settings.level === "autopilot" ? await tokenFor(email.account_id) : null;
+      const asker = settings.level === "autopilot" ? accountOf(email.account_id) : null;
       const trySend =
         settings.level === "autopilot" &&
         decide({ kind: "send", ...sendCtx }).verdict === "do" &&
-        (!profile?.autopilot_known_only || (await wroteTo(userId, replyTo, tokenRef)));
+        (!profile?.autopilot_known_only || (await wroteTo(userId, replyTo, asker)));
       // Ask before paying for the model call; a refusal is logged by act().
       const pre = decide({ kind: "draft", ...settings, source: "engine", suspicious, todayCount: today.draft ?? 0, cycleCount });
       const { count: existing } = await db.from("draft_emails").select("id", { count: "exact", head: true }).eq("email_id", email.id);
@@ -282,7 +284,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
           } else if (trySend && body) {
             let inReplyTo: string | null = null;
             try {
-              if (tokenRef && email.gmail_id) inReplyTo = (await messageHeaders(tokenRef, email.gmail_id, ["Message-ID"]))["message-id"] ?? null;
+              if (asker && email.gmail_id) inReplyTo = (await mail(asker).headers(asker, email.gmail_id, ["Message-ID"]))["message-id"] ?? null;
             } catch {
               // Without the Message-ID the reply still lands in the thread by its thread id.
             }
@@ -323,17 +325,17 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     if (meeting && wall !== null && !row.calendar) {
       const start = wallClockToUtc(wall, timezone);
       const minutes = Math.min(Math.max(meeting.duration || 60, 5), 24 * 60);
-      const tokenRef = start.getTime() > Date.now() ? await tokenFor(email.account_id) : null;
+      const cal = start.getTime() > Date.now() ? calendar : null;
       // Ask the calendar only when a proposal could follow; a refusal is logged by act().
       const allowed = decide({ kind: "meeting", ...settings, source: "engine", suspicious, todayCount: today.meeting ?? 0, cycleCount }).verdict !== "refuse";
       let onCalendar: LinkedEvent | null = null;
       try {
-        if (tokenRef && allowed) onCalendar = await findCalendarEvent(tokenRef, { start: start.toISOString(), people: [sender, replyTo.toLowerCase()].filter(Boolean) });
+        if (cal && allowed) onCalendar = await cal.calendar.find(cal.account, { start: start.toISOString(), people: [sender, replyTo.toLowerCase()].filter(Boolean) });
       } catch (e) {
         console.error("[engine] calendar lookup:", (e as Error).message);
       }
       if (onCalendar) await db.from("email_processed").update({ calendar: onCalendar }).eq("id", row.id);
-      else if (tokenRef) {
+      else if (cal) {
         const said = meeting.asWritten ? ` (${meeting.asWritten} in the email)` : "";
         await run({
           kind: "meeting",
@@ -484,7 +486,7 @@ export async function runCycle(): Promise<void> {
 
 // ── The watcher ─────────────────────────────────────────────────────────────
 
-// Asks Gmail whether anything changed: every 5 seconds while a window is
+// Asks each mailbox whether anything changed: every 5 seconds while a window is
 // connected to /events, every 20 seconds otherwise. One small request per
 // account (where the mailbox's change history stands); when it moved, the
 // change is synced at once and new mail is read and planned. Failures (no
@@ -504,11 +506,14 @@ export function windowClosed(): void {
 }
 
 async function mailboxChanged(userId: string): Promise<boolean> {
-  const { data } = await db.from("accounts").select("token_ref, history_id").eq("user_id", userId).eq("paused", false);
-  for (const a of data ?? []) {
-    if (a.history_id && (await currentHistoryId(a.token_ref as string)) !== a.history_id) return true;
+  const { data } = await db.from("accounts").select("*").eq("user_id", userId).eq("paused", false);
+  let changed = false;
+  for (const a of (data ?? []) as unknown as Account[]) {
+    const box = mail(a);
+    box.watch?.(a, () => wakeWatcher());
+    if (!changed && a.history_id && (await box.moved(a))) changed = true;
   }
-  return false;
+  return changed;
 }
 
 // Read and plan new mail, one run at a time; mail arriving meanwhile is
@@ -557,10 +562,10 @@ function startWatcher(): () => void {
         if (fresh.length && modelConfigured()) void readNew(userId);
       }
       failures = 0;
-      engineStatus.gmailError = null;
+      engineStatus.mailError = null;
     } catch (e) {
       failures++;
-      if (failures >= 3) engineStatus.gmailError = (e as Error).message;
+      if (failures >= 3) engineStatus.mailError = (e as Error).message;
       delay = Math.min(WATCH_MAX_MS, delay * 2 ** failures);
     } finally {
       busy = false;

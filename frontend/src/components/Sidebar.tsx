@@ -75,8 +75,8 @@ function Engine() {
   const ref = useRef<HTMLDivElement>(null);
   const level = mail.engine?.level ?? (profile.autonomy_level as string) ?? "observe";
   const paused = mail.engine?.paused ?? !!profile.engine_paused;
-  const failing = !!(mail.engine?.gmailError || mail.engine?.lastError);
-  const note = paused ? "" : mail.engine?.gmailError ? "Can't reach Gmail" : mail.engine?.lastError ? "Last check failed" : "";
+  const failing = !!(mail.engine?.mailError || mail.engine?.lastError);
+  const note = paused ? "" : mail.engine?.mailError ? "Can't reach your mail" : mail.engine?.lastError ? "Last check failed" : "";
 
   useEffect(() => {
     if (!open) return;

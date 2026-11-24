@@ -19,7 +19,7 @@ type Sent = {
   received_at: string;
   snippet?: string;
   has_attachments?: boolean;
-  body_html?: string; // only on an email sent a moment ago, before Gmail has it
+  body_html?: string; // only on an email sent a moment ago, before the mailbox has it
 };
 type Body = { body_text: string | null; body_html: string | null; attachments: { filename: string; mime_type: string; size: number; attachment_id: string }[] | null };
 type FollowUp = { thread_id: string; status: string; remind_at: string; snooze_until: string | null };

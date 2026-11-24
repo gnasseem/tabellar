@@ -4,9 +4,10 @@ import { Glyph } from "@/components/ui";
 import type { Session } from "@/lib/db";
 import { setupPost, type SetupState } from "@/lib/setup";
 import ModelSetup, { ErrorLine, Icon, modelLabel, ui, useSetupState } from "./ModelSetup";
+import AddMailbox from "./AddMailbox";
 
-// First run, shown until a Google account is connected: the model, then
-// signing in to Gmail. Sign-in uses the Google client built into Tabellar; the
+// First run, shown until a mailbox is connected: the model, then the
+// mailbox (Google, Outlook, or one with an app password). Sign-in uses the Google client built into Tabellar; the
 // Google client step is for bringing your own instead, and comes first only
 // in a copy that has none built in. Each step can be revisited from the line
 // of steps at the top; the model step can be skipped and finished in Settings
@@ -81,7 +82,7 @@ export default function Welcome({ error }: { session?: Session; error?: string }
   const steps = [
     { step: 0, title: "Google client", done: googleDone },
     { step: 1, title: "Model", done: modelDone },
-    { step: 2, title: "Gmail", done: false },
+    { step: 2, title: "Mail", done: false },
   ].filter((s) => s.step > 0 || !builtIn || ownClient || step === 0);
   const reachable = (i: number) => i === 0 || googleDone;
 
@@ -122,7 +123,7 @@ export default function Welcome({ error }: { session?: Session; error?: string }
           ) : step === 1 ? (
             <ModelStep state={state} refresh={refresh} onBack={builtIn && !ownClient ? undefined : () => setStep(0)} onNext={() => setStep(2)} onSkip={skipAi} />
           ) : (
-            <GmailStep state={state} goTo={setStep} />
+            <MailStep state={state} refresh={refresh} goTo={setStep} />
           )}
         </main>
 
@@ -131,7 +132,7 @@ export default function Welcome({ error }: { session?: Session; error?: string }
             <b className="font-semibold text-ink2">What stays on this Mac.</b> Your mail, in one file in your home folder. Keys and sign-in tokens, in the macOS Keychain. Nothing is hosted anywhere and there is no account to create.
           </p>
           <p className="mt-1.5">
-            <b className="font-semibold text-ink2">What leaves it.</b> Calls to Google, to read and act on your own Gmail and Calendar, and calls to the model you choose. With a model on this Mac, nothing else leaves at all.
+            <b className="font-semibold text-ink2">What leaves it.</b> Calls to your mail provider, to read and act on your own mail and calendar, and calls to the model you choose. With a model on this Mac, nothing else leaves at all.
           </p>
         </footer>
       </div>
@@ -387,9 +388,9 @@ function ModelStep({ state, refresh, onBack, onNext, onSkip }: { state: SetupSta
   );
 }
 
-// Step 3: sign in to Gmail
+// Step 3: the mailbox
 
-function GmailStep({ state, goTo }: { state: SetupState; goTo: (i: number) => void }) {
+function MailStep({ state, refresh, goTo }: { state: SetupState; refresh: () => Promise<void>; goTo: (i: number) => void }) {
   const [going, setGoing] = useState(false);
   const own = !!state.google.clientId;
   const rows = [
@@ -403,13 +404,37 @@ function GmailStep({ state, goTo }: { state: SetupState; goTo: (i: number) => vo
       : "Google will say it has not verified the app, because Tabellar has not been through Google's review yet. Choose Advanced, then Go to Tabellar.",
     "Allow access to Gmail and Calendar. Tabellar then fetches your recent mail and sorts it.",
   ];
+  const google = (
+    <div>
+      <ol>
+        {notes.map((n, i) => (
+          <li key={i} className="grid grid-cols-[24px_minmax(0,1fr)] py-1.5 leading-normal text-ink2">
+            <span className="text-ink3">{i + 1}</span>
+            {n}
+          </li>
+        ))}
+      </ol>
+      {!own && (
+        <p className="mt-2 text-xs leading-normal text-ink2">
+          If Google blocks the sign-in instead, your organisation does not allow apps it has not verified.{" "}
+          <button type="button" onClick={() => goTo(0)} className="link">
+            Use your own Google client
+          </button>
+          .
+        </p>
+      )}
+      <a href="/oauth/start" onClick={() => setGoing(true)} className={`${ui.btnPrimary} mt-4`} aria-busy={going}>
+        {going ? "Opening Google" : "Sign in with Google"}
+      </a>
+    </div>
+  );
   return (
     <>
-      <Heading title="Sign in to Gmail">
-        The last step. Expect a minute or two before the Inbox fills{state.model?.format === "ollama" ? ", longer with a model on this Mac" : ""}.
+      <Heading title="Add your mail">
+        The last step. Expect a minute or two before the Inbox fills{state.model?.format === "ollama" ? ", longer with a model on this Mac" : ""}. More mailboxes can be added in Settings.
       </Heading>
 
-      <dl className="border-y border-line-soft">
+      <dl className="mb-5 border-y border-line-soft">
         {rows.map((r, i) => (
           <div key={r.label} className={`flex items-baseline gap-3 py-2 ${i ? "border-t border-line-soft" : ""}`}>
             <dt className="w-28 flex-none text-ink3">{r.label}</dt>
@@ -421,30 +446,9 @@ function GmailStep({ state, goTo }: { state: SetupState; goTo: (i: number) => vo
         ))}
       </dl>
 
-      <ol className="mt-4">
-        {notes.map((n, i) => (
-          <li key={i} className="grid grid-cols-[24px_minmax(0,1fr)] py-1.5 leading-normal text-ink2">
-            <span className="text-ink3">{i + 1}</span>
-            {n}
-          </li>
-        ))}
-      </ol>
+      <AddMailbox state={state} refresh={refresh} google={google} onAdded={(first) => window.location.assign(first ? "/?initial=1" : "/")} />
 
-      {!own && (
-        <p className="mt-3 text-xs leading-normal text-ink2">
-          If Google blocks the sign-in instead, your organisation does not allow apps it has not verified.{" "}
-          <button type="button" onClick={() => goTo(0)} className="link">
-            Use your own Google client
-          </button>
-          .
-        </p>
-      )}
-
-      <Actions onBack={() => goTo(1)}>
-        <a href="/oauth/start" onClick={() => setGoing(true)} className={ui.btnPrimary} aria-busy={going}>
-          {going ? "Opening Google" : "Sign in with Google"}
-        </a>
-      </Actions>
+      <Actions onBack={() => goTo(1)} />
     </>
   );
 }

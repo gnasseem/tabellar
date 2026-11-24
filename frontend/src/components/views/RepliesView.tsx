@@ -185,7 +185,7 @@ export default function RepliesView() {
     try {
       for (const r of list) {
         const { account, from } = sender(r);
-        if (!account) throw new Error("No Gmail account is connected");
+        if (!account) throw new Error("No mailbox is connected");
         // A draft that is also in Gmail's Drafts is sent from there.
         const gmailDraftId = r.raw.gmail_draft_id && r.raw.account_id === account.id ? r.raw.gmail_draft_id : null;
         const { data, error } = await supabase

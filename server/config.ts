@@ -52,6 +52,9 @@ export type Config = {
   // Set only when the user brought their own Google client; its secret is in
   // the Keychain. Unset means the built-in client.
   googleClientId?: string;
+  // The Application (client) ID of the app registered in Microsoft's Azure
+  // portal, for Outlook and Microsoft 365 accounts. It has no secret.
+  microsoftClientId?: string;
   model?: ModelConfig;
   fastModel?: ModelConfig;
 };

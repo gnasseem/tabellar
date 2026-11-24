@@ -232,7 +232,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
     try {
       await setMailState([email.id], { read: false });
     } catch {
-      return addToast("error", "Could not mark it unread in Gmail.");
+      return addToast("error", "Could not mark it unread in the mailbox.");
     }
     addToast("info", "Marked unread");
     onMarkUnread?.();
@@ -348,7 +348,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
       const entry = await fetchAttachment(att, gmailId);
       setPreview((p) => (p?.att === att ? { ...p, entry } : p));
     } catch {
-      setPreview((p) => (p?.att === att ? { ...p, error: "Could not load this attachment from Gmail." } : p));
+      setPreview((p) => (p?.att === att ? { ...p, error: "Could not load this attachment from the mailbox." } : p));
     }
   };
 

@@ -44,7 +44,7 @@ export function useInboxSync(reload: () => Promise<void> | void) {
       });
       if (!res.ok) {
         const msg = ((await res.json().catch(() => ({}))) as { error?: string }).error ?? `Error ${res.status}`;
-        if (msg === "No Gmail account connected") setNoAccountsConnected(true);
+        if (msg === "No mailbox connected") setNoAccountsConnected(true);
         else setSyncError(msg);
         return;
       }

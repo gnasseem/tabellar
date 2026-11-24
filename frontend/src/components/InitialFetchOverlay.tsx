@@ -3,7 +3,7 @@ import { Glyph } from "./ui";
 // Shown over the Inbox during the very first fetch: the steps in order, the
 // finished ones ticked and the current one marked as working.
 
-const PHASES = ["Connect to Gmail", "Fetch your newest mail"];
+const PHASES = ["Connect to your mailbox", "Fetch your newest mail"];
 
 export default function InitialFetchOverlay({ phaseIndex }: { phaseIndex: number }) {
   return (
