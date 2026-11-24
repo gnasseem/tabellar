@@ -95,6 +95,10 @@ const AUTOPILOT_INSTRUCTIONS =
 
 const HOLD = /^\W*HOLD\W*$/;
 
+// A gap the model left for the user to fill in ("[Insert venue]"). Such a
+// reply is never sent on its own.
+export const GAP = /\[(?:insert|your|add|enter|fill|name|date|time|venue|place|location|address|phone|link|number|amount|company|recipient|details?|tbd|to be|x{2,})\b[^\]\n]{0,60}\]/i;
+
 // A draft the model failed to write is tried again, this often in all.
 const DRAFT_TRIES = 3;
 const draftTries = new Map<string, number>();
@@ -321,7 +325,10 @@ export const planNew = serial(async (userId: string): Promise<void> => {
         try {
           const instructions = String(reply.text || reply.label || "");
           let body = (await drafter.draft(userId, email, trySend ? `${instructions}\n\n${AUTOPILOT_INSTRUCTIONS}` : instructions)).trim();
-          if (trySend && HOLD.test(body)) {
+          if (trySend && GAP.test(body)) {
+            // Kept as a draft, for the user to fill in.
+            if (pre.verdict === "refuse") body = "";
+          } else if (trySend && HOLD.test(body)) {
             body = pre.verdict === "refuse" ? "" : (await drafter.draft(userId, email, instructions)).trim();
           } else if (trySend && body) {
             let inReplyTo: string | null = null;

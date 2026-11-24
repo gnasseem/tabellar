@@ -34,6 +34,8 @@ type Head = { head: true; key: string; name: string };
 function plain(html: string): string {
   return (html || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>\s*<p[^>]*>/gi, "\n\n").replace(/<\/?(div|p|tr|table|li)\b[^>]*>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"').trim();
 }
+// A gap the model left for the user to fill in (GAP in server/engine.ts).
+const GAP = /\[(?:insert|your|add|enter|fill|name|date|time|venue|place|location|address|phone|link|number|amount|company|recipient|details?|tbd|to be|x{2,})\b[^\]\n]{0,60}\]/i;
 function nameOf(s: string): string {
   return (s || "").replace(/<.*>/, "").replace(/"/g, "").trim();
 }
@@ -199,6 +201,8 @@ export default function RepliesView() {
     if (!list.length || sending) return;
     const bad = list.find((r) => !r.to.length);
     if (bad) return addToast("error", `"${bad.subject || "A reply"}" has no recipient. Open it with Edit to add one.`);
+    const gap = list.map((r) => r.text.match(GAP)?.[0]).find(Boolean);
+    if (gap) return addToast("error", `"${gap}" is still to be filled in. Open the reply with Edit.`);
     setSending(true);
     const sendAt = at || new Date(Date.now() + 15_000).toISOString();
     const queued: string[] = [];
@@ -407,6 +411,8 @@ export default function RepliesView() {
                       <button className="link" onClick={(e) => (e.stopPropagation(), cancel(item))}>
                         Cancel
                       </button>
+                    ) : GAP.test(item.text) ? (
+                      <em className="flex-none text-xs font-medium not-italic text-warn">To fill in</em>
                     ) : !item.to.length ? (
                       <em className="flex-none text-xs font-medium not-italic text-warn">No recipient</em>
                     ) : isNew(item) ? (

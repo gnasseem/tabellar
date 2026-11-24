@@ -214,6 +214,9 @@ function listUnshown(state: ExtractState, html: string): void {
   }
 }
 
+// Gmail has no such message, as against not answering for it now.
+const gone = (status: number) => status >= 400 && status < 500 && ![401, 403, 408, 429].includes(status);
+
 // One message, or null when Gmail no longer has it. Any other failure throws,
 // so the sync that asked is tried again instead of going on without it.
 async function fetchMessageById(
@@ -221,7 +224,7 @@ async function fetchMessageById(
   messageId: string,
 ): Promise<EmailData | null> {
   const msgRes = await gmailRequest(accessToken, `/messages/${messageId}?format=full`);
-  if (msgRes.status === 404) return null;
+  if (gone(msgRes.status)) return null;
   if (!msgRes.ok) throw new Error(`Gmail message fetch failed (${msgRes.status})`);
   const msg = await msgRes.json();
   try {
@@ -360,7 +363,7 @@ async function fetchHeaderRows(tokenRef: string, ids: string[]): Promise<HeaderR
     const got = await Promise.all(
       ids.slice(i, i + 10).map(async (id) => {
         const res = await gmailRequest(tokenData.token, `/messages/${id}?format=metadata&${q}&fields=id,threadId,labelIds,internalDate,payload/headers`);
-        if (res.status === 404) return null;
+        if (gone(res.status)) return null;
         if (!res.ok) throw new Error(`Gmail header fetch failed (${res.status})`);
         const msg = await res.json();
         const h: Record<string, string> = {};

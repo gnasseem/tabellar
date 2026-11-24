@@ -99,7 +99,9 @@ export function rowStatus(outcomes: Outcome[] | undefined): { state: MailState; 
   if (!shown.length) return { state: "filed", text: "" };
   const top = shown[0];
   const rest = shown.find((o) => o !== top && o.short !== top.short);
-  return { state: top.state, text: rest ? `${top.short}, ${rest.short.charAt(0).toLowerCase()}${rest.short.slice(1)}` : top.short, sendAt: top.sendAt };
+  // Both, while they fit the column.
+  const both = rest ? `${top.short}, ${rest.short.charAt(0).toLowerCase()}${rest.short.slice(1)}` : "";
+  return { state: top.state, text: both && both.length <= 25 ? both : top.short, sendAt: top.sendAt };
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */

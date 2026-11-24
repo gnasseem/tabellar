@@ -207,7 +207,7 @@ export async function executeAgentPlan(
               .eq("user_id", userId)
               .is("resolved_at", null);
           }
-          await record(userId, { kind: "send", emailId: action.linked_email_id ?? null, summary: `Sent reply to ${to}`, detail: { to: [to], subject } }, "agent");
+          await record(userId, { kind: "send", emailId: action.linked_email_id ?? null, summary: `Sent reply to ${to}`, detail: { to: [to], subject, sentAt: new Date().toISOString() } }, "agent");
           results[action.id] = {
             status: "success",
             info: `Sent reply to ${to}`,
