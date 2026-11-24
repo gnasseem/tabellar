@@ -4,6 +4,7 @@ import { createClient } from "@/lib/db";
 import { api } from "@/lib/outcomes";
 import { useApp } from "../AppShell";
 import { ReaderById } from "../EmailDetail";
+import { MeetingPrep, useUpNext } from "../Prep";
 import { Glyph, SkeletonRows, ViewBar, clock, shortWhen } from "../ui";
 
 // The Brief: one page, top to bottom. What needs the user today (five lines
@@ -12,7 +13,7 @@ import { Glyph, SkeletonRows, ViewBar, clock, shortWhen } from "../ui";
 // to the list. Every line is something the engine stored (brief.ts). Settings,
 // Brief chooses the sections and whether a paragraph opens it.
 
-type Need = { key: string; kind: "reply" | "approve" | "meeting" | "todo" | "question"; who: string; text: string; email_id: string | null; id: string; hash?: string; start?: string; due?: string };
+type Need = { key: string; kind: "reply" | "approve" | "meeting" | "todo" | "question" | "back" | "read"; who: string; text: string; email_id: string | null; id: string; hash?: string; start?: string; due?: string };
 type Waiting = { key: string; email_id: string; thread_id: string; who: string; address: string; text: string; subject: string; sent_at: string };
 type Handled = { email_id: string; who: string; subject: string; what: string; at: string };
 type Brief = {
@@ -24,11 +25,11 @@ type Brief = {
   waitingMore: number;
   handled: Handled[];
 };
-type CalEvent = { id: string; title: string; start: string; end: string; allDay: boolean; attendees: string[]; htmlLink: string | null };
+type CalEvent = { id: string; title: string; start: string; end: string; allDay: boolean; attendees: string[]; people?: string[]; htmlLink: string | null };
 
 const DAY = 86_400_000;
 
-const ACTION: Record<Need["kind"], string> = { reply: "Review", approve: "Approve", meeting: "Add to calendar", todo: "Done", question: "Answer" };
+const ACTION: Record<Need["kind"], string> = { reply: "Review", approve: "Approve", meeting: "Add to calendar", todo: "Done", question: "Answer", back: "Open", read: "Read" };
 
 function ago(iso: string): string {
   const n = Math.floor((Date.now() - new Date(iso).getTime()) / DAY);
@@ -56,6 +57,7 @@ export default function BriefingView() {
   const [showHandled, setShowHandled] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [reading, setReading] = useState<string | null>(null);
+  const upNext = useUpNext(events);
   const [writing, setWriting] = useState(false);
   const asked = useRef(false);
 
@@ -70,7 +72,7 @@ export default function BriefingView() {
 
   useEffect(() => {
     load();
-  }, [load, liveChanges.action_log, liveChanges.draft_emails, liveChanges.todos, liveChanges.meetings, liveChanges.questions, liveChanges.email_processed, liveChanges.follow_up_reminders]);
+  }, [load, liveChanges.action_log, liveChanges.draft_emails, liveChanges.todos, liveChanges.meetings, liveChanges.questions, liveChanges.email_processed, liveChanges.follow_up_reminders, liveChanges.emails, liveChanges.preferences]);
 
   // Today's opening paragraph, when it is on and not written yet, or when a
   // line it was written from is dealt with.
@@ -98,7 +100,7 @@ export default function BriefingView() {
   }, [liveChanges.meetings]);
 
   const act = async (n: Need) => {
-    if (n.kind === "reply") return n.email_id && setReading(n.email_id);
+    if (n.kind === "reply" || n.kind === "back" || n.kind === "read") return n.email_id && setReading(n.email_id);
     if (n.kind === "question") return setView("inbox");
     setBusy(n.key);
     try {
@@ -250,7 +252,8 @@ export default function BriefingView() {
                     events.map((ev) => {
                       const over = !ev.allDay && new Date(ev.end).getTime() < Date.now();
                       return (
-                        <a key={ev.id} className="row" href={ev.htmlLink || undefined} target="_blank" rel="noopener noreferrer">
+                        <div key={ev.id}>
+                        <a className="row" href={ev.htmlLink || undefined} target="_blank" rel="noopener noreferrer">
                           <span className="w-[26px] flex-none" />
                           <span className={`w-[96px] flex-none truncate pr-3 md:w-[164px] ${over ? "text-ink3" : "text-ink"}`}>{ev.allDay ? (
                               "All day"
@@ -263,6 +266,8 @@ export default function BriefingView() {
                           <span className={`min-w-0 flex-1 truncate ${over ? "text-ink3" : "text-ink"}`}>{ev.title}</span>
                           {ev.attendees.length > 0 && <span className="min-w-0 max-w-[40%] flex-none truncate pl-3 text-ink3 max-md:hidden">{ev.attendees.join(", ")}</span>}
                         </a>
+                        {upNext === ev.id && !!ev.people?.length && <MeetingPrep title={ev.title} people={ev.people} onOpen={setReading} className="pl-10 md:pl-[204px]" />}
+                        </div>
                       );
                     })
                   )}

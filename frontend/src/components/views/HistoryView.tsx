@@ -246,7 +246,7 @@ export default function HistoryView() {
       if (k === "j" || e.key === "ArrowDown") move(1);
       else if (k === "k" || e.key === "ArrowUp") move(-1);
       else if (e.key === "Enter" && cursor) toggle(cursor);
-      else if (k === "z" && cursor && canUndo(cursor) && !busy.has(cursor.id)) undoRow(cursor);
+      else if (k === "u" && cursor && canUndo(cursor) && !busy.has(cursor.id)) undoRow(cursor);
       else return;
       e.preventDefault();
     };

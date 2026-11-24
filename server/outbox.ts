@@ -13,6 +13,9 @@ import { checkAutoSend } from "./policy.ts";
 import { engineSettings } from "./actions.ts";
 import { notify } from "./notify.ts";
 import { fromLine, type Account } from "./accounts.ts";
+import { messageIdOf, withForward } from "./forward.ts";
+import { htmlToText } from "./mime.ts";
+import { answered } from "./snooze.ts";
 
 type Row = Record<string, any>;
 
@@ -65,7 +68,12 @@ export async function sendDueEmails(): Promise<void> {
     try {
       if (!account?.token_ref) throw new Error("The account for this email is no longer connected");
       const from = await fromLine(row.user_id, account, row.from_address);
-      const m = { from, to: row.to_addresses, cc: row.cc_addresses ?? undefined, bcc: row.bcc_addresses ?? undefined, subject: row.subject, html: row.body_html, inReplyTo: row.in_reply_to ?? undefined };
+      const inReplyTo = await messageIdOf(account, row.in_reply_to);
+      const m = await withForward(
+        row.user_id,
+        { from, to: row.to_addresses, cc: row.cc_addresses ?? undefined, bcc: row.bcc_addresses ?? undefined, subject: row.subject, html: row.body_html, inReplyTo, receipt: !!row.read_receipt },
+        row.forward,
+      );
       // A draft that is also in the mailbox's Drafts is sent from there, so it leaves Drafts.
       const result = row.gmail_draft_id
         ? await mail(account).sendDraft(account, row.gmail_draft_id, m, row.thread_id ?? undefined)
@@ -79,13 +87,16 @@ export async function sendDueEmails(): Promise<void> {
           account_id: row.account_id,
           subject: row.subject,
           recipients: (row.to_addresses as string[]).join(", "),
-          body_html: row.body_html,
+          body_html: m.html,
+          body_text: htmlToText(row.body_html),
           received_at: new Date().toISOString(),
           is_read: true,
           label_ids: ["SENT"],
+          ...(row.read_receipt ? { receipt_asked: true, awaits_reply: true } : {}),
         },
         { onConflict: "user_id,gmail_id" },
       );
+      await answered(row.user_id, row.thread_id, new Date().toISOString());
       if (autopilot && row.action_id) {
         const { data: a } = await db.from("action_log").select("detail").eq("id", row.action_id).maybeSingle();
         await db.from("action_log").update({ detail: { ...(a?.detail ?? {}), sentAt: new Date().toISOString() }, reason: "Sent by Autopilot" }).eq("id", row.action_id);

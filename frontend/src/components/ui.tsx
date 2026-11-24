@@ -6,6 +6,7 @@ import Icon from "./Icon";
 import { useApp } from "./AppShell";
 import { appearanceOf, sizesOf } from "@/lib/appearance";
 import type { Outcome } from "@/lib/outcomes";
+import { createClient } from "@/lib/db";
 
 // The state of a piece of mail, drawn as the seal: filled when it needs the
 // user, a ring while a reply is on its way out, a check once handled, a
@@ -348,6 +349,13 @@ export function OutcomeLines({ outcomes, className = "" }: { outcomes: Outcome[]
   const { mail, setView, setViewCache, addToast } = useApp();
   const shown = outcomes.filter((o) => o.state !== "info");
   if (!shown.length) return null;
+  // Back from snooze and dealt with: it stays in the inbox as handled.
+  const markDone = async (id: string) => {
+    const set = (at: string | null) => createClient().from("emails").update({ resolved_at: at }).eq("id", id);
+    await set(new Date().toISOString());
+    mail.reload();
+    addToast("success", "Done", { action: { label: "Undo", onClick: async () => (await set(null), mail.reload()) } });
+  };
   const action = (o: Outcome) => {
     const a = o.act;
     if (!a) return null;
@@ -357,9 +365,11 @@ export function OutcomeLines({ outcomes, className = "" }: { outcomes: Outcome[]
         : a.kind === "cancel"
           ? ["Cancel", () => mail.undo(a.id).then(() => addToast("success", "Cancelled. Kept as a draft.")), false]
           : a.kind === "approve"
-            ? ["Approve", () => mail.approve(a.id, a.hash).then(() => addToast("success", "Approved")), true]
+            ? ["Approve", () => mail.approve(a.id, a.hash, true).then(() => addToast("success", "Approved", { action: { label: "Undo", onClick: () => mail.undo(a.id) } })), true]
             : a.kind === "review"
               ? ["Review", () => (setViewCache("replies:focus", a.draftId), setView("replies"), Promise.resolve()), true]
+              : a.kind === "back"
+                ? ["Done", () => markDone(a.id), false]
               : ["Show", () => (setView(a.view), Promise.resolve()), false];
     return (
       <button className={`link flex-none ${wax ? "!text-wax-ink" : ""}`} onClick={() => run().catch(() => {})}>

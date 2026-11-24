@@ -6,6 +6,7 @@ import { useApp } from "./AppShell";
 import { Glyph } from "./ui";
 import { createClient } from "@/lib/db";
 import { api } from "@/lib/outcomes";
+import { reversible } from "@/lib/undo";
 
 const supabase = createClient();
 
@@ -14,7 +15,7 @@ type Question = { id: string; text: string; detail: string | null; options: { la
 // One quiet row at the top of the Inbox that opens in place. Nothing shows
 // while there is nothing to ask.
 export function Questions() {
-  const { user, liveChanges, addToast } = useApp();
+  const { user, liveChanges, addToast, pushUndo } = useApp();
   const [questions, setQuestions] = useState<Question[]>([]);
   const [open, setOpen] = useState(() => {
     try {
@@ -45,7 +46,7 @@ export function Questions() {
   const reply = async (q: Question, option: number) => {
     setBusy(q.id);
     try {
-      await api("/questions/answer", { id: q.id, option });
+      pushUndo("Answer", await reversible(user.id, () => api("/questions/answer", { id: q.id, option })));
       setQuestions((prev) => prev.filter((x) => x.id !== q.id));
       load();
     } catch (e) {
@@ -110,7 +111,7 @@ export function NotThis({
   onDone: () => void;
   onNotThis?: () => void | Promise<void>;
 }) {
-  const { addToast } = useApp();
+  const { user, addToast } = useApp();
   const [open, setOpen] = useState(false);
   const [typing, setTyping] = useState(false);
   const [text, setText] = useState("");
@@ -133,8 +134,8 @@ export function NotThis({
     try {
       if (outcome === "not_this" && onNotThis) await onNotThis();
       else {
-        await api("/profile/feedback", { thing, outcome, id, proposal, sender: sender ?? undefined, topic: outcome === "never_topic" ? text.trim() : undefined });
-        addToast("success", done);
+        const undo = await reversible(user.id, () => api("/profile/feedback", { thing, outcome, id, proposal, sender: sender ?? undefined, topic: outcome === "never_topic" ? text.trim() : undefined }));
+        addToast("success", done, { action: { label: "Undo", onClick: () => undo().then(onDone) } });
       }
       onDone();
     } catch (e) {

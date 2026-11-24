@@ -25,6 +25,7 @@ export const GO_TO_VIEWS: Record<string, string> = {
   h: "history",
   f: "followups",
   l: "labels",
+  d: "files",
   ",": "settings",
 };
 
@@ -42,6 +43,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "g h", description: "Go to history" },
       { keys: "g f", description: "Go to follow-ups" },
       { keys: "g l", description: "Go to labels" },
+      { keys: "g d", description: "Go to files" },
       { keys: "g ,", description: "Go to settings" },
     ],
   },
@@ -50,6 +52,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     shortcuts: [
       { keys: "c", description: "Compose a new email" },
       { keys: "/", description: "Focus search" },
+      { keys: "z", description: "Undo the last change, up to ten minutes back" },
       { keys: "?", description: "Toggle this help" },
       { keys: "Esc", description: "Close overlay, email, or search" },
     ],
@@ -65,9 +68,11 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "o", description: "Open the email" },
       { keys: "a", description: "Approve" },
       { keys: "e", description: "Archive" },
+      { keys: "s", description: "Snooze, or bring a snoozed email back" },
       { keys: "r", description: "Reply" },
+      { keys: "f", description: "Forward, with a note drafted for you" },
+      { keys: "v", description: "Sender is most important, or not" },
       { keys: "u", description: "Mark unread" },
-      { keys: "z", description: "Undo the last change" },
     ],
   },
   {
@@ -94,7 +99,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: "Meetings",
     shortcuts: [
       { keys: "j k", description: "Move" },
-      { keys: "Enter", description: "Add to calendar" },
+      { keys: "Enter", description: "Add to calendar, or show what is open with the people" },
       { keys: "e", description: "Change time" },
       { keys: "n", description: "New meeting" },
     ],
@@ -115,7 +120,15 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "u", description: "Unsubscribe" },
       { keys: "e", description: "Archive all" },
       { keys: "y", description: "Keep" },
-      { keys: "z", description: "Undo archive" },
+    ],
+  },
+  {
+    title: "Files",
+    shortcuts: [
+      { keys: "j k", description: "Move" },
+      { keys: "Enter", description: "Look at the file" },
+      { keys: "o", description: "Open the email" },
+      { keys: "d", description: "Download" },
     ],
   },
   {
@@ -140,14 +153,16 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     shortcuts: [
       { keys: "j k", description: "Move" },
       { keys: "Enter", description: "Details" },
-      { keys: "z", description: "Undo the selected line" },
+      { keys: "u", description: "Undo the selected line" },
     ],
   },
 ];
 
 // True when a keystroke belongs to whatever the user is typing into, so a
-// shortcut handler can bow out rather than hijacking the key.
+// shortcut handler can bow out rather than hijacking the key. An open menu
+// that takes the keys (Snooze) counts too.
 export function isTypingTarget(target: EventTarget | null): boolean {
+  if (document.querySelector("[data-key-menu]")) return true;
   const el = target as HTMLElement | null;
   if (!el) return false;
   const tag = el.tagName;

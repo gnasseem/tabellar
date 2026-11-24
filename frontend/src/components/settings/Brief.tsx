@@ -6,7 +6,7 @@ import { Group, Row, Switch, useProfile } from "./parts";
 
 type Length = "short" | "standard" | "long";
 type Tone = "plain" | "warm" | "blunt";
-type Settings = { time: string; length: Length; sections: string[]; summary: boolean; tone: Tone };
+type Settings = { time: string; length: Length; sections: string[]; summary: boolean; tone: Tone; notify?: boolean };
 const SECTIONS = [
   { id: "needs", label: "Needs you today" },
   { id: "waiting", label: "Waiting on others" },

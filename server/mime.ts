@@ -166,15 +166,20 @@ export function parsePart(raw: Buffer, path = ""): Part {
 
 // What a message holds: its text, its HTML with inline images as data URIs,
 // its attachments, and the first calendar part.
-export type Read = { headers: Record<string, string>; text: string; html: string; attachments: AttachmentInfo[]; ics: string };
+// `report` is a read receipt's own part.
+export type Read = { headers: Record<string, string>; text: string; html: string; attachments: AttachmentInfo[]; ics: string; report: string };
 
 export function readMessage(raw: Buffer): Read {
   const top = parsePart(raw);
-  const out: Read = { headers: top.headers, text: "", html: "", attachments: [], ics: "" };
+  const out: Read = { headers: top.headers, text: "", html: "", attachments: [], ics: "", report: "" };
   const inline: Part[] = [];
   const walk = (p: Part) => {
     const disposition = (p.headers["content-disposition"] ?? "").toLowerCase();
     if ((p.type === "text/calendar" || p.type === "application/ics") && !out.ics) out.ics = decodeText(p.body, p.params.charset);
+    if (p.type === "message/disposition-notification") {
+      out.report ||= decodeText(p.body, p.params.charset);
+      return;
+    }
     if (p.type === "message/rfc822" || (p.filename && !p.type.startsWith("multipart/"))) {
       if (p.type.startsWith("image/") && p.headers["content-id"] && !disposition.startsWith("attachment")) inline.push(p);
       else out.attachments.push({ filename: p.filename || "message.eml", mime_type: p.type, size: p.body.length, attachment_id: p.path });
@@ -207,6 +212,8 @@ export function headerText(v: string): string {
   return /^[\x20-\x7e]*$/.test(v) ? v : `=?UTF-8?B?${Buffer.from(v, "utf8").toString("base64")}?=`;
 }
 
+export const escapeHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
 const wrap = (b64: string) => b64.replace(/(.{76})/g, "$1\r\n");
 
 export const newMessageId = (address: string) => `<${randomUUID()}@${address.split("@")[1] || "tabellar.local"}>`;
@@ -221,6 +228,7 @@ export function writeMessage(m: Outgoing, extra: string[] = []): string {
   // Gmail delivers to Bcc recipients and strips the header before sending;
   // SMTP sends leave it out (smtpSend).
   if (m.bcc?.length) headers.push(`Bcc: ${m.bcc.join(", ")}`);
+  if (m.receipt && m.from) headers.push(`Disposition-Notification-To: ${m.from}`);
   headers.push(...extra, `Subject: ${headerText(m.subject)}`, "MIME-Version: 1.0");
   if (m.inReplyTo) {
     const ref = m.inReplyTo.includes("<") ? m.inReplyTo : `<${m.inReplyTo}>`;

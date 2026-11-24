@@ -20,6 +20,7 @@ function hoursLine(h: Hours): string {
 export function Notifications({ go }: { go: (section: string) => void }) {
   const { profile, save } = useProfile();
   const level = profile.notification_level ?? "needs";
+  const brief = (profile.brief as { notify?: boolean } | null) ?? {};
   return (
     <>
       <Group title="Notify about">
@@ -30,6 +31,22 @@ export function Notifications({ go }: { go: (section: string) => void }) {
         </div>
       </Group>
       <Group title="When and what">
+        <Row
+          name="The Brief"
+          text={
+            <>
+              Its first three lines, at its time{" "}
+              <button className="link ml-1" onClick={() => go("brief")}>
+                Change
+              </button>
+            </>
+          }
+        >
+          <Switch label="The Brief" on={brief.notify !== false} onChange={(v) => save({ brief: { ...brief, notify: v } })} />
+        </Row>
+        <Row name="An hour before a meeting" text="The last thread with the people in it, and what is open between you">
+          <Switch label="An hour before a meeting" on={profile.notify_meetings !== false} onChange={(v) => save({ notify_meetings: v })} />
+        </Row>
         <Row
           name="Quiet outside working hours"
           text={

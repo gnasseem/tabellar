@@ -7,10 +7,15 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 ## What it does
 
 - **Inbox**: one line per conversation, ending in what Tabellar did with it: reply ready, todo added, on your calendar, replying in 3:12. Only what needs you stands out. Filter to what needs you, group by day, sender or outcome, select many at once, and open the details panel to see each action with its reason and Undo.
-- **Brief**: one page for the day: at most five things that need you, each with its one action; who owes you an answer; today's calendar; and how much Tabellar handled since yesterday, which opens to the list. Every line is something Tabellar did or holds. You set its time, length and sections, and whether a short paragraph opens it.
+- **Snooze** (`s`): an email leaves the inbox, in your mailbox and on your phone too, until a time or until someone answers, and comes back unread among what needs you.
+- **People who matter** (`v`): mail from the people you mark most important is read first, has its own group in the Inbox, is in the Brief while unread, and can be the only mail that notifies you. The first run seeds the list.
+- **Undo** (`z`): takes back your last change, and the one before it, up to ten minutes back; with none of yours left it offers the last thing Tabellar did on its own.
+- **Brief**: one page for the day: at most five things that need you, each with its one action; who owes you an answer; today's calendar; and how much Tabellar handled since yesterday, which opens to the list. Every line is something Tabellar did or holds. You set its time, length and sections, and whether a short paragraph opens it. A notification brings its first three lines at that time.
 - **Replies**: answers written in your style wait here. Read, edit, send, send later or discard, one or several at once, with 15 seconds to undo a send. Replies Autopilot is about to send are listed with their countdown and a Cancel. Tone rephrasing is in the compose window.
-- **Todos and meetings**: a todo only when someone asks you for something, quoting the sentence that asks, due on the day that sentence names; a meeting only at the time the email states, in the timezone it states, and never for what is already on your calendar (invitations and acceptances are linked to their event instead). Todos are a checklist by Today, This week and Later. Meetings lists what waits to be confirmed, with the sentence its time came from and your free time that day, then the next two weeks of your calendar (Google or Outlook).
-- **Follow-ups**: mail you sent to a person that asks or promises something and got no reply: who, what you asked, how long ago. Nudge opens a drafted follow-up in the thread; Later brings it back in three days.
+- **Todos and meetings**: a todo only when someone asks you for something, quoting the sentence that asks, due on the day that sentence names; a meeting only at the time the email states, in the timezone it states, and never for what is already on your calendar (invitations and acceptances are linked to their event instead). Todos are a checklist by Today, This week and Later. Meetings lists what waits to be confirmed, with the sentence its time came from and your free time that day, then the next two weeks of your calendar (Google or Outlook). An hour before a meeting with other people, its last thread with them and what is open between you show under it, and come as a notification.
+- **Follow-ups**: mail you sent to a person that asks or promises something and got no reply: who, what you asked, how long ago. Nudge opens a drafted follow-up in the thread; Later brings it back in three days. Compose can ask for a read receipt (a header many mail programs ignore); such an email is always followed up, and the list says when it was seen.
+- **Forward** (`f`): hand an email on with its attachments. Once you say to whom, Tabellar drafts a short note on what it is about and what is asked; you send it.
+- **Files**: every attachment, received and sent, by name, sender or kind. A search also looks through the mailbox for older ones.
 - **Ask**: ask about your inbox ("what did the registrar say about fees?") or tell it to act. Past conversations are kept on the left. "Clean up my inbox" starts a plan in the conversation: it reads the last week of the inbox, proposes replies, todos, meetings and a bulk archive, asks when unsure, and runs only what you approve.
 - **Labels**: your own labels, with a line that says which mail belongs and examples (senders, and emails you put in a label by hand; mail from those senders always gets it). Tabellar suggests some from your mail on first run, applies each as a label in your mailbox (`Tabellar/<name>` or one of your own: a Gmail label, an Outlook category, an IMAP folder), and the order you drag them into is the order of the Inbox's Priority grouping.
 - **Background engine**: watches each mailbox every few seconds (IMAP mailboxes tell it at once through IDLE) (new mail shows in the window within seconds), even with the window closed, and labels, drafts and plans for new mail. You choose how far it goes: **Observe** (sorts and notifies, changes nothing), **Suggest** (labels mail; drafts, todos and meetings wait for your approval), **Assist** (labels, drafts, todos and meeting proposals happen on their own) or **Autopilot** (see below). It never deletes or archives on its own. Everything it does is listed under **Settings > History**, with Undo, and one Pause switch stops all actions at once.
@@ -19,6 +24,7 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 - **What it knows about you**: before it makes a todo or a draft from someone you have never written to or read mail from, Tabellar asks ("Do you deal with Voyage AI?") at the top of the Inbox. Every todo, meeting, follow-up and newsletter has a menu for "Not this", "Never for this sender" and "Not interested in this topic", and turning down the same kind of thing twice from one sender is remembered. All of it is listed in Settings, under About you, where you can change or delete it, and every prompt Tabellar writes reads it.
 - **How you write**: the greeting, sign-off, tone and length of your drafts are learned from your last 200 sent emails, separately for your organisation, people you know and strangers, and from what you change in drafts. All of it is editable in Settings, with rules ("never open with I hope this finds you well") and phrases that drafts are checked against, and a sample reply to see the result.
 - **Notifications**: macOS notifications for what needs you, or only for the people you marked most important, or none; quiet outside your working hours if you like.
+- **Menu bar**: how many emails need you, with a menu to open the window and to pause. Settings, General turns it off.
 - **Also**: search operators, full keyboard use (press `?` for the keys), light, dark or auto, an accent colour, density and text size, which pages the sidebar shows, phishing warnings, signatures, templates, scheduled send and undo send, several mailboxes in one inbox, and sending from your Gmail aliases (replies go out from the address the mail was sent to).
 
 ## Requirements
@@ -113,7 +119,13 @@ server/
   outbox.ts     sending what is due: send later, undo send, Autopilot replies
   newsletters.ts  bulk senders by their headers, unsubscribe, archiving a sender
   labels.ts     the user's labels: examples, mailbox labels, suggestions
-  brief.ts      the Brief, from what the engine stored
+  brief.ts      the Brief, from what the engine stored, and its notification
+  prep.ts       before a meeting: the last thread with its people, and what is open
+  snooze.ts     hiding an email until a time or an answer
+  forward.ts    handing an email on, with its attachments
+  receipts.ts   read receipts: asking, and what comes back
+  files.ts      attachments found in the mailboxes
+  menubar.ts    the menu bar item
   notify.ts     notifications (macOS)
   writing.ts    how you write, and the rules drafts keep to
   launchd.ts    start at login

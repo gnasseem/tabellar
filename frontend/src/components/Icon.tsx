@@ -3,6 +3,8 @@
 // picks the drawing.
 import {
   Activity,
+  Table2,
+  Presentation,
   AlarmClock,
   Archive,
   ArrowLeft,
@@ -253,6 +255,8 @@ const ICONS: Record<string, LucideIcon> = {
   sentiment_satisfied: Smile,
   settings: SlidersHorizontal,
   smart_toy: Activity,
+  sheet: Table2,
+  slides: Presentation,
   snooze: AlarmClock,
   sort: ArrowUpDown,
   star: Star,

@@ -17,6 +17,7 @@ const RelationshipsView = lazy(() => import("./views/RelationshipsView"));
 const FollowupsView = lazy(() => import("./views/FollowupsView"));
 const HistoryView = lazy(() => import("./views/HistoryView"));
 const NewslettersView = lazy(() => import("./views/NewslettersView"));
+const FilesView = lazy(() => import("./views/FilesView"));
 const AskView = lazy(() => import("./views/AskView"));
 
 const views: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
@@ -35,6 +36,7 @@ const views: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
   history: HistoryView,
   newsletters: NewslettersView,
   ask: AskView,
+  files: FilesView,
 };
 
 export default function EmailDashboard() {

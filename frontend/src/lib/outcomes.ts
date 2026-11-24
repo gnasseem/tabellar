@@ -5,12 +5,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/db";
 import type { MailState } from "@/components/ui";
+import { reversible } from "@/lib/undo";
 
 export type OutcomeAct =
   | { kind: "review"; draftId: string }
   | { kind: "approve"; id: string; hash: string }
   | { kind: "undo"; id: string }
   | { kind: "cancel"; id: string }
+  | { kind: "back"; id: string }
   | { kind: "view"; view: string };
 
 export type Outcome = {
@@ -40,12 +42,16 @@ export type EngineStatus = {
 export type Overview = {
   byEmail: Map<string, Outcome[]>;
   written: Set<string>; // addresses the user has written to
+  vips: Set<string>; // their most important people, as addresses and domains
+  isVip: (address: string | null | undefined) => boolean;
+  setVip: (address: string, on: boolean, name: string) => Promise<void>;
   outgoing: Outgoing[];
   counts: { need: number; replies: number; todos: number; meetings: number; followups: number; proposals: number };
   engine: EngineStatus | null;
   loaded: boolean;
   reload: () => void;
-  approve: (id: string, hash: string) => Promise<void>;
+  // "own": the caller offers its own way to undo it.
+  approve: (id: string, hash: string, own?: boolean) => Promise<void>;
   dismiss: (id: string) => Promise<void>;
   undo: (id: string) => Promise<void>;
   refreshEngine: () => void;
@@ -117,7 +123,7 @@ function calendarOutcome(emailId: string, c: any, at: string): Outcome {
   };
 }
 
-function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: any[], cal: any[]): Map<string, Outcome[]> {
+function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: any[], cal: any[], back: any[]): Map<string, Outcome[]> {
   const map = new Map<string, Outcome[]>();
   const push = (emailId: string | null, o: Outcome) => {
     if (!emailId) return;
@@ -177,6 +183,7 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
     if (m.status === "proposed") push(m.email_id, { key: m.id, at: m.created_at, state: "need", short: "Meeting to confirm", title: `Meeting to confirm: ${m.title}, ${meetingWhen(m)}`, act: { kind: "view", view: "meetings" } });
     else if (m.status === "confirmed") push(m.email_id, { key: m.id, at: m.created_at, state: "done", short: `On calendar, ${when(m.start_time)}`, title: `On calendar: ${m.title}, ${when(m.start_time)}`, act: { kind: "view", view: "meetings" } });
   }
+  for (const e of back) push(e.id, { key: `back:${e.id}`, at: e.snooze_until, state: "need", short: "Back", title: `Back from snooze, ${when(e.snooze_until)}`, act: { kind: "back", id: e.id } });
   for (const c of cal) if (c.calendar) push(c.email_id, calendarOutcome(c.email_id, c.calendar, c.processed_at));
   for (const t of todos) if (t.email_id && !t.is_completed && !seenTodoText.has(`${t.email_id}:${t.text}`)) push(t.email_id, { key: t.id, at: t.created_at, state: "done", short: "Todo added", title: `Todo: ${t.text}`, act: { kind: "view", view: "todos" } });
 
@@ -191,14 +198,28 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
   return map;
 }
 
-export function useOverview(userId: string, live: Record<string, number>, onError: (message: string) => void): Overview {
+export function useOverview(userId: string, live: Record<string, number>, onError: (message: string) => void, onUndoable: (label: string, undo: () => Promise<unknown>) => void): Overview {
   const supabase = createClient();
-  const [raw, setRaw] = useState<{ log: any[]; drafts: any[]; meetings: any[]; todos: any[]; sched: any[]; cal: any[]; followups: number; written: Set<string> } | null>(null);
+  const [raw, setRaw] = useState<{ log: any[]; drafts: any[]; meetings: any[]; todos: any[]; sched: any[]; cal: any[]; vips: Set<string>; followups: number; written: Set<string> } | null>(null);
+  // Mail back from snooze, and mail hidden by it.
+  const [snooze, setSnooze] = useState<{ back: any[]; hidden: Set<string> }>({ back: [], hidden: new Set() });
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const loading = useRef(false);
   const again = useRef(false);
 
+  const loadSnooze = useCallback(async () => {
+    const [back, hidden] = await Promise.all([
+      supabase.from("emails").select("id, snooze_until").eq("user_id", userId).eq("is_snoozed", false).eq("is_archived", false).not("snooze_until", "is", null).is("resolved_at", null),
+      supabase.from("emails").select("id").eq("user_id", userId).eq("is_snoozed", true),
+    ]);
+    const next = { back: (back.data || []) as any[], hidden: new Set(((hidden.data || []) as any[]).map((e) => e.id as string)) };
+    // Most changes to mail are not about snooze: keep the same value then.
+    const key = (s: { back: any[]; hidden: Set<string> }) => `${s.back.map((e) => e.id + e.snooze_until).sort().join()}|${[...s.hidden].sort().join()}`;
+    setSnooze((prev) => (key(prev) === key(next) ? prev : next));
+  }, [userId]);
+
   const reload = useCallback(async () => {
+    void loadSnooze();
     // A change while a load runs is loaded once more after it, not dropped.
     if (loading.current) {
       again.current = true;
@@ -206,7 +227,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
     }
     loading.current = true;
     try {
-      const [log, drafts, meetings, todos, sched, cal, followups, sent] = await Promise.all([
+      const [log, drafts, meetings, todos, sched, cal, followups, sent, vips] = await Promise.all([
         supabase.from("action_log").select("id, kind, status, source, email_id, summary, detail, hash, reason, error, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(4000),
         supabase.from("draft_emails").select("id, email_id, subject, to_addresses, body_html, created_at").eq("user_id", userId).order("created_at", { ascending: false }),
         supabase.from("meetings").select("id, email_id, title, start_time, as_written, status, created_at").eq("user_id", userId),
@@ -215,6 +236,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
         supabase.from("email_processed").select("email_id, calendar, processed_at").eq("user_id", userId).not("calendar", "is", null).order("processed_at", { ascending: false }).limit(2000),
         supabase.from("follow_up_reminders").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "waiting"),
         supabase.from("emails").select("recipients").eq("user_id", userId).contains("label_ids", ["SENT"]).order("received_at", { ascending: false }).limit(3000),
+        supabase.from("preferences").select("subject").eq("user_id", userId).eq("value", "vip").in("kind", ["sender", "domain"]),
       ]);
       // People the user has written to, from the sent mail kept here.
       const written = new Set<string>();
@@ -227,7 +249,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
         for (const e of (data || []) as any[]) pendingNames.set(e.id, String(e.sender || "").replace(/<.*>/, "").replace(/"/g, "").trim());
       }
       for (const x of (sched.data || []) as any[]) x.to_name = pendingNames.get(x.email_id) || "";
-      setRaw({ log: log.data || [], drafts: drafts.data || [], meetings: meetings.data || [], todos: todos.data || [], sched: sched.data || [], cal: cal.data || [], followups: followups.count ?? 0, written });
+      setRaw({ log: log.data || [], drafts: drafts.data || [], meetings: meetings.data || [], todos: todos.data || [], sched: sched.data || [], cal: cal.data || [], vips: new Set(((vips.data || []) as any[]).map((p) => p.subject)), followups: followups.count ?? 0, written });
     } finally {
       loading.current = false;
       if (again.current) {
@@ -235,7 +257,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
         void reload();
       }
     }
-  }, [userId]);
+  }, [userId, loadSnooze]);
 
   const refreshEngine = useCallback(() => {
     api("/engine/status").then(setEngine).catch(() => {});
@@ -243,7 +265,11 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
 
   useEffect(() => {
     reload();
-  }, [reload, live.action_log, live.draft_emails, live.meetings, live.todos, live.scheduled_emails, live.follow_up_reminders]);
+  }, [reload, live.action_log, live.draft_emails, live.meetings, live.todos, live.scheduled_emails, live.follow_up_reminders, live.preferences]);
+
+  useEffect(() => {
+    loadSnooze();
+  }, [loadSnooze, live.emails]);
 
   useEffect(() => {
     refreshEngine();
@@ -261,14 +287,16 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
   }, [raw, reload]);
 
   const derived = useMemo(() => {
-    if (!raw) return { byEmail: new Map<string, Outcome[]>(), written: new Set<string>(), outgoing: [] as Outgoing[], counts: { need: 0, replies: 0, todos: 0, meetings: 0, followups: 0, proposals: 0 } };
+    if (!raw) return { byEmail: new Map<string, Outcome[]>(), written: new Set<string>(), vips: new Set<string>(), outgoing: [] as Outgoing[], counts: { need: 0, replies: 0, todos: 0, meetings: 0, followups: 0, proposals: 0 } };
     const auto = raw.sched.filter((s) => s.source === "autopilot");
-    const byEmail = build(raw.log, raw.drafts, raw.meetings, raw.todos, auto, raw.cal);
+    const byEmail = build(raw.log, raw.drafts, raw.meetings, raw.todos, auto, raw.cal, snooze.back);
+    // A snoozed email waits on nobody until it is back.
     let need = 0;
-    for (const list of byEmail.values()) if (list[0]?.state === "need") need++;
+    for (const [id, list] of byEmail) if (list[0]?.state === "need" && !snooze.hidden.has(id)) need++;
     return {
       byEmail,
       written: raw.written,
+      vips: raw.vips,
       outgoing: auto.map((s) => ({ id: s.id, actionId: s.action_id, emailId: s.email_id, to: s.to_name || (s.to_addresses || [])[0] || "", subject: s.subject || "", sendAt: s.send_at })),
       counts: {
         need,
@@ -279,7 +307,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
         proposals: raw.log.filter((r) => r.status === "proposed" && r.kind !== "label").length,
       },
     };
-  }, [raw]);
+  }, [raw, snooze]);
 
   const run = useCallback(
     async (path: string, body: unknown) => {
@@ -295,14 +323,40 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
     [reload, onError],
   );
 
+  const isVip = useCallback(
+    (address: string | null | undefined) => {
+      const a = (address || "").toLowerCase();
+      const d = a.split("@")[1] || "";
+      return !!a && (derived.vips.has(a) || [...derived.vips].some((v) => !v.includes("@") && (d === v || d.endsWith(`.${v}`))));
+    },
+    [derived.vips],
+  );
+  const setVip = async (address: string, on: boolean, name: string) => {
+    const a = address.toLowerCase();
+    const undo = await reversible(userId, async () => {
+      if (on) await api("/preferences", { kind: "sender", subject: a, value: "vip" });
+      else await supabase.from("preferences").delete().eq("user_id", userId).eq("kind", "sender").eq("subject", a).eq("value", "vip");
+    });
+    onUndoable(on ? `${name} is most important` : `${name} is not most important`, () => undo().then(reload));
+    reload();
+  };
+
   return {
     ...derived,
+    isVip,
+    setVip,
     engine,
     loaded: raw !== null,
     reload,
     refreshEngine,
-    approve: (id, hash) => run("/actions/approve", { id, hash }),
-    dismiss: (id) => run("/actions/dismiss", { id }),
+    approve: async (id, hash, own) => {
+      await run("/actions/approve", { id, hash });
+      if (!own) onUndoable("Approved", () => run("/actions/undo", { id }));
+    },
+    dismiss: async (id) => {
+      const undo = await reversible(userId, () => run("/actions/dismiss", { id }));
+      onUndoable("Dismissed", () => undo().then(reload));
+    },
     undo: (id) => run("/actions/undo", { id }),
   };
 }

@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "./db.ts";
 import { mail } from "./providers.ts";
 import type { Account } from "./accounts.ts";
+import { escapeHtml } from "./mime.ts";
 import { decide, normalizeLevel, proposalHash, type AutoSend, type Kind, type Source } from "./policy.ts";
 import { learn, type Signal } from "./profile.ts";
 
@@ -57,8 +58,7 @@ async function relabel(email: Awaited<ReturnType<typeof emailWithAccount>>, add:
 }
 
 function textToHtml(text: string): string {
-  const esc = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return esc.split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
+  return escapeHtml(text).split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, "<br>")}</p>`).join("");
 }
 
 // Archive or return to the inbox, mark read or unread, a batch of emails: in
@@ -88,6 +88,8 @@ export async function setMailState(userId: string, emailIds: string[], state: { 
       const labels = [...new Set([...((e.label_ids as string[] | null) ?? []).filter((l) => !drop.includes(l)), ...add])];
       const patch: Record<string, unknown> = { label_ids: labels };
       if (state.archived !== undefined) patch.is_archived = state.archived;
+      // Archiving ends a snooze, and deals with an email back from one (snooze.ts).
+      if (state.archived) Object.assign(patch, { is_snoozed: false, snooze_until: null });
       if (state.read !== undefined) patch.is_read = state.read;
       await db.from("emails").update(patch).eq("id", e.id);
     }

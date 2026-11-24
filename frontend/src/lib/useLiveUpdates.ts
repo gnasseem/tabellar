@@ -20,7 +20,8 @@ type TableName =
   | "scheduled_emails"
   | "action_log"
   | "questions"
-  | "follow_up_reminders";
+  | "follow_up_reminders"
+  | "preferences";
 
 
 export type LiveChangeCounters = Record<TableName, number>;
@@ -40,6 +41,7 @@ export function useLiveUpdates(userId: string) {
     action_log: 0,
     questions: 0,
     follow_up_reminders: 0,
+    preferences: 0,
   });
 
   const pending = useRef(new Set<TableName>());
@@ -122,7 +124,7 @@ export function useLiveUpdates(userId: string) {
         () => bumpTable("email_processed"),
       );
       // Rows the background engine writes while the window is open.
-      for (const table of ["action_log", "draft_emails", "todos", "meetings", "questions", "follow_up_reminders"] as const) {
+      for (const table of ["action_log", "draft_emails", "todos", "meetings", "questions", "follow_up_reminders", "preferences"] as const) {
         channel.on(
           "postgres_changes",
           { event: "*", schema: "public", table, filter: `user_id=eq.${userId}` },

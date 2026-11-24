@@ -5,7 +5,8 @@
 // calendar comes from /calendar/events.
 //
 // profiles.brief holds the settings: the time of day a new Brief starts, how
-// long it is, which sections it has, and an optional opening paragraph with
+// long it is, which sections it has, whether a notification with its first
+// three lines goes out then, and an optional opening paragraph with
 // its tone. The paragraph is one model call, made at that time from the
 // same lines and kept in profiles.brief_summary.
 
@@ -13,7 +14,7 @@ import { db } from "./db.ts";
 import { briefParagraph } from "./ai.ts";
 import { modelConfigured } from "./llm.ts";
 import { followupList } from "./followups.ts";
-import { wallClock, minutes, type Hours } from "./notify.ts";
+import { inQuietHours, notify, wallClock, minutes, type Hours } from "./notify.ts";
 import { allPrefs, displayName, pick, stops } from "./profile.ts";
 
 const HANDLED_MAX = 200;
@@ -29,7 +30,7 @@ export const TONES: Record<string, string> = {
   blunt: "Blunt: short sentences, the most pressing thing first, nothing else.",
 };
 
-export type BriefSettings = { time: string; length: keyof typeof LENGTHS; sections: string[]; summary: boolean; tone: string };
+export type BriefSettings = { time: string; length: keyof typeof LENGTHS; sections: string[]; summary: boolean; tone: string; notify: boolean };
 
 export function briefSettings(stored: unknown): BriefSettings {
   const b = (stored ?? {}) as Partial<BriefSettings>;
@@ -39,25 +40,26 @@ export function briefSettings(stored: unknown): BriefSettings {
     sections: Array.isArray(b.sections) ? SECTIONS.filter((s) => b.sections!.includes(s)) : [...SECTIONS],
     summary: b.summary === true,
     tone: b.tone && b.tone in TONES ? b.tone : "plain",
+    notify: b.notify !== false,
   };
 }
 
 const zoneOf = (profile: Record<string, unknown> | null | undefined) => (profile?.working_hours as Hours | null)?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 
-// The day today's Brief belongs to, in the user's zone, and whether its time
-// has come. `since` is the same time the day before: what was handled counts
+// The day today's Brief belongs to, in the user's zone, whether its time
+// has come and how many minutes ago. `since` is the same time the day before: what was handled counts
 // from there, so a Brief always covers a whole night.
-export function briefDay(settings: BriefSettings, tz: string, at = new Date()): { day: string; due: boolean; since: string } {
+export function briefDay(settings: BriefSettings, tz: string, at = new Date()): { day: string; due: boolean; past: number; since: string } {
   const now = wallClock(tz, at);
   const past = now.minute - minutes(settings.time);
-  return { day: now.day, due: past >= 0, since: new Date(at.getTime() - past * 60_000 - DAY).toISOString() };
+  return { day: now.day, due: past >= 0, past, since: new Date(at.getTime() - past * 60_000 - DAY).toISOString() };
 }
 
 // ── The lines ───────────────────────────────────────────────────────────────
 
 export type NeedItem = {
   key: string;
-  kind: "reply" | "approve" | "meeting" | "todo" | "question";
+  kind: "reply" | "approve" | "meeting" | "todo" | "question" | "back" | "read";
   who: string; // the person, or "Todo", or "Tabellar"
   text: string; // one line: what it is
   email_id: string | null;
@@ -94,7 +96,7 @@ export async function brief(userId: string): Promise<Brief> {
   const written = profile?.brief_summary as Summary | null;
   const max = LENGTHS[settings.length];
 
-  const [drafts, proposals, meetings, todos, questions, recent, prefs, waiting] = await Promise.all([
+  const [drafts, proposals, meetings, todos, questions, recent, prefs, waiting, back, hidden, unread] = await Promise.all([
     db.from("draft_emails").select("id, email_id, subject, to_addresses, created_at").eq("user_id", userId).not("email_id", "is", null).order("created_at", { ascending: false }).limit(200),
     db.from("action_log").select("id, kind, email_id, summary, detail, hash, created_at").eq("user_id", userId).eq("status", "proposed").neq("kind", "label").order("created_at", { ascending: false }).limit(200),
     db.from("meetings").select("id, email_id, title, start_time, as_written").eq("user_id", userId).eq("status", "proposed").order("start_time", { ascending: true }).limit(100),
@@ -109,7 +111,13 @@ export async function brief(userId: string): Promise<Brief> {
       .limit(1000),
     allPrefs(userId),
     followupList(userId).catch(() => []),
+    db.from("emails").select("id, subject, sender, sender_email, snooze_until").eq("user_id", userId).eq("is_snoozed", false).eq("is_archived", false).not("snooze_until", "is", null).is("resolved_at", null).limit(100),
+    db.from("emails").select("id").eq("user_id", userId).eq("is_snoozed", true),
+    db.from("emails").select("id, subject, sender, sender_email, received_at, email_processed(summary)").eq("user_id", userId).eq("is_read", false).eq("is_archived", false).eq("is_calendar", false).gte("received_at", new Date(Date.now() - 7 * DAY).toISOString()).not("label_ids", "cs", '{"SENT"}').order("received_at", { ascending: false }).limit(500),
   ]);
+  // Nothing about a snoozed email shows until it is back.
+  const snoozed = new Set((hidden.data ?? []).map((e) => String(e.id)));
+  for (const r of [drafts, proposals, meetings]) r.data = ((r.data ?? []) as Row[]).filter((x) => !snoozed.has(String(x.email_id ?? "")));
 
   // The people the needs are about, by email.
   const ids = new Set<string>();
@@ -126,8 +134,9 @@ export async function brief(userId: string): Promise<Brief> {
   const vip = (emailId: unknown) => pick(prefs, senders.get(String(emailId ?? ""))?.address ?? "", "").some((p) => p.value === "vip");
 
   // Ranked: an overdue todo, a meeting in the next day, a reply for someone
-  // who matters, other replies and approvals, other meetings, todos due
-  // today, then the questions. Newest first within each.
+  // who matters and mail back from snooze, unread mail from someone who
+  // matters, other replies and approvals, other meetings, todos due today,
+  // then the questions. Newest first within each.
   type Ranked = NeedItem & { rank: number; at: string };
   const all: Ranked[] = [];
   const draftedEmails = new Set<string>();
@@ -155,6 +164,22 @@ export async function brief(userId: string): Promise<Brief> {
     const q = open[0];
     all.push({ key: `question:${q.id}`, kind: "question", who: "Tabellar", text: open.length === 1 ? String(q.text) : `${open.length} questions, the first: ${String(q.text)}`, email_id: (q.email_id as string) ?? null, id: String(q.id), rank: 6, at: "" });
   }
+  // One line per thread is enough: mail with a line of its own already is not repeated.
+  const listed = new Set(all.map((n) => n.email_id));
+  for (const e of (back.data ?? []) as Row[]) {
+    if (listed.has(String(e.id))) continue;
+    listed.add(String(e.id));
+    all.push({ key: `back:${e.id}`, kind: "back", who: displayName(e.sender as string, String(e.sender_email ?? "")), text: `Back from snooze: ${e.subject || "(no subject)"}`, email_id: String(e.id), id: String(e.id), rank: 2, at: String(e.snooze_until) });
+  }
+  const matters = (address: unknown) => pick(prefs, String(address ?? "").toLowerCase(), "").some((p) => p.value === "vip");
+  for (const e of (unread.data ?? []) as Row[]) {
+    if (listed.has(String(e.id)) || !matters(e.sender_email)) continue;
+    const p = (Array.isArray(e.email_processed) ? e.email_processed[0] : e.email_processed) as Row | null;
+    all.push({ key: `read:${e.id}`, kind: "read", who: displayName(e.sender as string, String(e.sender_email ?? "")), text: String(p?.summary || e.subject || "(no subject)"), email_id: String(e.id), id: String(e.id), rank: 2.5, at: String(e.received_at) });
+  }
+  // Who owes the user an answer: their most important people first, then the longest wait.
+  waiting.sort((a, b) => Number(matters(b.recipient_email)) - Number(matters(a.recipient_email)));
+
   all.sort((a, b) => a.rank - b.rank || (a.kind === "meeting" || a.kind === "todo" ? a.at.localeCompare(b.at) : b.at.localeCompare(a.at)));
   const needs = all.slice(0, max.needs).map(({ rank: _rank, at: _at, ...n }) => n);
   const needIds = new Set(all.map((n) => n.email_id).filter(Boolean) as string[]);
@@ -205,6 +230,49 @@ export async function brief(userId: string): Promise<Brief> {
   };
 }
 
+// How many emails wait on the user: the count on the Inbox and in the menu bar.
+export async function needCount(userId: string): Promise<number> {
+  const [drafts, proposals, meetings, back, hidden, going] = await Promise.all([
+    db.from("draft_emails").select("email_id").eq("user_id", userId).not("email_id", "is", null),
+    db.from("action_log").select("email_id").eq("user_id", userId).eq("status", "proposed").neq("kind", "label").not("email_id", "is", null),
+    db.from("meetings").select("email_id").eq("user_id", userId).eq("status", "proposed").not("email_id", "is", null),
+    db.from("emails").select("id").eq("user_id", userId).eq("is_snoozed", false).eq("is_archived", false).not("snooze_until", "is", null).is("resolved_at", null),
+    db.from("emails").select("id").eq("user_id", userId).eq("is_snoozed", true),
+    db.from("scheduled_emails").select("email_id").eq("user_id", userId).eq("status", "pending").eq("source", "autopilot"),
+  ]);
+  const need = new Set<string>([...(drafts.data ?? []), ...(proposals.data ?? []), ...(meetings.data ?? [])].map((r) => String(r.email_id)));
+  for (const e of back.data ?? []) need.add(String(e.id));
+  for (const e of hidden.data ?? []) need.delete(String(e.id));
+  for (const e of going.data ?? []) need.delete(String(e.email_id));
+  return need.size;
+}
+
+// ── The notification ────────────────────────────────────────────────────────
+
+const LATE_MIN = 6 * 60;
+const short = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).trimEnd()}…` : s);
+
+// Once a day, when the Brief's time has come (or the quiet hours it fell in
+// are over), its first three lines. Nothing when nothing needs the user, or
+// when the Mac was off until long after. Mail still being read (not `fresh`)
+// holds it for at most half an hour. Returns whether it went out.
+export async function tellBrief(userId: string, { at = new Date(), fresh = true } = {}): Promise<boolean> {
+  const { data: me } = await db.from("profiles").select("working_hours, brief, brief_told, notification_level, notification_preview, notification_quiet, onboarding").eq("id", userId).maybeSingle();
+  if (!me || me.onboarding !== "done" || me.notification_level === "none") return false;
+  const settings = briefSettings(me.brief);
+  const { day, due, past } = briefDay(settings, zoneOf(me), at);
+  if (!settings.notify || !due || me.brief_told === day || inQuietHours(me, at) || (!fresh && past < 30)) return false;
+  await db.from("profiles").update({ brief_told: day }).eq("id", userId);
+  if (past > LATE_MIN) return false;
+  const b = await brief(userId);
+  if (!b.needs.length) return false;
+  const count = b.needs.length + b.more;
+  const title = `${count} ${count === 1 ? "thing needs" : "things need"} you today`;
+  if (me.notification_preview === false) notify({ title: "Brief", body: title });
+  else notify({ title: "Brief", subtitle: title, body: b.needs.slice(0, 3).map((n) => short(n.who === "Todo" || n.who === "Tabellar" ? n.text : `${n.who}: ${n.text}`, 76)).join("\n") });
+  return true;
+}
+
 // ── The paragraph ───────────────────────────────────────────────────────────
 
 type Summary = { day: string; tone: string; text: string; keys: string[] };
@@ -229,6 +297,7 @@ function linesFor(b: Brief): string {
     if (n.kind === "reply" || /^Reply to approve/.test(n.text)) return `A reply to ${n.who} about "${about}" is drafted and waits for the user to send it`;
     if (n.kind === "meeting") return `A meeting with ${n.who} waits to be confirmed: ${n.text}`;
     if (n.kind === "todo") return `Todo: ${n.text}${n.due && n.due < b.day ? ", overdue" : ", due today"}`;
+    if (n.kind === "read") return `Unread mail from ${n.who}, who matters to the user: ${n.text}`;
     return `${n.who}: ${n.text}`;
   };
   const has = (section: string) => b.settings.sections.includes(section);

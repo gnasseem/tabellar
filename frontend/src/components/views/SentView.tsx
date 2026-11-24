@@ -19,6 +19,7 @@ type Sent = {
   received_at: string;
   snippet?: string;
   has_attachments?: boolean;
+  seen_at?: string | null; // its read receipt came
   body_html?: string; // only on an email sent a moment ago, before the mailbox has it
 };
 type Body = { body_text: string | null; body_html: string | null; attachments: { filename: string; mime_type: string; size: number; attachment_id: string }[] | null };
@@ -27,7 +28,7 @@ type Head = { head: true; key: string; name: string };
 type Item = Head | Sent;
 
 const CHUNK = 300;
-const LIST = "id, thread_id, subject, recipients, received_at, snippet, has_attachments";
+const LIST = "id, thread_id, subject, recipients, received_at, snippet, has_attachments, seen_at";
 const COLUMNS = "!grid grid-cols-[26px_128px_minmax(0,1fr)_46px] md:grid-cols-[26px_164px_minmax(0,1fr)_132px_46px]";
 const COLUMNS_BESIDE_READER = "!grid grid-cols-[26px_128px_minmax(0,1fr)_46px]";
 
@@ -46,10 +47,12 @@ function size(bytes: number): string {
 
 // What became of a sent email, from its follow-up: red only once the reminder is due.
 function followState(e: Sent, f: FollowUp | undefined): { text: string; due: boolean; answered: boolean } {
-  if (!f || f.status === "dismissed") return { text: "", due: false, answered: false };
+  const seen = e.seen_at ? `Seen ${shortWhen(e.seen_at)}` : "";
+  if (!f || f.status === "dismissed") return { text: seen, due: false, answered: false };
   if (f.status === "replied") return { text: "Answered", due: false, answered: true };
   const n = daysAgo(e.received_at);
-  const text = n <= 0 ? "Waiting" : `Waiting ${n} day${n === 1 ? "" : "s"}`;
+  const waiting = n <= 0 ? "Waiting" : `Waiting ${n} day${n === 1 ? "" : "s"}`;
+  const text = seen ? `${seen}, w${waiting.slice(1)}` : waiting;
   if (f.status === "snoozed" && f.snooze_until && new Date(f.snooze_until) > new Date()) return { text: "Snoozed", due: false, answered: false };
   return { text, due: new Date(f.remind_at) <= new Date(), answered: false };
 }
@@ -128,7 +131,6 @@ export default function SentView() {
   const [reading, setReading] = useState(false);
   const loaded = useRef(0);
   const busy = useRef(false);
-  const goKey = useRef(0);
 
   const loadSent = useCallback(
     async (more = false) => {
@@ -229,10 +231,7 @@ export default function SentView() {
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (document.querySelector("[data-compose-modal]")) return;
-      // "g" then a letter goes to another view; that letter is not an action here.
-      if (Date.now() - goKey.current < 1500) return void (goKey.current = 0);
       const k = e.key.toLowerCase();
-      if (k === "g") return void (goKey.current = Date.now());
       if (k === "j" || e.key === "ArrowDown") move(1);
       else if (k === "k" || e.key === "ArrowUp") move(-1);
       else if ((e.key === "Enter" || k === "o" || e.key === " ") && cursor) setReading(e.key === " " ? !reading : true);
@@ -332,10 +331,12 @@ export default function SentView() {
                 </p>
                 {follow?.text && (
                   <p className={`mt-1 text-xs ${follow.due ? "font-semibold text-wax-ink" : "text-ink2"}`}>
-                    {follow.answered ? "Answered." : follow.due ? `${follow.text}, a follow-up is due.` : `${follow.text} for an answer.`}{" "}
-                    <button className="link" onClick={() => setView("followups")}>
-                      Open Follow-ups
-                    </button>
+                    {follow.answered ? "Answered." : follow.due ? `${follow.text}, a follow-up is due.` : /aiting/.test(follow.text) ? `${follow.text} for an answer.` : follow.text}{" "}
+                    {(follow.answered || follow.due || /aiting/.test(follow.text)) && (
+                      <button className="link" onClick={() => setView("followups")}>
+                        Open Follow-ups
+                      </button>
+                    )}
                   </p>
                 )}
               </div>

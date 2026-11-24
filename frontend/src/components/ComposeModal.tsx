@@ -4,6 +4,7 @@ import { createClient } from "@/lib/db";
 import { useApp } from "./AppShell";
 import { api } from "@/lib/outcomes";
 import { replyFrom } from "@/lib/accounts";
+import { FILE_ICON, fileKind, type Att } from "@/lib/attachments";
 import { EmailField, useContacts } from "./EmailAutocomplete";
 import DateTimePicker from "./DateTimePicker";
 import { Tick } from "./ui";
@@ -130,9 +131,26 @@ export default function ComposeModal({
     notifyDraftChange,
     notifySent,
     accounts,
+    mail,
   } = useApp();
   const supabase = createClient();
   const draftId = useRef(draft?.id ?? crypto.randomUUID());
+  // An email handed on: it goes out below the note, with its attachments. A
+  // saved draft of one carries it.
+  const forwardId: string | null = draft?.forward?.email_id ?? (replyTo?._forward ? replyTo.id : null);
+  const [forwarded, setForwarded] = useState<{ id: string; subject: string; sender: string; body_text: string | null; snippet: string | null; received_at: string; attachments: Att[] } | null>(null);
+  const [without, setWithout] = useState<string[]>(draft?.forward?.without ?? []);
+  const [readReceipt, setReadReceipt] = useState<boolean>(!!draft?.read_receipt);
+  useEffect(() => {
+    if (!forwardId) return;
+    supabase
+      .from("emails")
+      .select("id, subject, sender, body_text, snippet, received_at, attachments")
+      .eq("id", forwardId)
+      .maybeSingle()
+      .then(({ data }: { data: any }) => setForwarded(data));
+  }, [forwardId]);
+  const forward = forwardId ? { email_id: forwardId, without } : null;
   // Helper: extract bare email addresses from a comma-separated RFC 2822 string,
   // excluding the user's own addresses.
   const extractReplyAddresses = (
@@ -172,7 +190,7 @@ export default function ComposeModal({
         addrs.add(addr);
       return Array.from(addrs).join(", ");
     }
-    return replyTo?.sender_email || "";
+    return replyTo?._forward ? "" : replyTo?.sender_email || "";
   });
   const [cc, setCc] = useState(() => {
     if (draft?.cc_addresses?.length)
@@ -197,6 +215,10 @@ export default function ComposeModal({
   const [subject, setSubject] = useState(
     draft
       ? draft.subject || ""
+      : replyTo?._forward
+        ? /^(fwd?|wg|tr):/i.test(replyTo.subject || "")
+          ? replyTo.subject
+          : `Fwd: ${replyTo.subject || ""}`
       : replyTo
         ? /^Re:/i.test(replyTo.subject || "")
           ? replyTo.subject
@@ -222,7 +244,7 @@ export default function ComposeModal({
   const [showMeetingPanel, setShowMeetingPanel] = useState(false);
 
   // The footer menu that is open, if any: Rewrite, Send later or Templates.
-  const [menu, setMenu] = useState<"" | "rewrite" | "later" | "templates">("");
+  const [menu, setMenu] = useState<"" | "rewrite" | "later" | "more" | "templates">("");
   const footerRef = useRef<HTMLDivElement>(null);
 
   // Convert ISO scheduleAt to datetime-local format for the picker, and back
@@ -474,9 +496,11 @@ export default function ComposeModal({
     setTemplates((prev) => prev.filter((t) => t.id !== id));
   };
 
-  const generateDraft = async (intentOverride?: string) => {
+  // A forward's note needs no words from the user. One drafted on its own
+  // (`quiet`) never replaces what they have started to write.
+  const generateDraft = async (intentOverride?: string, quiet = false) => {
     const intent = intentOverride ?? body;
-    if (!intent.trim()) {
+    if (!intent.trim() && !forwarded) {
       addToast("error", "Write a few words on what to say first");
       return;
     }
@@ -498,7 +522,8 @@ export default function ComposeModal({
           subject,
           to,
           senderName: profile?.display_name || "",
-          replyTo: replyTo
+          forward: forwarded ? { subject: forwarded.subject, from: forwarded.sender, body: forwarded.body_text || forwarded.snippet } : undefined,
+          replyTo: replyTo && !forwardId
             ? {
                 subject: replyTo.subject,
                 body: replyTo.body_text?.slice(0, 1000),
@@ -508,23 +533,40 @@ export default function ComposeModal({
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.draft) {
+        if (quiet && bodyNow.current.trim()) {
+          // The user wrote their own meanwhile.
+        } else if (data.draft) {
           setBody(data.draft);
           drafted.current = data.draft;
           setAiGenerated(true);
           setShowRefinePanel(false);
           setRefineFeedback("");
-        } else {
+        } else if (!quiet) {
           addToast("error", "Could not generate draft");
         }
-      } else {
+      } else if (!quiet) {
         addToast("error", "Could not generate draft");
       }
     } catch {
-      addToast("error", "Network error");
+      if (!quiet) addToast("error", "Network error");
     }
     setGeneratingDraft(false);
   };
+
+  // The note on a forwarded email, drafted once it has someone to go to.
+  const bodyNow = useRef(body);
+  bodyNow.current = body;
+  const noted = useRef(false);
+  const firstTo = to.split(",")[0].trim();
+  useEffect(() => {
+    if (!forwarded || draft || noted.current || body.trim() || !mail.engine?.model || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(firstTo)) return;
+    const timer = setTimeout(() => {
+      noted.current = true;
+      generateDraft("", true);
+    }, 700);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forwarded, firstTo, body, mail.engine?.model]);
 
   const refineWithFeedback = async () => {
     if (!refineFeedback.trim() || !body) return;
@@ -649,9 +691,12 @@ export default function ComposeModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // The message this one answers: a forward starts a conversation of its own.
+  const answers = forward ? null : replyTo;
+
   // Kept here and in that mailbox's Gmail Drafts, From the address chosen.
   const saveDraft = async () => {
-    if (!body) return;
+    if (!body && !forward) return;
     const split = (v: string) => v.split(",").map((s: string) => s.trim()).filter(Boolean);
     const html = /<br|<p|<div/.test(body) ? body : body.replace(/\n/g, "<br>");
     try {
@@ -664,9 +709,11 @@ export default function ComposeModal({
         bcc: split(bcc),
         subject,
         body_html: html,
-        email_id: draft?.email_id ?? replyTo?.id ?? null,
-        in_reply_to: replyTo?.gmail_id,
-        thread_id: replyTo?.thread_id,
+        email_id: draft?.email_id ?? (forward ? null : (replyTo?.id ?? null)),
+        in_reply_to: answers?.gmail_id,
+        thread_id: answers?.thread_id,
+        forward,
+        read_receipt: readReceipt,
       });
       notifyDraftChange();
       addToast(inGmail ? "success" : "info", inGmail ? "Draft saved" : "Draft saved here. The mailbox could not be reached, so it is not in its Drafts.");
@@ -844,6 +891,8 @@ export default function ComposeModal({
               body_html: sendBody,
               send_at: scheduleAt,
               status: "pending",
+              read_receipt: readReceipt,
+              forward,
             })
             .eq("id", draft._scheduledId);
           if (upErr) {
@@ -865,8 +914,10 @@ export default function ComposeModal({
               subject,
               body_html: sendBody,
               send_at: scheduleAt,
-              in_reply_to: replyTo?.gmail_id,
-              thread_id: replyTo?.thread_id,
+              in_reply_to: answers?.gmail_id,
+              thread_id: answers?.thread_id,
+              read_receipt: readReceipt,
+              forward,
             });
           if (insErr) {
             addToast("error", "Failed to schedule email");
@@ -888,8 +939,10 @@ export default function ComposeModal({
             bcc_addresses: parsedBcc.length ? parsedBcc : null,
             subject,
             body_html: sendBody,
-            in_reply_to: replyTo?.gmail_id,
-            thread_id: replyTo?.thread_id,
+            in_reply_to: answers?.gmail_id,
+            thread_id: answers?.thread_id,
+            read_receipt: readReceipt,
+            forward,
             send_at: new Date(Date.now() + 15_000).toISOString(),
           })
           .select("id")
@@ -955,8 +1008,10 @@ export default function ComposeModal({
               bcc: parsedBcc.length ? parsedBcc : undefined,
               subject,
               body_html: sendBody,
-              in_reply_to: replyTo?.gmail_id,
-              thread_id: replyTo?.thread_id,
+              in_reply_to: answers?.gmail_id,
+              thread_id: answers?.thread_id,
+              read_receipt: readReceipt,
+              forward,
               account_id: effectiveAccountId,
               from_address: from.address || undefined,
               gmail_draft_id: gmailDraftId ?? undefined,
@@ -1068,10 +1123,10 @@ export default function ComposeModal({
   const replyName = (replyTo?.sender ?? "").replace(/<.*>/, "").replace(/"/g, "").trim() || replyTo?.sender_email || "";
   const title = draft?._scheduledId
     ? "Scheduled message"
-    : !replyTo
+    : forward
+      ? "Forward"
+      : !replyTo
       ? "New message"
-      : /^fwd:/i.test(replyTo.subject || "")
-        ? "Forward"
         : replyName
           ? `Reply to ${replyName}`
           : "Reply";
@@ -1235,7 +1290,7 @@ export default function ComposeModal({
             if (aiGenerated) setAiGenerated(false);
           }}
           placeholder="Write your message"
-          rows={showMeetingPanel ? 6 : 10}
+          rows={showMeetingPanel || forward ? 6 : 10}
           className="block w-full resize-none bg-transparent py-3 text-sm leading-[1.6] text-ink outline-none"
         />
 
@@ -1243,6 +1298,29 @@ export default function ComposeModal({
           <p role="status" className="pb-2.5 text-xs text-ink3">
             {busy}
           </p>
+        )}
+
+        {/* The email that goes out below the text, and its files */}
+        {forwarded && (
+          <div className="inset mb-3">
+            <div className="flex items-baseline gap-2">
+              <b className="min-w-0 truncate font-medium text-ink">{forwarded.subject || "(no subject)"}</b>
+              <span className="min-w-0 flex-1 truncate text-xs text-ink3">{forwarded.sender.replace(/<.*>/, "").replace(/"/g, "").trim()}</span>
+            </div>
+            <p className="mt-1 line-clamp-2 leading-snug text-ink3">{forwarded.snippet}</p>
+            {(forwarded.attachments || [])
+              .filter((a) => !without.includes(a.attachment_id))
+              .map((a) => (
+                <div key={a.attachment_id} className="mt-1 flex h-6 items-center gap-2">
+                  <Icon name={FILE_ICON[fileKind(a)]} size={14} className="flex-none text-ink3" />
+                  <span className="min-w-0 truncate text-ink">{a.filename}</span>
+                  {a.size > 0 && <span className="flex-none text-xs text-ink3">{formatFileSize(a.size)}</span>}
+                  <button className="iconbtn h-6 w-6" onClick={() => setWithout((w) => [...w, a.attachment_id])} title="Leave out" aria-label={`Leave out ${a.filename}`}>
+                    <Icon name="close" size={13} />
+                  </button>
+                </div>
+              ))}
+          </div>
         )}
 
         {/* Asking Tabellar for a change to the draft */}
@@ -1287,6 +1365,15 @@ export default function ComposeModal({
               </span>
             </div>
           </div>
+        )}
+
+        {readReceipt && (
+          <p className="flex items-center gap-2 pb-2.5 text-xs text-ink3">
+            Asks for a read receipt
+            <button className="link" onClick={() => setReadReceipt(false)}>
+              Remove
+            </button>
+          </p>
         )}
 
         {!busy && !showRefinePanel && aiGenerated && (
@@ -1386,7 +1473,7 @@ export default function ComposeModal({
                 role="menuitem"
                 className={menuItem}
                 disabled={!to || !subject}
-                title="Turns the notes in the message into a full email. Needs a recipient and a subject."
+                title={forward ? "Writes the note again" : "Turns the notes in the message into a full email. Needs a recipient and a subject."}
                 onClick={() => {
                   setMenu("");
                   generateDraft();
@@ -1421,21 +1508,52 @@ export default function ComposeModal({
           <Icon name="attach_file" size={16} />
         </button>
 
+        {/* What few emails need: a template, a meeting, a read receipt */}
         <div className="relative">
-          <button
-            className={`iconbtn ${menu === "templates" ? "bg-sel text-ink" : ""}`}
-            aria-haspopup="dialog"
-            aria-expanded={menu === "templates"}
-            title="Templates"
-            aria-label="Templates"
-            onClick={() => {
-              const opening = menu !== "templates";
-              setMenu(opening ? "templates" : "");
-              if (opening) setSaveTemplateName(subject || "");
-            }}
-          >
-            <Icon name="description" size={16} />
+          <button className="iconbtn" aria-haspopup="menu" aria-expanded={menu === "more"} title="More" aria-label="More" onClick={() => setMenu(menu === "more" ? "" : "more")}>
+            <Icon name="more" size={16} />
           </button>
+          {menu === "more" && (
+            <div className="pop absolute bottom-9 left-0 w-56" role="menu">
+              <button
+                role="menuitem"
+                className={menuItem}
+                onClick={() => {
+                  setSaveTemplateName(subject || "");
+                  setMenu("templates");
+                }}
+              >
+                Templates
+                <Icon name="chevron_right" size={14} className="ml-auto text-ink3" />
+              </button>
+              <button
+                role="menuitemcheckbox"
+                aria-checked={showMeetingPanel}
+                className={menuItem}
+                disabled={!to || !subject}
+                title={!to || !subject ? "Add a recipient and a subject to set up a meeting" : undefined}
+                onClick={() => {
+                  setMenu("");
+                  setShowMeetingPanel((v) => !v);
+                }}
+              >
+                {showMeetingPanel ? "Remove the meeting" : "Set up a meeting"}
+              </button>
+              <button
+                role="menuitemcheckbox"
+                aria-checked={readReceipt}
+                className={menuItem}
+                title="Many mail programs do not answer it. Without an answer in two days, it is in Follow-ups."
+                onClick={() => {
+                  setMenu("");
+                  setReadReceipt((v) => !v);
+                }}
+              >
+                Ask for a read receipt
+                {readReceipt && <Icon name="check" size={13} className="ml-auto" />}
+              </button>
+            </div>
+          )}
           {menu === "templates" && (
             <div className="pop absolute bottom-9 left-0 flex max-h-[340px] w-72 flex-col" role="dialog" aria-label="Templates">
               <p className="label px-2 py-1.5">Templates</p>
@@ -1480,20 +1598,9 @@ export default function ComposeModal({
           )}
         </div>
 
-        <button
-          className={`iconbtn ${showMeetingPanel ? "bg-sel text-ink" : ""}`}
-          aria-pressed={showMeetingPanel}
-          onClick={() => setShowMeetingPanel((p) => !p)}
-          disabled={!to || !subject}
-          title={!to || !subject ? "Add a recipient and a subject to set up a meeting" : "Set up a meeting with this email"}
-          aria-label="Set up a meeting with this email"
-        >
-          <Icon name="event" size={16} />
-        </button>
-
         <span className="flex-1" />
 
-        <button className="btn btn-plain" onClick={saveDraft} disabled={!body} title="Keep this as a draft and close">
+        <button className="btn btn-plain" onClick={saveDraft} disabled={!body && !forward} title="Keep this as a draft and close">
           Save draft
         </button>
         <button className="iconbtn" onClick={onClose} title="Discard" aria-label="Discard">

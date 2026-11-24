@@ -34,7 +34,8 @@ import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
 import { ACT_WITHIN_MS, dueOf, meetingOf, RULES_VERSION, todoOf } from "./rules.ts";
 import { judgeSent } from "./followups.ts";
 import { inQuietHours, notify, worthNotifying } from "./notify.ts";
-import { prepareBrief } from "./brief.ts";
+import { prepareBrief, tellBrief } from "./brief.ts";
+import { tellMeetings } from "./prep.ts";
 import { firstReadState, relearnStyle, startFirstRead } from "./firstRead.ts";
 import { listAccounts, refreshStaleSendAs, replyFrom, type Account } from "./accounts.ts";
 import { gmailLabelOf, userLabels } from "./labels.ts";
@@ -154,7 +155,7 @@ export async function sampleReply(userId: string, kind?: Recipient): Promise<{ w
 // work for nothing).
 async function laterInThread(e: EmailRow): Promise<boolean> {
   if (!e.thread_id || !e.received_at) return false;
-  const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("thread_id", e.thread_id).gt("received_at", e.received_at);
+  const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("thread_id", e.thread_id).eq("is_receipt", false).gt("received_at", e.received_at);
   return !!count;
 }
 
@@ -622,8 +623,29 @@ function startWatcher(): () => void {
   };
 }
 
+// The Brief's notification and the ones before a meeting, once a minute and
+// apart from the cycle, which a long backlog can hold up. The Brief waits for
+// a cycle that has just finished, so it is about this morning's mail.
+let telling = false;
+async function tellUser(): Promise<void> {
+  if (telling) return;
+  telling = true;
+  try {
+    const userId = await localUser();
+    if (!userId || (await engineSettings(userId)).paused) return;
+    const fresh = !!engineStatus.lastCycleAt && Date.now() - new Date(engineStatus.lastCycleAt).getTime() < 5 * 60_000;
+    await tellBrief(userId, { fresh });
+    await tellMeetings(userId);
+  } catch (e) {
+    console.error("[engine] notifications:", (e as Error).message);
+  } finally {
+    telling = false;
+  }
+}
+
 export function startEngine(): () => void {
   let last = 0;
+  const tell = setInterval(() => void tellUser(), 60_000);
   const tick = () => {
     if (Date.now() - last < INTERVAL_MS) return;
     last = Date.now();
@@ -635,6 +657,7 @@ export function startEngine(): () => void {
   return () => {
     clearTimeout(first);
     clearInterval(timer);
+    clearInterval(tell);
     stopWatcher();
   };
 }

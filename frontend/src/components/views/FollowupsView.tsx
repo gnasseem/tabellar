@@ -3,7 +3,7 @@ import { createClient } from "@/lib/db";
 import { api } from "@/lib/outcomes";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
-import { Empty, Glyph, SkeletonRows, ViewBar, VirtualList, useSizes } from "../ui";
+import { Empty, Glyph, SkeletonRows, ViewBar, VirtualList, shortWhen, useSizes } from "../ui";
 import { NotThis } from "../Profile";
 
 // Follow-ups: mail the user sent that still waits on an answer, one line
@@ -23,6 +23,7 @@ type Followup = {
   subject: string;
   sent_at: string;
   asked: string;
+  seen_at: string | null;
   remind_at: string | null;
 };
 
@@ -154,6 +155,7 @@ export default function FollowupsView() {
           {f.recipient_name}
         </span>
         <span className="min-w-0 flex-1 truncate text-ink2">{f.asked || f.subject}</span>
+        {f.seen_at && <span className="flex-none pl-3 text-xs text-ink3 group-hover:hidden group-aria-selected:hidden">Seen {shortWhen(f.seen_at)}</span>}
         <span className={`flex flex-none items-center gap-3 pl-3 max-md:hidden max-md:group-aria-selected:flex ${reveal}`}>
           <button className="link !text-wax-ink" onClick={(e) => (e.stopPropagation(), nudge(f))}>
             Nudge

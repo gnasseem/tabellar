@@ -28,7 +28,10 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       // vip, needs or none (notify.ts); quiet outside the working hours.
       notification_level: 'text ! ="needs"', notification_preview: "bool ! =true", notification_quiet: "bool ! =false",
       // The Brief's settings and the paragraph written for today (brief.ts).
-      brief: "json ! ={}", brief_summary: "json",
+      brief: "json ! ={}", brief_summary: "json", brief_told: "text",
+      // Before a meeting (prep.ts): whether to tell, and the events told about.
+      notify_meetings: "bool ! =true", meetings_told: "json ! =[]",
+      menu_bar: "bool ! =true",
       autonomy_level: 'text ! ="suggest"', engine_paused: "bool ! =false",
       autopilot_delay_min: "int ! =5", autopilot_daily_cap: "int ! =5", autopilot_known_only: "bool ! =true",
       first_read: "json", rules_version: "int ! =0", label_suggestions: "json",
@@ -57,11 +60,16 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       subject: "text", sender: "text", sender_email: "text", recipients: "text",
       snippet: "text", body_text: "text", body_html: "text", received_at: "time",
       is_read: "bool ! =false", is_starred: "bool ! =false", is_archived: "bool ! =false",
+      // Snoozed (snooze.ts): hidden until snooze_until, or until an answer
+      // when that is empty. Once back, snooze_until is when it came back.
       is_snoozed: "bool ! =false", snooze_until: "time", label_ids: "json",
       has_attachments: "bool ! =false", attachments: "json ! =[]",
       has_list_unsubscribe: "bool ! =false", is_reply: "bool ! =false",
       reply_to_email: "text", cc_recipients: "text", precedence_header: "text", list_id: "text",
       is_calendar: "bool ! =false", calendar_event: "json", awaits_reply: "bool",
+      // Sent mail that asked for a read receipt, and when it was read; mail
+      // that is such a receipt (receipts.ts).
+      receipt_asked: "bool ! =false", seen_at: "time", is_receipt: "bool ! =false",
       resolved_at: "time", created_at: "time ! =now",
     },
     unique: [["user_id", "gmail_id"]],
@@ -99,6 +107,8 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       // "autopilot" rows are Tabellar's own replies, re-checked when they fall due.
       source: 'text ! ="user"', email_id: "uuid >emails:null", action_id: "uuid",
       gmail_draft_id: "text", // sent through Gmail's Drafts, which it then leaves
+      // A forwarded email and the attachments left out: {email_id, without} (forward.ts).
+      forward: "json", read_receipt: "bool ! =false",
     },
   },
   // Senders the user dealt with in Newsletters: kept, or unsubscribed from.
@@ -160,6 +170,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       id: "uuid pk =uuid", user_id: "uuid !", account_id: "uuid >accounts:cascade", from_address: "text",
       to_addresses: "json ! =[]", subject: "text", body_html: "text", email_id: "uuid >emails:null", source: "text",
       gmail_draft_id: "text", // the same draft in Gmail's Drafts, when the user saved it
+      forward: "json", read_receipt: "bool ! =false",
       created_at: "time ! =now",
     },
   },
@@ -254,6 +265,7 @@ const INDEXES = [
   "CREATE INDEX IF NOT EXISTS emails_thread ON emails(user_id, thread_id)",
   "CREATE INDEX IF NOT EXISTS emails_sender ON emails(user_id, sender_email)",
   "CREATE INDEX IF NOT EXISTS emails_account ON emails(account_id)",
+  "CREATE INDEX IF NOT EXISTS emails_snoozed ON emails(user_id, snooze_until) WHERE snooze_until IS NOT NULL OR is_snoozed = 1",
   "CREATE INDEX IF NOT EXISTS processed_category ON email_processed(user_id, category)",
   "CREATE INDEX IF NOT EXISTS todos_user ON todos(user_id, is_completed)",
   "CREATE INDEX IF NOT EXISTS meetings_start ON meetings(user_id, start_time)",

@@ -190,7 +190,7 @@ export default function RepliesView() {
         const gmailDraftId = r.raw.gmail_draft_id && r.raw.account_id === account.id ? r.raw.gmail_draft_id : null;
         const { data, error } = await supabase
           .from("scheduled_emails")
-          .insert({ user_id: user.id, account_id: account.id, from_address: from, gmail_draft_id: gmailDraftId, to_addresses: r.to, subject: r.subject, body_html: r.html, in_reply_to: r.source?.gmail_id, thread_id: r.source?.thread_id, send_at: sendAt, email_id: r.source?.id })
+          .insert({ user_id: user.id, account_id: account.id, from_address: from, gmail_draft_id: gmailDraftId, to_addresses: r.to, subject: r.subject, body_html: r.html, in_reply_to: r.source?.gmail_id, thread_id: r.source?.thread_id, send_at: sendAt, email_id: r.source?.id, forward: r.raw.forward ?? null, read_receipt: !!r.raw.read_receipt })
           .select("id")
           .single();
         if (error || !data?.id) throw new Error(error?.message || "Could not queue the reply");
@@ -236,7 +236,7 @@ export default function RepliesView() {
   };
   const restore = (r: Reply) => ({
     user_id: user.id, account_id: r.raw.account_id ?? null, from_address: r.raw.from_address ?? null, gmail_draft_id: r.raw.gmail_draft_id ?? null,
-    to_addresses: r.to, subject: r.subject, body_html: r.html, email_id: r.raw.email_id, source: r.raw.source,
+    to_addresses: r.to, subject: r.subject, body_html: r.html, email_id: r.raw.email_id, source: r.raw.source, forward: r.raw.forward ?? null, read_receipt: !!r.raw.read_receipt,
   });
 
   const discard = async (list: Reply[]) => {

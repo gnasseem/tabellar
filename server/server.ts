@@ -1,6 +1,7 @@
 // The Tabellar server: serves the interface, the local API, the database
 // bridge and the live event stream, on 127.0.0.1 only, and runs the
-// background engine (engine.ts) and the timer for scheduled sends.
+// background engine (engine.ts), the timer for scheduled sends and snoozed
+// mail, and the menu bar item (menubar.ts).
 //
 // Access: every request must name this machine as its Host (which defeats DNS
 // rebinding) and, when a browser sends an Origin, come from Tabellar's own
@@ -26,6 +27,9 @@ import { sendDueEmails } from "./outbox.ts";
 import { modelConfigured } from "./llm.ts";
 import { startEngine, windowClosed, windowOpened } from "./engine.ts";
 import { connectAccount } from "./accounts.ts";
+import { wakeDue } from "./snooze.ts";
+import { startMenuBar } from "./menubar.ts";
+import { spawn } from "node:child_process";
 
 const DIST = fileURLToPath(new URL("../frontend/dist/", import.meta.url));
 const MAX_BODY = 50 * 1024 * 1024; // attachments arrive base64-encoded in JSON
@@ -252,7 +256,11 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
     }
   });
 
-  const timer = setInterval(() => sendDueEmails().catch((e) => console.error("[scheduled]", e)), 10_000);
+  // Every 10 seconds: mail due to go out, and snoozed mail due back.
+  const timer = setInterval(() => {
+    sendDueEmails().catch((e) => console.error("[scheduled]", e));
+    wakeDue().catch((e) => console.error("[snooze]", e));
+  }, 10_000);
 
   return new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -260,10 +268,12 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
       // A local model needs Ollama running; start it if it is not.
       if ([loadConfig().model, loadConfig().fastModel].some((m) => m?.format === "ollama")) startOllama().catch(() => {});
       const stopEngine = startEngine();
+      const stopMenuBar = startMenuBar(() => spawn("open", [`http://127.0.0.1:${port}/?code=${mintLoginCode()}`], { stdio: "ignore" }).on("error", () => {}));
       resolve({
         port,
         close: () => {
           stopEngine();
+          stopMenuBar();
           clearInterval(timer);
           server.close();
         },

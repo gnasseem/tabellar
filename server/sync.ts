@@ -12,6 +12,8 @@ import { headerRowOf, mail, type EmailData, type HeaderRow, type MailboxChanges,
 import { analyzeEmailsForUser } from "./analyzeEmails.ts";
 import { addressesIn, indexMail, ownAddresses, rebuildSenders } from "./senders.ts";
 import type { Account } from "./accounts.ts";
+import { markSeen } from "./receipts.ts";
+import { answered, wakeThreads } from "./snooze.ts";
 
 // Run fn after every earlier call on the same queue has finished.
 export function serial<A extends unknown[], R>(fn: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
@@ -84,10 +86,16 @@ export async function storeInbox(userId: string, account: Account, rawEmails: Em
       list_id: e.list_id ?? null,
       is_calendar: e.is_calendar,
       calendar_event: e.calendar_event,
+      is_receipt: !!e.is_receipt,
     }));
     const { data } = await db.from("emails").insert(rows).select("id");
     inserted.push(...((data ?? []) as { id: string }[]).map((e) => e.id));
   }
+
+  // A read receipt marks the email it is about; any other mail brings back
+  // what was snoozed in its thread.
+  for (const e of emails) if (e.receipt) await markSeen(userId, account, e.receipt, e.received_at).catch((err) => console.error("[sync] read receipt:", (err as Error).message));
+  await wakeThreads(userId, emails.filter((e) => !e.is_receipt).map((e) => e.thread_id));
 
   // How often each sender wrote, for the briefing and the assistant.
   const senderMap = new Map<string, { sender: string; subject: string; count: number }>();
@@ -155,6 +163,7 @@ export async function storeSent(userId: string, account: Account, sent: Sent[]):
   for (let i = 0; i < rows.length; i += 100) {
     await db.from("emails").upsert(rows.slice(i, i + 100), { onConflict: "user_id,gmail_id", ignoreDuplicates: true });
   }
+  for (const r of rows) await answered(userId, r.thread_id, r.received_at);
   return rows.length;
 }
 
@@ -181,10 +190,10 @@ export function sentHeaderRow(e: Sent, account: Account): HeaderRow {
 async function applyChanges(userId: string, ch: MailboxChanges): Promise<string[]> {
   const ids = [...new Set([...ch.labels.map((c) => c.id), ...ch.deleted])];
   if (!ids.length) return [];
-  type Row = { id: string; gmail_id: string; label_ids: string[] | null; is_read: boolean; is_starred: boolean; is_archived: boolean };
+  type Row = { id: string; gmail_id: string; label_ids: string[] | null; is_read: boolean; is_starred: boolean; is_archived: boolean; is_snoozed: boolean };
   const stored = new Map<string, Row>();
   for (let i = 0; i < ids.length; i += 500) {
-    const { data } = await db.from("emails").select("id, gmail_id, label_ids, is_read, is_starred, is_archived").eq("user_id", userId).in("gmail_id", ids.slice(i, i + 500));
+    const { data } = await db.from("emails").select("id, gmail_id, label_ids, is_read, is_starred, is_archived, is_snoozed").eq("user_id", userId).in("gmail_id", ids.slice(i, i + 500));
     for (const r of (data ?? []) as unknown as Row[]) stored.set(r.gmail_id, r);
   }
   const back = new Set<string>();
@@ -216,7 +225,9 @@ async function applyChanges(userId: string, ch: MailboxChanges): Promise<string[
     const same =
       next.is_read === row.is_read && next.is_starred === row.is_starred && next.is_archived === row.is_archived &&
       [...set].sort().join() === [...(row.label_ids ?? [])].sort().join();
-    if (!same) await db.from("emails").update(next).eq("id", row.id);
+    // Moved back to the inbox or thrown away in the mailbox: the snooze ends.
+    const over = row.is_snoozed && (set.has("INBOX") || set.has("TRASH") || ch.deleted.includes(gmailId)) ? { is_snoozed: false, snooze_until: null } : null;
+    if (!same || over) await db.from("emails").update({ ...next, ...over }).eq("id", row.id);
   }
   return [...back];
 }
@@ -314,7 +325,7 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
       }
 
       // What arrived and what was sent counts toward the sender statistics.
-      const seen = [...rawEmails.map(headerRowOf), ...sent.map((e) => sentHeaderRow(e, account))];
+      const seen = [...rawEmails.filter((e) => !e.is_receipt).map(headerRowOf), ...sent.map((e) => sentHeaderRow(e, account))];
       if (seen.length) {
         try {
           await indexMail(userId, account.id, seen, own);

@@ -9,6 +9,7 @@
 import { db } from "./db.ts";
 import { mail } from "./providers.ts";
 import { accountById, defaultAccount, fromLine } from "./accounts.ts";
+import { messageIdOf, withForward, type Forward } from "./forward.ts";
 
 export type DraftInput = {
   id?: string;
@@ -22,6 +23,8 @@ export type DraftInput = {
   email_id?: string | null;
   in_reply_to?: string;
   thread_id?: string;
+  forward?: Forward | null;
+  read_receipt?: boolean;
 };
 
 const list = (v: unknown) => (Array.isArray(v) ? v.map(String).map((s) => s.trim()).filter(Boolean) : []);
@@ -44,6 +47,8 @@ export async function saveUserDraft(userId: string, d: DraftInput): Promise<{ id
     subject: d.subject ?? "",
     body_html: d.body_html ?? "",
     email_id: d.email_id ?? null,
+    forward: d.forward ?? null,
+    read_receipt: d.read_receipt === true,
   };
   const { data, error } = await db.from("draft_emails").upsert(row, { onConflict: "id" }).select("id").single();
   if (error) throw new Error(error.message);
@@ -54,7 +59,11 @@ export async function saveUserDraft(userId: string, d: DraftInput): Promise<{ id
     const saved = await mail(account).saveDraft(
       account,
       gmailId,
-      { from, to: row.to_addresses, cc: list(d.cc), bcc: list(d.bcc), subject: row.subject, html: row.body_html, inReplyTo: d.in_reply_to },
+      await withForward(
+        userId,
+        { from, to: row.to_addresses, cc: list(d.cc), bcc: list(d.bcc), subject: row.subject, html: row.body_html, inReplyTo: await messageIdOf(account, d.in_reply_to), receipt: row.read_receipt },
+        row.forward,
+      ),
       d.thread_id,
     );
     await db.from("draft_emails").update({ gmail_draft_id: saved }).eq("id", id);

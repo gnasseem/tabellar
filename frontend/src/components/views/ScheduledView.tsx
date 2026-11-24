@@ -74,7 +74,6 @@ export default function ScheduledView() {
   const [open, setOpen] = useState(false); // narrow windows: the list or the email, one at a time
   const [timeOpen, setTimeOpen] = useState(false);
   const [newTime, setNewTime] = useState("");
-  const goKey = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
 
   // Everything still to go out or that failed, and the last hundred already
@@ -182,17 +181,14 @@ export default function ScheduledView() {
     const at = new Date(newTime);
     if (isNaN(at.getTime())) return;
     setTimeOpen(false);
-    if (await change(s, { status: "pending", send_at: at.toISOString(), error_message: null })) addToast("success", `Now sends ${sendsAt(at.toISOString())}`);
+    if (await change(s, { status: "pending", send_at: at.toISOString(), error_message: null })) addToast("success", `Now sends ${sendsAt(at.toISOString())}`, { action: { label: "Undo", onClick: () => change(s, { status: s.status, send_at: s.send_at, error_message: s.error_message }) } });
   };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (document.querySelector("[data-compose-modal]")) return;
-      // "g" then a letter goes to another view; that letter is not an action here.
-      if (Date.now() - goKey.current < 1500) return void (goKey.current = 0);
       const k = e.key.toLowerCase();
-      if (k === "g") return void (goKey.current = Date.now());
       if (k === "j" || e.key === "ArrowDown") move(1);
       else if (k === "k" || e.key === "ArrowUp") move(-1);
       else if ((k === "e" || e.key === "Enter") && cursor) edit(cursor);

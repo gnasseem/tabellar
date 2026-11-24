@@ -7,6 +7,7 @@ import { loadTokens, saveTokens, refreshAccessToken, revokeGoogleTokens, type To
 import { calendarHeaders, parseIcs } from "./rules.ts";
 import { htmlToText, writeMessage } from "./mime.ts";
 import type { AttachmentInfo, Calendar, CalEvent, EmailData, HeaderRow, LinkedEvent, Mail, MailboxChanges, NewEvent, Outgoing, Sent, SendAs } from "./providers.ts";
+import { isReceipt, receiptOf } from "./receipts.ts";
 
 const GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -162,6 +163,7 @@ interface ExtractState {
     attachmentId?: string;
   }[];
   ics: { data?: string; attachmentId?: string } | null; // the first text/calendar part, with or without a filename
+  report?: { data?: string; attachmentId?: string }; // a read receipt's own part
 }
 
 function extractBody(part: EmailPart, state: ExtractState) {
@@ -172,6 +174,11 @@ function extractBody(part: EmailPart, state: ExtractState) {
 
   if ((mime === "text/calendar" || mime === "application/ics") && !state.ics && (part.body?.data || part.body?.attachmentId)) {
     state.ics = { data: part.body.data, attachmentId: part.body.attachmentId };
+  }
+
+  if (mime === "message/disposition-notification") {
+    state.report ??= { data: part.body?.data, attachmentId: part.body?.attachmentId };
+    return;
   }
 
   if (mime === "text/plain" && part.body?.data) {
@@ -235,16 +242,20 @@ async function fetchMessageById(
     };
     extractBody(msg.payload ?? {}, state);
 
-    // The event a calendar email is about, from its .ics.
-    let icsText = state.ics?.data ? b64urlDecode(state.ics.data) : "";
-    if (!icsText && state.ics?.attachmentId) {
+    // The event a calendar email is about, from its .ics; what a read receipt
+    // is about, from its report. Gmail hands a longer part over separately.
+    const partText = async (p: { data?: string; attachmentId?: string } | null | undefined): Promise<string> => {
+      if (p?.data) return b64urlDecode(p.data);
+      if (!p?.attachmentId) return "";
       try {
-        const res = await gmailRequest(accessToken, `/messages/${messageId}/attachments/${state.ics.attachmentId}`);
-        if (res.ok) icsText = b64urlDecode(((await res.json()).data as string) ?? "");
+        const res = await gmailRequest(accessToken, `/messages/${messageId}/attachments/${p.attachmentId}`);
+        return res.ok ? b64urlDecode(((await res.json()).data as string) ?? "") : "";
       } catch {
-        // Still calendar mail, without the event's details.
+        return ""; // still calendar mail, or a receipt, without its details
       }
-    }
+    };
+    const icsText = await partText(state.ics);
+    const receipt = isReceipt(headers) ? receiptOf(headers, await partText(state.report)) : null;
 
     // Replace CID inline image references with embedded data URIs
     for (const cid of state.cidParts) {
@@ -307,6 +318,8 @@ async function fetchMessageById(
       list_id: headers["list-id"] ?? undefined,
       is_calendar: !!state.ics || calendarHeaders(headers),
       calendar_event: icsText ? parseIcs(icsText, Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC") : null,
+      is_receipt: isReceipt(headers),
+      receipt,
     };
   } catch {
     return null;
@@ -1007,6 +1020,7 @@ const googleCalendar: Calendar = {
         allDay: !ev.start?.dateTime,
         // The other people: not the user, not a room.
         attendees: (ev.attendees ?? []).filter((x: any) => !x.self && !x.resource).map((x: any) => x.displayName || x.email).filter(Boolean),
+        people: (ev.attendees ?? []).filter((x: any) => !x.self && !x.resource && x.email).map((x: any) => String(x.email).toLowerCase()),
         location: ev.location ?? null,
         meetingLink: ev.hangoutLink ?? ev.conferenceData?.entryPoints?.[0]?.uri ?? null,
         htmlLink: ev.htmlLink ?? null,
@@ -1045,6 +1059,7 @@ export const gmailMailbox: Mail = {
   modify: (a, ids, add, remove) => batchModifyLabels(a.token_ref, ids, add, remove),
   sendAs: (a) => listSendAs(a.token_ref),
   hasSentTo: (a, address) => hasSentTo(a.token_ref, address),
+  files: (a, q, cap) => listMessageIds(a.token_ref, `has:attachment -in:trash -in:spam ${q.from ? `from:(${q.from.replace(/[()"]/g, " ")}) ` : ""}${q.text.replace(/[(){}"]/g, " ")}`.trim(), cap),
   attachment: (a, id, attachmentId) => fetchAttachment(a.token_ref, id, attachmentId),
   contacts: (a) => fetchGoogleContacts(a.token_ref),
   disconnect: (a) => revokeGoogleTokens(a.token_ref),

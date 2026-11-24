@@ -6,6 +6,9 @@ import { assessSuspicion, type SuspicionVerdict } from "@/lib/suspicion";
 import { useApp } from "./AppShell";
 import DateTimePicker from "./DateTimePicker";
 import EmailBody from "./EmailBody";
+import FilePreview from "./FilePreview";
+import { SnoozeMenu, useSnooze } from "./Snooze";
+import { FILE_ICON, fetchAttachment, fileKind, fileSize, saveAttachment, type Att } from "@/lib/attachments";
 import { Countdown, Glyph, OutcomeLines, shortWhen } from "./ui";
 
 // The reader: one column at a readable measure. The thread shows its latest
@@ -14,65 +17,6 @@ import { Countdown, Glyph, OutcomeLines, shortWhen } from "./ui";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// Attachments fetched in this window, kept across emails. Bounded: an object
-// URL keeps its Blob alive until revoked.
-type CachedAttachment = { blobUrl: string; blob: Blob; text: string | null };
-const CACHE_MAX_BYTES = 64 * 1024 * 1024;
-const CACHE_MAX_ENTRIES = 24;
-const cache = new Map<string, CachedAttachment>();
-let cacheBytes = 0;
-
-function evict(key: string) {
-  const entry = cache.get(key);
-  if (!entry) return;
-  URL.revokeObjectURL(entry.blobUrl);
-  cacheBytes -= entry.blob.size;
-  cache.delete(key);
-}
-
-function remember(key: string, entry: CachedAttachment) {
-  evict(key);
-  cache.set(key, entry);
-  cacheBytes += entry.blob.size;
-  while (cache.size > 1 && (cacheBytes > CACHE_MAX_BYTES || cache.size > CACHE_MAX_ENTRIES)) {
-    const oldest = cache.keys().next().value;
-    if (oldest === undefined || oldest === key) break;
-    evict(oldest);
-  }
-}
-
-// Reading an entry moves it to the back, so eviction is least recently used.
-function recall(key: string): CachedAttachment | undefined {
-  const entry = cache.get(key);
-  if (entry) {
-    cache.delete(key);
-    cache.set(key, entry);
-  }
-  return entry;
-}
-
-type Att = { filename: string; mime_type: string; size: number; attachment_id: string };
-
-async function fetchAttachment(att: Att, gmailId: string): Promise<CachedAttachment> {
-  const key = `${gmailId}::${att.attachment_id}`;
-  const cached = recall(key);
-  if (cached) return cached;
-  const { data } = await createClient().auth.getSession();
-  const res = await fetch(`/api/attachment?gmail_id=${encodeURIComponent(gmailId)}&attachment_id=${encodeURIComponent(att.attachment_id)}`, {
-    headers: { Authorization: `Bearer ${data.session?.access_token}` },
-  });
-  if (!res.ok) throw new Error("Could not fetch the attachment");
-  const binary = atob(((await res.json()).data as string).replace(/-/g, "+").replace(/_/g, "/"));
-  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-  const blob = new Blob([bytes], { type: att.mime_type || "application/octet-stream" });
-  const text = att.mime_type?.startsWith("text/") || att.mime_type === "application/json" ? await blob.text() : null;
-  const entry = { blobUrl: URL.createObjectURL(blob), blob, text };
-  remember(key, entry);
-  return entry;
-}
-
-const fileSize = (n: number) => (n > 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.ceil(n / 1024))} KB`);
-const fileIcon = (mime: string | undefined) => (mime?.startsWith("image/") ? "image" : mime?.includes("pdf") ? "picture_as_pdf" : "description");
 const nameOf = (sender: string | null | undefined, address: string | null | undefined) => (sender ?? "").replace(/<.*>/, "").replace(/"/g, "").trim() || address || "Unknown sender";
 const fullWhen = (iso: string) => new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 const plain = (html: string) =>
@@ -85,15 +29,8 @@ const CATEGORIES: [string, string][] = [
   ["promotions", "Promotions"],
 ];
 
-const SNOOZE: [string, number][] = [
-  ["1 hour", 1],
-  ["3 hours", 3],
-  ["Tomorrow morning", 16],
-  ["Next week", 168],
-];
-
 const MESSAGE_FIELDS =
-  "id, gmail_id, thread_id, account_id, subject, sender, sender_email, recipients, cc_recipients, received_at, body_html, body_text, snippet, has_attachments, attachments, reply_to_email";
+  "id, gmail_id, thread_id, account_id, subject, sender, sender_email, recipients, cc_recipients, received_at, body_html, body_text, snippet, label_ids, has_attachments, attachments, reply_to_email";
 
 // A caution about the sender or its links, on one line; the reasons open below it.
 function SuspicionBanner({ verdict }: { verdict: SuspicionVerdict }) {
@@ -134,12 +71,15 @@ type EmailDetailProps = {
 };
 
 export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkUnread, onSnooze, onRethink, onResolvedChange }: EmailDetailProps) {
-  const { user, openCompose, addToast, setView, mail, liveChanges, draftVersion, notifyDraftChange, accounts } = useApp();
+  const { user, openCompose, addToast, pushUndo, setView, mail, liveChanges, draftVersion, notifyDraftChange, accounts } = useApp();
+  const snoozeMail = useSnooze();
   const supabase = createClient();
   const [proc, setProc] = useState<any>(Array.isArray(email.email_processed) ? email.email_processed[0] : email.email_processed);
   const [messages, setMessages] = useState<any[] | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const [menu, setMenu] = useState<"" | "more" | "sort" | "snooze" | "track">("");
+  const [menu, setMenu] = useState<"" | "more" | "sort" | "track">("");
+  const [snoozeAt, setSnoozeAt] = useState<DOMRect | null>(null);
+  const snoozeButton = useRef<HTMLButtonElement>(null);
   const barRef = useRef<HTMLElement>(null);
   const [labels, setLabels] = useState<{ slug: string; display_name: string }[]>([]);
   const [resolvedAt, setResolvedAt] = useState<string | null>(email.resolved_at ?? null);
@@ -151,7 +91,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
   });
   const [busy, setBusy] = useState(false);
   const [reply, setReply] = useState<{ draft?: any; going?: any } | null>(null);
-  const [preview, setPreview] = useState<{ att: Att; gmailId: string; entry: CachedAttachment | null; error: string | null } | null>(null);
+  const [preview, setPreview] = useState<{ att: Att; gmailId: string } | null>(null);
 
   // The thread, oldest first; only the latest message opens.
   useEffect(() => {
@@ -234,7 +174,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
     } catch {
       return addToast("error", "Could not mark it unread in the mailbox.");
     }
-    addToast("info", "Marked unread");
+    addToast("info", "Marked unread", { action: { label: "Undo", onClick: () => setMailState([email.id], { read: true }) } });
     onMarkUnread?.();
   };
 
@@ -248,14 +188,11 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
       return addToast("error", "Could not update this email.");
     }
     onResolvedChange?.(email.id, next);
-  };
-
-  const snooze = async (hours: number) => {
-    const until = new Date(Date.now() + hours * 3_600_000);
-    await supabase.from("emails").update({ is_snoozed: true, snooze_until: until.toISOString() }).eq("id", email.id);
-    setMenu("");
-    addToast("success", `Snoozed until ${until.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`);
-    onSnooze?.();
+    pushUndo(next ? "Done" : "Not done", async () => {
+      await supabase.from("emails").update({ resolved_at: before }).eq("id", email.id);
+      setResolvedAt(before);
+      onResolvedChange?.(email.id, before);
+    });
   };
 
   const track = async () => {
@@ -278,18 +215,28 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
     setMenu("");
     if (error) return addToast("error", "Could not set the reminder.");
     setTracked(true);
-    addToast("success", "Reminder set");
+    addToast("success", "Reminder set", {
+      action: {
+        label: "Undo",
+        onClick: async () => {
+          await supabase.from("follow_up_reminders").delete().eq("user_id", user.id).eq("thread_id", email.thread_id || email.id);
+          setTracked(false);
+        },
+      },
+    });
   };
 
-  const sort = async (patch: { category?: string; extra_labels?: string[] }) => {
-    const next = { ...proc, ...patch };
+  const sort = async (category: string, byHand = true) => {
+    const before = proc?.category;
+    const next = { ...proc, category };
     setProc(next);
     onRethink?.(next);
-    await supabase.from("email_processed").update(patch).eq("email_id", email.id);
+    await supabase.from("email_processed").update({ category }).eq("email_id", email.id);
+    if (byHand && before && before !== category) pushUndo(`Sorted as ${CATEGORIES.find(([slug]) => slug === category)?.[1] ?? category}`, () => sort(before, false));
   };
 
   // In or out of one of the user's labels: in Gmail too, and kept as an example.
-  const label = async (slug: string, on: boolean) => {
+  const label = async (slug: string, on: boolean, byHand = true) => {
     const before = proc;
     const extraNow: string[] = Array.isArray(proc?.extra_labels) ? proc.extra_labels : [];
     const next = { ...proc, extra_labels: on ? [...extraNow, slug] : extraNow.filter((x) => x !== slug) };
@@ -297,6 +244,8 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
     onRethink?.(next);
     try {
       await api("/labels/apply", { email_id: email.id, slug, on });
+      const name = labels.find((l) => l.slug === slug)?.display_name ?? slug;
+      if (byHand) pushUndo(on ? `Labelled ${name}` : `Label ${name} taken off`, () => label(slug, !on, false));
     } catch (e) {
       setProc(before);
       onRethink?.(before);
@@ -342,38 +291,36 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
     });
   };
 
-  const showAttachment = async (att: Att, gmailId: string) => {
-    setPreview({ att, gmailId, entry: null, error: null });
-    try {
-      const entry = await fetchAttachment(att, gmailId);
-      setPreview((p) => (p?.att === att ? { ...p, entry } : p));
-    } catch {
-      setPreview((p) => (p?.att === att ? { ...p, error: "Could not load this attachment from the mailbox." } : p));
-    }
+  const download = (att: Att, gmailId: string) => saveAttachment(att, gmailId).catch(() => addToast("error", "Download failed"));
+  const openSnooze = () => {
+    setMenu("");
+    setSnoozeAt(snoozeButton.current?.getBoundingClientRect() ?? null);
+  };
+  const forward = () => {
+    setMenu("");
+    openCompose({ ...email, _forward: true });
+  };
+  const vip = mail.isVip(email.sender_email);
+  const toggleVip = () => {
+    setMenu("");
+    const who = nameOf(email.sender, email.sender_email);
+    mail
+      .setVip(email.sender_email, !vip, who)
+      .then(() => addToast("success", vip ? `${who} is not most important` : `${who} is most important`))
+      .catch((e: Error) => addToast("error", e.message));
   };
 
-  const download = async (att: Att, gmailId: string) => {
-    try {
-      const a = document.createElement("a");
-      a.href = (await fetchAttachment(att, gmailId)).blobUrl;
-      a.download = att.filename;
-      a.click();
-    } catch {
-      addToast("error", "Download failed");
-    }
-  };
-
-  // Esc goes back (or closes what is open); R replies, E archives, U marks
-  // unread. Caught before the list's own handler.
+  // Esc goes back (or closes what is open); R replies, E archives, S snoozes,
+  // F forwards, V marks the sender, U marks unread. Caught before the list's
+  // own handler.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
-      if (document.querySelector("[data-compose-modal]")) return;
+      if (document.querySelector("[data-compose-modal]") || document.querySelector("[data-key-menu]")) return;
       if (e.key === "Escape") {
-        if (preview) setPreview(null);
-        else if (menu) setMenu("");
+        if (menu) setMenu("");
         else if (document.querySelector('[aria-modal="true"]')) return;
         else onBack();
         e.stopPropagation();
@@ -383,6 +330,9 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
       const k = e.key.toLowerCase();
       if (k === "r") replyTo();
       else if (k === "e") onArchive();
+      else if (k === "s") openSnooze();
+      else if (k === "f") forward();
+      else if (k === "v") toggleVip();
       else if (k === "u") markUnread();
       else return;
       e.preventDefault();
@@ -421,6 +371,9 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
         <button className="iconbtn" onClick={onArchive} title="Archive" aria-label="Archive">
           <Icon name="archive" size={16} />
         </button>
+        <button ref={snoozeButton} className="iconbtn" onClick={openSnooze} title="Snooze (S)" aria-label="Snooze" aria-haspopup="menu" aria-expanded={!!snoozeAt}>
+          <Icon name="snooze" size={16} />
+        </button>
         <div className="relative">
           <button className="iconbtn" onClick={() => setMenu(menu ? "" : "more")} title="More" aria-label="More actions" aria-haspopup="menu" aria-expanded={!!menu}>
             <Icon name="more" size={16} />
@@ -432,7 +385,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
                   Reply all
                 </button>
               )}
-              <button role="menuitem" className="pop-item" onClick={() => (setMenu(""), openCompose({ ...email, sender_email: "", subject: `Fwd: ${email.subject}` }))}>
+              <button role="menuitem" className="pop-item" onClick={forward}>
                 Forward
               </button>
               <button role="menuitem" className="pop-item" onClick={() => (setMenu(""), markUnread())}>
@@ -441,16 +394,15 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
               <button role="menuitem" className="pop-item" onClick={() => setResolved(resolvedAt ? null : new Date().toISOString())}>
                 {resolvedAt ? "Not done" : "Done, keep in Inbox"}
               </button>
-              <button role="menuitem" className="pop-item" onClick={() => setMenu("snooze")}>
-                Snooze
-                <Icon name="chevron_right" size={14} className="ml-auto text-ink3" />
-              </button>
               {email.thread_id && !tracked && (
                 <button role="menuitem" className="pop-item" onClick={() => setMenu("track")}>
                   Remind me if no answer
                 </button>
               )}
               <div className="mx-2 my-1 border-t border-line-soft" />
+              <button role="menuitemcheckbox" aria-checked={vip} className="pop-item" onClick={toggleVip}>
+                {vip ? "Sender is not most important" : "Sender is most important"}
+              </button>
               <button role="menuitem" className="pop-item" onClick={() => setMenu("sort")}>
                 Category and labels
                 <Icon name="chevron_right" size={14} className="ml-auto text-ink3" />
@@ -460,19 +412,10 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
               </button>
             </div>
           )}
-          {menu === "snooze" && (
-            <div className="pop absolute right-0 top-8 w-48" role="menu">
-              {SNOOZE.map(([label, hours]) => (
-                <button key={hours} role="menuitem" className="pop-item" onClick={() => snooze(hours)}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          )}
           {menu === "sort" && (
             <div className="pop absolute right-0 top-8 w-56" role="menu">
               {CATEGORIES.map(([slug, name]) => (
-                <button key={slug} role="menuitemradio" aria-checked={proc?.category === slug} className="pop-item" onClick={() => sort({ category: slug })}>
+                <button key={slug} role="menuitemradio" aria-checked={proc?.category === slug} className="pop-item" onClick={() => sort(slug)}>
                   <Icon name="check" size={13} className={proc?.category === slug ? "text-ink" : "invisible"} />
                   {name}
                 </button>
@@ -544,7 +487,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
             <div className={outcomes.length || resolvedAt || tracked ? "mt-3 border-t border-line-soft pt-2" : ""}>
               {messages.length > 1 && <p className="label mb-1 mt-2">{messages.length} messages</p>}
               {messages.map((m) => {
-                const me = accounts.mine.has(String(m.sender_email || "").toLowerCase()) || (!!user.email && String(m.sender_email || "").toLowerCase() === user.email.toLowerCase());
+                const me = (m.label_ids || []).includes("SENT") || accounts.mine.has(String(m.sender_email || "").toLowerCase()) || (!!user.email && String(m.sender_email || "").toLowerCase() === user.email.toLowerCase());
                 const name = me ? "You" : nameOf(m.sender, m.sender_email);
                 if (!open.has(m.id))
                   return (
@@ -577,8 +520,8 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
                       <div className="mt-5 border-t border-line-soft pt-2">
                         {atts.map((att) => (
                           <div key={att.attachment_id} className="-mx-2 flex h-row items-center gap-2 rounded-md px-2 hover:bg-hover">
-                            <Icon name={fileIcon(att.mime_type)} size={14} className="flex-none text-ink3" />
-                            <button className="min-w-0 truncate text-left text-ink hover:underline" onClick={() => showAttachment(att, m.gmail_id)}>
+                            <Icon name={FILE_ICON[fileKind(att)]} size={14} className="flex-none text-ink3" />
+                            <button className="min-w-0 truncate text-left text-ink hover:underline" onClick={() => setPreview({ att, gmailId: m.gmail_id })}>
                               {att.filename}
                             </button>
                             {att.size > 0 && <span className="flex-none text-xs text-ink3">{fileSize(att.size)}</span>}
@@ -599,49 +542,16 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
         </div>
       </div>
 
-      {preview && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4" onClick={() => setPreview(null)}>
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={preview.att.filename}
-            className="flex flex-col overflow-hidden rounded-[12px] bg-raised shadow-pop"
-            style={{ width: "min(92vw, 56.25rem)", height: "min(90vh, 43.75rem)" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex h-11 flex-none items-center gap-2 border-b border-line-soft pl-4 pr-1.5">
-              <p className="min-w-0 flex-1 truncate font-semibold text-ink">{preview.att.filename}</p>
-              {preview.att.size > 0 && <span className="flex-none text-xs text-ink3">{fileSize(preview.att.size)}</span>}
-              <button className="btn ml-1" onClick={() => download(preview.att, preview.gmailId)}>
-                Download
-              </button>
-              <button className="iconbtn" onClick={() => setPreview(null)} title="Close" aria-label="Close">
-                <Icon name="close" size={16} />
-              </button>
-            </div>
-            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-side">
-              {preview.error ? (
-                <p className="text-danger">{preview.error}</p>
-              ) : !preview.entry ? (
-                <div className="skel h-[70%] w-[70%] rounded-[9px]" aria-busy="true" aria-label="Loading" />
-              ) : preview.att.mime_type?.startsWith("image/") ? (
-                <img src={preview.entry.blobUrl} alt={preview.att.filename} className="max-h-full max-w-full object-contain p-4" />
-              ) : preview.att.mime_type?.includes("pdf") ? (
-                <iframe src={preview.entry.blobUrl} title={preview.att.filename} className="h-full w-full border-0" />
-              ) : preview.entry.text !== null ? (
-                <pre className="h-full w-full overflow-auto whitespace-pre-wrap break-all p-4 font-mono text-xs leading-relaxed text-ink">{preview.entry.text}</pre>
-              ) : (
-                <div className="empty">
-                  <Icon name="description" size={22} className="text-ink3" />
-                  <h3>No preview</h3>
-                  <button className="link mt-1.5" onClick={() => download(preview.att, preview.gmailId)}>
-                    Download it
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+      {preview && <FilePreview att={preview.att} gmailId={preview.gmailId} onClose={() => setPreview(null)} />}
+      {snoozeAt && (
+        <SnoozeMenu
+          anchor={snoozeAt}
+          onPick={async (until) => {
+            setSnoozeAt(null);
+            if (await snoozeMail(ids, until)) onSnooze?.();
+          }}
+          onClose={() => setSnoozeAt(null)}
+        />
       )}
     </div>
   );

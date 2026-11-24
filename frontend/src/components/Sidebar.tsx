@@ -229,6 +229,7 @@ export const NAV: Item[][] = [
   [
     { id: "sent", icon: "send", label: "Sent" },
     { id: "scheduled", icon: "schedule", label: "Scheduled" },
+    { id: "files", icon: "attach_file", label: "Files" },
     { id: "labels", icon: "label", label: "Labels" },
     { id: "newsletters", icon: "newspaper", label: "Newsletters" },
   ],

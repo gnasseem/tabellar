@@ -9,6 +9,7 @@ import { ReaderById } from "../EmailDetail";
 import { EmailField, useContacts } from "../EmailAutocomplete";
 import { Empty, Glyph, Seg, SkeletonRows, ViewBar, clock } from "../ui";
 import { NotThis } from "../Profile";
+import { MeetingPrep, useUpNext } from "../Prep";
 
 // Meetings: two lists. To confirm holds what Tabellar found in mail, with the
 // sentence the time came from and the free time that day; Add to calendar
@@ -29,7 +30,7 @@ type Pending = {
   quote: string | null;
   location: string | null;
 };
-type CalEvent = { id: string; title: string; start: string; end: string; allDay: boolean; attendees: string[]; htmlLink: string | null };
+type CalEvent = { id: string; title: string; start: string; end: string; allDay: boolean; attendees: string[]; people?: string[]; htmlLink: string | null };
 type Source = { sender: string; subject: string };
 type Slot = { start: string; end: string };
 type Draft = { title: string; minutes: string; attendees: string; location: string; start: string };
@@ -125,6 +126,12 @@ export default function MeetingsView() {
   const [busy, setBusy] = useState<string | null>(null);
   const [reading, setReading] = useState<string | null>(null);
   const free = useFreeSlots();
+  // The meeting coming up in the next hour shows what is open on its own;
+  // any other opens it on Enter or a click.
+  const upNext = useUpNext(events);
+  const [prepOpen, setPrepOpen] = useState<Map<string, boolean>>(new Map());
+  const prepShown = (ev: CalEvent) => !!ev.people?.length && (prepOpen.get(ev.id) ?? upNext === ev.id);
+  const togglePrep = (ev: CalEvent) => setPrepOpen((m) => new Map(m).set(ev.id, !prepShown(ev)));
 
   const loadPending = useCallback(async () => {
     const [m, p] = await Promise.all([
@@ -184,6 +191,7 @@ export default function MeetingsView() {
   const keys = [...toConfirm.map((p) => p.key), ...upcoming.map((ev) => `e:${ev.id}`)];
   const cursor = keys.includes(cursorKey ?? "") ? cursorKey : (keys[0] ?? null);
   const cursorPending = toConfirm.find((p) => p.key === cursor) ?? null;
+  const cursorEvent = upcoming.find((ev) => `e:${ev.id}` === cursor) ?? null;
 
   const move = (delta: number) => {
     if (!keys.length) return;
@@ -255,6 +263,7 @@ export default function MeetingsView() {
       else if (k === "n") setForm({ mode: "new" });
       else if (k === "e" && cursorPending) setForm({ mode: "change", pending: cursorPending });
       else if (e.key === "Enter" && cursorPending && !(e.target as HTMLElement).closest?.("button, a")) confirm(cursorPending);
+      else if (e.key === "Enter" && cursorEvent?.people?.length && !(e.target as HTMLElement).closest?.("button, a")) togglePrep(cursorEvent);
       else return;
       e.preventDefault();
     };
@@ -357,7 +366,17 @@ export default function MeetingsView() {
                 const src = emailId ? sources.get(emailId) : undefined;
                 const who = ev.attendees.length ? (ev.attendees.length > 1 ? `${ev.attendees[0]} and ${ev.attendees.length - 1} more` : ev.attendees[0]) : "";
                 return (
-                  <div key={ev.id} role="option" aria-selected={cursor === `e:${ev.id}`} className="row group gap-2.5" onClick={() => setCursorKey(`e:${ev.id}`)}>
+                  <div key={ev.id}>
+                  <div
+                    role="option"
+                    aria-selected={cursor === `e:${ev.id}`}
+                    aria-expanded={ev.people?.length ? prepShown(ev) : undefined}
+                    className="row group gap-2.5"
+                    onClick={() => {
+                      setCursorKey(`e:${ev.id}`);
+                      if (ev.people?.length) togglePrep(ev);
+                    }}
+                  >
                     <span className="w-[26px] flex-none" />
                     <span className="w-[92px] flex-none text-ink3">{ev.allDay ? "All day" : `${clock(ev.start)} to ${clock(ev.end)}`}</span>
                     <span className="min-w-0 shrink truncate text-ink">{ev.title}</span>
@@ -370,6 +389,8 @@ export default function MeetingsView() {
                         </a>
                       )}
                     </span>
+                  </div>
+                  {prepShown(ev) && <MeetingPrep title={ev.title} people={ev.people!} onOpen={setReading} className="pl-10 md:pl-[152px]" />}
                   </div>
                 );
               })}

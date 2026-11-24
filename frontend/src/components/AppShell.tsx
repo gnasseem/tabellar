@@ -57,7 +57,11 @@ type Profile = {
   notification_level?: string | null;
   notification_preview?: boolean | null;
   notification_quiet?: boolean | null;
+  notify_meetings?: boolean | null;
+  menu_bar?: boolean | null;
 };
+
+const UNDO_MS = 10 * 60_000;
 
 // In-memory view data cache for instant view switching
 type ViewCacheEntry = { data: any; timestamp: number };
@@ -77,6 +81,8 @@ export type AppContextType = {
     message: string,
     options?: { action?: ToastItem["action"]; duration?: number },
   ) => void;
+  // Keep a change Z can take back, for ten minutes. A toast with Undo does it itself.
+  pushUndo: (label: string, undo: () => unknown) => void;
   // Global search
   search: string;
   setSearch: (v: string) => void;
@@ -301,6 +307,15 @@ export default function AppShell({
     setComposeMinimized(false);
   }, []);
 
+  // What Z takes back: every change of the last ten minutes, newest last. A
+  // toast that offers Undo (or Cancel, while it lasts) is one of them.
+  const undos = useRef<{ id: string; label: string; run: () => unknown; until: number }[]>([]);
+  const toastCount = useRef(0);
+  const keepUndo = useCallback((id: string, label: string, run: () => unknown, ms: number) => {
+    undos.current = [...undos.current.filter((u) => u.until > Date.now()), { id, label, run, until: Date.now() + ms }].slice(-50);
+  }, []);
+  const pushUndo = useCallback((label: string, run: () => unknown) => keepUndo(Math.random().toString(36).slice(2), label, run, UNDO_MS), [keepUndo]);
+
   const addToast = useCallback(
     (
       type: ToastItem["type"],
@@ -308,21 +323,57 @@ export default function AppShell({
       options?: { action?: ToastItem["action"]; duration?: number },
     ) => {
       const id = Math.random().toString(36).slice(2);
-      setToasts((prev) => [
-        ...prev,
-        {
-          id,
-          type,
-          message,
-          action: options?.action,
-          duration: options?.duration,
-        },
-      ]);
+      toastCount.current++;
+      let action = options?.action;
+      if (action && (action.label === "Undo" || action.label === "Cancel")) {
+        const run = action.onClick;
+        // With a duration of its own the offer ends with the toast (a send's 15 seconds).
+        keepUndo(id, message, run, options?.duration ?? UNDO_MS);
+        action = { label: action.label, onClick: () => ((undos.current = undos.current.filter((u) => u.id !== id)), run()) };
+      }
+      setToasts((prev) => [...prev, { id, type, message, action, duration: options?.duration }]);
     },
-    [],
+    [keepUndo],
   );
   const reportError = useCallback((m: string) => addToast("error", m), [addToast]);
-  const mail = useOverview(user.id, liveChanges, reportError);
+  const mail = useOverview(user.id, liveChanges, reportError, pushUndo);
+  const mailRef = useRef(mail);
+  mailRef.current = mail;
+
+  // Z: the user's own last change; with none left, the last thing Tabellar did
+  // on its own is offered, and Z again takes that back.
+  const offered = useRef(new Set<string>());
+  const undoLast = useCallback(async () => {
+    undos.current = undos.current.filter((u) => u.until > Date.now());
+    const u = undos.current.pop();
+    if (u) {
+      // Its own toast goes, and the ones that only said something.
+      setToasts((prev) => prev.filter((t) => t.id !== u.id && (t.action || t.type === "error")));
+      const before = toastCount.current;
+      try {
+        await u.run();
+        if (toastCount.current === before) addToast("info", `Undone: ${u.label.replace(/^By Tabellar, [^:]+: /, "")}`);
+      } catch (e) {
+        addToast("error", `Could not undo that: ${(e as Error).message}`);
+      }
+      return;
+    }
+    const { data } = await createClient()
+      .from("action_log")
+      .select("id, kind, summary, detail, created_at")
+      .eq("user_id", user.id)
+      .eq("source", "engine")
+      .eq("status", "done")
+      .in("kind", ["draft", "todo", "meeting", "send"])
+      .gte("created_at", new Date(Date.now() - UNDO_MS).toISOString())
+      .order("created_at", { ascending: false })
+      .limit(20);
+    const row = ((data || []) as any[]).find((r) => !offered.current.has(r.id) && !r.detail?.sentAt);
+    if (!row) return addToast("info", "Nothing to undo in the last ten minutes");
+    offered.current.add(row.id);
+    const ago = Math.round((Date.now() - new Date(row.created_at).getTime()) / 60_000);
+    addToast("info", `By Tabellar, ${ago < 1 ? "just now" : `${ago} min ago`}: ${row.summary}`, { duration: 8000, action: { label: "Undo", onClick: () => mailRef.current.undo(row.id) } });
+  }, [addToast, user.id]);
   const accounts = useAccounts();
   addToastRef.current = addToast;
 
@@ -640,7 +691,7 @@ export default function AppShell({
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (isTypingTarget(e.target)) {
         // Escape should still get you out of the search box.
-        if (e.key === "Escape") (e.target as HTMLElement).blur();
+        if (e.key === "Escape" && !document.querySelector("[data-key-menu]")) (e.target as HTMLElement).blur();
         return;
       }
       if (document.querySelector("[data-compose-modal]")) return;
@@ -655,11 +706,11 @@ export default function AppShell({
       if (goToPending.current) {
         goToPending.current = false;
         if (goToTimer.current) clearTimeout(goToTimer.current);
+        // The letter is not also an action of the view it leaves.
+        e.preventDefault();
+        e.stopImmediatePropagation();
         const target = GO_TO_VIEWS[e.key.toLowerCase()];
-        if (target) {
-          e.preventDefault();
-          setView(target);
-        }
+        if (target) setView(target);
         return;
       }
 
@@ -691,17 +742,24 @@ export default function AppShell({
         return;
       }
 
+      if (e.key === "z" || e.key === "Z") {
+        e.preventDefault();
+        void undoLast();
+        return;
+      }
+
       if (e.key === "c" || e.key === "C") {
         e.preventDefault();
         openCompose();
       }
     };
-    window.addEventListener("keydown", handler);
+    // Caught on the way down, before the views' own handlers.
+    window.addEventListener("keydown", handler, true);
     return () => {
-      window.removeEventListener("keydown", handler);
+      window.removeEventListener("keydown", handler, true);
       if (goToTimer.current) clearTimeout(goToTimer.current);
     };
-  }, [setView, openCompose]);
+  }, [setView, openCompose, undoLast]);
 
   // Polling fallback: re-sync session every 5s while active, in case a
   // Realtime UPDATE event was missed (requires REPLICA IDENTITY FULL which is
@@ -734,6 +792,7 @@ export default function AppShell({
         theme,
         openCompose,
         addToast,
+        pushUndo,
         search,
         setSearch,
         inboxFilters,
@@ -797,7 +856,7 @@ export default function AppShell({
           </button>
         )}
 
-        <ToastContainer toasts={toasts} removeToast={removeToast} />
+        <ToastContainer toasts={toasts} removeToast={removeToast} overCompose={composeOpen && !composeMinimized} />
         <ShortcutsHelp
           open={showShortcutsHelp}
           onClose={() => setShowShortcutsHelp(false)}

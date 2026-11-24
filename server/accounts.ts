@@ -18,6 +18,7 @@ import { mail, type SendAs } from "./providers.ts";
 import { addressesIn } from "./senders.ts";
 import { RULES_VERSION } from "./rules.ts";
 import { keychainDelete } from "./config.ts";
+import { unsnoozeAll } from "./snooze.ts";
 
 export type { SendAs };
 // An IMAP account's servers and the user name it signs in with.
@@ -156,10 +157,12 @@ export async function updateAccount(userId: string, id: string, patch: { paused?
 }
 
 // Disconnect an account: its sign-in leaves this Mac and its mail, drafts
-// and signatures leave Tabellar. The mailbox itself is not changed.
+// and signatures leave Tabellar. The mailbox itself is not changed, except
+// that what was snoozed goes back to its inbox.
 export async function removeAccount(userId: string, id: string): Promise<void> {
   const a = await accountById(userId, id);
   if (!a) return;
+  await unsnoozeAll(userId, id).catch((e) => console.error("[accounts] returning snoozed mail:", (e as Error).message));
   try {
     await mail(a).disconnect(a);
   } catch (e) {

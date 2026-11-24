@@ -839,7 +839,7 @@ const put = (name: string, raw: string, flags: string[] = [], date = new Date())
 };
 for (const n of ["INBOX", "Sent", "Drafts", "Archive"]) folder(n);
 const textOf = (raw: string) => Buffer.from(raw.split("\r\n\r\n")[1] ?? "", "base64").toString();
-const copiesOf = (mid: string) => [...store].flatMap(([n, f]) => f.msgs.filter((m) => m.raw.includes(`<${mid}>`)).map(() => n));
+const copiesOf = (mid: string) => [...store].flatMap(([n, f]) => f.msgs.filter((m) => m.raw.includes(`Message-ID: <${mid}>`)).map(() => n));
 const PASS = "abcd-efgh-ijkl-mnop";
 const imapServer = net.createServer((sock) => {
   let box = "";
@@ -882,10 +882,12 @@ const imapServer = net.createServer((sock) => {
       if (C === "IDLE") { idling.add(sock); say("+ idling"); continue; }
       if (C === "SEARCH") {
         const f = folder(box).msgs;
-        const q = arg.match(/^HEADER MESSAGE-ID "(.*)"$/i)?.[1] ?? arg.match(/^TO "(.*)"$/i)?.[1];
+        const id = arg.match(/^HEADER MESSAGE-ID "(.*)"$/i)?.[1];
+        const q = id ? `Message-ID: <${id.replace(/[<>]/g, "")}` : arg.match(/^TO "(.*)"$/i)?.[1];
         const since = arg.match(/^SINCE (\S+)/i)?.[1];
+        const type = arg.match(/^HEADER CONTENT-TYPE "(.*?)"/i)?.[1];
         const range = arg.match(/^UID (\S+)/i)?.[1];
-        const hits = range ? uidsIn(range) : f.filter((m) => (q ? m.raw.split("\r\n\r\n")[0].includes(q) : since ? m.date >= new Date(since) : true)).map((m) => m.uid);
+        const hits = range ? uidsIn(range) : f.filter((m) => (type ? m.raw.split("\r\n\r\n")[0].includes(type) : q ? m.raw.split("\r\n\r\n")[0].includes(q) : since ? m.date >= new Date(since) : true)).map((m) => m.uid);
         say(`* SEARCH ${hits.join(" ")}`.trim());
       }
       if (C === "FETCH") {
@@ -1054,6 +1056,98 @@ ok("sending goes through SMTP, Bcc only in the envelope, and leaves Drafts for S
   assert.equal(folder("Drafts").msgs.length, 0);
   assert.ok(folder("Sent").msgs.some((m) => textOf(m.raw).includes("at noon")));
 });
+// Snooze: out of the inbox in the mailbox too, back when due or answered.
+const snoozing = await import("./snooze.ts");
+const four = later.find((e) => e.gmail_id === "four@people.example")!;
+const row = async (gmailId: string) => (await db.from("emails").select("*").eq("user_id", mailUser).eq("gmail_id", gmailId).single()).data!;
+await assert.rejects(snoozing.snooze(mailUser, [four.id], new Date(Date.now() - 1000).toISOString()));
+await snoozing.snooze(mailUser, [four.id], new Date(Date.now() + 3_600_000).toISOString());
+const asleep = await row("four@people.example");
+const asleepIn = copiesOf("four@people.example");
+await syncMail(mailUser);
+await snoozing.wakeDue();
+const stillAsleep = (await row("four@people.example")).is_snoozed;
+await db.from("emails").update({ snooze_until: new Date(Date.now() - 1000).toISOString() }).eq("id", four.id);
+await snoozing.wakeDue();
+const awake = await row("four@people.example");
+ok("a snoozed email is archived in the mailbox, and back in the inbox, unread, when its time comes", () => {
+  assert.ok(asleep.is_snoozed && asleep.is_archived);
+  assert.deepEqual(asleepIn, ["Archive"]);
+  assert.ok(stillAsleep);
+  assert.ok(!awake.is_snoozed && !awake.is_archived && !awake.is_read && awake.snooze_until);
+  assert.deepEqual(copiesOf("four@people.example"), ["INBOX"]);
+});
+const { brief: briefOf, needCount } = await import("./brief.ts");
+const backBrief = await briefOf(mailUser);
+const backCount = await needCount(mailUser);
+await setMailState(mailUser, [four.id], { archived: true });
+const dealtWith = await needCount(mailUser);
+await snoozing.unsnooze(mailUser, [four.id]);
+ok("an email back from snooze needs the user until it is archived", () => {
+  assert.ok(backBrief.needs.some((x) => x.kind === "back" && x.email_id === four.id));
+  assert.equal(backCount, dealtWith + 1);
+});
+await snoozing.snooze(mailUser, [four.id], null);
+await syncMail(mailUser);
+const waits = (await row("four@people.example")).is_snoozed;
+put("INBOX", "Message-ID: <five@people.example>\nIn-Reply-To: <four@people.example>\nReferences: <four@people.example>\nFrom: Cy <cy@people.example>\nTo: me@fake.example\nSubject: Re: New\n\nAn answer.\n");
+await syncMail(mailUser);
+const answeredRow = await row("four@people.example");
+ok("snoozed until someone answers, it comes back with the answer", () => {
+  assert.ok(waits);
+  assert.ok(!answeredRow.is_snoozed && !answeredRow.is_archived);
+  assert.deepEqual(copiesOf("four@people.example"), ["INBOX"]);
+});
+await snoozing.snooze(mailUser, [four.id], null);
+await syncMail(mailUser);
+await box.modify(imapAccount, ["four@people.example"], ["INBOX"], []);
+await syncMail(mailUser);
+const movedBack = await row("four@people.example");
+ok("moved back to the inbox in the mailbox itself, it is no longer snoozed", () => assert.ok(!movedBack.is_snoozed && !movedBack.is_archived));
+
+// Handing an email on, and read receipts.
+const queue = (r: Record<string, unknown>) =>
+  db.from("scheduled_emails").insert({ user_id: mailUser, account_id: imapAccount.id, to_addresses: ["bo@people.example"], subject: "x", body_html: "Hi", send_at: new Date(Date.now() - 1000).toISOString(), ...r });
+await queue({ subject: "Fwd: Café on Friday", body_html: "Bo, can you take this?", forward: { email_id: one.id } });
+await queue({ subject: "Fwd: Café on Friday", body_html: "Without the plan.", forward: { email_id: one.id, without: [(one.attachments as { attachment_id: string }[])[0].attachment_id] } });
+await queue({ subject: "Budget", body_html: "The numbers are attached.", read_receipt: true });
+await sendDueEmails();
+const [forwardGot, bareGot, receiptGot] = smtpGot.slice(-3).map((m) => m.data);
+const { readMessage } = await import("./mime.ts");
+const forwardRead = readMessage(Buffer.from(forwardGot));
+ok("a forward carries the note, the email and its attachment, and starts its own conversation", () => {
+  assert.match(forwardRead.html, /^Bo, can you take this\?/);
+  assert.match(forwardRead.html, /Forwarded message.*Ana María.*Shall we meet/s);
+  assert.deepEqual(forwardRead.attachments.map((a) => a.filename), ["plan.pdf"]);
+  assert.ok(!/^In-Reply-To:/m.test(forwardGot));
+  assert.equal(readMessage(Buffer.from(bareGot)).attachments.length, 0);
+});
+const budgetId = receiptGot.match(/^Message-ID: <(.*)>/m)![1];
+ok("a read receipt is asked for only when the user did", () => {
+  assert.match(receiptGot, /^Disposition-Notification-To: .*me@fake\.example/m);
+  assert.ok(!/Disposition-Notification-To/i.test(forwardGot));
+});
+await db.from("emails").update({ received_at: new Date(Date.now() - 3 * 86_400_000).toISOString() }).eq("user_id", mailUser).eq("gmail_id", budgetId);
+put("INBOX", [
+  "Message-ID: <mdn@people.example>", `In-Reply-To: <${budgetId}>`, `References: <${budgetId}>`, "From: Bo <bo@people.example>", "To: me@fake.example", "Subject: Read: Budget",
+  'Content-Type: multipart/report; report-type=disposition-notification; boundary="r1"', "", "--r1", "Content-Type: text/plain", "", "Your message was read.", "--r1",
+  "Content-Type: message/disposition-notification", "", "Final-Recipient: rfc822; bo@people.example", `Original-Message-ID: <${budgetId}>`, "Disposition: manual-action/MDN-sent-manually; displayed", "--r1--", "",
+].join("\n"));
+await syncMail(mailUser);
+const seenRow = await row(budgetId);
+const mdnRow = await row("mdn@people.example");
+const seenList = await fu.followupList(mailUser);
+ok("a receipt marks the sent email as seen, and is not an answer: Follow-ups still lists it", () => {
+  assert.ok(seenRow.seen_at && mdnRow.is_receipt);
+  const f = seenList.find((x) => x.email_id === seenRow.id);
+  assert.ok(f?.seen_at, JSON.stringify(seenList));
+});
+const { receiptOf } = await import("./receipts.ts");
+ok("a receipt that says the message was deleted unread marks nothing", () => {
+  assert.equal(receiptOf({ from: "bo@people.example" }, "Disposition: automatic-action/MDN-sent-automatically; deleted"), null);
+});
+const found = await box.files!(imapAccount, { text: "", from: "" }, 10);
+ok("messages with attachments are found in the mailbox", () => assert.ok(found.includes("one@fake.example") && !found.includes("three@people.example")));
 await box.disconnect(imapAccount);
 imapServer.close();
 smtpServer.close();
@@ -1204,9 +1298,9 @@ ok("quiet hours are the hours outside work, in the user's zone", () => {
 });
 ok("a Brief starts at its time, and counts from that time the day before", () => {
   const s = briefSettings({ time: "08:30", length: "endless", sections: ["handled", "nope"], tone: "rude" });
-  assert.deepEqual(s, { time: "08:30", length: "standard", sections: ["handled"], summary: false, tone: "plain" });
-  assert.deepEqual(briefDay(s, "Asia/Dubai", new Date("2026-11-24T04:00:00Z")), { day: "2026-11-24", due: false, since: "2026-11-23T04:30:00.000Z" });
-  assert.deepEqual(briefDay(s, "Asia/Dubai", new Date("2026-11-24T18:00:00Z")), { day: "2026-11-24", due: true, since: "2026-11-23T04:30:00.000Z" });
+  assert.deepEqual(s, { time: "08:30", length: "standard", sections: ["handled"], summary: false, tone: "plain", notify: true });
+  assert.deepEqual(briefDay(s, "Asia/Dubai", new Date("2026-11-24T04:00:00Z")), { day: "2026-11-24", due: false, past: -30, since: "2026-11-23T04:30:00.000Z" });
+  assert.deepEqual(briefDay(s, "Asia/Dubai", new Date("2026-11-24T18:00:00Z")), { day: "2026-11-24", due: true, past: 810, since: "2026-11-23T04:30:00.000Z" });
 });
 ok("the Brief's paragraph may name only what its lines do", () => {
   const lines = "Needs the user today (2):\n- Maya Okafor: Reply drafted: Contract for the spring pilot\n- Todo: Send the report, due 2026-11-24";
@@ -1227,6 +1321,60 @@ ok("an answer taken back is a question again, without its preference", () => {
   assert.deepEqual(reopened, { status: "open", answer: null });
 });
 assert.equal((await profileModule.allPrefs(penUser)).length, 0);
+
+// The Brief's notification, what is open before a meeting, and the people
+// marked most important.
+const { tellBrief, brief: penBrief } = await import("./brief.ts");
+const { prepFor, tellMeetings } = await import("./prep.ts");
+const told: { title: string; subtitle?: string; body: string }[] = [];
+CHANNELS.push((x) => told.push(x));
+await db.from("questions").delete().eq("user_id", penUser);
+const { data: penAccount } = await db.from("accounts").select("id").eq("user_id", penUser).single();
+const penMailRow = async (id: string, from: string, subject: string, o: Record<string, unknown> = {}) =>
+  (await db.from("emails").insert({ user_id: penUser, gmail_id: `pen-${id}`, thread_id: `pen-${id}`, account_id: penAccount!.id, sender: `${from.split("@")[0]} <${from}>`, sender_email: from, subject, snippet: subject, label_ids: ["INBOX"], received_at: new Date(Date.now() - 3_600_000).toISOString(), ...o }).select("id").single()).data!.id as string;
+const contract = await penMailRow("contract", "ann@client.example", "Contract for the pilot");
+await db.from("draft_emails").insert({ user_id: penUser, email_id: contract, to_addresses: ["ann@client.example"], subject: "Re: Contract for the pilot", body_html: "Yes.", source: "tabellar" });
+await penMailRow("news", "zed@lumen.example", "Office move");
+const boss = await penMailRow("boss", "boss@else.example", "Board slides");
+await profileModule.setPref(penUser, "sender", "boss@else.example", "vip", "user");
+const penNow = await penBrief(penUser);
+ok("unread mail from the most important people is in the Brief, other unread mail is not", () => {
+  assert.deepEqual(penNow.needs.map((x) => [x.kind, x.email_id]), [["read", boss], ["reply", contract]]);
+});
+const tz = "UTC";
+const todayAt = (h: number) => new Date(`${new Date().toISOString().slice(0, 10)}T${String(h).padStart(2, "0")}:00:00Z`);
+await db.from("profiles").update({ brief: { time: "08:00" }, working_hours: { start: "09:00", end: "17:00", days: [0, 1, 2, 3, 4, 5, 6], timezone: tz }, notification_quiet: true, notification_level: "needs" }).eq("id", penUser);
+const tells = [await tellBrief(penUser, { at: todayAt(7) }), await tellBrief(penUser, { at: todayAt(8) }), await tellBrief(penUser, { at: todayAt(9) }), await tellBrief(penUser, { at: todayAt(10) })];
+ok("the Brief is told once, after its time and the quiet hours, with its first lines", () => {
+  assert.deepEqual(tells, [false, false, true, false]);
+  assert.equal(told.length, 1);
+  assert.equal(told[0].subtitle, "2 things need you today");
+  assert.equal(told[0].body, "boss: Board slides\nann: Reply drafted: Contract for the pilot");
+});
+await db.from("profiles").update({ brief_told: null, notification_quiet: false }).eq("id", penUser);
+const lateTell = await tellBrief(penUser, { at: todayAt(16) });
+await db.from("profiles").update({ brief_told: null, brief: { time: "08:00", notify: false } }).eq("id", penUser);
+const offTell = await tellBrief(penUser, { at: todayAt(9) });
+ok("a Brief long past its time, or turned off, is not told", () => assert.deepEqual([lateTell, offTell, told.length], [false, false, 1]));
+
+await db.from("todos").insert({ user_id: penUser, email_id: contract, text: "Send the signed copy", source: "tabellar" });
+const meetingWith = (people: string[], minutes: number) => ({ id: `ev-${people[0]}-${minutes}`, title: "Pilot contract", start: new Date(Date.now() + minutes * 60_000).toISOString(), end: new Date(Date.now() + (minutes + 30) * 60_000).toISOString(), allDay: false, attendees: people, people, location: null, meetingLink: null, htmlLink: null, status: "confirmed", source: "check" });
+const prep = await prepFor(penUser, { title: "Pilot contract", people: ["Ann@client.example", "pen@lumen.example"] });
+ok("before a meeting: the last thread with its people and what is open with them", () => {
+  assert.equal(prep.last?.subject, "Contract for the pilot");
+  assert.deepEqual(prep.open.map((x) => x.kind).sort(), ["reply", "todo"]);
+});
+const inAnHour = meetingWith(["ann@client.example"], 58);
+const meetingTells = [
+  await tellMeetings(penUser, [inAnHour, meetingWith(["ann@client.example"], 90), meetingWith(["stranger@nowhere.example"], 40)]),
+  await tellMeetings(penUser, [inAnHour]),
+];
+ok("a meeting is told about once, within the hour, and only when there is something to say", () => {
+  assert.deepEqual(meetingTells, [1, 0]);
+  assert.match(told[1].subtitle!, /^In an hour, with ann@client\.example/);
+  assert.match(told[1].body, /Contract for the pilot/);
+});
+CHANNELS.length = 0;
 
 if (modelConfigured()) {
   console.log("Rules through the configured model (this can take a minute)");

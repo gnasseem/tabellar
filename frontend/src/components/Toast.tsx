@@ -6,7 +6,7 @@ export type ToastItem = {
   id: string;
   type: "success" | "error" | "info";
   message: string;
-  action?: { label: string; onClick: () => void };
+  action?: { label: string; onClick: () => unknown };
   duration?: number;
 };
 
@@ -67,13 +67,8 @@ function SingleToast({ toast, onRemove }: { toast: ToastItem; onRemove: () => vo
   );
 }
 
-export function ToastContainer({ toasts, removeToast }: { toasts: ToastItem[]; removeToast: (id: string) => void }) {
-  // An open compose window has its Send row along the bottom: stay above it.
-  const [overCompose, setOverCompose] = useState(false);
-  useEffect(() => {
-    setOverCompose(!!document.querySelector("[data-compose-modal]"));
-  }, [toasts]);
-
+// An open compose window has its Send row along the bottom: stay above it.
+export function ToastContainer({ toasts, removeToast, overCompose }: { toasts: ToastItem[]; removeToast: (id: string) => void; overCompose: boolean }) {
   if (!toasts.length) return null;
   return (
     <div

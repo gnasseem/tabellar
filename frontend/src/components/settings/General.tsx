@@ -67,6 +67,9 @@ export default function General() {
         <Row name="Start at login" text="Keeps running with the window closed">
           {autostart === null ? <span className="skel block h-[18px] w-8" aria-label="Loading" /> : <Switch label="Start at login" on={autostart} onChange={toggleAutostart} />}
         </Row>
+        <Row name="Menu bar" text="What needs you, and Pause">
+          <Switch label="Menu bar" on={profile.menu_bar !== false} onChange={(v) => save({ menu_bar: v })} />
+        </Row>
         <Row name="First-run steps" text="Mail, model, About you, examples from your mail, people and labels, level">
           <button
             className="btn"

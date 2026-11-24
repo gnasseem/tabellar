@@ -54,8 +54,6 @@ export default function NewslettersView() {
   // The unsubscribe email waiting for the user's yes or no.
   const [ask, setAsk] = useState<Ask | null>(null);
   const anchor = useRef<string | null>(null);
-  const lastUndo = useRef<(() => Promise<void>) | null>(null);
-  const goKey = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -137,7 +135,6 @@ export default function NewslettersView() {
       await load();
       addToast("info", "Back in your inbox");
     };
-    lastUndo.current = undo;
     addToast("success", text, { action: { label: "Undo", onClick: undo } });
   };
 
@@ -245,21 +242,14 @@ export default function NewslettersView() {
       }
       if (isTypingTarget(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
       if (document.querySelector("[data-compose-modal]")) return;
-      // "g" then a letter goes to another view; that letter is not an action here.
-      if (Date.now() - goKey.current < 1500) return void (goKey.current = 0);
       const k = e.key.toLowerCase();
-      if (k === "g") return void (goKey.current = Date.now());
       if (k === "j" || e.key === "ArrowDown") move(1);
       else if (k === "k" || e.key === "ArrowUp") move(-1);
       else if (k === "x" && cursor) pick(cursor, e.shiftKey);
       else if (k === "u" && cursor && canUnsubscribe(cursor) && !busy.has(cursor.sender_email)) unsubscribe(cursor);
       else if (k === "e") archive(targets().filter((s) => !busy.has(s.sender_email)));
       else if (k === "y" && tab === "clean") keep(targets().filter((s) => !busy.has(s.sender_email)), true);
-      else if (k === "z" && lastUndo.current) {
-        const undo = lastUndo.current;
-        lastUndo.current = null;
-        undo();
-      } else if (e.key === "Escape" && picked.size) setPicked(new Set());
+      else if (e.key === "Escape" && picked.size) setPicked(new Set());
       else return;
       e.preventDefault();
     };

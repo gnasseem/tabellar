@@ -20,7 +20,8 @@
  * - Mail older than rules.ACT_WITHIN_MS is only sorted and summarised: the
  *   model is not asked for todos, meetings or a reply, since none are made,
  *   and what Gmail kept out of Primary from strangers is sorted without it.
- * - Mail from those people goes to the model first, then the rest, newest
+ * - Mail from the most important people goes to the model first, then from
+ *   those, then the rest, newest
  *   first in each group. A local model takes a batch of 20 at a time, so new
  *   mail that arrives meanwhile is read before the rest of an older backlog.
  * - The user's labels (labels.ts) go to the model with their examples, and
@@ -36,7 +37,7 @@ import type { Db } from "./db.ts";
 import { getEnv } from "./config.ts";
 import { processFullEmail } from "./ai.ts";
 import { isLocalModel } from "./llm.ts";
-import { correspondents, profileContext } from "./profile.ts";
+import { allPrefs, correspondents, pick, profileContext } from "./profile.ts";
 import { readWithoutModel, writtenTo } from "./senders.ts";
 import { labelsBySender, labelsForPrompt, userLabels } from "./labels.ts";
 import { calendarAccount, type LinkedEvent } from "./providers.ts";
@@ -75,7 +76,7 @@ export async function analyzeEmailsForUser(
 
   let unprocessedQuery = db
     .from("emails")
-    .select("id, subject, sender, sender_email, recipients, body_text, snippet, received_at, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, precedence_header, list_id, is_calendar, calendar_event, account_id")
+    .select("id, subject, sender, sender_email, recipients, body_text, snippet, received_at, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, precedence_header, list_id, is_calendar, is_receipt, calendar_event, account_id")
     .eq("user_id", userId)
     .not("label_ids", "cs", '{"SENT"}')
     .order("received_at", { ascending: false })
@@ -124,8 +125,11 @@ export async function analyzeEmailsForUser(
   // Mail new enough that todos, drafts and meetings are made from it.
   const recent = (e: Record<string, unknown>) => Date.now() - new Date(String(e.received_at)).getTime() <= ACT_WITHIN_MS;
   const corresponds = (e: Record<string, unknown>) => known.has(String(e.sender_email ?? "").toLowerCase());
-  // People the user writes to before everyone else; the sort keeps newest first within each.
-  emailsToProcess.sort((a, b) => Number(corresponds(b)) - Number(corresponds(a)));
+  // The user's most important people first, then those they write to, then
+  // everyone else; the sort keeps newest first within each.
+  const prefs = await allPrefs(userId);
+  const order = new Map<string, number>(emailsToProcess.map((e): [string, number] => [String(e.id), pick(prefs, String(e.sender_email ?? ""), "").some((p) => p.value === "vip") ? 2 : corresponds(e) ? 1 : 0]));
+  emailsToProcess.sort((a, b) => order.get(String(b.id))! - order.get(String(a.id))!);
 
   // Meeting extraction has to resolve relative dates ("Friday", "tomorrow")
   // against the user's day, not the edge runtime's UTC day.
@@ -196,6 +200,12 @@ export async function analyzeEmailsForUser(
           extra_labels: extra(bySender(email)),
           calendar: await linkCalendar(cal, email),
         });
+        processed += 1;
+        if (rowBuffer.length >= FLUSH_SIZE) await flushRows();
+        return;
+      }
+      if (email.is_receipt) {
+        rowBuffer.push({ user_id: userId, email_id: email.id as string, category: "updates", urgency: "low", summary: "Read receipt", quick_actions: [], extra_labels: null });
         processed += 1;
         if (rowBuffer.length >= FLUSH_SIZE) await flushRows();
         return;

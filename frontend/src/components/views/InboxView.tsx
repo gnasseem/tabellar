@@ -3,13 +3,14 @@ import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
 import { parseSearch } from "@/lib/searchQuery";
 import { isTypingTarget } from "@/lib/shortcuts";
-import { rowStatus, setMailState, type Outcome } from "@/lib/outcomes";
+import { api, rowStatus, setMailState, type Outcome } from "@/lib/outcomes";
 import { useInboxSync } from "@/lib/useInboxSync";
 import { addressesIn } from "@/lib/accounts";
 import { useApp } from "../AppShell";
 import EmailBody from "../EmailBody";
 import EmailDetail from "../EmailDetail";
 import { Questions } from "../Profile";
+import { SnoozeMenu, snoozedText, useSnooze } from "../Snooze";
 import { AccountMark, Countdown, Empty, Glyph, Menu, OutcomeLines, Seg, SkeletonRows, Tick, ViewBar, VirtualList, useSizes, dayLabel, shortWhen, type MailState } from "../ui";
 
 // The inbox: every email on one quiet line that ends in what Tabellar did
@@ -33,10 +34,12 @@ type Email = {
   recipients?: string | null;
   cc_recipients?: string | null;
   resolved_at?: string | null;
+  is_snoozed?: boolean;
+  snooze_until?: string | null;
   email_processed: { category: string; summary: string; quick_actions: any[]; extra_labels: string[] | null } | null;
 };
 
-type Thread = { key: string; latest: Email; ids: string[]; count: number; outcomes: Outcome[]; state: MailState; text: string; sendAt?: string };
+type Thread = { key: string; latest: Email; ids: string[]; count: number; outcomes: Outcome[]; state: MailState; text: string; sendAt?: string; snoozed?: boolean };
 type Head = { head: true; key: string; name: string; fold?: boolean };
 type Item = Head | Thread;
 type Filter = "need" | "all";
@@ -66,8 +69,9 @@ function firstLabel(t: Thread, labels: UserLabel[]): UserLabel | null {
   return own?.length ? labels.find((l) => own.includes(l.slug)) ?? null : null;
 }
 
-function priorityOf(t: Thread, labels: UserLabel[]): string {
+function priorityOf(t: Thread, labels: UserLabel[], isVip: (address: string) => boolean): string {
   if (t.state === "need" || t.state === "going" || t.state === "failed") return "need";
+  if (isVip(t.latest.sender_email)) return "vip";
   const own = firstLabel(t, labels);
   if (own) return `label:${own.slug}`;
   const cat = t.latest.email_processed?.category;
@@ -83,12 +87,18 @@ function readFolded(): Set<string> {
   }
 }
 
+const backOf = (t: Thread) => t.outcomes.find((o) => o.act?.kind === "back");
+
+// Promotions start folded; so does Snoozed, whose entry in the list means open.
+const isFolded = (folded: Set<string>, key: string) => (key === "snoozed" ? !folded.has(key) : folded.has(key));
+
 function senderName(e: Email): string {
   return (e.sender || e.sender_email || "Unknown").replace(/<.*>/, "").replace(/"/g, "").trim() || e.sender_email;
 }
 
 export default function InboxView() {
-  const { user, openCompose, addToast, search, getViewCache, setViewCache, invalidateViewCache, liveChanges, mail, setView, accounts } = useApp();
+  const { user, openCompose, addToast, pushUndo, search, getViewCache, setViewCache, invalidateViewCache, liveChanges, mail, setView, accounts } = useApp();
+  const snoozeMail = useSnooze();
   // The sidebar's account switch: one account, or every account merged.
   const only = accounts.only;
   const columns = accounts.list.length > 1 ? COLUMNS_MARKED : COLUMNS;
@@ -111,7 +121,9 @@ export default function InboxView() {
   const busy = useRef(false);
   const again = useRef(false);
   const anchor = useRef<string | null>(null);
-  const lastUndo = useRef<{ label: string; run: () => Promise<void> } | null>(null);
+  // Snoozed mail is out of the inbox; it has a folded group at the bottom.
+  const [snoozed, setSnoozed] = useState<Email[]>([]);
+  const [snoozing, setSnoozing] = useState<{ anchor: DOMRect; list: Thread[] } | null>(null);
 
   const load = useCallback(
     async (more = false) => {
@@ -131,7 +143,6 @@ export default function InboxView() {
           .eq("user_id", user.id)
           .eq("is_archived", false)
           .not("label_ids", "cs", '{"SENT"}')
-          .or("is_snoozed.eq.false,snooze_until.lt." + new Date().toISOString())
           .order("received_at", { ascending: false })
           .range(0, want);
         if (only) query = query.eq("account_id", only);
@@ -208,6 +219,14 @@ export default function InboxView() {
   }, [load, liveChanges.emails, liveChanges.email_processed]);
 
   useEffect(() => {
+    let q = supabase.from("emails").select(SELECT).eq("user_id", user.id).eq("is_snoozed", true);
+    if (only) q = q.eq("account_id", only);
+    q.order("received_at", { ascending: false })
+      .limit(500)
+      .then(({ data }: { data: any[] | null }) => setSnoozed((data || []).map((e) => ({ ...e, email_processed: Array.isArray(e.email_processed) ? e.email_processed[0] : e.email_processed }))));
+  }, [user.id, only, liveChanges.emails]);
+
+  useEffect(() => {
     supabase
       .from("categories")
       .select("slug, display_name")
@@ -234,6 +253,9 @@ export default function InboxView() {
       t.outcomes = t.ids.flatMap((id) => mail.byEmail.get(id) || []);
       if (t.ids.length > 1) t.outcomes.sort((a, b) => rank(a.state) - rank(b.state) || b.at.localeCompare(a.at));
       const s = rowStatus(t.outcomes);
+      // Back from snooze because someone wrote: the thread's newest mail is theirs.
+      const back = backOf(t);
+      if (back && !back.key.endsWith(t.latest.id)) s.text = s.text.replace(/^Back\b/, "Answered").replace(/, back\b/, ", answered");
       const cat = t.latest.email_processed?.category || "";
       t.state = s.state;
       // Fetched but not read by the model yet.
@@ -249,32 +271,55 @@ export default function InboxView() {
     return list;
   }, [emails, attention, mail.byEmail, mail.engine?.model, labels]);
 
+  const asleep = useMemo(() => {
+    const byKey = new Map<string, Thread>();
+    for (const e of snoozed) {
+      const key = `z:${e.thread_id || e.id}`;
+      const t = byKey.get(key);
+      if (t) {
+        t.ids.push(e.id);
+        t.count++;
+      } else byKey.set(key, { key, latest: e, ids: [e.id], count: 1, outcomes: [], state: "filed", text: snoozedText(e.snooze_until), snoozed: true });
+    }
+    // Soonest back first; those waiting on an answer last.
+    return [...byKey.values()].sort((a, b) => (a.latest.snooze_until || "9").localeCompare(b.latest.snooze_until || "9"));
+  }, [snoozed]);
+
   const counts = useMemo(() => ({ need: threads.filter((t) => t.state === "need").length }), [threads]);
 
   const items = useMemo(() => {
     // Older mail fetched only because it needs attention stays out of the
     // plain listing until scrolling reaches it.
     const oldest = hasMore && emails.length ? emails[emails.length - 1].received_at : "";
-    const state = search ? parseSearch(search).state : undefined;
+    const asked = search ? parseSearch(search) : undefined;
+    const state = asked?.state;
+    if (asked?.isSnoozed) return asleep;
     const shown = threads.filter((t) => {
       if (filter === "need" && t.state !== "need") return false;
+      if (asked?.isVip && !mail.isVip(t.latest.sender_email)) return false;
       if (state === "need" && t.state !== "need") return false;
       if (state === "going" && t.state !== "going") return false;
       if (state === "filed" && t.state !== "filed") return false;
       if (state === "handled" && t.state !== "done" && t.state !== "held" && t.state !== "failed") return false;
       if (filter === "need" || state === "need" || state === "going" || state === "handled") return true;
-      if (group === "priority" && priorityOf(t, labels) === "need") return true;
-      return !(oldest && t.latest.received_at < oldest);
+      if (group === "priority" && priorityOf(t, labels, mail.isVip) === "need") return true;
+      return !!backOf(t) || !(oldest && t.latest.received_at < oldest);
     });
     const out: Item[] = [];
     const add = (key: string, name: string, list: Thread[], fold = false) => {
       if (!list.length) return;
       out.push({ head: true, key: `head:${key}`, name, fold });
-      if (!(fold && folded.has(key))) out.push(...list);
+      if (!(fold && isFolded(folded, key))) out.push(...list);
     };
     if (group === "priority") {
-      const groups: [string, string][] = [["need", "Needs you"], ...labels.map((l): [string, string] => [`label:${l.slug}`, l.display_name]), ...REST];
-      for (const [key, name] of groups) add(key, name, shown.filter((t) => priorityOf(t, labels) === key), key !== "need");
+      const groups: [string, string][] = [["need", "Needs you"], ["vip", "Most important"], ...labels.map((l): [string, string] => [`label:${l.slug}`, l.display_name]), ...REST];
+      for (const [key, name] of groups) {
+        const list = shown.filter((t) => priorityOf(t, labels, mail.isVip) === key);
+        // What waits on the user from their most important people is first.
+        if (key === "need") list.sort((a, b) => Number(mail.isVip(b.latest.sender_email)) - Number(mail.isVip(a.latest.sender_email)));
+        add(key, name, list, key !== "need");
+      }
+      if (filter === "all" && !search) add("snoozed", "Snoozed", asleep, true);
     } else if (group === "sender") {
       const by = new Map<string, Thread[]>();
       for (const t of shown) {
@@ -285,8 +330,10 @@ export default function InboxView() {
     } else {
       let run: Thread[] = [];
       let day = { head: "", key: "" };
-      for (const t of shown) {
-        const d = dayLabel(t.latest.received_at);
+      // Mail back from snooze stands at the time it came back.
+      const at = (t: Thread) => backOf(t)?.at ?? t.latest.received_at;
+      for (const t of shown.some(backOf) ? [...shown].sort((a, b) => at(b).localeCompare(at(a))) : shown) {
+        const d = dayLabel(at(t));
         if (d.key !== day.key) {
           add(day.key, day.head, run);
           run = [];
@@ -297,7 +344,7 @@ export default function InboxView() {
       add(day.key, day.head, run);
     }
     return out;
-  }, [threads, filter, group, folded, hasMore, emails, search, labels]);
+  }, [threads, asleep, filter, group, folded, hasMore, emails, search, labels, mail.isVip]);
 
   const fold = (key: string) =>
     setFolded((prev) => {
@@ -360,7 +407,6 @@ export default function InboxView() {
       await setMailState(ids, { archived: false }).catch(() => addToast("error", "Could not move it back to the inbox."));
       await reload();
     };
-    lastUndo.current = { label: "archive", run };
     addToast("success", list.length === 1 ? "Archived" : `Archived ${list.length} conversations`, { action: { label: "Undo", onClick: run } });
   };
 
@@ -371,7 +417,7 @@ export default function InboxView() {
     for (const o of proposals) {
       if (o.act?.kind !== "approve") continue;
       try {
-        await mail.approve(o.act.id, o.act.hash);
+        await mail.approve(o.act.id, o.act.hash, true);
         done++;
       } catch {
         // the reason is already shown; keep going with the rest
@@ -383,13 +429,13 @@ export default function InboxView() {
     const run = async () => {
       for (const id of ids) await mail.undo(id).catch(() => {});
     };
-    lastUndo.current = { label: "approval", run };
     addToast("success", done === 1 ? "Approved" : `Approved ${done}`, { action: { label: "Undo", onClick: run } });
   };
 
-  const markRead = async (list: Thread[], read: boolean) => {
+  const markRead = async (list: Thread[], read: boolean, byHand = false) => {
     const ids = list.flatMap((t) => t.ids);
     if (!ids.length) return;
+    if (byHand) pushUndo(read ? "Marked read" : "Marked unread", () => markRead(list, !read));
     setEmails((prev) => prev.map((e) => (ids.includes(e.id) ? { ...e, is_read: read } : e)));
     setPicked(new Set());
     await setMailState(ids, { read }).catch(() => addToast("error", read ? "Could not mark it read in the mailbox." : "Could not mark it unread in the mailbox."));
@@ -407,6 +453,44 @@ export default function InboxView() {
       return addToast("error", "Could not mark it done.");
     }
     if (at && !t.latest.is_read) markRead([t], true);
+    pushUndo(at ? "Done" : "Not done", async () => {
+      await supabase.from("emails").update({ resolved_at: t.latest.resolved_at ?? null }).in("id", ids);
+    });
+  };
+
+  // Where the Snooze menu opens for the S key: at the end of the selected row.
+  const rowRect = () => document.querySelector('[role="option"][aria-selected="true"]')?.getBoundingClientRect() ?? new DOMRect(window.innerWidth / 2, window.innerHeight / 3, 0, 0);
+
+  const bringBack = async (list: Thread[]) => {
+    const ids = list.flatMap((t) => t.ids);
+    const until = list[0].latest.snooze_until ?? null;
+    setSnoozed((prev) => prev.filter((e) => !ids.includes(e.id)));
+    try {
+      await api("/snooze/back", { ids });
+    } catch (e) {
+      addToast("error", `Could not bring it back: ${(e as Error).message}`);
+      return reload();
+    }
+    addToast("success", "Back in the inbox", { action: { label: "Undo", onClick: () => api("/snooze", { ids, until }).then(reload) } });
+    reload();
+  };
+
+  const snooze = async (list: Thread[], until: string | null) => {
+    setSnoozing(null);
+    const ids = list.flatMap((t) => t.ids);
+    const next = rows[rows.findIndex((r) => !list.includes(r) && rows.indexOf(r) > rows.indexOf(list[list.length - 1]))] || rows.find((r) => !list.includes(r));
+    setEmails((prev) => prev.filter((e) => !ids.includes(e.id)));
+    setPicked(new Set());
+    setCursorKey(next?.key ?? null);
+    if (!(await snoozeMail(ids, until))) reload();
+  };
+
+  const toggleVip = (t: Thread) => {
+    const on = !mail.isVip(t.latest.sender_email);
+    mail
+      .setVip(t.latest.sender_email, on, senderName(t.latest))
+      .then(() => addToast("success", on ? `${senderName(t.latest)} is most important` : `${senderName(t.latest)} is not most important`))
+      .catch((e: Error) => addToast("error", e.message));
   };
 
   const open = (t: Thread) => {
@@ -452,18 +536,22 @@ export default function InboxView() {
       else if (k === "e") archive(targets());
       else if (k === "a") approve(targets());
       else if (k === "r" && cursor) openCompose(cursor.latest);
-      else if (k === "u") markRead(targets(), false);
-      else if (k === "z" && lastUndo.current) {
-        const u = lastUndo.current;
-        lastUndo.current = null;
-        u.run().then(() => addToast("info", `Undid the ${u.label}`));
-      } else if (e.key === "Escape" && picked.size) setPicked(new Set());
+      else if (k === "f" && cursor) openCompose({ ...cursor.latest, _forward: true });
+      else if (k === "v" && cursor) toggleVip(cursor);
+      else if (k === "s" && targets().length) {
+        const list = targets();
+        if (list.every((t) => t.snoozed)) bringBack(list);
+        else setSnoozing({ anchor: rowRect(), list: list.filter((t) => !t.snoozed) });
+      } else if (k === "u") markRead(targets(), false, true);
+      else if (e.key === "Escape" && picked.size) setPicked(new Set());
       else return;
       e.preventDefault();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   });
+
+  const snoozeMenu = snoozing && <SnoozeMenu anchor={snoozing.anchor} onPick={(until) => snooze(snoozing.list, until)} onClose={() => setSnoozing(null)} />;
 
   if (reading)
     return (
@@ -480,7 +568,7 @@ export default function InboxView() {
         onMarkUnread={() => {
           const t = rows.find((r) => r.ids.includes(reading.id));
           setReading(null);
-          if (t) markRead([t], false);
+          if (t) markRead([t], false, true);
         }}
         onSnooze={() => {
           setEmails((prev) => prev.filter((e) => e.id !== reading.id));
@@ -495,7 +583,7 @@ export default function InboxView() {
   const waiting = selected.flatMap((t) => t.outcomes).filter((o) => o.act?.kind === "approve").length;
 
   const renderItem = (item: Item) => {
-    if ("head" in item) return <GroupHead key={item.key} head={item} folded={folded.has(item.key.replace(/^head:/, ""))} onFold={fold} />;
+    if ("head" in item) return <GroupHead key={item.key} head={item} folded={isFolded(folded, item.key.replace(/^head:/, ""))} onFold={fold} />;
     const t = item;
     const e = t.latest;
     const isCursor = cursor === t;
@@ -540,14 +628,34 @@ export default function InboxView() {
           <AccountMark id={e.account_id} />
           <time className="min-w-[30px] text-right text-xs text-ink3">{shortWhen(e.received_at)}</time>
         </span>
-        <span className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 gap-0.5 rounded-md bg-hover pl-1 group-hover:flex group-aria-selected:bg-sel">
+        {t.snoozed ? (
+          <span className="absolute right-1.5 top-1/2 hidden -translate-y-1/2 rounded-md bg-hover pl-6 group-hover:flex group-aria-selected:bg-sel">
+            <button className="iconbtn h-6 w-6" title="Bring back (S)" aria-label="Bring back" onClick={(ev) => (ev.stopPropagation(), bringBack([t]))}>
+              <Icon name="undo" size={15} />
+            </button>
+          </span>
+        ) : (
+        <span className={`absolute right-1.5 top-1/2 -translate-y-1/2 gap-0.5 rounded-md bg-hover pl-1 group-hover:flex group-aria-selected:bg-sel ${snoozing?.list.includes(t) ? "flex" : "hidden"}`}>
           <button className="iconbtn h-6 w-6" title="Archive" aria-label="Archive" onClick={(ev) => (ev.stopPropagation(), archive([t]))}>
             <Icon name="archive" size={15} />
           </button>
           <button className="iconbtn h-6 w-6" title={e.resolved_at ? "Not done" : "Done"} aria-label={e.resolved_at ? "Not done" : "Done"} aria-pressed={!!e.resolved_at} onClick={(ev) => (ev.stopPropagation(), markDone(t))}>
             <Icon name="check" size={15} />
           </button>
+          <button
+            className="iconbtn h-6 w-6"
+            title="Snooze (S)"
+            aria-label="Snooze"
+            aria-haspopup="menu"
+            onClick={(ev) => {
+              ev.stopPropagation();
+              setSnoozing({ anchor: ev.currentTarget.getBoundingClientRect(), list: [t] });
+            }}
+          >
+            <Icon name="snooze" size={15} />
+          </button>
         </span>
+        )}
       </div>
     );
   };
@@ -559,6 +667,7 @@ export default function InboxView() {
 
   return (
     <>
+      {snoozeMenu}
       {picked.size ? (
         <header className="bar">
           <b className="bar-title mr-1.5">{picked.size} selected</b>
@@ -570,7 +679,10 @@ export default function InboxView() {
           <button className="btn" onClick={() => archive(selected)}>
             Archive
           </button>
-          <button className="btn" onClick={() => markRead(selected, true)}>
+          <button className="btn" aria-haspopup="menu" onClick={(ev) => setSnoozing({ anchor: ev.currentTarget.getBoundingClientRect(), list: selected.filter((t) => !t.snoozed) })}>
+            Snooze
+          </button>
+          <button className="btn" onClick={() => markRead(selected, true, true)}>
             Mark read
           </button>
           <button className="btn btn-plain" onClick={() => setPicked(new Set())}>
@@ -653,13 +765,13 @@ export default function InboxView() {
               onEnd={hasMore ? () => load(true) : undefined}
               sticky={(first) => {
                 const h = firstHead(first);
-                return h ? <GroupHead head={h} folded={folded.has(h.key.replace(/^head:/, ""))} onFold={fold} /> : null;
+                return h ? <GroupHead head={h} folded={isFolded(folded, h.key.replace(/^head:/, ""))} onFold={fold} /> : null;
               }}
             />
           )}
           </div>
         </div>
-        {details && cursor && rows.length > 0 && <Details key={cursor.latest.id} thread={cursor} primary={primary(cursor)} onOpen={() => open(cursor)} onReply={() => openCompose(cursor.latest)} onArchive={() => archive([cursor])} />}
+        {details && cursor && rows.length > 0 && <Details key={cursor.latest.id} thread={cursor} primary={primary(cursor)} onOpen={() => open(cursor)} onReply={() => openCompose(cursor.latest)} onArchive={() => (cursor.snoozed ? bringBack([cursor]) : archive([cursor]))} />}
       </div>
     </>
   );
@@ -824,7 +936,7 @@ function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thre
           </button>
         )}
         <button className="btn" onClick={onArchive}>
-          Archive
+          {thread.snoozed ? "Bring back" : "Archive"}
         </button>
       </div>
     </aside>

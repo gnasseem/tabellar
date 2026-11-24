@@ -24,6 +24,9 @@
 //   GET  /attachment            Fetch a Gmail attachment
 //   POST /agent/step|answer|execute|cancel   The agent (started from /chat)
 //   GET  /engine/status, POST /engine/autostart, POST /mail/state
+//   POST /snooze, POST /snooze/back          Hide an email until a time or an answer
+//   GET  /files/search          Attachments in the mailboxes beyond the mail kept here
+//   POST /calendar/prep         The last thread with a meeting's people and what is open
 //   POST /actions/approve|dismiss|undo   The action log
 
 import { followupList, judgeSent } from "./followups.ts";
@@ -42,6 +45,11 @@ import {
 import { syncMail, analyzeInbox } from "./sync.ts";
 import { accountById, accountFor, accountsForWindow, defaultAccount, fromLine, listAccounts, removeAccount, replyFrom, updateAccount } from "./accounts.ts";
 import { saveUserDraft } from "./drafts.ts";
+import { messageIdOf, withForward } from "./forward.ts";
+import { htmlToText } from "./mime.ts";
+import { answered, snooze, unsnooze, unsnoozeAll } from "./snooze.ts";
+import { prepFor } from "./prep.ts";
+import { filesInMailboxes } from "./files.ts";
 import { kickEngine, draftReply, engineStatus, planNew, sampleReply } from "./engine.ts";
 import { displayNameOf, isRule, keepRules, learnFromEdit, RECIPIENTS, setAvoid, setLine, stylePrompt, writingFor } from "./writing.ts";
 import { learnFromSent, startFirstRead } from "./firstRead.ts";
@@ -183,6 +191,18 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         read: typeof read === "boolean" ? read : undefined,
       });
       return json({ ok: true });
+    }
+    // Snooze until a time, or until an answer without one; back undoes it.
+    if ((path === "/snooze" || path === "/snooze/back") && req.method === "POST") {
+      const { ids, until } = await req.json();
+      if (!Array.isArray(ids) || !ids.length) return json({ error: "ids required" }, 400);
+      if (path === "/snooze") return json({ ids: await snooze(userId, ids.map(String), typeof until === "string" ? until : null) });
+      await unsnooze(userId, ids.map(String));
+      return json({ ok: true });
+    }
+    // Files in the mailboxes that are not among the mail kept here.
+    if (path === "/files/search" && req.method === "GET") {
+      return json({ files: await filesInMailboxes(userId, url.searchParams.get("text") ?? "", url.searchParams.get("from") ?? "") });
     }
     if (path === "/engine/autostart" && req.method === "POST") {
       const { on } = await req.json();
@@ -439,7 +459,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       }
 
       const from = await fromLine(userId, account, body.from_address);
-      const m = { from, to: body.to ?? [], cc: body.cc, bcc: body.bcc, subject: body.subject ?? "", html: body.body_html ?? "", inReplyTo: body.in_reply_to, attachments: body.attachments ?? undefined };
+      const receipt = body.read_receipt === true;
+      const m = await withForward(
+        userId,
+        { from, to: body.to ?? [], cc: body.cc, bcc: body.bcc, subject: body.subject ?? "", html: body.body_html ?? "", inReplyTo: await messageIdOf(account, body.in_reply_to), attachments: body.attachments ?? undefined, receipt },
+        body.forward,
+      );
       // A saved draft in that mailbox's Drafts is sent from there, so it leaves Drafts.
       const result =
         typeof body.gmail_draft_id === "string"
@@ -455,17 +480,21 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
               user_id: userId,
               gmail_id: result.id,
               account_id: account.id,
+              thread_id: body.thread_id ?? null,
               subject: body.subject ?? "",
               recipients: (body.to as string[]).join(", "),
-              body_html: body.body_html ?? "",
+              body_html: m.html,
+              body_text: htmlToText(body.body_html ?? ""),
               received_at: new Date().toISOString(),
               is_read: true,
               label_ids: ["SENT"],
+              ...(receipt ? { receipt_asked: true, awaits_reply: true } : {}),
             },
             { onConflict: "user_id,gmail_id", ignoreDuplicates: false },
           );
         if (insertErr)
           console.error("[send-email] failed to save to emails table:", insertErr.message);
+        await answered(userId, body.thread_id, new Date().toISOString());
       }
 
       return json(
@@ -555,7 +584,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       if (kbParts.length) knowledgeContext = kbParts.join("\n");
 
       const draft = await keepRules(writing, (extra) =>
-        composeDraft({ intent: body.intent ?? "", subject: body.subject ?? "", recipientName, senderName, replyTo: body.replyTo, style: stylePrompt(writing), extra, knowledgeContext }),
+        composeDraft({ intent: body.intent ?? "", subject: body.subject ?? "", recipientName, senderName, replyTo: body.replyTo, forward: body.forward, style: stylePrompt(writing), extra, knowledgeContext }),
       );
 
       return json({ draft }, 200, corsHeaders);
@@ -807,6 +836,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ events }, 200, corsHeaders);
     }
 
+    // The last thread with a meeting's people and what is open with them (prep.ts).
+    if (path === "/calendar/prep" && req.method === "POST") {
+      const { title, people } = await req.json();
+      return json(await prepFor(userId, { title: String(title ?? ""), people: Array.isArray(people) ? people.map(String) : [] }));
+    }
+
     // ── POST /meetings/confirm ─────────────────────────────────────────────
     // Puts a meeting waiting to be confirmed on Google Calendar: a meetings
     // row by `id`, or a proposal by `proposal` {id, hash}, which is approved
@@ -1019,7 +1054,9 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     // ── DELETE /delete-all-data ────────────────────────────────────────────
     if (path === "/delete-all-data" && req.method === "DELETE") {
       // Wipe everything Tabellar learned or stored. The profile and the
-      // connected accounts stay, so the user remains signed in.
+      // connected accounts stay, so the user remains signed in. What was
+      // snoozed goes back to its inbox first.
+      await unsnoozeAll(userId).catch((e) => console.error("[delete-all-data] returning snoozed mail:", (e as Error).message));
       for (const t of ["agent_sessions", "email_processed", "todos", "meetings", "follow_up_reminders",
         "scheduled_emails", "draft_emails", "email_memory", "contacts", "knowledge_base", "categories", "preferences", "questions", "conversations",
         "style_profiles", "email_templates", "email_signatures", "newsletter_senders", "emails"]) {
@@ -1027,7 +1064,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         if (error) return json({ error: "Failed to delete data: " + error.message }, 500, corsHeaders);
       }
       await db.from("accounts").update({ history_id: null }).eq("user_id", userId);
-      await db.from("profiles").update({ brief_summary: null }).eq("id", userId);
+      await db.from("profiles").update({ brief_summary: null, brief_told: null, meetings_told: [] }).eq("id", userId);
       return json({ deleted: true }, 200, corsHeaders);
     }
 
@@ -1790,6 +1827,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       const urlObj = new URL(req.url);
       const gmailId = urlObj.searchParams.get("gmail_id");
       const attachmentId = urlObj.searchParams.get("attachment_id");
+      // Mail that is not kept here (older files found in the mailbox) names its account.
+      const accountId = urlObj.searchParams.get("account_id");
       if (!gmailId || !attachmentId) {
         return json(
           { error: "Missing gmail_id or attachment_id" },
@@ -1804,11 +1843,11 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         .eq("user_id", userId)
         .eq("gmail_id", gmailId)
         .maybeSingle();
-      if (!emailRow?.account_id) {
+      if (!emailRow?.account_id && !accountId) {
         return json({ error: "Email not found" }, 404, corsHeaders);
       }
 
-      const account = await accountById(userId, emailRow.account_id as string);
+      const account = await accountById(userId, (emailRow?.account_id as string | undefined) ?? accountId);
       if (!account) {
         return json({ error: "The account for this email is not connected" }, 404, corsHeaders);
       }

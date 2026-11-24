@@ -54,7 +54,12 @@ export interface EmailData {
   list_id?: string;
   is_calendar: boolean; // an invitation, an answer to one, a cancellation
   calendar_event: CalendarEvent | null; // its .ics, read
+  receipt?: Receipt | null; // a read receipt: what it is about (receipts.ts)
+  is_receipt?: boolean;
 }
+
+// The Message-ID of the sent email a read receipt is about, and who read it.
+export type Receipt = { message_id: string; reader: string };
 
 // Sent mail as Follow-ups, the Sent view and the style read keep it.
 export type Sent = {
@@ -125,6 +130,7 @@ export type Outgoing = {
   html: string;
   inReplyTo?: string;
   attachments?: { name: string; contentType: string; data: string }[];
+  receipt?: boolean; // ask for a read receipt, sent to the From address
 };
 
 export type SendAs = { address: string; name: string; default: boolean };
@@ -138,7 +144,8 @@ export type CalEvent = {
   start: string | null;
   end: string | null;
   allDay: boolean;
-  attendees: string[];
+  attendees: string[]; // the other people, by name where there is one
+  people: string[]; // their addresses
   location: string | null;
   meetingLink: string | null;
   htmlLink: string | null;
@@ -188,6 +195,8 @@ export type Mail = {
   modify(a: Box, ids: string[], add: string[], remove: string[]): Promise<void>;
   sendAs(a: Box): Promise<SendAs[]>;
   hasSentTo(a: Box, address: string): Promise<boolean>;
+  // Ids of messages with attachments that match a search, newest first.
+  files?(a: Box, q: { text: string; from: string }, cap: number): Promise<string[]>;
   // An attachment as base64url.
   attachment(a: Box, id: string, attachmentId: string): Promise<{ data: string; size: number } | null>;
   contacts?(a: Box): Promise<{ email: string; name: string }[]>;

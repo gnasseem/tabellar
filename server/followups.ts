@@ -37,10 +37,11 @@ export type Followup = {
   subject: string;
   sent_at: string;
   asked: string; // the sentence of the sent email that asks or promises something
+  seen_at: string | null; // when its read receipt came, if one did
   remind_at: string | null;
 };
 
-type Sent = { id: string; thread_id: string | null; recipients: string | null; subject: string | null; body_text: string | null; received_at: string; awaits_reply: boolean | null };
+type Sent = { id: string; thread_id: string | null; recipients: string | null; subject: string | null; body_text: string | null; received_at: string; awaits_reply: boolean | null; seen_at: string | null };
 
 // What the user wrote, without the message quoted below it.
 function ownText(body: string | null): string {
@@ -92,7 +93,7 @@ async function lastAnswers(userId: string, threads: string[]): Promise<Map<strin
   for (let i = 0; i < threads.length; i += 300) {
     const ids = threads.slice(i, i + 300);
     const [{ data: inbox }, { data: index }] = await Promise.all([
-      db.from("emails").select("thread_id, received_at").eq("user_id", userId).in("thread_id", ids).not("label_ids", "cs", '{"SENT"}'),
+      db.from("emails").select("thread_id, received_at").eq("user_id", userId).in("thread_id", ids).eq("is_receipt", false).not("label_ids", "cs", '{"SENT"}'),
       db.from("mail_index").select("thread_id, at").eq("user_id", userId).in("thread_id", ids).eq("sent", false),
     ]);
     for (const r of inbox ?? []) later(String(r.thread_id), String(r.received_at));
@@ -106,7 +107,7 @@ async function lastAnswers(userId: string, threads: string[]): Promise<Map<strin
 async function candidates(userId: string): Promise<{ sent: Sent; to: { email: string; name: string } }[]> {
   const since = new Date(Date.now() - WINDOW_DAYS * DAY).toISOString();
   const [{ data: sentRows }, { data: tracked }, own, { data: listy }] = await Promise.all([
-    db.from("emails").select("id, thread_id, recipients, subject, body_text, received_at, awaits_reply").eq("user_id", userId).contains("label_ids", ["SENT"]).gte("received_at", since).order("received_at", { ascending: false }).limit(500),
+    db.from("emails").select("id, thread_id, recipients, subject, body_text, received_at, awaits_reply, seen_at").eq("user_id", userId).contains("label_ids", ["SENT"]).gte("received_at", since).order("received_at", { ascending: false }).limit(500),
     db.from("follow_up_reminders").select("thread_id").eq("user_id", userId),
     ownAddresses(userId),
     db.from("senders").select("address, list_id, precedence, category").eq("user_id", userId).or("list_unsubscribe.eq.true,category.eq.promotions"),
@@ -160,7 +161,7 @@ export async function followupList(userId: string): Promise<Followup[]> {
   const { data: reminders } = await db.from("follow_up_reminders").select("*").eq("user_id", userId).in("status", ["waiting", "snoozed"]);
   const active = (reminders ?? []).filter((r) => r.status === "waiting" || String(r.snooze_until ?? "") <= now);
   const ids = active.map((r) => r.email_id).filter(Boolean) as string[];
-  const { data: sentRows } = ids.length ? await db.from("emails").select("id, received_at, body_text").in("id", ids) : { data: [] };
+  const { data: sentRows } = ids.length ? await db.from("emails").select("id, received_at, body_text, seen_at").in("id", ids) : { data: [] };
   const sent = new Map<string, Record<string, unknown>>((sentRows ?? []).map((e: Record<string, unknown>) => [String(e.id), e]));
   const answered = await lastAnswers(userId, active.map((r) => String(r.thread_id)));
   const out: Followup[] = [];
@@ -175,7 +176,7 @@ export async function followupList(userId: string): Promise<Followup[]> {
     out.push({
       key: String(r.id), reminder_id: String(r.id), email_id: String(r.email_id ?? ""), thread_id: String(r.thread_id),
       recipient_email: String(r.recipient_email), recipient_name: String(r.recipient_name || r.recipient_email),
-      subject: String(r.subject || "(no subject)"), sent_at: sentAt, asked: askedOf((e?.body_text as string | null) ?? null), remind_at: String(r.remind_at),
+      subject: String(r.subject || "(no subject)"), sent_at: sentAt, asked: askedOf((e?.body_text as string | null) ?? null), seen_at: (e?.seen_at as string | null) ?? null, remind_at: String(r.remind_at),
     });
   }
   for (const { sent: e, to } of await candidates(userId)) {
@@ -183,7 +184,7 @@ export async function followupList(userId: string): Promise<Followup[]> {
     if (stops(pick(prefs, to.email, e.subject ?? ""), "followup")) continue;
     out.push({
       key: `s:${e.thread_id}`, reminder_id: null, email_id: e.id, thread_id: e.thread_id!, recipient_email: to.email, recipient_name: to.name,
-      subject: e.subject || "(no subject)", sent_at: e.received_at, asked: askedOf(e.body_text), remind_at: null,
+      subject: e.subject || "(no subject)", sent_at: e.received_at, asked: askedOf(e.body_text), seen_at: e.seen_at, remind_at: null,
     });
   }
   // Longest wait first.

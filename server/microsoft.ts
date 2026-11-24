@@ -19,6 +19,7 @@ import { keychainDelete, keychainGet, keychainSet, loadConfig } from "./config.t
 import { calendarHeaders, type CalendarEvent } from "./rules.ts";
 import { htmlToText } from "./mime.ts";
 import type { Box, CalEvent, Calendar, EmailData, HeaderRow, LabelChange, LinkedEvent, Mail, NewEvent, Outgoing, Sent } from "./providers.ts";
+import { isReceipt, receiptOf } from "./receipts.ts";
 
 const LOGIN = "https://login.microsoftonline.com/common/oauth2/v2.0";
 const GRAPH = "https://graph.microsoft.com/v1.0";
@@ -249,6 +250,8 @@ async function emailOf(a: Box, m: any): Promise<EmailData> {
     list_id: h["list-id"] || undefined,
     is_calendar: isEvent || calendarHeaders(h),
     calendar_event,
+    is_receipt: isReceipt(h),
+    receipt: isReceipt(h) ? receiptOf({ ...h, from: sender }, "") : null,
   };
 }
 
@@ -266,6 +269,7 @@ const bodyOf = (m: Outgoing) => ({
   toRecipients: recipients(m.to),
   ccRecipients: recipients(m.cc),
   bccRecipients: recipients(m.bcc),
+  ...(m.receipt ? { isReadReceiptRequested: true } : {}),
 });
 
 // The message being answered, by Message-ID or else the newest in the thread.
@@ -362,6 +366,10 @@ const outlookCalendar: Calendar = {
           .filter((x) => x.type !== "resource" && x.emailAddress?.address?.toLowerCase() !== a.address.toLowerCase())
           .map((x) => x.emailAddress?.name || x.emailAddress?.address || "")
           .filter(Boolean),
+        people: ((e.attendees ?? []) as (Who & { type?: string })[])
+          .filter((x) => x.type !== "resource")
+          .map((x) => String(x.emailAddress?.address ?? "").toLowerCase())
+          .filter((x) => x && x !== a.address.toLowerCase()),
         location: e.location?.displayName || null,
         meetingLink: e.onlineMeeting?.joinUrl ?? null,
         htmlLink: e.webLink ?? null,
@@ -569,6 +577,12 @@ export const microsoftMailbox: Mail = {
   async hasSentTo(a, address) {
     const list = await pages(a, `/me/mailFolders/sentitems/messages?$search=${encodeURIComponent(`"to:${address.replace(/"/g, "")}"`)}&$select=id&$top=1`, 1);
     return list.length > 0;
+  },
+
+  async files(a, q, cap) {
+    const words = [q.text, q.from && `from:${q.from}`].filter(Boolean).join(" ").replace(/["\\]/g, " ").trim();
+    const list = await pages(a, `/me/messages?$search=${encodeURIComponent(`"${words} hasAttachments:true"`.replace(/" +/, '"'))}&$select=id,parentFolderId&$top=${Math.min(cap, 100)}`, cap);
+    return list.map((m) => String(m.id));
   },
 
   async attachment(a, id, attachmentId) {

@@ -28,6 +28,7 @@ import { calendarHeaders, parseIcs } from "./rules.ts";
 import { htmlToText, newMessageId, parseHeaders, partAt, readMessage, writeMessage } from "./mime.ts";
 import type { ImapServer } from "./accounts.ts";
 import type { Box, EmailData, HeaderRow, Mail, MailboxChanges, Outgoing, Sent } from "./providers.ts";
+import { isReceipt, receiptOf } from "./receipts.ts";
 
 // `tabellar check` swaps these so its fake mailbox needs no Keychain item.
 export const secrets = { get: keychainGet, set: keychainSet, delete: keychainDelete };
@@ -546,6 +547,8 @@ function emailOf(f: Folders, folder: string, id: string, x: Fetched): EmailData 
     list_id: h["list-id"] || undefined,
     is_calendar: !!r.ics || calendarHeaders(h),
     calendar_event: r.ics ? parseIcs(r.ics, Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC") : null,
+    is_receipt: isReceipt(h),
+    receipt: isReceipt(h) ? receiptOf(h, r.report) : null,
   };
 }
 
@@ -940,6 +943,22 @@ export const imapMailbox: Mail = {
       if (!f.names.includes(f.sent)) return false;
       await c.select(f.sent);
       return (await c.search(`TO ${quote(to)}`)).length > 0;
+    }),
+
+  // IMAP cannot ask for attachments, only for the message type that carries
+  // them, and takes plain ASCII search words.
+  files: (a, q, cap) =>
+    session(a, async (c) => {
+      if (!/^[\x20-\x7e]*$/.test(q.text + q.from)) return [];
+      const f = await folders(c, a);
+      const found: HeaderRow[] = [];
+      for (const folder of ["INBOX", ...(f.archive ? [f.archive] : []), f.sent].filter((n) => n === "INBOX" || f.names.includes(n))) {
+        await c.select(folder);
+        const words = quote(q.text);
+        const uids = await c.search(`HEADER CONTENT-TYPE "multipart/mixed"${q.from ? ` FROM ${quote(q.from)}` : ""}${q.text ? ` OR OR FROM ${words} TO ${words} OR SUBJECT ${words} BODY ${words}` : ""}`);
+        found.push(...(await readHeads(c, a, folder, uids.slice(-cap))).map((p) => p.row));
+      }
+      return found.sort((x, y) => y.at.localeCompare(x.at)).map((r) => r.gmail_id).slice(0, cap);
     }),
 
   attachment: (a, id, attachmentId) =>
