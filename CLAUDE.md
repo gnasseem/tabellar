@@ -32,7 +32,7 @@ tabellar autostart on|off   # start at login via launchd (~/Library/LaunchAgents
 tabellar check     # policy asserts, planted-instruction emails, the first run and Autopilot through the engine, the IMAP provider against an in-process fake IMAP/SMTP server, in a throwaway TABELLAR_HOME
 ```
 
-Set `TABELLAR_HOME` to run against a different data folder (default `~/.tabellar`). The Keychain service is always `tabellar`.
+Set `TABELLAR_HOME` to run against a different data folder (default `~/.tabellar`). The Keychain service is always `tabellar`, so a copied folder reaches the real mailboxes: started from another path than `profiles.home`, it pauses itself and fails its pending sends (`pauseIfCopied`). `db.ts` refuses to open the default folder for anything but the `tabellar` command.
 
 ## Architecture
 

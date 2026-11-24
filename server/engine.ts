@@ -21,6 +21,7 @@
 // Autopilot is a reply sent, and then only to the person who wrote, inside the
 // thread, after a cancel window (policy.checkAutoSend, outbox.ts).
 
+import { HOME } from "./config.ts";
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { generateDraft } from "./ai.ts";
@@ -730,6 +731,19 @@ async function tellUser(): Promise<void> {
   } finally {
     telling = false;
   }
+}
+
+// A copied data folder still reaches the real mailboxes, because the sign-ins
+// are in the Keychain. The copy starts paused, and sends nothing the original
+// is going to send.
+export async function pauseIfCopied(): Promise<void> {
+  const { data: me } = await db.from("profiles").select("id, home").limit(1).maybeSingle();
+  if (!me || me.home === HOME) return;
+  if (me.home) {
+    await db.from("scheduled_emails").update({ status: "failed", error_message: "Not sent: this is a copy of another Tabellar folder." }).eq("status", "pending");
+    console.log("This data folder was copied from " + me.home + ", so Tabellar is paused.");
+  }
+  await db.from("profiles").update(me.home ? { home: HOME, engine_paused: true } : { home: HOME }).eq("id", me.id);
 }
 
 export function startEngine(): () => void {

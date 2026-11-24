@@ -17,7 +17,7 @@ import { db } from "./db.ts";
 import { mail, type SendAs } from "./providers.ts";
 import { addressesIn } from "./senders.ts";
 import { RULES_VERSION } from "./rules.ts";
-import { keychainDelete } from "./config.ts";
+import { HOME, keychainDelete } from "./config.ts";
 import { unsnoozeAll } from "./snooze.ts";
 
 export type { SendAs };
@@ -185,7 +185,7 @@ export async function connectAccount(a: { provider: string; address: string; nam
   const address = a.address.toLowerCase();
   let { data: profile } = await db.from("profiles").select("id").limit(1).maybeSingle();
   if (!profile) {
-    const created = await db.from("profiles").insert({ id: randomUUID(), email: address, display_name: a.name, avatar_url: a.picture ?? null, onboarding: "mailboxes", rules_version: RULES_VERSION }).select("id").single();
+    const created = await db.from("profiles").insert({ id: randomUUID(), email: address, display_name: a.name, avatar_url: a.picture ?? null, home: HOME, onboarding: "mailboxes", rules_version: RULES_VERSION }).select("id").single();
     if (created.error) throw new Error(created.error.message);
     profile = created.data;
   }

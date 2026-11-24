@@ -10,6 +10,7 @@
 import { DatabaseSync, type StatementSync } from "node:sqlite";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { basename } from "node:path";
 import { Query, type QuerySpec, type Result, type Filter } from "./query.ts";
 import { DB_PATH } from "./config.ts";
 
@@ -37,6 +38,8 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       first_read: "json", rules_version: "int ! =0", label_suggestions: "json",
       // The first-run step the window is on (onboarding.ts); "done" after it.
       onboarding: 'text ! ="done"',
+      // The data folder this database was last started from (pauseIfCopied).
+      home: "text",
       created_at: "time ! =now", updated_at: "time ! =now",
     },
   },
@@ -305,6 +308,13 @@ function parseSchema(): Map<string, Table> {
 }
 
 const TABLES = parseSchema();
+
+// Opening the database also upgrades it, so a script that imports this module
+// has to say which data folder it means. Only the tabellar command gets the
+// default one.
+if (!process.env.TABELLAR_HOME && !/^tabellar(\.[jt]s)?$/.test(basename(process.argv[1] ?? ""))) {
+  throw new Error("Set TABELLAR_HOME: only the tabellar command opens the default data folder.");
+}
 
 const sqlite = new DatabaseSync(DB_PATH);
 sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");

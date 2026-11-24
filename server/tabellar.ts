@@ -284,6 +284,7 @@ async function start() {
     return openWindow();
   }
   const { startServer } = await import("./server.ts");
+  await (await import("./engine.ts")).pauseIfCopied();
   const { port } = await startServer();
   console.log(`Tabellar is running at http://127.0.0.1:${port} (Ctrl-C to stop).`);
   if (!args.includes("--no-open")) await openWindow();
