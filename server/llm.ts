@@ -126,6 +126,23 @@ function contextLength(): number {
   return gb >= 48 ? 32768 : gb >= 16 ? 16384 : 8192;
 }
 
+// Reading one email needs about 4,000 tokens: the prompt, the user's profile,
+// the email cut to 2,500 characters and the answer. A smaller window is less
+// memory to hold beside the careful model. Ollama reloads a model whose
+// window changes, so when one model serves both slots it keeps one window.
+const FAST_CONTEXT = 8192;
+
+function contextFor(slot: Slot, model: string): number {
+  const careful = slotModel("careful");
+  if (slot === "fast" && !(careful?.format === "ollama" && careful.model === model)) return Math.min(FAST_CONTEXT, contextLength());
+  return contextLength();
+}
+
+// How long Ollama keeps a model in memory after a request. Its default of 5
+// minutes let the fast model unload between the steps of the first read and
+// between bursts of new mail, and loading it again costs seconds each time.
+const KEEP_ALIVE = "30m";
+
 async function ollama(baseUrl: string, model: string, req: ChatRequest, signal?: AbortSignal): Promise<Response> {
   const toolNames = new Map<string, string>();
   const messages = req.messages.map((m) => {
@@ -151,7 +168,14 @@ async function ollama(baseUrl: string, model: string, req: ChatRequest, signal?:
     tools: req.tools?.length ? req.tools : undefined,
     stream: false,
     think: req.effort === "high",
-    options: { num_ctx: contextLength(), temperature: req.temperature, num_predict: Math.max(req.max_tokens ?? 0, 4096) },
+    keep_alive: KEEP_ALIVE,
+    // Without thinking, the caller's limit (at least 1,024 tokens) holds, so
+    // a model that starts repeating itself stops there.
+    options: {
+      num_ctx: contextFor(req.slot ?? "careful", model),
+      temperature: req.temperature,
+      num_predict: Math.max(req.max_tokens ?? 0, req.effort === "high" ? 4096 : 1024),
+    },
   };
   const post = () =>
     fetch(`${baseUrl.replace(/\/+$/, "")}/api/chat`, { method: "POST", signal, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });

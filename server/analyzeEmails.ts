@@ -8,13 +8,21 @@
  * - All emails in a batch are analyzed in parallel (no chunk barrier), so one
  *   slow email never stalls the other 49. The only cap is AI_PROCESS_CONCURRENCY
  *   which is a safety ceiling against provider-side throttling.
- * - Bulk mail (senders.isBulk: promotions, or a mailing list's headers) is
- *   sorted from its headers alone; the model never reads it. Neither does
+ * - Bulk mail (senders.readWithoutModel: promotions, a mailing list's
+ *   headers, or List-Unsubscribe outside Gmail's Primary tab, never from
+ *   someone the user wrote to) is sorted from its headers alone; the model
+ *   never reads it. Neither does
  *   calendar mail (rules.ts): it is linked to its event on the user's Google
  *   Calendar instead, and never becomes a todo or a meeting proposal.
- * - Each email is read with the user's profile (profile.ts). Only mail from
- *   people the user corresponds with also goes through extractEntities, in
- *   parallel, and only the people and companies it names are kept.
+ * - Each email is read with the user's profile (profile.ts), in one model
+ *   call. For mail from people the user corresponds with, the same call also
+ *   names the people and companies worth remembering.
+ * - Mail older than rules.ACT_WITHIN_MS is only sorted and summarised: the
+ *   model is not asked for todos, meetings or a reply, since none are made,
+ *   and what Gmail kept out of Primary from strangers is sorted without it.
+ * - Mail from those people goes to the model first, then the rest, newest
+ *   first in each group. A local model takes a batch of 20 at a time, so new
+ *   mail that arrives meanwhile is read before the rest of an older backlog.
  * - The user's labels (labels.ts) go to the model with their examples, and
  *   mail from an example's sender gets the label without it.
  * - Preamble DB reads (delegation rules, labels, sender memory) run in
@@ -26,13 +34,13 @@
 
 import type { Db } from "./db.ts";
 import { getEnv } from "./config.ts";
-import { extractEntities, processFullEmail } from "./ai.ts";
+import { processFullEmail } from "./ai.ts";
 import { isLocalModel } from "./llm.ts";
 import { correspondents, profileContext } from "./profile.ts";
-import { isBulk, writtenTo } from "./senders.ts";
+import { readWithoutModel, writtenTo } from "./senders.ts";
 import { labelsBySender, labelsForPrompt, userLabels } from "./labels.ts";
 import { findCalendarEvent, type LinkedEvent } from "./gmail.ts";
-import type { CalendarEvent } from "./rules.ts";
+import { ACT_WITHIN_MS, type CalendarEvent } from "./rules.ts";
 
 // The event a calendar email is about: on the user's calendar when Google
 // Calendar has it, otherwise what its .ics says.
@@ -66,11 +74,11 @@ export async function analyzeEmailsForUser(
 
   let unprocessedQuery = db
     .from("emails")
-    .select("id, subject, sender, sender_email, recipients, body_text, snippet, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, precedence_header, list_id, is_calendar, calendar_event, gmail_account_id")
+    .select("id, subject, sender, sender_email, recipients, body_text, snippet, received_at, label_ids, has_attachments, has_list_unsubscribe, is_reply, reply_to_email, cc_recipients, precedence_header, list_id, is_calendar, calendar_event, gmail_account_id")
     .eq("user_id", userId)
     .not("label_ids", "cs", '{"SENT"}')
     .order("received_at", { ascending: false })
-    .limit(100);
+    .limit(isLocalModel("fast") ? 20 : 100);
 
   if (processedIds.length > 0) {
     unprocessedQuery = unprocessedQuery.not("id", "in", `(${processedIds.join(",")})`);
@@ -118,6 +126,11 @@ export async function analyzeEmailsForUser(
   const tokenRefs = new Map<string, string>((accountsRes.data ?? []).map((a) => [String(a.id), String(a.token_ref)]));
 
   const [known, written] = await Promise.all([correspondents(userId, senderEmails as string[]), writtenTo(userId)]);
+  // Mail new enough that todos, drafts and meetings are made from it.
+  const recent = (e: Record<string, unknown>) => Date.now() - new Date(String(e.received_at)).getTime() <= ACT_WITHIN_MS;
+  const corresponds = (e: Record<string, unknown>) => known.has(String(e.sender_email ?? "").toLowerCase());
+  // People the user writes to before everyone else; the sort keeps newest first within each.
+  emailsToProcess.sort((a, b) => Number(corresponds(b)) - Number(corresponds(a)));
 
   // Meeting extraction has to resolve relative dates ("Friday", "tomorrow")
   // against the user's day, not the edge runtime's UTC day.
@@ -193,7 +206,7 @@ export async function analyzeEmailsForUser(
         if (rowBuffer.length >= FLUSH_SIZE) await flushRows();
         return;
       }
-      if (isBulk(email as Parameters<typeof isBulk>[0], written)) {
+      if (readWithoutModel(email as Parameters<typeof readWithoutModel>[0], written, !recent(email))) {
         rowBuffer.push({
           user_id: userId,
           email_id: email.id as string,
@@ -224,24 +237,17 @@ export async function analyzeEmailsForUser(
       const body = (email.body_text as string) || (email.snippet as string) || "";
 
       const profile = await profileContext(userId, { sender_email: email.sender_email as string, subject, text: body });
-      const corresponds = known.has(String(email.sender_email ?? "").toLowerCase());
-      const [result, rawEntities] = await Promise.all([
-        processFullEmail(
-          subject,
-          sender,
-          body,
-          signals,
-          userTags.length > 0 ? userTags : undefined,
-          userTimezone,
-          profile,
-        ),
-        corresponds
-          ? extractEntities(subject, sender, body).catch((err) => {
-              console.error("[analyzeEmailsForUser] entity extraction:", err);
-              return [] as { entity: string; entity_type: string; info: string }[];
-            })
-          : Promise.resolve([] as { entity: string; entity_type: string; info: string }[]),
-      ]);
+      const result = await processFullEmail(
+        subject,
+        sender,
+        body,
+        signals,
+        userTags.length > 0 ? userTags : undefined,
+        userTimezone,
+        profile,
+        corresponds(email),
+        recent(email),
+      );
 
       const delegationActions: { label: string; action: string; target: string }[] = [];
       if (delegationRules.length) {
@@ -272,7 +278,7 @@ export async function analyzeEmailsForUser(
 
       // People and companies only; topics and places from one email are trivia.
       if (finalCategory !== "promotions") {
-        for (const entity of rawEntities.filter((x) => x.entity_type === "person" || x.entity_type === "company")) {
+        for (const entity of result.people) {
           kbBuffer.push({
             user_id: userId,
             entity: entity.entity,

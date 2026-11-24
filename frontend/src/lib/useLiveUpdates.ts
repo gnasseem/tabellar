@@ -4,6 +4,12 @@ import { createClient } from "@/lib/db";
 
 // Live updates: one channel on /events for the tables the views show (the
 // server fetches and reads new mail itself).
+//
+// Every changed row arrives as its own event, and while the model reads a
+// batch of mail that is dozens a second. Each counter bump makes the views
+// that watch it load again, so bumps are gathered and handed out at most once
+// a second: the first change at once, the rest together a second later.
+const THROTTLE_MS = 1000;
 
 type TableName =
   | "emails"
@@ -36,9 +42,38 @@ export function useLiveUpdates(userId: string) {
     follow_up_reminders: 0,
   });
 
-  const bumpTable = useCallback((table: TableName) => {
-    setChangeCounters((prev) => ({ ...prev, [table]: prev[table] + 1 }));
+  const pending = useRef(new Set<TableName>());
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flush = useCallback(() => {
+    if (!pending.current.size) {
+      timer.current = null;
+      return;
+    }
+    const tables = [...pending.current];
+    pending.current.clear();
+    setChangeCounters((prev) => {
+      const next = { ...prev };
+      for (const t of tables) next[t] += 1;
+      return next;
+    });
+    timer.current = setTimeout(flush, THROTTLE_MS);
   }, []);
+
+  const bumpTable = useCallback(
+    (table: TableName) => {
+      pending.current.add(table);
+      if (!timer.current) flush();
+    },
+    [flush],
+  );
+
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
 
   // ── Live-update subscriptions ──
   useEffect(() => {

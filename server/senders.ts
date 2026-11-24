@@ -219,16 +219,38 @@ export async function writtenTo(userId: string): Promise<Written> {
 // someone the user wrote to, or from a company they wrote to (the job
 // application system they applied through), and never a post to a discussion
 // list (Precedence: list), which is a person writing to a group.
-export function isBulk(
-  m: { sender_email?: string | null; sender?: string | null; label_ids?: string[] | null; has_list_unsubscribe?: boolean | null; list_id?: string | null; precedence_header?: string | null },
-  written: Written,
-): boolean {
+type Headers = { sender_email?: string | null; sender?: string | null; label_ids?: string[] | null; has_list_unsubscribe?: boolean | null; list_id?: string | null; precedence_header?: string | null };
+
+// Someone the user wrote to, a company they wrote to, or a job application
+// system: never bulk, never sorted without the model.
+function personal(m: Headers, written: Written): boolean {
   const address = lc(m.sender_email);
   const domain = address.split("@")[1] ?? "";
-  if (written.addresses.has(address) || [...written.domains].some((d) => domain === d || domain.endsWith(`.${d}`))) return false;
-  if (jobSystem(address, m.sender)) return false;
+  if (written.addresses.has(address) || [...written.domains].some((d) => domain === d || domain.endsWith(`.${d}`))) return true;
+  return jobSystem(address, m.sender);
+}
+
+export function isBulk(m: Headers, written: Written): boolean {
+  if (personal(m, written)) return false;
   if ((m.label_ids ?? []).includes("CATEGORY_PROMOTIONS")) return true;
   return bulkHeaders(!!m.has_list_unsubscribe, m.list_id, m.precedence_header);
+}
+
+// Mail the model need not read: bulk, or mail with List-Unsubscribe that Gmail
+// kept out of Primary (Updates, Forums, Social), from no one the user wrote to
+// and not a post to a discussion list. A mailbox without a Promotions tab (a
+// university or company Google account) gets its mass mail this way: on one
+// such mailbox the model called every one of these 82 emails promotions.
+// With `old` (mail too old for anything to be made from it, which the model
+// would only summarise), anything Gmail kept out of Primary from a stranger.
+// Broader than isBulk, which decides what the Newsletters page offers to
+// unsubscribe from.
+export function readWithoutModel(m: Headers, written: Written, old = false): boolean {
+  if (isBulk(m, written)) return true;
+  if (personal(m, written) || /^\s*list\s*$/i.test(m.precedence_header ?? "")) return false;
+  if (!m.has_list_unsubscribe && !old) return false;
+  const labels = m.label_ids ?? [];
+  return labels.some((l) => l.startsWith("CATEGORY_") && l !== "CATEGORY_PERSONAL");
 }
 
 // Job application systems and recruiting teams. Mail about an application

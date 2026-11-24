@@ -13,6 +13,10 @@
 
 import { wallClockToUtc } from "./agentExecute.ts";
 
+// Mail older than this is sorted and summarised but nothing is made from it,
+// so the model is not asked what to do about it either.
+export const ACT_WITHIN_MS = 7 * 24 * 3600_000;
+
 type Action = Record<string, unknown> & { action?: string; label?: string; text?: string; quote?: string };
 type Mail = { subject?: string | null; body_text?: string | null; snippet?: string | null };
 

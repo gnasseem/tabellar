@@ -24,11 +24,11 @@ import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { generateDraft } from "./ai.ts";
 import { currentHistoryId, findCalendarEvent, messageHeaders, type LinkedEvent } from "./gmail.ts";
-import { syncMail, analyzeInbox, serial, fillMissingBodies, refreshStored } from "./sync.ts";
+import { syncMail, readBacklog, serial, fillMissingBodies, refreshStored } from "./sync.ts";
 import { act, applyWaitingLabels, engineSettings, type Planned } from "./actions.ts";
 import { decide, looksLikeInstructions, type AutoSend } from "./policy.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
-import { dueOf, meetingOf, todoOf } from "./rules.ts";
+import { ACT_WITHIN_MS, dueOf, meetingOf, todoOf } from "./rules.ts";
 import { judgeSent } from "./followups.ts";
 import { notify } from "./notify.ts";
 import { firstReadState, startFirstRead } from "./firstRead.ts";
@@ -37,7 +37,6 @@ import { ask, covers, type Thing, knowsSender, prefsFor, profileContext, retireT
 
 const INTERVAL_MS = 2 * 60_000;
 const TICK_MS = 20_000;
-const MAX_AGE_MS = 7 * 24 * 3600_000; // older mail is sorted but not acted on
 
 const LABELS: Record<string, string> = {
   "action-required": "Tabellar/Action required",
@@ -90,10 +89,15 @@ const HOLD = /^\W*HOLD\W*$/;
 // `tabellar check` swaps this for canned text so Autopilot can be run without a model.
 export const drafter = { draft: (userId: string, e: EmailRow, instructions: string) => draftReply(userId, e, instructions) };
 
+// The part of an email a reply answers: its own text and the newest of the
+// thread quoted under it. A local model reads the prompt at about a hundred
+// tokens a second, so a long quoted thread cost more time than anything else.
+const DRAFT_BODY_CHARS = 4000;
+
 // A reply to one email in the user's writing style, with what Tabellar knows
 // about the sender. Used by the engine and by /generate-draft.
 export async function draftReply(userId: string, e: EmailRow, instructions: string): Promise<string> {
-  const emailText = `Subject: ${e.subject}\nFrom: ${e.sender}\n\n${e.body_text || e.snippet}`;
+  const emailText = `Subject: ${e.subject}\nFrom: ${e.sender}\n\n${String(e.body_text || e.snippet || "").slice(0, DRAFT_BODY_CHARS)}`;
   const senderName = e.sender?.split("<")[0]?.trim().replace(/"/g, "") || "";
   const [{ data: style }, { data: profile }, { data: known }, about] = await Promise.all([
     db.from("style_profiles").select("*").eq("user_id", userId).limit(1),
@@ -115,6 +119,16 @@ export async function draftReply(userId: string, e: EmailRow, instructions: stri
 }
 
 // ── Planning ────────────────────────────────────────────────────────────────
+
+// Whether the thread went on after this email: the user answered it, or a
+// newer message came in, which is the one a reply would answer. Either way a
+// draft for this one would be stale (and, on a local model, half a minute of
+// work for nothing).
+async function laterInThread(e: EmailRow): Promise<boolean> {
+  if (!e.thread_id || !e.received_at) return false;
+  const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("thread_id", e.thread_id).gt("received_at", e.received_at);
+  return !!count;
+}
 
 type QuickAction = Record<string, unknown> & { action?: string; label?: string; text?: string };
 
@@ -182,7 +196,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
   for (const row of sorted) {
     const email = row.emails as EmailRow;
     await db.from("email_processed").update({ engine_at: new Date().toISOString() }).eq("id", row.id);
-    if (!email.received_at || Date.now() - new Date(email.received_at).getTime() > MAX_AGE_MS) continue;
+    if (!email.received_at || Date.now() - new Date(email.received_at).getTime() > ACT_WITHIN_MS) continue;
 
     const category = String(row.category);
     const suspicious = looksLikeInstructions(email.subject, email.body_text, email.body_html);
@@ -222,7 +236,8 @@ export const planNew = serial(async (userId: string): Promise<void> => {
 
     const replyTo = (email.reply_to_email || email.sender_email || "").trim();
     const reply = actions.find((a) => a.action === "reply");
-    const wantsDraft = category === "action-required" && !!reply && !!replyTo && !NO_REPLY.test(replyTo) && !already.has("draft") && !already.has("send") && !stopped("draft");
+    const wantsDraft =
+      category === "action-required" && !!reply && !!replyTo && !NO_REPLY.test(replyTo) && !already.has("draft") && !already.has("send") && !stopped("draft") && !(await laterInThread(email));
     const todo = todoOf(actions, email, category);
     const wantsTodo = !!todo && !already.has("todo") && !stopped("todo");
 
@@ -431,6 +446,9 @@ export async function rereadUnderNewRules(userId: string): Promise<void> {
   console.log(`[engine] read ${ids.length} emails again under the current rules`);
 }
 
+// Sort and plan everything not read yet, a batch at a time.
+const readAll = (userId: string) => readBacklog(userId, () => planNew(userId));
+
 export async function runCycle(): Promise<void> {
   if (engineStatus.running) return;
   const userId = await localUser();
@@ -450,8 +468,7 @@ export async function runCycle(): Promise<void> {
     await applyWaitingLabels(userId);
     await syncMail(userId);
     if (modelConfigured()) {
-      await analyzeInbox(userId);
-      await planNew(userId);
+      await readAll(userId);
       await judgeSent(userId);
     }
     engineStatus.lastError = null;
@@ -506,8 +523,7 @@ async function readNew(userId: string): Promise<void> {
   try {
     do {
       readAgain = false;
-      await analyzeInbox(userId);
-      await planNew(userId);
+      await readAll(userId);
     } while (readAgain);
   } catch (e) {
     console.error("[engine] reading new mail:", e);

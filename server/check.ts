@@ -570,6 +570,21 @@ ok("bulk is told from headers: promotions, or List-Unsubscribe with List-Id or P
     assert.ok(!senders.isBulk(m(address, { sender: name, label_ids: ["CATEGORY_PROMOTIONS"] }), written), `a job application system: ${address}`);
   }
 });
+ok("the model skips bulk, List-Unsubscribe mail outside Primary and old mail outside Primary, never a person, a list post or a job system", () => {
+  const m = (sender_email: string, x: Record<string, unknown> = {}) => ({ sender_email, label_ids: ["INBOX"], has_list_unsubscribe: false, list_id: null, precedence_header: null, ...x });
+  assert.ok(senders.readWithoutModel(m("news@letter.example", { label_ids: ["CATEGORY_PROMOTIONS"] }), written));
+  assert.ok(senders.readWithoutModel(m("events@uni-mail.example", { label_ids: ["INBOX", "CATEGORY_UPDATES"], has_list_unsubscribe: true }), written));
+  assert.ok(!senders.readWithoutModel(m("events@uni-mail.example", { label_ids: ["INBOX", "CATEGORY_PERSONAL"], has_list_unsubscribe: true }), written), "in Primary");
+  assert.ok(!senders.readWithoutModel(m("events@uni-mail.example", { has_list_unsubscribe: true }), written), "no Gmail category");
+  assert.ok(!senders.readWithoutModel(m("events@uni-mail.example", { label_ids: ["INBOX", "CATEGORY_UPDATES"] }), written), "no List-Unsubscribe");
+  assert.ok(!senders.readWithoutModel(m("person@club.example", { label_ids: ["INBOX", "CATEGORY_FORUMS"], has_list_unsubscribe: true, precedence_header: "list" }), written), "a list post");
+  assert.ok(!senders.readWithoutModel(m("noreply@acme.example", { label_ids: ["INBOX", "CATEGORY_UPDATES"], has_list_unsubscribe: true }), written), "a company the user wrote to");
+  assert.ok(!senders.readWithoutModel(m("no-reply@us.greenhouse-mail.io", { sender: "Acme", label_ids: ["INBOX", "CATEGORY_UPDATES"], has_list_unsubscribe: true }), written), "a job system");
+  assert.ok(senders.readWithoutModel(m("alerts@bank.example", { label_ids: ["INBOX", "CATEGORY_UPDATES"] }), written, true), "old system mail outside Primary");
+  assert.ok(!senders.readWithoutModel(m("alerts@bank.example", { label_ids: ["INBOX", "CATEGORY_UPDATES"] }), written), "the same mail when new");
+  assert.ok(!senders.readWithoutModel(m("dana@uni.example", { label_ids: ["INBOX", "CATEGORY_PERSONAL"] }), written, true), "old mail in Primary");
+  assert.ok(!senders.readWithoutModel(m("no-reply@us.greenhouse-mail.io", { sender: "Acme", label_ids: ["INBOX", "CATEGORY_UPDATES"] }), written, true), "an old job system email");
+});
 const corr = await profile.correspondents(userId, ["lee@uni.example", "jobs@acme.example", "news@letter.example"]);
 ok("someone the user answered or wrote to is a correspondent; a newsletter is not", () => {
   assert.ok(corr.has("lee@uni.example") && corr.has("jobs@acme.example") && !corr.has("news@letter.example"));

@@ -179,20 +179,24 @@ export async function profileContext(
     db.from("profiles").select("display_name, email").eq("id", userId).maybeSingle(),
     allPrefs(userId),
   ]);
-  const lines: string[] = [];
-  const who = [me?.display_name, me?.email ? `<${me.email}>` : ""].filter(Boolean).join(" ");
-  if (who) lines.push(`The user is ${who}.`);
+  // What is said about this email's sender and topics goes last, so the
+  // block before it is the same for every email and a local model can reuse
+  // the work it did on it. It is also kept first when the block runs long.
+  const about: string[] = [];
   if (email?.sender_email) {
     const address = lc(email.sender_email);
     for (const r of pick(rows, address, `${email.subject ?? ""} ${String(email.text ?? "").slice(0, 3000)}`)) {
       if (r.kind === "topic") {
-        lines.push(`This email is about ${r.subject}, which the user is not interested in.`);
+        about.push(`This email is about ${r.subject}, which the user is not interested in.`);
         continue;
       }
       const what = r.kind === "domain" ? `Mail from ${r.subject}` : `This sender (${address})`;
-      lines.push(`${what}: ${DESCRIBE[r.value] ?? r.value}.`);
+      about.push(`${what}: ${DESCRIBE[r.value] ?? r.value}.`);
     }
   }
+  const lines: string[] = [];
+  const who = [me?.display_name, me?.email ? `<${me.email}>` : ""].filter(Boolean).join(" ");
+  if (who) lines.push(`The user is ${who}.`);
   for (const f of rows.filter((r) => r.kind === "fact")) lines.push(`- ${f.value}`);
   const rules = rows.filter((r) => r.kind === "rule");
   if (rules.length) lines.push(`Rules from the user: ${rules.map((r) => r.value).join("; ")}.`);
@@ -203,11 +207,13 @@ export async function profileContext(
   const never = rows.filter((r) => r.kind !== "topic" && (r.value === "quiet" || r.value === "ignore")).map((r) => r.subject);
   if (never.length) lines.push(`Wants nothing from: ${never.slice(0, 20).join(", ")}.`);
 
+  const tail = about.map((l) => `${l}\n`).join("");
   let text = "";
   for (const l of lines) {
-    if (text.length + l.length + 1 > CONTEXT_CHARS) break;
+    if (text.length + l.length + 1 + tail.length > CONTEXT_CHARS) break;
     text += `${l}\n`;
   }
+  text += tail;
   return text ? `What Tabellar knows about the user:\n${text.trim()}` : "";
 }
 

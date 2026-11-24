@@ -101,12 +101,17 @@ export default function InboxView() {
   const [reading, setReading] = useState<Email | null>(null);
   const loaded = useRef(0);
   const busy = useRef(false);
+  const again = useRef(false);
   const anchor = useRef<string | null>(null);
   const lastUndo = useRef<{ label: string; run: () => Promise<void> } | null>(null);
 
   const load = useCallback(
     async (more = false) => {
-      if (busy.current) return;
+      // A change while a load runs is loaded once more after it, not dropped.
+      if (busy.current) {
+        again.current = true;
+        return;
+      }
       busy.current = true;
       try {
         const want = more ? loaded.current + CHUNK : Math.max(CHUNK, loaded.current);
@@ -148,6 +153,10 @@ export default function InboxView() {
       } finally {
         busy.current = false;
         setLoading(false);
+        if (again.current) {
+          again.current = false;
+          void load();
+        }
       }
     },
     [user.id, search],
@@ -194,7 +203,7 @@ export default function InboxView() {
       .eq("user_id", user.id)
       .order("position", { ascending: true })
       .then(({ data }: { data: UserLabel[] | null }) => setLabels(data || []));
-  }, [user.id, liveChanges.emails]);
+  }, [user.id]);
 
   // One row per conversation: the newest message stands for the thread.
   const threads = useMemo(() => {

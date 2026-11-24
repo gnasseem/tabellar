@@ -196,9 +196,14 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
   const [raw, setRaw] = useState<{ log: any[]; drafts: any[]; meetings: any[]; todos: any[]; sched: any[]; cal: any[]; followups: number; written: Set<string> } | null>(null);
   const [engine, setEngine] = useState<EngineStatus | null>(null);
   const loading = useRef(false);
+  const again = useRef(false);
 
   const reload = useCallback(async () => {
-    if (loading.current) return;
+    // A change while a load runs is loaded once more after it, not dropped.
+    if (loading.current) {
+      again.current = true;
+      return;
+    }
     loading.current = true;
     try {
       const [log, drafts, meetings, todos, sched, cal, followups, sent] = await Promise.all([
@@ -225,6 +230,10 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
       setRaw({ log: log.data || [], drafts: drafts.data || [], meetings: meetings.data || [], todos: todos.data || [], sched: sched.data || [], cal: cal.data || [], followups: followups.count ?? 0, written });
     } finally {
       loading.current = false;
+      if (again.current) {
+        again.current = false;
+        void reload();
+      }
     }
   }, [userId]);
 

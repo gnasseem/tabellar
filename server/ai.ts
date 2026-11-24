@@ -8,56 +8,28 @@ import type { Slot } from "./config.ts";
 import { checkActions } from "./rules.ts";
 
 const PROMPTS = {
-  process_email: `You are an email assistant. Analyze this email and return ONLY valid JSON with no markdown:
-{"reasoning":"...","category":"...","urgency":"...","summary":"...","actions":[...]}
+  process_email: `You sort one email for the user. Return only JSON, no markdown:
+{FORMAT}
 
-STEP 1  -  HIGH-STAKES CHECK (run before picking a category):
-If this email concerns any of these life-event domains, it is NEVER "updates" or "promotions":
-- Career: job offer, offer letter, interview invitation, application update (hired/shortlisted/rejected/next steps/offer extended), onboarding, background check, recruiter asking for a response, contract to sign
-- Academic: admission/acceptance/rejection, financial aid, scholarship offer, enrollment deadline
-- Legal: contract, agreement, legal notice, court filing, settlement, lease, terms requiring signature
-- Medical: appointment confirmation/change, lab or test results, prescription, diagnosis, referral
-- Financial decision: mortgage/loan approval or denial, credit application, account suspended, fraud alert requiring action
-ATS or HR system senders (Greenhouse, Workday, Lever, Taleo, SmartRecruiters, iCIMS, Jobvite, Breezy, BambooHR) writing about a job or interview are NOT updates.
-If STEP 1 triggers: action-required when a reply/action is expected; important when status-only FYI.
+writer: "person" when a human wrote this email to the user or to a small group, "system" for anything sent by a service, an app, an organisation's mailing system or a no-reply address, even when it is signed by a person.
 
-CATEGORIES (pick exactly one; STEP 1 overrides if triggered):
-1. action-required: a real person is waiting on YOU to do something concrete with a clear finish line  -  reply with an answer, approve, sign, pay, schedule, RSVP, review, submit. Any direct question from a human belongs here.
-2. important: a real person wrote to you and it is worth reading, but no response is required right now. Status updates from colleagues, personal notes, FYIs from known contacts, meeting notes. Do not use as a safe default.
-3. promotions: bulk content sent to many recipients  -  marketing campaigns, sales emails, promotional announcements, brand newsletters, content digests, product round-ups. Marketing tone + broadcast to many recipients = promotions.
-4. updates: automated, transactional, or system-generated messages that are NOT marketing. Receipts, shipping/order updates, bank/card alerts, security alerts, password resets, calendar reminders, billing statements, service pings, app notifications.
+category, exactly one:
+- action-required: a person (writer "person") is waiting on the user to do something concrete with a clear finish line: answer, approve, sign, pay, schedule, RSVP, review, submit. A direct question from a person belongs here.
+- important: a person wrote and it is worth reading, but nothing is needed now: status from a colleague, a personal note, an FYI from a contact. Not a safe default.
+- promotions: marketing or broadcast content sent to many people: campaigns, sales, newsletters, digests, event announcements.
+- updates: system mail that is not marketing: receipts, orders and shipping, bank and security alerts, payment and account notices, password resets, reminders, statements, app notifications. System mail is updates even when it asks the user to do something.
+High stakes are never updates or promotions, whoever sends them: a job offer, an interview or assessment to schedule or complete, an application decision, onboarding or a contract to sign (also from systems such as Greenhouse, Workday or Lever); admission, financial aid or a scholarship; a legal notice or lease; a medical appointment or result; a loan decision. Action-required only when the user must act (accept, book, complete, sign); a rejection, an application received or another status update is important.
+An unsubscribe link alone does not make mail promotions.
 
-Tie-breakers: an unsubscribe link alone does not make something promotions (transactional mail has them too). A direct human question beats important and updates. When unsure between important and updates, prefer updates for automated content; only use important for human-to-human mail that matters.
+urgency, exactly one: critical (act today), high (within 1 to 3 days: an offer or interview, a legal notice, an overdue payment, a close deadline), medium (an answer would help, nothing urgent), low (automated, no action, no deadline).
 
-URGENCY (required field, pick exactly one):
-- critical: must act today (offer/deadline expires today, interview is tomorrow, active security breach)
-- high: time-sensitive within 1-3 days (job offer with deadline, interview request, legal notice, overdue payment, medical appointment soon, admission/scholarship deadline)
-- medium: reply or action helpful but not immediately urgent
-- low: automated notification, no action needed, no deadline, nothing personal
-
-reasoning: ONE sentence  -  name the sender type, what they want, why you chose this category and urgency. Internal chain-of-thought only; not shown to the user.
-
-summary: Lead with the single most important fact  -  if there is a specific dollar amount, deadline, decision required, or named ask, state it first. Name the sender only if they are a real person. Use 1-3 sentences. Be concrete; skip filler like "This email informs you that...".
-
-actions: what the user would do about this email. Most email needs nothing: return [] unless a rule below clearly applies. Never add an action just to have one.
-- "reply": a real person asked the user something or is waiting on an answer from them. "text" must answer the specific ask with details from the email, not a generic acknowledgment like "Thanks, will review."
-- "add_todo": only when the user is personally being asked to do something they would agree is theirs to do: someone they deal with needs them to sign, pay what they owe, submit, send, prepare or fix something. Not a todo: marketing or broadcast calls to action (register, sign up, nominate, apply, attend a webinar, buy), offers and options the user may take or leave, things that are done or happen on their own, receipts, notifications, reminders of something optional. "label" names the task, the person when relevant, and the deadline if one is stated. "quote" copies, word for word, the sentence of the email that asks for it.
-- "schedule_meeting": only when the email arranges or proposes a meeting, call, interview or appointment with the user. Not for events advertised to many people. "quote" copies, word for word, the sentence that gives the meeting's time, or else the one that proposes it. "meetingDetails": {"title": "short name", "date": "YYYY-MM-DD resolved against today, or null when the email names no day", "time": "the start time exactly as written in the email, e.g. 1:15pm, or null when the email gives none", "timezone": "the timezone exactly as written next to the time, e.g. EST, or null", "duration": minutes_or_null, "location": "meeting link or address, or null"}. Never supply a time or a timezone the email does not state.
-- At most one action of each kind.
-
-Each action MUST be an object:
-  {"label": "short descriptive phrase", "action": "reply"|"add_todo"|"schedule_meeting", "text": "reply content, or what the meeting is about", "quote": "add_todo and schedule_meeting only", "questions": [optional array, reply only], "meetingDetails": {schedule_meeting only}}
-For reply actions: if the reply text requires information the email does not contain  -  such as the recipient's name when the email uses only "my friend" or pronouns, a specific preference, or a choice between options  -  include a "questions" array on that action. Each question: {"key":"snake_case_var","label":"Human-readable label","placeholder":"example value"}. Use {{key}} inside "text" wherever that answer should go. Only add questions when the info is truly absent from the email. Max 2 questions per action. Omit "questions" entirely when the email provides enough context.
-Examples:
-  {"label": "Reply to John confirming Q3 budget review by Friday", "action": "reply", "text": "Hi John, I can have the Q3 budget review done by Friday. I will send over my comments then."}
-  {"label": "Sign the lease renewal for Dana by Dec 15", "action": "add_todo", "quote": "Could you sign the renewal and send it back by December 15?"}
-  {"label": "Call with Priya about the internship", "action": "schedule_meeting", "text": "Internship call", "quote": "Would Thursday at 4:30pm EST work for a quick call?", "meetingDetails": {"title": "Call with Priya", "date": "2026-05-07", "time": "4:30pm", "timezone": "EST", "duration": 30, "location": null}}
-  {"label": "Reply to friend about weekend plans", "action": "reply", "text": "Hey {{friend_name}}, Saturday works for me!", "questions": [{"key": "friend_name", "label": "Your friend's name", "placeholder": "e.g. Alex"}]}
-Return raw JSON only. No explanation, no markdown.`,
+summary: one sentence, two at most, that leads with the most important fact: an amount, a deadline, the decision or the ask. Name the sender only if a person. No filler such as "This email informs you".`,
+  process_email_actions: `actions: what the user would do about it. Most email needs nothing: [] unless a rule below clearly applies. At most one of each kind.
+- {"action": "reply", "label": "Reply to John about the Q3 review", "text": "what the reply should say, in one line"}: only when a real person asked the user something or is waiting on their answer.
+- {"action": "add_todo", "label": "Sign the lease renewal for Dana by Dec 15", "quote": "the sentence that asks for it, copied word for word"}: only when someone the user deals with asks them personally to sign, pay what they owe, submit, send, prepare or fix something. Never for marketing or broadcast calls to action (register, sign up, apply, attend, nominate, buy), offers the user may take or leave, receipts, notifications, or things that happen on their own. The label names the task, the person when relevant, and a stated deadline.
+- {"action": "schedule_meeting", "label": "Call with Priya", "text": "what it is about", "quote": "the sentence that gives the meeting's time, or else the one that proposes it, word for word", "meetingDetails": {"title": "Call with Priya", "date": "YYYY-MM-DD resolved against today, or null when no day is named", "time": "the start time as written, e.g. 4:30pm, or null", "timezone": "as written next to the time, e.g. EST, or null", "duration": minutes or null, "location": "link or address, or null"}}: only when the email arranges or proposes a meeting, call, interview or appointment with the user, not an event advertised to many. Never supply a time or timezone the email does not state.`,
   draft:
     "You are an email drafting assistant. Write a professional, clear reply to the email below. Match the tone of the original. Keep it concise.",
-  extract_entities:
-    'Extract entities from this email that would be useful to remember for future reference. Return a JSON array of objects with "entity" (proper name or specific identifier), "entity_type" (person|company), and "info" (one concrete sentence about what was learned: their role, their relationship to the user, or what the user deals with them about). Rules: only include named people with a clear role or relationship; only include companies if a specific detail was learned (what they do, how the user deals with them); never include topics, places, projects or figures; skip generic words like "meeting", "email", "deadline", "invoice", "document"; skip entities where info would be trivially vague. Confidence bar: only include if you would recommend storing this fact for future drafts or decisions. Return an empty array if nothing clearly useful was found.',
   style_analysis:
     'Analyze the writing style of these sent emails (written BY the user). Return ONLY valid JSON with EXACTLY these four string keys and no extras: {"greeting_style":"<short>","closing_style":"<short>","tone":"formal|casual|mixed","avg_length":"short|medium|long"}. FIELD RULES  -  greeting_style: the exact most common opening word or phrase the user writes (e.g. "Hi", "Hey", "Hi {name}", "Hello", "Dear", "Good morning"). closing_style: the exact most common sign-off the user writes (e.g. "Best", "Thanks", "Cheers", "Best regards", "Talk soon", "Thanks,\\nGeorge"). NEVER return empty strings  -  if there is truly no greeting or closing, use "Hi" and "Thanks" as sensible defaults. tone: single word from formal/casual/mixed. avg_length: single word from short/medium/long. Do NOT wrap in markdown. Do NOT add commentary. Return JSON only.',
   agent_system: `You are Tabellar's Auto-Resolve executive agent. Your job is to completely clear the user's current inbox list by producing a fully confirmed action plan: drafted replies, todos, calendar events, and a single bulk archive. At the end, the user reviews and executes approved actions with one click.
@@ -475,6 +447,18 @@ export function dateContextFor(timezone: string): string {
   return `${parts.weekday}, ${parts.year}-${parts.month}-${parts.day}`;
 }
 
+// What the model reads of an email. The ask, the dates and the names are
+// nearly always at the top; the rest is quoted thread, signatures and footers,
+// and every extra token is time on a local model. A summary alone needs less.
+const BODY_CHARS = 2500;
+const SUMMARY_BODY_CHARS = 1500;
+
+// Asked for in the same call when the sender is someone the user writes to.
+// Last in the prompt, so the part before it is the same for every email and
+// a local model can reuse the work it did on it.
+const PEOPLE_PROMPT =
+  'Also add "people" to the JSON: named people (and companies, only when a specific detail was learned) worth remembering for future drafts and decisions, as [{"name": "...", "type": "person"|"company", "info": "one concrete sentence: their role, their relationship to the user, or what the user deals with them about"}]. Never topics, places, projects or figures; nothing vague. Use [] when nothing is clearly worth keeping.';
+
 export async function processFullEmail(
   subject: string,
   sender: string,
@@ -483,14 +467,17 @@ export async function processFullEmail(
   userTags?: { slug: string; description: string }[],
   timezone = "UTC",
   profile = "",
+  people = false,
+  actions = true,
 ): Promise<{
   category: string;
   urgency: string;
   summary: string;
   quick_actions: unknown[];
   tags: string[];
+  people: { entity: string; entity_type: string; info: string }[];
 }> {
-  const emailText = `Subject: ${subject}\nFrom: ${sender}\n\n${body.slice(0, 6000)}`;
+  const emailText = `Subject: ${subject}\nFrom: ${sender}\n\n${body.slice(0, actions ? BODY_CHARS : SUMMARY_BODY_CHARS)}`;
 
   const { context: signalContext, definiteCategory } = signals
     ? buildSignalContext(signals)
@@ -500,7 +487,11 @@ export async function processFullEmail(
   // dateTime for any meeting it finds, but nothing was telling it what today
   // is, so every relative date ("Friday", "tomorrow", "next week") was
   // unresolvable and came back null or guessed against the training cutoff.
-  let prompt = `Today is ${dateContextFor(timezone)} in the user's timezone (${timezone}). Resolve every relative date against it, and resolve a named weekday with no date to the next such day that is today or later.\n\n${PROMPTS.process_email}`;
+  // Without `actions` (old mail, which nothing is made from) the model is not
+  // asked what to do about it: a shorter prompt and a shorter answer.
+  const format = `{"writer":"...","category":"...","urgency":"...","summary":"..."${actions ? ',"actions":[...]' : ""}}`;
+  let prompt = `Today is ${dateContextFor(timezone)} in the user's timezone (${timezone}). Resolve every relative date against it, and resolve a named weekday with no date to the next such day that is today or later.\n\n${PROMPTS.process_email.replace("{FORMAT}", format)}`;
+  if (actions) prompt += `\n\n${PROMPTS.process_email_actions}`;
   if (userTags && userTags.length > 0) {
     const tagLines = userTags
       .map((t) => `- ${t.slug}: ${t.description || t.slug}`)
@@ -511,12 +502,13 @@ export async function processFullEmail(
   if (profile) {
     prompt += `\n\n${profile}\nUse this to judge what matters to the user and what they would actually do.`;
   }
+  if (people) prompt += `\n\n${PEOPLE_PROMPT}`;
 
   const textWithSignals = signalContext
     ? `${signalContext}${emailText}`
     : emailText;
 
-  const raw = await llm(prompt, textWithSignals, 0.2, 2048, "fast");
+  const raw = await llm(prompt, textWithSignals, 0.2, 1024, "fast");
   const parsed = parseJson(raw) as any;
 
   const valid = ["important", "action-required", "promotions", "updates"];
@@ -543,6 +535,9 @@ export async function processFullEmail(
     // What the model suggests, checked against the email itself.
     quick_actions: checkActions(parsed?.actions, { subject, body_text: body }, finalCategory, timezone),
     tags: returnedTags,
+    people: (Array.isArray(parsed?.people) ? (parsed.people as Record<string, unknown>[]) : [])
+      .map((x) => ({ entity: String(x?.name ?? "").trim(), entity_type: String(x?.type ?? "").trim(), info: String(x?.info ?? "").trim() }))
+      .filter((x) => x.entity && x.info && (x.entity_type === "person" || x.entity_type === "company")),
   };
 }
 
@@ -647,17 +642,6 @@ export async function generateDraft(
 // write only the body; the subject comes from the thread, so drop it.
 function draftBody(text: string): string {
   return text.replace(/^\s*\**subject:\**[^\n]*\n+/i, "").trim();
-}
-
-export async function extractEntities(
-  subject: string,
-  sender: string,
-  body: string,
-): Promise<{ entity: string; entity_type: string; info: string }[]> {
-  const text = `Subject: ${subject}\nFrom: ${sender}\n\n${body}`;
-  const raw = await llm(PROMPTS.extract_entities, text, 0.2, 1024, "fast");
-  const parsed = parseJson(raw);
-  return Array.isArray(parsed) ? parsed : [];
 }
 
 export async function analyzeWritingStyle(sentEmails: string): Promise<{

@@ -19,7 +19,7 @@ import { basename, dirname, join } from "node:path";
 import { loadConfig, saveConfig, keychainSet, modelKeyName, accessToken, googleClient, sibling, BUILT_IN_GOOGLE, HOME, type Config, type ModelConfig, type Slot } from "./config.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
 import {
-  findClientFiles, saveGoogleClient, useBuiltInGoogleClient, moveToTrash, OLLAMA_URL, LOCAL_CHOICES, recommendedLocalModel,
+  findClientFiles, saveGoogleClient, useBuiltInGoogleClient, moveToTrash, OLLAMA_URL, LOCAL_CHOICES, SMALL_MAC_GB, memoryGb, recommendedLocalModel,
   ollamaInstalled, ollamaModels, startOllama, installOllama, pullOllamaModel, PROVIDERS, listModels, savedKeyFor, type Progress,
 } from "./setup.ts";
 
@@ -165,15 +165,21 @@ async function setupLocal(current: ModelConfig | undefined, slot: Slot): Promise
   const names = models.map((m) => m.name);
   const suggested = recommendedLocalModel(slot);
   const size = gb(LOCAL_CHOICES.find((c) => c.name === suggested)!.size);
+  const about = (name: string) => LOCAL_CHOICES.find((c) => c.name === name)?.about;
+  if (slot === "careful" && memoryGb() < SMALL_MAC_GB) {
+    console.log(`   With ${memoryGb()} GB of memory one small model does everything here, and its drafts are plainer.`);
+    console.log("   A cloud model writes drafts faster and closer to your voice.");
+  }
   let model: string;
   if (names.length) {
-    const options = [...names];
-    if (!names.includes(suggested)) options.push(`Download ${suggested}, recommended for this Mac (${size})`);
+    const options = names.map((n) => (about(n) ? `${n}: ${about(n)}` : n));
+    if (!names.includes(suggested)) options.push(`Download ${suggested}, recommended for this Mac (${size}): ${about(suggested)}`);
     const fallback = current?.format === "ollama" && names.includes(current.model) ? names.indexOf(current.model) : Math.max(0, options.findIndex((o) => o === suggested || o.startsWith("Download")));
     const i = await choose("   Model:", options, fallback);
     model = i < names.length ? names[i] : suggested;
   } else {
     console.log(`   No local models yet. The recommended one for this Mac is ${suggested} (${size}).`);
+    console.log(`   ${about(suggested)}.`);
     if (!(await yes(`   Download ${suggested} now?`))) return current;
     model = suggested;
   }

@@ -152,12 +152,6 @@ export default function ModelSetup({ state, refresh, onSaved, slot = "careful" }
 
 // On this Mac
 
-const ABOUT: Record<string, string> = {
-  "qwen3.5:4b": "Small and quick; sorts mail well, simpler drafts",
-  "gemma4:12b": "Writes good drafts in your voice; wants 24 GB of memory",
-  "gemma4:26b": "Best drafts, and quick for its size; wants 48 GB of memory",
-};
-
 function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProps) {
   const { ollama, local } = state;
   const current = model?.format === "ollama" ? model.model : null;
@@ -168,6 +162,7 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
   const [error, setError] = useState("");
 
   const installed = useMemo(() => new Map(ollama.models.map((m) => [m.name, m.size])), [ollama.models]);
+  const about = useMemo(() => new Map(local.choices.map((c) => [c.name, c.about])), [local.choices]);
   const rows = useMemo(() => {
     const curated = new Set(local.choices.map((c) => c.name));
     return [...ollama.models.filter((m) => !curated.has(m.name)), ...local.choices];
@@ -255,7 +250,7 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
               disabled={!!busy}
               onClick={() => setSelected(m.name)}
               title={m.name}
-              hint={m.name === recommendedName ? `Recommended for this Mac's ${local.memoryGb} GB of memory` : (ABOUT[m.name] ?? "Already on this Mac")}
+              hint={[m.name === recommendedName && `Recommended for this Mac's ${local.memoryGb} GB of memory`, about.get(m.name) ?? (m.name !== recommendedName && "Already on this Mac")].filter(Boolean).join(". ")}
               right={current === m.name && model?.ready ? "In use" : installed.has(m.name) ? "On this Mac" : formatBytes(m.size)}
             />
           ))}
@@ -276,6 +271,11 @@ function LocalPanel({ state, slot, current: model, refresh, onSaved }: PanelProp
           </div>
         </div>
       </div>
+      {slot === "careful" && local.small && (
+        <p className="text-xs leading-normal text-ink2">
+          With {local.memoryGb} GB of memory one small model does everything here, and its drafts are plainer. A cloud model writes drafts faster and closer to your voice.
+        </p>
+      )}
       {busy ? (
         <ProgressBar label={busy.label} p={busy.p} />
       ) : (

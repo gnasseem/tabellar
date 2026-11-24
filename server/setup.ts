@@ -96,18 +96,24 @@ export function moveToTrash(path: string): boolean {
 export const OLLAMA_URL = "http://127.0.0.1:11434";
 const OLLAMA_ZIP = "https://ollama.com/download/Ollama-darwin.zip";
 
-export type LocalModel = { name: string; size: number };
+export type LocalModel = { name: string; size: number; about?: string };
 
 // Models offered for download, smallest first, with their download size.
 // Chosen by running sorting, drafting and the assistant on 50 real emails
 // (2026-11): qwen3.5:4b sorted as well as models twice its size in half the
 // time; the gemma4 models were the only ones that always drafted in the
 // user's voice. qwen3:8b, qwen3.5:9b and granite4.2:3b did worse on both.
+// What to expect from each, timed on an M1 Pro with 32 GB (2026-11): reading
+// an email with qwen3.5:4b, drafting a reply with gemma4:12b.
 export const LOCAL_CHOICES: LocalModel[] = [
-  { name: "qwen3.5:4b", size: 3_324_173_934 },
-  { name: "gemma4:12b", size: 8_021_618_941 },
-  { name: "gemma4:26b", size: 18_731_025_629 },
+  { name: "qwen3.5:4b", size: 3_324_173_934, about: "Small and quick: reads an email in about 4 seconds, the first 300 in about 15 minutes. Plainer drafts" },
+  { name: "gemma4:12b", size: 8_021_618_941, about: "Drafts in your voice, 10 to 30 seconds a reply. Wants 24 GB of memory" },
+  { name: "gemma4:26b", size: 18_731_025_629, about: "The best local drafts, slower than gemma4:12b. Wants 48 GB of memory" },
 ];
+
+// Below this much memory one small model does every job, and a cloud model
+// for drafts is the better choice.
+export const SMALL_MAC_GB = 24;
 
 export function memoryGb(): number {
   return Math.round(totalmem() / 2 ** 30);
@@ -116,7 +122,7 @@ export function memoryGb(): number {
 // Below 24 GB there is room for one model, so the small one does both jobs.
 export function recommendedLocalModel(slot: Slot = "careful"): string {
   const gb = memoryGb();
-  if (slot === "fast" || gb < 24) return "qwen3.5:4b";
+  if (slot === "fast" || gb < SMALL_MAC_GB) return "qwen3.5:4b";
   return gb >= 48 ? "gemma4:26b" : "gemma4:12b";
 }
 
@@ -407,7 +413,7 @@ async function state() {
     // null when the fast slot uses the careful model.
     fastModel: withReady(config.fastModel),
     ollama: { installed: models !== null || ollamaInstalled(), running: models !== null, models: models ?? [] },
-    local: { choices: LOCAL_CHOICES, recommended: recommendedLocalModel("careful"), recommendedFast: recommendedLocalModel("fast"), memoryGb: memoryGb() },
+    local: { choices: LOCAL_CHOICES, recommended: recommendedLocalModel("careful"), recommendedFast: recommendedLocalModel("fast"), memoryGb: memoryGb(), small: memoryGb() < SMALL_MAC_GB },
     providers: PROVIDERS.map(({ id, name, keyUrl, suggested }) => ({ id, name, keyUrl, suggested, hasKey: !!savedKeyFor(id) })),
   };
 }

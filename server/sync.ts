@@ -364,6 +364,25 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
 
 export const analyzeInbox = serial((userId: string) => analyzeEmailsForUser(userId, db));
 
+// Sort everything not read yet, a batch at a time, and plan each batch while
+// the next one is sorted. Planning drafts replies with the careful model,
+// which runs beside the fast one: on a Mac both share the GPU with room to
+// spare, and a draft costs almost no time this way. `each` runs after every
+// batch is sorted.
+export async function readBacklog(userId: string, plan: () => unknown, each?: () => Promise<unknown>): Promise<void> {
+  let planning: Promise<unknown> = Promise.resolve();
+  for (;;) {
+    const { analyzed } = await analyzeInbox(userId);
+    await each?.();
+    await planning;
+    planning = Promise.resolve()
+      .then(plan)
+      .catch((e) => console.error("[plan]", e));
+    if (!analyzed) break;
+  }
+  await planning;
+}
+
 // Mail stored before HTML-only emails got a text body: fill it in, and have
 // the model read those emails again with their real text instead of the
 // snippet. Proposals made from the snippet are withdrawn; what was already

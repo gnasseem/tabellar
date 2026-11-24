@@ -1,7 +1,7 @@
 // Calls to the server's /api/setup routes, used by the first-run onboarding
 // and by Settings > Models.
 
-export type LocalModel = { name: string; size: number };
+export type LocalModel = { name: string; size: number; about?: string };
 
 export type Slot = "careful" | "fast";
 
@@ -20,7 +20,7 @@ export type SetupState = {
   // The fast model that reads each email; null when it is the careful one.
   fastModel: ModelInfo | null;
   ollama: { installed: boolean; running: boolean; models: LocalModel[] };
-  local: { choices: LocalModel[]; recommended: string; recommendedFast: string; memoryGb: number };
+  local: { choices: LocalModel[]; recommended: string; recommendedFast: string; memoryGb: number; small: boolean };
   providers: { id: string; name: string; keyUrl: string; suggested?: string; hasKey: boolean }[];
 };
 

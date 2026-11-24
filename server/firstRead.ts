@@ -20,7 +20,7 @@ import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { analyzeWritingStyle, factsFromSent } from "./ai.ts";
 import { fetchHeaderRows, fetchMessages, fetchSentEmails, listMessageIds } from "./gmail.ts";
-import { analyzeInbox, notStored, sentHeaderRow, storeInbox, storeSent, syncMail, type Account } from "./sync.ts";
+import { notStored, readBacklog, sentHeaderRow, storeInbox, storeSent, syncMail, type Account } from "./sync.ts";
 import { indexMail, isBulk, ownAddresses, rebuildSenders, writtenTo } from "./senders.ts";
 import { setPref } from "./profile.ts";
 import { suggestLabels } from "./labels.ts";
@@ -147,8 +147,7 @@ async function indexHeaders(userId: string, accounts: Account[]): Promise<void> 
 // Sort what is already stored and plan it.
 async function readNewest(userId: string, plan: () => unknown): Promise<void> {
   if (!modelConfigured()) return;
-  await analyzeInbox(userId);
-  await plan();
+  await readBacklog(userId, plan);
 }
 
 // ── Sent mail ───────────────────────────────────────────────────────────────
@@ -261,7 +260,8 @@ async function fetchDeep(userId: string, account: Account): Promise<void> {
 }
 
 // Sort everything stored that is not sorted yet, a batch at a time, newest
-// first, keeping the count of the last 30 days up to date.
+// first, keeping the count of the last 30 days up to date. Each batch is
+// planned while the next is sorted.
 async function sortDeep(userId: string, plan: () => unknown): Promise<void> {
   const since = new Date(Date.now() - DEEP_DAYS * DAY).toISOString();
   const progress = async () => {
@@ -275,10 +275,5 @@ async function sortDeep(userId: string, plan: () => unknown): Promise<void> {
     await save(userId, { deep: sorted, deep_total: ids.length });
   };
   await progress();
-  while (modelConfigured()) {
-    const { analyzed } = await analyzeInbox(userId);
-    await progress();
-    await plan();
-    if (!analyzed) break;
-  }
+  if (modelConfigured()) await readBacklog(userId, plan, progress);
 }
