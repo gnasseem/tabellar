@@ -15,7 +15,7 @@
  *   { status: 'success' | 'error', info?: string, error?: string }
  */
 
-import type { Db } from "./db.ts";
+import { db, type Db } from "./db.ts";
 import { mail, userCalendar } from "./providers.ts";
 import { accountById, defaultAccount, fromLine, replyFrom } from "./accounts.ts";
 import { decide } from "./policy.ts";
@@ -101,6 +101,16 @@ function plainToHtml(body: string): string {
     .split(/\n/)
     .map((line) => `<p>${line || "&nbsp;"}</p>`)
     .join("");
+}
+
+// The day a todo is due: the one its email names, read in code; the model's
+// only when the email names none, or the user typed it in the plan.
+async function dueDay(userId: string, action: ApprovedAction, tz: string): Promise<string | null> {
+  const given = String(action.payload.due ?? "").match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? null;
+  if (!given || !action.linked_email_id) return given;
+  const { data: e } = await db.from("emails").select("body_text, received_at").eq("id", action.linked_email_id).eq("user_id", userId).maybeSingle();
+  const { dueOf } = await import("./rules.ts");
+  return (e && dueOf(e.body_text, tz, new Date(String(e.received_at)))) || given;
 }
 
 export async function executeAgentPlan(
@@ -232,7 +242,7 @@ export async function executeAgentPlan(
         const row: Record<string, unknown> = {
           user_id: userId,
           text: title,
-          due: /^\d{4}-\d{2}-\d{2}/.test(String(action.payload.due ?? "")) ? String(action.payload.due).slice(0, 10) : null,
+          due: await dueDay(userId, action, userTimezone),
           is_completed: false,
           source: "solver",
         };

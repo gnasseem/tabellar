@@ -143,9 +143,13 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
 
   for (const r of log) {
     // Labels are plain Gmail labels, shown on the row; undo them in History.
-    if (r.kind === "label") continue;
     const d = r.detail || {};
     const base = { key: r.id, at: r.created_at };
+    if (r.kind === "label") {
+      // One of them says the email is held.
+      if (r.status === "done" && d.label === "Tabellar/Suspicious") push(r.email_id, { ...base, key: `held:${r.email_id}`, state: "held", short: "Held: written to an AI", title: "Held: written to an AI, only labelled" });
+      continue;
+    }
     if (r.status === "proposed") {
       push(r.email_id, { ...base, state: "need", short: PROPOSED[r.kind] || "To approve", title: r.summary, act: { kind: "approve", id: r.id, hash: r.hash || "" } });
     } else if (r.status === "done" && r.kind === "send") {
