@@ -46,7 +46,7 @@ data/settings.json
 Thumbs.db
 
 # Private product notes
-todo.md
+todo*.md
 .env*.local
 
 # Tool artifacts
