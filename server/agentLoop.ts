@@ -226,7 +226,7 @@ function buildSystemPrompt(
 /**
  * Convert stored agent_turns into OpenAI chat messages. When bucket is set,
  * only turns tagged with that bucket (or null bucket for back-compat) are
- * replayed — sub-agents each see their own isolated thread.
+ * replayed, sub-agents each see their own isolated thread.
  */
 function turnsToMessages(
   system: string,
@@ -366,7 +366,7 @@ export async function getOrCreateBriefingSnapshot(
     const evidence = (c as unknown as { evidence?: string }).evidence ?? "";
     const rel =
       (c as unknown as { relationshipHint?: string }).relationshipHint ?? "";
-    const head = `  [${id}] (${bucket}${c.deadline ? `, due ${c.deadline}` : ""}${rel ? `, ${rel}` : ""}) ${c.senderName ?? c.sender ?? "?"} — ${c.subject ?? ""}`;
+    const head = `  [${id}] (${bucket}${c.deadline ? `, due ${c.deadline}` : ""}${rel ? `, ${rel}` : ""}) ${c.senderName ?? c.sender ?? "?"}, ${c.subject ?? ""}`;
     const lines = [head];
     if (signal) lines.push(`       signal: ${signal}`);
     if (suggestedAction) lines.push(`       suggested: ${suggestedAction}`);
@@ -412,7 +412,7 @@ function bucketSnapshot(
     const evidence = (c as unknown as { evidence?: string }).evidence ?? "";
     const rel =
       (c as unknown as { relationshipHint?: string }).relationshipHint ?? "";
-    const head = `  [${id}] (${bk}${c.deadline ? `, due ${c.deadline}` : ""}${rel ? `, ${rel}` : ""}) ${c.senderName ?? c.sender ?? "?"} — ${c.subject ?? ""}`;
+    const head = `  [${id}] (${bk}${c.deadline ? `, due ${c.deadline}` : ""}${rel ? `, ${rel}` : ""}) ${c.senderName ?? c.sender ?? "?"}, ${c.subject ?? ""}`;
     const lines = [head];
     if (signal) lines.push(`       signal: ${signal}`);
     if (suggestedAction) lines.push(`       suggested: ${suggestedAction}`);
@@ -481,7 +481,7 @@ function bucketSnapshot(
       : "",
   ].filter(Boolean);
 
-  const text = `YOUR BUCKET: ${bucket.toUpperCase()}.\n\nEXECUTIVE SUMMARY (full inbox context):\n${execSummary}\n\nEMAILS IN YOUR SCOPE:\n${sections.join("\n\n") || "(none — finalize immediately with an empty plan.)"}\n\nOther buckets are handled by parallel sub-agents. Only propose actions for emails in YOUR scope.`;
+  const text = `YOUR BUCKET: ${bucket.toUpperCase()}.\n\nEXECUTIVE SUMMARY (full inbox context):\n${execSummary}\n\nEMAILS IN YOUR SCOPE:\n${sections.join("\n\n") || "(none, finalize immediately with an empty plan.)"}\n\nOther buckets are handled by parallel sub-agents. Only propose actions for emails in YOUR scope.`;
   return { text, scoped };
 }
 
@@ -981,7 +981,7 @@ export async function runAgentStep(
           const explicitEmptyScope =
             typeof opts.bucketSnapshotText === "string" &&
             opts.bucketSnapshotText.includes(
-              "(none — finalize immediately with an empty plan.)",
+              "(none, finalize immediately with an empty plan.)",
             );
           if (
             draftActions.length === 0 &&
@@ -1049,7 +1049,7 @@ export async function runAgentStep(
 
       if (finalized) {
         // If this is a sub-agent run (bucket is set and session is multi-bucket),
-        // don't flip the session to ready here — the parent orchestrator decides.
+        // don't flip the session to ready here, the parent orchestrator decides.
         if (bucket && bucket !== "single") {
           // Best-effort: persist this bucket's actions into session.draft_actions
           // so the orchestrator can recover them on a re-run after a timeout.
@@ -1062,7 +1062,7 @@ export async function runAgentStep(
             await Promise.race([
               mergeRpc,
               new Promise<void>((resolve) => setTimeout(resolve, 4000)),
-            ]).catch(() => {/* best-effort — orchestrator has in-memory copy */});
+            ]).catch(() => {/* best-effort, orchestrator has in-memory copy */});
           }
           return {
             status: "bucket_done",
@@ -1316,7 +1316,7 @@ async function _runAgentStepParallel(
       ...((refreshed.draft_actions as DraftAction[]) ?? []),
       ...mergedFromRuns,
     ]);
-    // Merge questions from all sub-agents' returned values — the DB may have
+    // Merge questions from all sub-agents' returned values, the DB may have
     // lost some due to concurrent writes (last writer wins per row update).
     const allRunQuestions = results
       .filter((r) => r.status === "fulfilled")
@@ -1549,10 +1549,10 @@ export async function answerPendingQuestion(
     const tags: string[] = [];
     if (selected.no_reply)
       tags.push(
-        "mark resolved without replying — do NOT create a draft or send anything; propose a reply action with resolve_only=true",
+        "mark resolved without replying, do NOT create a draft or send anything; propose a reply action with resolve_only=true",
       );
     if (selected.recommended) tags.push("was the recommended option");
-    userText = `[User picked] ${selected.label}${selected.preview ? ` — ${selected.preview}` : ""}${tags.length ? ` (${tags.join("; ")})` : ""}`;
+    userText = `[User picked] ${selected.label}${selected.preview ? `, ${selected.preview}` : ""}${tags.length ? ` (${tags.join("; ")})` : ""}`;
   } else userText = "[User did not answer explicitly.]";
 
   // Questions asked in one call are answered by one result, once all of them

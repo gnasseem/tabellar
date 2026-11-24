@@ -775,7 +775,7 @@ export async function listAllGoogleContacts(
   }
 
   // Other Contacts via otherContacts.list (contacts.other.readonly)
-  // This is what Gmail uses — auto-collected from email history, no explicit save needed
+  // This is what Gmail uses, auto-collected from email history, no explicit save needed
   try {
     let pageToken: string | undefined;
     do {
@@ -834,7 +834,7 @@ export async function listAllGoogleContacts(
     /* directory.readonly scope not granted or admin restricted */
   }
 
-  // Extract contacts from Gmail sent mail — uses gmail.modify scope (always available).
+  // Extract contacts from Gmail sent mail, uses gmail.modify scope (always available).
   // This finds every person the user has ever emailed, covering friends not in other lists.
   try {
     const sentListRes = await fetch(
@@ -934,8 +934,8 @@ export async function searchGoogleContacts(
     /* ignore */
   }
 
-  // Search "Other Contacts" — people Gmail auto-collected from email history
-  // (contacts.other.readonly scope) — this is what Gmail uses for friend suggestions
+  // Search "Other Contacts", people Gmail auto-collected from email history
+  // (contacts.other.readonly scope), this is what Gmail uses for friend suggestions
   try {
     const otherRes = await fetch(
       `https://people.googleapis.com/v1/otherContacts:search?query=${encodeURIComponent(query)}&readMask=names,emailAddresses&pageSize=10`,

@@ -230,6 +230,7 @@ async function applyChanges(userId: string, ch: MailboxChanges): Promise<string[
     if (!row) continue;
     const set = labels.get(gmailId) ?? new Set(row.label_ids ?? []);
     set.delete("INBOX");
+    set.add("TRASH");
     labels.set(gmailId, set);
   }
   for (const [gmailId, set] of labels) {

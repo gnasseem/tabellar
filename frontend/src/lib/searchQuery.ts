@@ -30,7 +30,7 @@ export const SEARCH_OPERATORS = [
   { syntax: "from:name", description: "Sender name or address contains" },
   { syntax: "to:name", description: "Recipient contains" },
   { syntax: "subject:word", description: "Subject contains" },
-  { syntax: "category:important", description: "AI category" },
+  { syntax: "label:important", description: "One of your labels, or a category" },
   { syntax: "after:2026-08-01", description: "Received on or after" },
   { syntax: "before:2026-08-15", description: "Received before" },
   { syntax: "is:unread", description: "Also read, starred, resolved, unresolved, snoozed, vip" },
@@ -66,7 +66,6 @@ export function parseSearch(raw: string): ParsedSearch {
   const result: ParsedSearch = { text: "" };
   if (!raw) return result;
 
-  let consumedAny = false;
   const leftovers = raw.replace(OPERATOR_RE, (match, key, _q, quoted) => {
     const rawValue = quoted !== undefined ? quoted : match.slice(key.length + 1);
     const value = rawValue.trim();
@@ -141,12 +140,10 @@ export function parseSearch(raw: string): ParsedSearch {
       default:
         return match; // not an operator we know; leave it in the free text
     }
-    consumedAny = true;
     return " ";
   });
 
   result.text = leftovers.replace(/\s+/g, " ").trim();
-  void consumedAny;
   return result;
 }
 

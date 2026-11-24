@@ -77,6 +77,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
   const [proc, setProc] = useState<any>(Array.isArray(email.email_processed) ? email.email_processed[0] : email.email_processed);
   const [messages, setMessages] = useState<any[] | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [unfolded, setUnfolded] = useState(false);
   const [menu, setMenu] = useState<"" | "more" | "sort" | "track">("");
   const [snoozeAt, setSnoozeAt] = useState<DOMRect | null>(null);
   const snoozeButton = useRef<HTMLButtonElement>(null);
@@ -349,6 +350,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
     return () => window.removeEventListener("keydown", onKey, true);
   });
 
+  const folded = !unfolded && (messages?.length ?? 0) > 8;
   const toggle = (id: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -493,7 +495,15 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
           ) : (
             <div className={outcomes.length || resolvedAt || tracked ? "mt-3 border-t border-line-soft pt-2" : ""}>
               {messages.length > 1 && <p className="label mb-1 mt-2">{messages.length} messages</p>}
-              {messages.map((m) => {
+              {messages.map((m, i) => {
+                // A long thread folds its middle: the first message, then the last three.
+                if (folded && i > 0 && i < messages.length - 3) {
+                  return i > 1 ? null : (
+                    <button key="fold" className="row2 -mx-1.5 w-[calc(100%+0.75rem)] !pl-1.5 text-left text-ink3 hover:text-ink" onClick={() => setUnfolded(true)}>
+                      {messages.length - 4} more messages
+                    </button>
+                  );
+                }
                 const me = (m.label_ids || []).includes("SENT") || accounts.mine.has(String(m.sender_email || "").toLowerCase()) || (!!user.email && String(m.sender_email || "").toLowerCase() === user.email.toLowerCase());
                 const name = me ? "You" : nameOf(m.sender, m.sender_email);
                 if (!open.has(m.id))

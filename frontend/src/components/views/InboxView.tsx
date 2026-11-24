@@ -104,6 +104,8 @@ export default function InboxView() {
   const [loading, setLoading] = useState(() => !getViewCache("inbox"));
   const [hasMore, setHasMore] = useState(false);
   const [labels, setLabels] = useState<UserLabel[]>([]);
+  const labelsNow = useRef(labels);
+  labelsNow.current = labels;
   const [filter, setFilter] = useState<Filter>(() => (localStorage.getItem("tabellar_inbox_filter") === "need" ? "need" : "all"));
   const [group, setGroup] = useState<Group>(() => {
     const g = localStorage.getItem("tabellar_inbox_group");
@@ -138,20 +140,24 @@ export default function InboxView() {
           .from("emails")
           .select(category ? SELECT.replace("email_processed(*)", "email_processed!inner(*)") : SELECT)
           .eq("user_id", user.id)
-          .eq("is_archived", false)
           .not("label_ids", "cs", '{"SENT"}')
           .order("received_at", { ascending: false })
           .range(0, want);
+        // A search finds archived mail too, but nothing thrown away.
+        query = search ? query.not("label_ids", "cs", '{"TRASH"}').not("label_ids", "cs", '{"SPAM"}') : query.eq("is_archived", false);
         if (only) query = query.eq("account_id", only);
         if (search) {
           const q = parseSearch(search);
           if (q.text) query = query.textSearch("search_vector", q.text, { type: "websearch", config: "english" });
-          if (q.from) query = query.or(`sender.ilike.%${q.from}%,sender_email.ilike.%${q.from}%`);
+          if (q.from) query = query.or(`sender.ilike.%${q.from.replace(/[,()"]/g, "%")}%,sender_email.ilike.%${q.from.replace(/[,()"]/g, "%")}%`);
           if (q.to) query = query.ilike("recipients", `%${q.to}%`);
           if (q.subject) query = query.ilike("subject", `%${q.subject}%`);
-          if (q.category) query = query.eq("email_processed.category", q.category);
-          if (q.after) query = query.gte("received_at", `${q.after}T00:00:00Z`);
-          if (q.before) query = query.lt("received_at", `${q.before}T00:00:00Z`);
+          if (q.category) {
+            const own = labelsNow.current.find((l) => l.slug === q.category || l.display_name.toLowerCase() === q.category);
+            query = own ? query.contains("email_processed.extra_labels", [own.slug]) : query.eq("email_processed.category", q.category);
+          }
+          if (q.after) query = query.gte("received_at", new Date(`${q.after}T00:00:00`).toISOString());
+          if (q.before) query = query.lt("received_at", new Date(`${q.before}T00:00:00`).toISOString());
           if (q.isUnread) query = query.eq("is_read", false);
           if (q.isRead) query = query.eq("is_read", true);
           if (q.isStarred) query = query.eq("is_starred", true);
@@ -258,6 +264,7 @@ export default function InboxView() {
       // Fetched but not read by the model yet.
       const unread = !t.latest.email_processed && mail.engine?.model;
       t.text = s.text || firstLabel(t, labels)?.display_name || CATEGORY[cat] || cat || (unread ? "Reading" : "");
+      if (t.latest.is_archived && !t.latest.is_snoozed && s.state === "filed") t.text = "Archived";
       // Marked done by hand: handled, unless Tabellar has something on it.
       if (t.latest.resolved_at && s.state === "filed") {
         t.state = "done";

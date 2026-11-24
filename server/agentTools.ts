@@ -3,12 +3,12 @@
  *
  * The agent has two categories of tools:
  *
- *   1. READ tools — return a string context that flows back into the
+ *   1. READ tools, return a string context that flows back into the
  *      conversation. Used by the model to gather context before acting.
  *      (search_emails, get_thread, past_replies_by_me, calendar_freebusy,
  *       user_style_profile)
  *
- *   2. CONTROL tools — signal a transition in the agent state machine.
+ *   2. CONTROL tools, signal a transition in the agent state machine.
  *      They are handled specially by `agentLoop.ts`:
  *        - ask_user     -> pauses the loop; frontend renders a QuestionCard
  *        - propose_action / revise_action -> stages a draft action
@@ -140,7 +140,7 @@ export const AGENT_TOOLS = [
     function: {
       name: "ask_user",
       description:
-        "Pause the agent and ask the user clarifying questions. Supports BATCHING: you can emit 1-5 independent questions in a single call via the `questions` array (the UI renders them as a grid so the user answers them all at once). Only use a single question when decisions chain. Every question needs 2-4 concrete options (each with optional preview + recommended flag) plus an allow_custom flag. Never assume — always ask if a decision depends on unknown context. The agent resumes automatically after the user answers.",
+        "Pause the agent and ask the user clarifying questions. Supports BATCHING: you can emit 1-5 independent questions in a single call via the `questions` array (the UI renders them as a grid so the user answers them all at once). Only use a single question when decisions chain. Every question needs 2-4 concrete options (each with optional preview + recommended flag) plus an allow_custom flag. Never assume, always ask if a decision depends on unknown context. The agent resumes automatically after the user answers.",
       parameters: {
         type: "object",
         properties: {
@@ -244,7 +244,7 @@ export const AGENT_TOOLS = [
     function: {
       name: "propose_action",
       description:
-        "Stage a concrete action to be included in the final plan. Do NOT call this if the action requires a decision the user has not made yet — use ask_user first. You may propose multiple actions across multiple rounds.",
+        "Stage a concrete action to be included in the final plan. Do NOT call this if the action requires a decision the user has not made yet, use ask_user first. You may propose multiple actions across multiple rounds.",
       parameters: {
         type: "object",
         properties: {

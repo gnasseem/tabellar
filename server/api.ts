@@ -1006,7 +1006,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         try {
           const all = await listAllGoogleContacts(account.token_ref);
           if (!all.length) {
-            // Google returned nothing — likely missing contacts/directory scope
+            // Google returned nothing, likely missing contacts/directory scope
             needsReauth = true;
             continue;
           }
@@ -1332,7 +1332,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ reply, actions }, 200, corsHeaders);
     }
 
-    // ── GET /follow-ups — list follow-up reminders ────────────────────────
+    // ── GET /follow-ups, list follow-up reminders ────────────────────────
     if (path === "/follow-ups" && req.method === "GET") {
       const { data, error } = await db
         .from("follow_up_reminders")
@@ -1349,7 +1349,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ followups: await followupList(userId) }, 200, corsHeaders);
     }
 
-    // ── POST /follow-ups — create a follow-up reminder ────────────────────
+    // ── POST /follow-ups, create a follow-up reminder ────────────────────
     if (path === "/follow-ups" && req.method === "POST") {
       const {
         email_id,
@@ -1383,7 +1383,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ followUp: data }, 200, corsHeaders);
     }
 
-    // ── PATCH /follow-ups/:id — update a follow-up reminder ───────────────
+    // ── PATCH /follow-ups/:id, update a follow-up reminder ───────────────
     if (path.startsWith("/follow-ups/") && req.method === "PATCH") {
       const followUpId = path.replace("/follow-ups/", "");
       if (!UUID_RE.test(followUpId))
@@ -1404,7 +1404,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ followUp: data }, 200, corsHeaders);
     }
 
-    // ── DELETE /follow-ups/:id — delete a follow-up reminder ──────────────
+    // ── DELETE /follow-ups/:id, delete a follow-up reminder ──────────────
     if (path.startsWith("/follow-ups/") && req.method === "DELETE") {
       const followUpId = path.replace("/follow-ups/", "");
       if (!UUID_RE.test(followUpId))
@@ -1417,7 +1417,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ ok: true }, 200, corsHeaders);
     }
 
-    // ── GET /signatures — list all signatures for user ────────────────────
+    // ── GET /signatures, list all signatures for user ────────────────────
     if (path === "/signatures" && req.method === "GET") {
       const { data, error } = await db
         .from("email_signatures")
@@ -1428,7 +1428,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ signatures: data ?? [] }, 200, corsHeaders);
     }
 
-    // ── POST /signatures — create a new signature ─────────────────────────
+    // ── POST /signatures, create a new signature ─────────────────────────
     if (path === "/signatures" && req.method === "POST") {
       const { name, html, is_default, account_id } = await req.json();
       if (!name?.trim())
@@ -1461,7 +1461,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ signature: data }, 200, corsHeaders);
     }
 
-    // ── PATCH /signatures/:id — update a signature ────────────────────────
+    // ── PATCH /signatures/:id, update a signature ────────────────────────
     if (path.startsWith("/signatures/") && req.method === "PATCH") {
       const sigId = path.replace("/signatures/", "");
       if (!UUID_RE.test(sigId))
@@ -1507,7 +1507,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ signature: data }, 200, corsHeaders);
     }
 
-    // ── DELETE /signatures/:id — delete a signature ───────────────────────
+    // ── DELETE /signatures/:id, delete a signature ───────────────────────
     if (path.startsWith("/signatures/") && req.method === "DELETE") {
       const sigId = path.replace("/signatures/", "");
       if (!UUID_RE.test(sigId))
@@ -1520,7 +1520,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ ok: true }, 200, corsHeaders);
     }
 
-    // ── GET /attachment — fetch a Gmail attachment by ID ───────────────────
+    // ── GET /attachment, fetch a Gmail attachment by ID ───────────────────
     if (path === "/attachment" && req.method === "GET") {
       const urlObj = new URL(req.url);
       const gmailId = urlObj.searchParams.get("gmail_id");
