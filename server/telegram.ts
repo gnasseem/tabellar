@@ -118,8 +118,9 @@ export async function telegramState(userId: string) {
 }
 
 export async function connect(userId: string, pasted: string): Promise<void> {
-  const token = pasted.trim();
-  if (!/^\d{5,20}:[\w-]{30,60}$/.test(token)) throw fail("That is not a bot token. It looks like 123456789:AAE... and BotFather sends it when the bot is made.");
+  // The whole message BotFather answers with will do: the token is in it.
+  const token = pasted.match(/(?<![\w:])\d{5,20}:[\w-]{30,60}(?![\w-])/)?.[0] ?? "";
+  if (!token) throw fail("That is not a bot token. It looks like 123456789:AAE... and BotFather sends it when the bot is made.");
   let me: { id: number; username: string };
   try {
     me = await callWith(token, "getMe");

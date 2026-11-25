@@ -26,7 +26,7 @@ import { accessSync, constants, existsSync, readFileSync, writeFileSync, mkdtemp
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { loadConfig, saveConfig, modelKeyName, accessToken, googleClient, sibling, BUILT_IN_GOOGLE, BUILT_IN_MICROSOFT, HOME, KEYCHAIN, MAC, type Config, type ModelConfig, type Slot, secrets } from "./config.ts";
-import { autostartHere, autostartInstalled, installAutostart, removeAutostart } from "./autostart.ts";
+import { autostartHere, autostartInstalled, installAutostart, removeAutostart, startInBackground } from "./autostart.ts";
 import { publicUrl } from "./access.ts";
 import { lock, unlock } from "./place.ts";
 import {
@@ -306,6 +306,14 @@ async function start(headless: boolean) {
     console.log("Tabellar is already running. Opening its window.");
     return openWindow();
   }
+  // With Start at login on, it runs there, so closing this window does not end it.
+  if (!quiet && !file && autostartHere() && startInBackground()) {
+    for (let i = 0; i < 100 && !(await running()); i++) await new Promise((r) => setTimeout(r, 200));
+    if (await running()) {
+      console.log("Tabellar is running in the background. This window can be closed; `tabellar autostart off` stops it.");
+      return openWindow();
+    }
+  }
   if (!lock()) throw new Error(`Another Tabellar is running on ${HOME}.`);
   if (file && existsSync(file)) {
     const { unpack } = await import("./move.ts");
@@ -326,7 +334,7 @@ async function start(headless: boolean) {
     process.exit(0);
   };
   const { port, close } = await startServer({ headless, stop: () => void stop() });
-  for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => void stop());
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, () => void stop());
   console.log(`Tabellar is running at http://127.0.0.1:${port} (Ctrl-C to stop).`);
   if (!quiet) await openWindow();
   else if (headless) console.log("Its window: run `tabellar open` for a link.");

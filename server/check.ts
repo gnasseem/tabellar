@@ -2593,7 +2593,7 @@ await db.from("profiles").update({ notification_level: "needs", notification_qui
 await assert.rejects(telegram.connect(ansUser, "not a token"), /not a bot token/);
 await assert.rejects(telegram.connect(ansUser, "123456789:AAEwrongwrongwrongwrongwrongwrongwrong"), /does not know that token/);
 const stopTelegram = telegram.startTelegram();
-await telegram.connect(ansUser, ` ${tgToken}\n`);
+await telegram.connect(ansUser, `Done! Congratulations on your new bot. You will find it at t.me/x_bot.\n\nUse this token to access the HTTP API:\n${tgToken}\nKeep your token secure.`);
 const tgState = await telegram.telegramState(ansUser);
 const tgRow = JSON.stringify((await db.from("telegram").select("*").single()).data);
 tgText("/start AAAAAAAA", 666);

@@ -131,6 +131,14 @@ export function installAutostart(): void {
   if (r.status !== 0) throw new Error(`launchctl could not load the login item: ${r.stderr.trim() || r.status}`);
 }
 
+// Have the login item run Tabellar now. A process of a Terminal window ends with
+// the window; this one does not.
+export function startInBackground(): boolean {
+  if (!MAC) return false;
+  if (spawnSync("launchctl", ["print", `${DOMAIN}/${LABEL}`], { stdio: "ignore" }).status !== 0) spawnSync("launchctl", ["bootstrap", DOMAIN, PLIST], { stdio: "ignore" });
+  return spawnSync("launchctl", ["kickstart", `${DOMAIN}/${LABEL}`], { stdio: "ignore" }).status === 0;
+}
+
 // Unloading the agent stops the server it started, which may be the very
 // process handling this request, so the unload waits a moment for the reply
 // to go out.

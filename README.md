@@ -57,7 +57,7 @@ tabellar start
 5. **People.** Who matters most, and which of the suggested labels to keep.
 6. **Level.** How much it does on its own, Suggest to begin with. Until then it only reads; then the Inbox opens, already sorted under your answers.
 
-After that, `tabellar start` runs Tabellar (Ctrl-C stops it), `tabellar open` opens the window again, and `tabellar status` shows what it is connected to and what the engine is doing. `tabellar setup` chooses the models in the terminal instead, and `tabellar setup microsoft` saves the Outlook app's client ID.
+After that, `tabellar start` runs Tabellar (Ctrl-C stops it, and so does closing its terminal window; with **Start at login** on it runs in the background instead), `tabellar open` opens the window again, and `tabellar status` shows what it is connected to and what the engine is doing. `tabellar setup` chooses the models in the terminal instead, and `tabellar setup microsoft` saves the Outlook app's client ID.
 
 To keep Tabellar running without a terminal, run `tabellar autostart on` (or turn on **Start at login** in Settings, under General). It then starts at login, restarts if it crashes, and logs to `~/.tabellar/server.log`. `tabellar autostart off` stops it.
 

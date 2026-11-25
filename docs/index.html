@@ -3,40 +3,188 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tabellar</title>
-    <meta name="description" content="A personal email agent that runs on your Mac." />
+    <title>Tabellar handles your mail</title>
+    <meta name="description" content="Tabellar sorts your mail, drafts your replies and keeps your todos and meetings. You decide how much it does on its own. Free and open source." />
+    <meta property="og:title" content="Tabellar handles your mail" />
+    <meta property="og:description" content="Sorts it, drafts replies, keeps todos and meetings. You decide how much it does on its own." />
+    <meta property="og:image" content="https://gnasseem.github.io/tabellar/img/card.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#b8341f" />
     <link rel="icon" href="logo.svg" />
+    <link rel="preload" href="fonts/ysabeau-office.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <a class="skip" href="#plans">Skip to install</a>
     <main>
-      <a class="brand" href="./"><img src="logo.svg" alt="" />Tabellar</a>
+      <section class="tablet wax first">
+        <svg class="press" viewBox="0 0 64 64" aria-hidden="true">
+          <clipPath id="t"><path d="M61 32L60.94 42.56L60.76 46.25L60.45 48.94L60.02 51.1L59.46 52.91L58.76 54.46L57.93 55.79L56.94 56.94L55.79 57.93L54.46 58.76L52.91 59.46L51.1 60.02L48.94 60.45L46.25 60.76L42.56 60.94L32 61L21.44 60.94L17.75 60.76L15.06 60.45L12.9 60.02L11.09 59.46L9.54 58.76L8.21 57.93L7.06 56.94L6.07 55.79L5.24 54.46L4.54 52.91L3.98 51.1L3.55 48.94L3.24 46.25L3.06 42.56L3 32L3.06 21.44L3.24 17.75L3.55 15.06L3.98 12.9L4.54 11.09L5.24 9.54L6.07 8.21L7.06 7.06L8.21 6.07L9.54 5.24L11.09 4.54L12.9 3.98L15.06 3.55L17.75 3.24L21.44 3.06L32 3L42.56 3.06L46.25 3.24L48.94 3.55L51.1 3.98L52.91 4.54L54.46 5.24L55.79 6.07L56.94 7.06L57.93 8.21L58.76 9.54L59.46 11.09L60.02 12.9L60.45 15.06L60.76 17.75L60.94 21.44Z" /></clipPath>
+          <g clip-path="url(#t)"><rect width="64" height="21" /><rect y="27.5" width="28.75" height="40" /><rect x="35.25" y="27.5" width="30" height="40" /></g>
+        </svg>
+        <nav aria-label="Main">
+          <a class="brand" href="./">
+            <svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true"><g clip-path="url(#t)"><rect width="64" height="21" /><rect y="27.5" width="28.75" height="40" /><rect x="35.25" y="27.5" width="30" height="40" opacity="0.6" /></g></svg>
+            Tabellar
+          </a>
+          <a href="#levels">How it works</a>
+          <a class="keep" href="#plans">Plans</a>
+          <a href="https://github.com/gnasseem/tabellar">Source</a>
+        </nav>
+        <div class="say">
+          <h1>Tabellar handles your mail</h1>
+          <div>
+            <p>It sorts your mail, drafts your replies and keeps your todos and meetings. You decide how much it does on its own.</p>
+            <div class="acts">
+              <a class="btn" href="#plans">Install it free</a>
+              <a class="quiet" href="#plans">See the plans</a>
+            </div>
+          </div>
+        </div>
+        <picture class="window">
+          <source srcset="img/phone-dark.webp" media="(max-width: 680px) and (prefers-color-scheme: dark)" width="780" height="1480" />
+          <source srcset="img/phone-light.webp" media="(max-width: 680px)" width="780" height="1480" />
+          <source srcset="img/brief-dark.webp" media="(prefers-color-scheme: dark)" />
+          <img class="shot" src="img/brief-light.webp" width="2240" height="1400" alt="Tabellar's window, with made-up mail: four things need you today, each with its answers on the line. The reply to Daniel Reyes is open, with Yes and No." />
+        </picture>
+      </section>
 
-      <h1>A personal email agent that runs on your Mac</h1>
-      <p>
-        Tabellar keeps a local copy of your Gmail, sorts it into your own labels, drafts replies in your style, pulls out todos and meetings, tracks mail that got no answer, and answers questions about your inbox. It keeps working in the background with the window closed, within limits you set.
-      </p>
-      <p>
-        There is no hosted service and no sign-up. Your mail is stored in one file on your Mac. The AI runs on your Mac through Ollama, or with a cloud provider of your choice on your own API key. Tabellar is free and open source under the MIT licence.
-      </p>
+      <section class="tablet black levels" id="levels">
+        <div>
+          <h2>You decide how much it does</h2>
+          <fieldset class="dial">
+            <legend>How much Tabellar does on its own</legend>
+            <label><input type="radio" name="level" value="observe" /><b>Observe</b><span>Sorts, sums up and tells you. Changes nothing.</span></label>
+            <label><input type="radio" name="level" value="suggest" checked /><b>Suggest</b><span>Labels mail. The rest waits for your yes.</span></label>
+            <label><input type="radio" name="level" value="assist" /><b>Assist</b><span>Labels, drafts and todos happen on their own. Sending is yours.</span></label>
+            <label><input type="radio" name="level" value="autopilot" /><b>Autopilot</b><span>Also sends the replies that need no decision, after a wait in which you can cancel.</span></label>
+          </fieldset>
+        </div>
+        <div>
+          <ul class="slips" aria-live="polite">
+            <li><span><b>Maya Okafor</b>2 March, or the 9th?</span><em></em></li>
+            <li><span><b>Tomas Lind</b>Which address do the proofs go to?</span><em></em></li>
+            <li><span><b>Sam Whitaker</b>Can you send the notes by Friday?</span><em></em></li>
+            <li><span><b>Priya Natarajan</b>Move the review to 3pm?</span><em></em></li>
+            <li><span><b>Northwind Bank</b>Your statement is ready</span><em></em></li>
+          </ul>
+          <p>The same five emails at each level. A decision, like Maya's, is left to you at all of them.</p>
+        </div>
+      </section>
 
-      <h2>Install</h2>
-      <p>Tabellar needs macOS and Node.js 24 or newer.</p>
-      <pre>npm install -g tabellar
-tabellar start</pre>
-      <p>
-        <code>tabellar start</code> opens Tabellar's window, which walks you through choosing a model and signing in to Gmail. The <a href="https://github.com/gnasseem/tabellar#readme">README</a> has everything else.
-      </p>
+      <div class="pair">
+        <section class="tablet seen">
+          <h2>Every line ends in what was done with it</h2>
+          <p>Only what needs you stands out. Open a line and see why, change it, or take it back.</p>
+          <picture class="window">
+            <source srcset="img/inbox-dark.webp" media="(prefers-color-scheme: dark)" />
+            <img class="shot" src="img/inbox-light.webp" width="2240" height="1400" alt="The Inbox, with made-up mail: three emails need you, marked Reply ready and Meeting to confirm. The rest is sorted under Clients, Money and Press." />
+          </picture>
+        </section>
+        <section class="tablet never">
+          <h2>What it never does</h2>
+          <ul>
+            <li><b>Delete your mail</b>It has no function for that. It can only take back drafts of its own.</li>
+            <li><b>Send before you allow it</b>Below Autopilot, nothing goes out without you.</li>
+            <li><b>Obey an email</b>Mail that gives orders to an AI gets a label and no more.</li>
+            <li><b>Invent a number or a date</b>Those, addresses and links in a draft are checked against your mail.</li>
+          </ul>
+        </section>
+      </div>
 
-      <h2>What Tabellar does with your Google account</h2>
-      <p>
-        When you sign in with Google, Tabellar asks to read and manage your Gmail, your Google Calendar and your contacts. It uses them only on your Mac: to show and sort your mail, draft and send the replies you approve, add the labels and calendar events you ask for, and suggest recipients. Nothing is sent to Tabellar's developer, because there is no Tabellar server. The <a href="privacy.html">privacy policy</a> says this in full.
-      </p>
+      <section class="plans" id="plans">
+        <h2>Three ways to run it</h2>
+        <div class="mark">
+          <div class="tablet black free">
+            <div>
+              <h3>Free</h3>
+              <p class="price">$0, all of it, open source</p>
+              <p>On your own computer, with a model that runs on your Mac or your own API key. Your mail stays in one file on your machine.</p>
+            </div>
+            <div>
+              <pre><code>npm install -g tabellar</code><button type="button" data-copy="npm install -g tabellar">Copy</button></pre>
+              <pre><code>tabellar start</code><button type="button" data-copy="tabellar start">Copy</button></pre>
+              <p>Paste the two lines into Terminal. The second opens Tabellar's window, which takes you through the rest. You need macOS and <a href="https://nodejs.org">Node.js 24</a> or newer.</p>
+            </div>
+          </div>
+          <div class="tablet black plus">
+            <h3>Plus</h3>
+            <p class="price">$6 a month</p>
+            <p>On your own computer, with the AI included.</p>
+            <dl>
+              <div><dt>You need</dt><dd>One code. No API key.</dd></div>
+              <div><dt>Your mail</dt><dd>On your computer. What the AI reads goes straight to companies that keep none of it, and not through us.</dd></div>
+              <div><dt>Works</dt><dd>While your computer is on.</dd></div>
+            </dl>
+            <p class="act"><span class="line">By invitation for now.</span> <a href="https://github.com/gnasseem/tabellar/issues/new?title=Invitation%20to%20Plus">Ask for one</a></p>
+          </div>
+          <div class="tablet wax always">
+            <h3>Always on</h3>
+            <p class="price">$12 a month</p>
+            <p>On a server of your own, with the AI included. Nothing to install.</p>
+            <dl>
+              <div><dt>You need</dt><dd>A browser. You sign in with a passkey.</dd></div>
+              <div><dt>Your mail</dt><dd>On that server's encrypted disk, which we look after.</dd></div>
+              <div><dt>Works</dt><dd>Day and night, with your computer off. For Outlook, iCloud, Fastmail, Yahoo, and Gmail with an app password.</dd></div>
+            </dl>
+            <p class="act"><span class="line">By invitation for now.</span> <a href="https://github.com/gnasseem/tabellar/issues/new?title=Invitation%20to%20Always%20on">Ask for one</a></p>
+          </div>
+        </div>
+      </section>
 
-      <footer>
-        <a href="https://github.com/gnasseem/tabellar">Source on GitHub</a> · <a href="privacy.html">Privacy policy</a> ·
-        <a href="https://github.com/gnasseem/tabellar/issues">Questions and problems</a>
-      </footer>
+      <section class="read">
+        <h2>Your Google account</h2>
+        <div>
+          <p>When you sign in with Google, Tabellar asks to read and manage your Gmail, your Google Calendar and your contacts. It uses them only on your own computer: to show and sort your mail, draft and send the replies you approve, add the labels and calendar events you ask for, and suggest recipients. None of it is sent to Tabellar's developer. The <a href="privacy.html">privacy policy</a> says this in full.</p>
+          <p>Tabellar also works with iCloud, Fastmail, Yahoo, AOL, Zoho, GMX and any mailbox that takes an app password, and with Outlook once you have registered a free app with Microsoft. The <a href="https://github.com/gnasseem/tabellar#readme">README</a> has the rest.</p>
+        </div>
+      </section>
     </main>
+    <footer>
+      <a class="brand" href="./">
+        <svg viewBox="0 0 64 64" aria-hidden="true"><g clip-path="url(#t)"><rect class="i" width="64" height="21" /><rect class="i" y="27.5" width="28.75" height="40" /><rect class="w" x="35.25" y="27.5" width="30" height="40" /></g></svg>
+        Tabellar
+      </a>
+      <a href="https://github.com/gnasseem/tabellar">Source on GitHub</a>
+      <a href="privacy.html">Privacy policy</a>
+      <a href="https://github.com/gnasseem/tabellar/issues">Questions and problems</a>
+    </footer>
+    <script>
+      // What happens to the five emails, per level: [what shows, its mark].
+      const LEVELS = {
+        observe: [["Needs you", "you"], ["Needs you", "you"], ["Needs you", "you"], ["Needs you", "you"], ["Summed up", "done"]],
+        suggest: [["Reply to approve", "you"], ["Reply to approve", "you"], ["Todo to approve", "you"], ["Meeting to approve", "you"], ["Labelled Money", "done"]],
+        assist: [["Reply in your Drafts", "you"], ["Reply in your Drafts", "you"], ["Todo added", "done"], ["Meeting to confirm", "you"], ["Labelled Money", "done"]],
+        autopilot: [["Reply in your Drafts", "you"], ["Replying in 5:00", "going"], ["Todo added", "done"], ["Meeting to confirm", "you"], ["Labelled Money", "done"]],
+      };
+      const slips = [...document.querySelectorAll(".slips li")];
+      function show(level, animate) {
+        slips.forEach((li, i) => {
+          const [text, mark] = LEVELS[level][i];
+          const em = li.querySelector("em");
+          if (em.textContent === text) return;
+          li.className = mark;
+          em.textContent = text;
+          em.classList.remove("new");
+          if (animate) {
+            void em.offsetWidth;
+            em.style.animationDelay = `${i * 60}ms`;
+            em.classList.add("new");
+          }
+        });
+      }
+      for (const input of document.querySelectorAll(".dial input")) input.addEventListener("change", () => show(input.value, true));
+      show(document.querySelector(".dial input:checked").value, false);
+      for (const b of document.querySelectorAll("[data-copy]"))
+        b.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(b.dataset.copy);
+            b.textContent = "Copied";
+          } catch {
+            b.textContent = "Select it";
+          }
+          setTimeout(() => (b.textContent = "Copy"), 1800);
+        });
+    </script>
   </body>
 </html>

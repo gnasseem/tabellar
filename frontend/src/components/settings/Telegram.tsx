@@ -9,10 +9,15 @@ type State = { bot: string | null; who?: string | null; paired?: boolean; code?:
 
 const POLL_MS = 2000;
 
+// Every username is taken once, so one is made up that will be free.
+const freeName = () => `tabellar_${Math.random().toString(36).slice(2, 8)}_bot`;
+
 export function Telegram() {
   const [state, setState] = useState<State | null>(null);
   const [open, setOpen] = useState(false);
   const [token, setToken] = useState("");
+  const [name] = useState(freeName);
+  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -67,19 +72,28 @@ export function Telegram() {
             >
               <ol className="list-decimal space-y-1 pl-[18px] leading-snug text-ink2 marker:text-ink3">
                 <li>
-                  In Telegram, write{" "}
-                  <span className="font-mono text-ink">/newbot</span> to{" "}
-                  <a className="link" href="https://t.me/BotFather" target="_blank" rel="noreferrer">
-                    @BotFather
-                  </a>
+                  <a className="link" href="https://t.me/BotFather?text=%2Fnewbot" target="_blank" rel="noreferrer">
+                    Open @BotFather
+                  </a>{" "}
+                  and send <span className="font-mono text-ink">/newbot</span>
                 </li>
                 <li>
-                  Give it any name, then a username that ends in <span className="font-mono text-ink">bot</span>
+                  Answer Tabellar for the name, and for the username{" "}
+                  <button
+                    type="button"
+                    className="link font-mono"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(name).then(() => setCopied(true));
+                    }}
+                  >
+                    {name}
+                  </button>{" "}
+                  <span aria-live="polite">{copied ? "Copied" : "(press to copy)"}</span>
                 </li>
-                <li>Paste the token it answers with</li>
+                <li>Copy its whole answer and paste it here</li>
               </ol>
               <div className="flex flex-wrap gap-2">
-                <input className="input min-w-[200px] flex-1 font-mono" type="password" autoFocus value={token} onChange={(e) => setToken(e.target.value)} placeholder="123456789:AAE..." aria-label="Bot token" spellCheck={false} autoComplete="off" disabled={busy} />
+                <input className="input min-w-[200px] flex-1 font-mono" type="password" autoFocus value={token} onChange={(e) => setToken(e.target.value)} placeholder="BotFather's answer" aria-label="BotFather's answer, with the token" spellCheck={false} autoComplete="off" disabled={busy} />
                 <button className="btn flex-none" type="submit" disabled={busy || !token.trim()}>
                   {busy ? "Connecting" : "Connect"}
                 </button>
