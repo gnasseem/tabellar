@@ -402,7 +402,7 @@ async function wait(userId: string, id: string): Promise<Line | null> {
     const account = (await accountById(userId, e?.account_id as string | null)) ?? (await defaultAccount(userId));
     if (!e || !account) throw said("That email is no longer in Tabellar");
     const days = Math.floor((Date.now() - new Date(f.sent_at).getTime()) / DAY);
-    const body = await writeTo(userId, {
+    const { text: body, from: writtenFrom } = await writeTo(userId, {
       to: `${f.recipient_name} <${f.recipient_email}>`,
       subject: f.subject,
       intent: `I sent this ${days ? `${days} day${days === 1 ? "" : "s"} ago` : "earlier today"} and have had no answer. Write a short, friendly follow-up that asks again${f.asked ? `: ${f.asked}` : "."}`,
@@ -414,7 +414,7 @@ async function wait(userId: string, id: string): Promise<Line | null> {
     const from = addressesOf(account).find((s) => s.address === String(e.sender_email ?? "").toLowerCase())?.address ?? defaultFrom(account);
     const outcome = await act(
       userId,
-      { kind: "draft", emailId: f.email_id, summary: `Draft a follow-up to ${f.recipient_name}`, detail: { to: [f.recipient_email], subject: /^re:/i.test(f.subject) ? f.subject : `Re: ${f.subject}`, body, accountId: account.id, from } },
+      { kind: "draft", emailId: f.email_id, summary: `Draft a follow-up to ${f.recipient_name}`, detail: { to: [f.recipient_email], subject: /^re:/i.test(f.subject) ? f.subject : `Re: ${f.subject}`, body, writtenFrom, accountId: account.id, from } },
       { ...(await engineSettings(userId)), source: "assistant" },
     );
     if (outcome !== "done") throw said((await engineSettings(userId)).paused ? "Tabellar is paused" : "The follow-up could not be kept");

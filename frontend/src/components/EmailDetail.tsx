@@ -8,6 +8,7 @@ import { choicesOf, choose } from "../../../server/choices.ts";
 import { useApp } from "./AppShell";
 import DateTimePicker from "./DateTimePicker";
 import EmailBody from "./EmailBody";
+import WrittenFrom from "./WrittenFrom";
 import FilePreview from "./FilePreview";
 import { SnoozeMenu, useSnooze } from "./Snooze";
 import { FILE_ICON, fetchAttachment, fileKind, fileSize, saveAttachment, type Att } from "@/lib/attachments";
@@ -603,6 +604,7 @@ function InlineReply({ reply, source, onDiscard }: { reply: { draft?: any; going
       ) : (
         <p className="mt-2 whitespace-pre-wrap break-words leading-[1.6] text-ink2">{text}</p>
       )}
+      <WrittenFrom from={r.written_from} className="mt-2.5" />
       <div className="mt-3 flex gap-1.5">
         {reply.going ? (
           reply.going.action_id && (

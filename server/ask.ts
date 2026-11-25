@@ -10,6 +10,7 @@ import { chatWithAssistant, localToUtc, type ChatContext } from "./ai.ts";
 import * as automations from "./automations.ts";
 import { db } from "./db.ts";
 import { escapeHtml } from "./mime.ts";
+import { checkedText, type EmailRow } from "./replies.ts";
 import { realAttendees } from "./senders.ts";
 import { stylePrompt, writingFor } from "./writing.ts";
 
@@ -117,7 +118,7 @@ export async function askTabellar(userId: string, { message, history = [], timez
     style: stylePrompt(writing),
   };
 
-  const { reply: said, tool_calls } = await chatWithAssistant(
+  const { reply: said, tool_calls, seen } = await chatWithAssistant(
     context,
     message,
     history,
@@ -130,6 +131,11 @@ export async function askTabellar(userId: string, { message, history = [], timez
       tool_calls.map((t) => ({ name: t.name, args: t.arguments })),
     ),
   );
+
+  // What it wrote for the user is held to what a reply of Tabellar's is: the
+  // user's own words, the mail it looked at and what is stored about the person.
+  const words = [...history.filter((h) => h.role === "user").map((h) => h.content), message].join("\n");
+  const checked = (to: string, subject: string, text: string, answers: EmailRow | null = null) => checkedText(userId, { to, subject, text, said: words, seen, answers });
 
   // Execute tool calls (search_emails is handled in-memory by chatWithAssistant)
   const actions: AskAction[] = [];
@@ -161,9 +167,10 @@ export async function askTabellar(userId: string, { message, history = [], timez
         actions.push({ type: "send_email_failed", data: { error: check.error ?? "Invalid recipient" } });
         continue;
       }
+      const d = await checked(check.emails![0], String(args.subject ?? ""), String(args.body ?? ""));
       const { data: draft } = await db
         .from("draft_emails")
-        .insert({ user_id: userId, source: "tabellar", to_addresses: check.emails, subject: String(args.subject ?? ""), body_html: escapeHtml(String(args.body ?? "")).replace(/\n/g, "<br>") })
+        .insert({ user_id: userId, source: "tabellar", to_addresses: check.emails, subject: String(args.subject ?? ""), body_html: escapeHtml(d.text).replace(/\n/g, "<br>"), written_from: d.from })
         .select("id")
         .single();
       if (draft) actions.push({ type: "save_draft", data: { subject: args.subject, to: check.emails!.join(", "), id: draft.id } });
@@ -215,7 +222,7 @@ export async function askTabellar(userId: string, { message, history = [], timez
         });
     } else if (tc.name === "reply_to_email") {
       const args = tc.arguments as { email_id: string; body: string };
-      const { data: original } = await db.from("emails").select("id, subject, sender_email, reply_to_email, account_id, recipients, cc_recipients").eq("id", String(args.email_id ?? "")).eq("user_id", userId).maybeSingle();
+      const { data: original } = await db.from("emails").select("*").eq("id", String(args.email_id ?? "")).eq("user_id", userId).maybeSingle();
       const to = String(original?.reply_to_email || original?.sender_email || "");
       if (!original || !to) {
         actions.push({ type: "send_email_failed", data: { error: "Original email not found" } });
@@ -223,11 +230,12 @@ export async function askTabellar(userId: string, { message, history = [], timez
       }
       const account = await accountById(userId, original.account_id as string);
       const subject = /^re:/i.test(String(original.subject ?? "")) ? String(original.subject) : `Re: ${original.subject ?? ""}`;
+      const d = await checked(to, subject, String(args.body ?? ""), original as unknown as EmailRow);
       const { data: draft } = await db
         .from("draft_emails")
         .insert({
-          user_id: userId, source: "tabellar", email_id: original.id, account_id: account?.id ?? null, from_address: account ? replyFrom(account, original as { recipients?: string | null }) : null,
-          to_addresses: [to], subject, body_html: escapeHtml(String(args.body ?? "")).replace(/\n/g, "<br>"),
+          user_id: userId, source: "tabellar", email_id: original.id, written_from: d.from, account_id: account?.id ?? null, from_address: account ? replyFrom(account, original as { recipients?: string | null }) : null,
+          to_addresses: [to], subject, body_html: escapeHtml(d.text).replace(/\n/g, "<br>"),
         })
         .select("id")
         .single();

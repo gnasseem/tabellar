@@ -279,12 +279,14 @@ export const planNew = serial(async (userId: string): Promise<void> => {
       if (pre.verdict === "refuse" && !trySend) await run(base);
       else if (!existing) {
         try {
-          let body = (await drafter.draft(userId, email, trySend)).trim();
+          let written = await drafter.draft(userId, email, trySend);
+          let body = written.text.trim();
           if (trySend && GAP.test(body)) {
             // Kept as a draft, for the user to fill in.
             if (pre.verdict === "refuse") body = "";
           } else if (trySend && HOLD.test(body)) {
-            body = pre.verdict === "refuse" ? "" : (await drafter.draft(userId, email, false)).trim();
+            if (pre.verdict !== "refuse") written = await drafter.draft(userId, email, false);
+            body = pre.verdict === "refuse" ? "" : written.text.trim();
           } else if (trySend && body) {
             let inReplyTo: string | null = null;
             try {
@@ -306,7 +308,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
           if (replying) {
             // Sent (after the cancel window); no draft as well.
           } else if (pre.verdict === "refuse") await run(base);
-          else if (body) drafted = (await run({ ...base, detail: { ...base.detail, body } })) === "done";
+          else if (body) drafted = (await run({ ...base, detail: { ...base.detail, body, writtenFrom: written.from } })) === "done";
         } catch (e) {
           // Planned again in the next pass; what is already done is not repeated.
           console.error("[engine] reply failed:", (e as Error).message);

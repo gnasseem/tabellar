@@ -216,7 +216,7 @@ export async function rebuildSenders(userId: string, only?: Set<string>): Promis
 // ── Bulk mail ───────────────────────────────────────────────────────────────
 
 // Addresses at these domains are people, not one company.
-const SHARED_DOMAINS = new Set(["gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "yahoo.com", "icloud.com", "me.com", "proton.me", "protonmail.com", "aol.com"]);
+export const SHARED_DOMAINS = new Set(["gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com", "yahoo.com", "icloud.com", "me.com", "proton.me", "protonmail.com", "aol.com"]);
 
 export type Written = { addresses: Set<string>; domains: Set<string> };
 

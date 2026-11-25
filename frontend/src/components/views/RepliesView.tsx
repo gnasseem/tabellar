@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import Icon from "@/components/Icon";
+import WrittenFrom from "@/components/WrittenFrom";
 import { createClient } from "@/lib/db";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
@@ -115,7 +116,7 @@ export default function RepliesView() {
         const forward = x.detail?.forward ?? null;
         const src = (!forward && sources.get(x.email_id)) || null;
         const text = String(x.detail?.body ?? "");
-        return { id: x.id, going: false, proposal: { id: x.id, hash: x.hash }, to: x.detail?.to || [], subject: x.detail?.subject || "", html: toHtml(text), text, at: src?.received_at || x.created_at, source: src, forwarded: sources.get(forward?.email_id), raw: { account_id: x.detail?.accountId, from_address: x.detail?.from, email_id: forward ? null : x.email_id, forward, source: "tabellar" } };
+        return { id: x.id, going: false, proposal: { id: x.id, hash: x.hash }, to: x.detail?.to || [], subject: x.detail?.subject || "", html: toHtml(text), text, at: src?.received_at || x.created_at, source: src, forwarded: sources.get(forward?.email_id), raw: { account_id: x.detail?.accountId, from_address: x.detail?.from, email_id: forward ? null : x.email_id, forward, source: "tabellar", written_from: x.detail?.writtenFrom } };
       }),
     ];
     setReplies(out);
@@ -493,6 +494,7 @@ export default function RepliesView() {
                     dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(cursor.html || "<p>This draft is empty.</p>", { FORBID_TAGS: ["style", "img"], FORBID_ATTR: ["style"] }) }}
                   />
                 )}
+                <WrittenFrom key={cursor.id} from={cursor.raw.written_from} className="mt-5 border-t border-line-soft pt-3" />
               </div>
             </div>
             <div className="flex flex-none flex-wrap items-center gap-2 border-t border-line py-[11px] pl-6 pr-4 md:pl-10">
@@ -535,7 +537,7 @@ export default function RepliesView() {
                   <button className="btn" onClick={() => edit(cursor)}>
                     Edit
                   </button>
-                  <small className="ml-1.5 hidden whitespace-nowrap text-xs text-ink3 xl:block">{cursor.source && !cursor.raw.cc_addresses?.length && !cursor.raw.bcc_addresses?.length ? `To ${recipient(cursor).split(" ")[0]} only, same thread` : ""}</small>
+                  <small className="ml-1.5 hidden whitespace-nowrap text-xs text-ink3 2xl:block">{cursor.source && !cursor.raw.cc_addresses?.length && !cursor.raw.bcc_addresses?.length ? `To ${recipient(cursor).split(" ")[0]} only, same thread` : ""}</small>
                 </>
               )}
               <span className="flex-1" />

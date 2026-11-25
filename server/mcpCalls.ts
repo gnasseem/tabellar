@@ -20,7 +20,7 @@ import { looksLikeInstructions, type Kind } from "./policy.ts";
 import { allPrefs, displayName, pick } from "./profile.ts";
 import { prepFor } from "./prep.ts";
 import { userCalendar } from "./providers.ts";
-import { draftReply, writeTo, HOLD, type EmailRow } from "./replies.ts";
+import { draftReply, writeTo, HOLD, type EmailRow, type Source } from "./replies.ts";
 import { modelConfigured } from "./llm.ts";
 import { ownAddresses } from "./senders.ts";
 import { ownWords, writingFor } from "./writing.ts";
@@ -91,7 +91,7 @@ async function doIt(userId: string, p: Planned & { kind: Kind }, done: string, w
 }
 
 // A draft of a reply, or of a new email when there is no email it answers.
-async function draft(userId: string, to: string[], subject: string, body: string, e: Row | null): Promise<string> {
+async function draft(userId: string, to: string[], subject: string, body: string, e: Row | null, writtenFrom: Source[] = []): Promise<string> {
   const account = e ? await accountById(userId, e.account_id) : await defaultAccount(userId);
   if (!account) throw fail("There is no mailbox to write from", 409);
   const from = e ? replyFrom(account, e as { recipients?: string | null }) : (defaultFrom(account) ?? addressesOf(account)[0]?.address);
@@ -99,7 +99,7 @@ async function draft(userId: string, to: string[], subject: string, body: string
   const state = unsendable(to, body);
   return doIt(
     userId,
-    { kind: "draft", emailId: e ? String(e.id) : null, summary: e ? `Draft a reply to ${who}` : `Draft an email to ${who}`, detail: { to, subject, body, accountId: account.id, from } },
+    { kind: "draft", emailId: e ? String(e.id) : null, summary: e ? `Draft a reply to ${who}` : `Draft an email to ${who}`, detail: { to, subject, body, writtenFrom, accountId: account.id, from } },
     `Drafted to ${who}. It is in Replies, and nothing was sent.${state ? ` ${state}` : ""}\n\n${body}`,
     `Drafted to ${who}. It waits in Replies for the user to approve, and nothing was sent.\n\n${body}`,
     e ?? undefined,
@@ -196,12 +196,14 @@ const CALLS: Record<string, (userId: string, a: Args) => Promise<unknown>> = {
     const to = String(e.reply_to_email || e.sender_email || "").trim();
     if (isSent(e) || !to) throw fail("That is not an email to the user that can be answered");
     let body = str(a.text);
+    let from: Source[] = [];
     if (!body) {
       if (!modelConfigured()) throw fail("No model is set up in Tabellar, so give the reply as text", 409);
-      body = (await draftReply(userId, e as unknown as EmailRow, str(a.say))).trim();
+      ({ text: body, from } = await draftReply(userId, e as unknown as EmailRow, str(a.say)));
+      body = body.trim();
       if (!body || HOLD.test(body)) throw fail("No reply could be written from that. Give the reply as text.", 409);
     }
-    return draft(userId, [to], /^re:/i.test(String(e.subject ?? "")) ? String(e.subject) : `Re: ${e.subject ?? ""}`, body, e);
+    return draft(userId, [to], /^re:/i.test(String(e.subject ?? "")) ? String(e.subject) : `Re: ${e.subject ?? ""}`, body, e, from);
   },
 
   async draft_email(userId, a) {
@@ -209,14 +211,16 @@ const CALLS: Record<string, (userId: string, a: Args) => Promise<unknown>> = {
     if (!check.ok) throw fail(check.error ?? "to is a list of addresses");
     const subject = need(a, "subject");
     let body = str(a.text);
+    let from: Source[] = [];
     if (!body) {
       const say = str(a.say);
       if (!say) throw fail("Give the email as text, or what to say as say");
       if (!modelConfigured()) throw fail("No model is set up in Tabellar, so give the email as text", 409);
-      body = (await writeTo(userId, { to: check.emails![0], subject, intent: say })).trim();
+      ({ text: body, from } = await writeTo(userId, { to: check.emails![0], subject, intent: say }));
+      body = body.trim();
       if (!body) throw fail("No email could be written from that. Give it as text.", 409);
     }
-    return draft(userId, check.emails!, subject, body, null);
+    return draft(userId, check.emails!, subject, body, null, from);
   },
 
   async add_todo(userId, a) {

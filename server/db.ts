@@ -191,6 +191,8 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       // looked at, and when the user changed it, here or there (drafts.ts).
       gmail_draft_id: "text", mailbox_version: "text", edited_at: "time",
       forward: "json", read_receipt: "bool ! =false",
+      // What Tabellar wrote it from (Source in replies.ts).
+      written_from: "json",
       created_at: "time ! =now",
     },
   },

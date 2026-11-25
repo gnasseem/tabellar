@@ -271,7 +271,7 @@ console.log("Autopilot");
 const { drafter } = await import("./engine.ts");
 const { sendDueEmails } = await import("./outbox.ts");
 const { undo } = await import("./actions.ts");
-drafter.draft = async () => "Hi Ann,\n\nYes, Thursday works. See you then.\n\nBest";
+drafter.draft = async () => ({ text: "Hi Ann,\n\nYes, Thursday works. See you then.\n\nBest", from: [] });
 await db.from("profiles").update({ autonomy_level: "autopilot", autopilot_delay_min: 5, autopilot_daily_cap: 10, autopilot_known_only: true }).eq("id", userId);
 await db.from("action_log").delete().eq("user_id", userId);
 await db.from("emails").insert({ user_id: userId, gmail_id: "sent-before", account_id: account!.id, recipients: "Ann <ann@example.org>", label_ids: ["SENT"], received_at: new Date(now - 86_400_000).toISOString() });
@@ -379,7 +379,7 @@ ok("a reply goes to the Reply-To address the email asked for, and nowhere else",
   assert.equal(redirected.row, null, "replies@example.org was never written to, so it is drafted");
 });
 
-drafter.draft = async () => "HOLD";
+drafter.draft = async () => ({ text: "HOLD", from: [] });
 const held = await incoming("ann@example.org");
 ok("when the model holds, the reply becomes a draft", () => {
   assert.equal(held.row, null);
@@ -534,6 +534,31 @@ ok("a reply is written from the thread, other mail with the person, files, todos
 });
 ok("not from quoted copies, other people's mail or events, or anything that instructs an AI", () => {
   for (const t of ["long ago", "Secret samples", "Board secrets", "PURPLE", "ignore all previous"]) assert.ok(!given.prompt.includes(t), t);
+});
+ok("what it was written from is said, each part with what opens it", () => {
+  assert.deepEqual(given.given.map((g) => g.kind), ["thread", "email", "file", "todos", "calendar"]);
+  assert.match(given.given[1].label, /^your email of \d+ \w+$/);
+  assert.equal(given.given[2].label, "colours.csv");
+  assert.ok(given.given[1].email_id && given.given[2].email_id === asking.id);
+});
+// Others at the sender's company, and in the thread, on the same subject only.
+await replyMail("deal-b", { thread_id: "deal-b", sender: "Bea Ruiz <bea@client.example>", sender_email: "bea@client.example", subject: "Harbour deal figures", body_text: "For the harbour deal the final price is 48,250 with delivery in March.", received_at: hoursAgo(60) });
+await replyMail("deal-c", { thread_id: "deal-c", sender: "Bea Ruiz <bea@client.example>", sender_email: "bea@client.example", subject: "Parking", body_text: "The parking price is 7,777.", received_at: hoursAgo(50) });
+await replyMail("deal-d", { thread_id: "deal-d", sender: "Cy <cy@other.example>", sender_email: "cy@other.example", subject: "Harbour deal", body_text: "We offered 61,111 for the harbour deal.", received_at: hoursAgo(40) });
+await replyMail("deal-e", { thread_id: "deal-e", sender: "Di <di@broker.example>", sender_email: "di@broker.example", subject: "Harbour deal survey", body_text: "The harbour deal survey costs 3,140.", received_at: hoursAgo(30) });
+const dealing = await replyMail("deal-a", { thread_id: "deal-a", recipients: "maya@lumen.example", cc_recipients: "Di <di@broker.example>", subject: "Re: Harbour deal", body_text: "Hi Maya,\n\nWhat is the final price of the harbour deal, please?\n\nAnn" });
+const dealt = await replies.draftContext(replyUser, dealing);
+ok("a colleague's and a copied person's mail on the same subject is there, nobody else's and nothing else", () => {
+  for (const t of ["48,250", "3,140"]) assert.ok(dealt.prompt.includes(t), t);
+  for (const t of ["7,777", "61,111"]) assert.ok(!dealt.prompt.includes(t), t);
+  assert.ok(dealt.given.some((g) => /^Bea Ruiz's email of /.test(g.label)));
+});
+const begin = await replies.draftContext(replyUser, { id: "", subject: "Harbour deal", sender: "Ann Lee <ann@client.example>", sender_email: "ann@client.example", reply_to_email: null, body_text: "Tell Ann the final price of the harbour deal", snippet: null, received_at: null }, undefined, true);
+ok("a new email to someone is written from the same, with no email to answer", () => {
+  assert.ok(begin.prompt.includes("48,250") && !begin.prompt.includes("The email to answer"));
+  const w = { kind: null, greeting: "Hi {name},", closing: "Best,\nMaya", tone: "", length: "", rules: ["never say leverage"], avoid: ["circle back"] };
+  const p = replies.problemsIn("Hi Ann,\n\nThe final price is 48,250, and I have sent you the contract of 9,999.\n\nBest,\nMaya", w, begin, "Tell Ann the final price");
+  assert.deepEqual([p.facts, p.done.length], [["9,999"], 1]);
 });
 const tight = await replies.draftContext(replyUser, { ...asking, body_text: `${"Very long. ".repeat(2000)}` }, replies.LOCAL);
 ok("a local model's share is bounded", () => assert.ok(tight.prompt.length < 7500, String(tight.prompt.length)));
@@ -696,7 +721,7 @@ const ownStored = await storeInbox(userId, acct, [
   { gmail_id: "from-alias", thread_id: "fa", subject: "Note to self", sender: "Me <me.alias@example.net>", sender_email: "me.alias@example.net", recipients: "me@example.com", snippet: "", body_text: "x", body_html: "", received_at: new Date().toISOString(), is_read: false, label_ids: ["INBOX"], has_attachments: false, attachments: [], has_list_unsubscribe: false, is_reply: false, is_calendar: false, calendar_event: null },
 ]);
 ok("mail from the user's own alias is not stored as inbox mail", () => assert.equal(ownStored.length, 0));
-drafter.draft = async () => "Hi Ann,\n\nYes, Thursday works.\n\nBest";
+drafter.draft = async () => ({ text: "Hi Ann,\n\nYes, Thursday works.\n\nBest", from: [] });
 const toAlias = await incoming("ann@example.org", { to: "me.alias@example.net" });
 await fallDue(toAlias.row.id);
 const sentBefore = sent.length;
@@ -1591,9 +1616,9 @@ auto.models.answer = async (q, m) => {
   // A model that says yes to everything, and quotes what is not there.
   return line ? { yes: true, quote: line } : { yes: true, quote: "Please find the invoice in this email" };
 };
-auto.models.reply = async (_u, _e, say) => `Hi,\n\n${say || "Thank you for this."}\n\nPat`;
-auto.models.forward = async (_u, _e, _to, note) => note || "Here is one to pay.";
-auto.models.nudge = async () => "Hi,\n\nAny news on this?\n\nPat";
+auto.models.reply = async (_u, _e, say) => ({ text: `Hi,\n\n${say || "Thank you for this."}\n\nPat`, from: [] });
+auto.models.forward = async (_u, _e, _to, note) => ({ text: note || "Here is one to pay.", from: [] });
+auto.models.nudge = async () => ({ text: "Hi,\n\nAny news on this?\n\nPat", from: [] });
 
 const refused = (raw: unknown, sentence: string, why: RegExp, labels: never[] = []) => assert.throws(() => auto.checkSpec(raw, sentence, { labels, accounts: ["pat@own.example"] }), (e: Error) => why.test(e.message), sentence);
 const mailSpec = (actions: unknown[], conditions: unknown = {}) => ({ trigger: { on: "mail" }, conditions, actions });
@@ -3180,7 +3205,7 @@ if (modelConfigured()) {
   const { setPref } = await import("./profile.ts");
   await setPref(penUser, "writing", "", "never open with I hope this finds you well", "user");
   await setPref(penUser, "writing", "", "Sign off with Cheers, Pen", "user");
-  const ruled = await draftReply(penUser, { id: "", subject: "Dates", sender: "Ann Lee <ann@client.example>", sender_email: "ann@client.example", reply_to_email: null, body_text: "Hi Pen,\n\nI hope this email finds you well. Which day next week suits you?\n\nAnn", snippet: null, received_at: null }, "Tuesday suits. Open politely.");
+  const { text: ruled } = await draftReply(penUser, { id: "", subject: "Dates", sender: "Ann Lee <ann@client.example>", sender_email: "ann@client.example", reply_to_email: null, body_text: "Hi Pen,\n\nI hope this email finds you well. Which day next week suits you?\n\nAnn", snippet: null, received_at: null }, "Tuesday suits. Open politely.");
   console.log(`      ${ruled.replace(/\n+/g, " / ")}`);
   ok("a draft from the configured model keeps the user's writing rules", () => {
     assert.ok(!writing.says(ruled, "I hope this finds you well"), ruled);
@@ -3199,6 +3224,18 @@ if (modelConfigured()) {
     { name: "a price is left to the user", before: "Please go ahead with the $6,200 quote.", body: "Hi Maya,\n\nThe venue wants fire-rated banners, which adds $1,850, $8,050 in all. OK to go ahead?\n\nJo", choice: true },
     { name: "a French invitation is answered in French", from: "Luc Martin <luc@atelier.example>", body: "Bonjour Maya,\n\nNous organisons une visite de l'atelier le 3 décembre à 14 h. Pourrez-vous être des nôtres ?\n\nLuc", choice: true, has: /Bonjour Luc/, signoff: "Cordialement,\nMaya" },
   ];
+  // A figure only a colleague's email holds, and a new email to someone known.
+  const priced = await replies.draftReply(replyUser, dealing);
+  console.log(`      ${priced.text.replace(/\n+/g, " / ")} (from ${priced.from.map((f) => f.label).join(", ")})`);
+  const begun = await replies.writeTo(replyUser, { to: "Ann Lee <ann@client.example>", subject: "Harbour deal", intent: "Tell Ann the final price of the harbour deal and ask when the papers come" });
+  console.log(`      ${begun.text.replace(/\n+/g, " / ")} (from ${begun.from.map((f) => f.label).join(", ")})`);
+  ok("a reply quotes the figure a colleague's email holds and names it; a new email to someone known holds to the facts", () => {
+    assert.match(priced.text, /48,?250/);
+    assert.ok(priced.from.findIndex((f) => /^Bea Ruiz's email/.test(f.label)) < 2, JSON.stringify(priced.from));
+    assert.match(begun.text, /48,?250/);
+    assert.deepEqual(replies.madeUp(begun.text, `${begin.sources} Maya Ann`), []);
+    assert.ok(begun.text.endsWith("Best,\nMaya"), begun.text);
+  });
   const poor: string[] = [];
   let spent = 0;
   for (const [i, c] of REPLIES.entries()) {
@@ -3207,7 +3244,7 @@ if (modelConfigured()) {
     if (c.before) await replyMail(`rm-${i}-0`, { thread_id: `rm-${i}`, label_ids: ["SENT"], sender: null, sender_email: null, recipients: from, body_text: `Hi Jo,\n\n${c.before}\n\nBest,\nMaya`, received_at: hoursAgo(40) });
     const e = await replyMail(`rm-${i}`, { thread_id: `rm-${i}`, sender: from, sender_email: address, subject: "Question", body_text: c.body });
     const started = Date.now();
-    const text = await replies.draftReply(replyUser, e);
+    const { text } = await replies.draftReply(replyUser, e);
     spent += Date.now() - started;
     console.log(`      ${text.replace(/\n+/g, " / ")}`);
     const bad = [

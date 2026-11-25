@@ -517,11 +517,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       if (body.email_id) {
         const { data: e } = await db.from("emails").select("*").eq("id", body.email_id).eq("user_id", userId).maybeSingle();
         if (!e) return json({ error: "Email not found" }, 404, corsHeaders);
-        return json({ draft: await draftReply(userId, e as unknown as EmailRow, String(body.intent ?? "")) }, 200, corsHeaders);
+        const { text, from } = await draftReply(userId, e as unknown as EmailRow, String(body.intent ?? ""));
+        return json({ draft: text, from }, 200, corsHeaders);
       }
 
-      const draft = await writeTo(userId, { to: String(body.to ?? ""), intent: String(body.intent ?? ""), subject: String(body.subject ?? ""), senderName: body.senderName, replyTo: body.replyTo, forward: body.forward });
-      return json({ draft }, 200, corsHeaders);
+      const { text, from } = await writeTo(userId, { to: String(body.to ?? ""), intent: String(body.intent ?? ""), subject: String(body.subject ?? ""), senderName: body.senderName, replyTo: body.replyTo, forward: body.forward });
+      return json({ draft: text, from }, 200, corsHeaders);
     }
 
     // ── POST /refine-draft ─────────────────────────────────────────────────

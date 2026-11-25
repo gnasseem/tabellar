@@ -665,8 +665,9 @@ async function reply(p: Pass, a: Automation, say: string, m: Mail, suspicious: b
   if (wouldRefuse(p, a, suspicious)) return doIt(p, a, plan, { suspicious });
   // One draft for an email, and none over the user's own in the thread.
   if ((await threadDrafts(p.userId, m.id)).some((d) => d.email_id === m.id || d.source !== "tabellar" || d.edited_at)) return "refused";
-  const body = (await models.reply(p.userId, m, say)).trim();
-  return body ? doIt(p, a, { ...plan, detail: { ...plan.detail, body } }, { suspicious }) : "refused";
+  const { text, from: writtenFrom } = await models.reply(p.userId, m, say);
+  const body = text.trim();
+  return body ? doIt(p, a, { ...plan, detail: { ...plan.detail, body, writtenFrom } }, { suspicious }) : "refused";
 }
 
 async function forward(p: Pass, a: Automation, x: { to: string; note: string }, m: Mail, suspicious: boolean): Promise<Made> {
@@ -674,7 +675,7 @@ async function forward(p: Pass, a: Automation, x: { to: string; note: string }, 
   const base = { to: [x.to], subject, accountId: m.account_id, forward: { email_id: m.id } };
   const plan: Planned = { kind: "draft", emailId: m.id, summary: `Draft a forward to ${x.to}`, detail: base };
   if (wouldRefuse(p, a, suspicious)) return doIt(p, a, plan, { suspicious });
-  const body = (await models.forward(p.userId, m, x.to, x.note).catch(() => x.note)).trim();
+  const body = (await models.forward(p.userId, m, x.to, x.note).catch(() => ({ text: x.note }))).text.trim();
   const handOn = { to: [x.to], typed: addressesIn(a.text) };
   const may = decide({ kind: "send", source: "automation", ...p.settings, own: a.mode === "own", suspicious, handOn, sentToday: p.sent, sendCap: p.sendCap, todayCount: p.today.get(a.id) ?? 0 }).verdict === "do";
   if (may && body && !GAP.test(body)) return doIt(p, a, { kind: "send", emailId: m.id, summary: `Forward to ${x.to}`, detail: { ...base, body, delayMinutes: p.delayMinutes } }, { suspicious, handOn });
@@ -819,8 +820,9 @@ async function onSilence(p: Pass, a: Automation): Promise<void> {
         if (r === "done") tell(p, who, `No answer yet: ${sent.subject || "(no subject)"}`);
       } else if (x.do === "reply" && !wouldRefuse(p, a, false) && !(await threadDrafts(p.userId, sent.id)).length) {
         const { data: e } = await db.from("emails").select("*").eq("id", sent.id).maybeSingle();
-        const body = e ? (await models.nudge(p.userId, e as unknown as EmailRow, to.name ? `${to.name} <${to.email}>` : to.email, x.say)).trim() : "";
-        if (body) r = await run("draft", `Draft a follow-up to ${who}`, { to: [to.email], subject: replySubject(sent.subject), accountId: e!.account_id ?? null, body });
+        const drafted = e ? await models.nudge(p.userId, e as unknown as EmailRow, to.name ? `${to.name} <${to.email}>` : to.email, x.say) : null;
+        const body = drafted?.text.trim() ?? "";
+        if (body) r = await run("draft", `Draft a follow-up to ${who}`, { to: [to.email], subject: replySubject(sent.subject), accountId: e!.account_id ?? null, body, writtenFrom: drafted!.from });
       }
       if (r === "done" || r === "proposed") made = true;
     }

@@ -1,6 +1,7 @@
 import { forwardRef, useImperativeHandle, useState, useEffect, useRef } from "react";
 import DOMPurify from "dompurify";
 import Icon from "@/components/Icon";
+import WrittenFrom, { type Source } from "@/components/WrittenFrom";
 import { createClient } from "@/lib/db";
 import { choicesOf, choose } from "../../../server/choices.ts";
 import { useApp } from "./AppShell";
@@ -279,6 +280,7 @@ const ComposeModal = forwardRef<ComposeHandle, ComposeProps>(function ComposeMod
     !!replyTo?._autoGenerate,
   );
   const [aiGenerated, setAiGenerated] = useState(false);
+  const [writtenFrom, setWrittenFrom] = useState<Source[]>(draft?.written_from ?? []);
   const [showRefinePanel, setShowRefinePanel] = useState(false);
   const [refineFeedback, setRefineFeedback] = useState("");
   const [keepFeedback, setKeepFeedback] = useState(false);
@@ -520,6 +522,7 @@ const ComposeModal = forwardRef<ComposeHandle, ComposeProps>(function ComposeMod
         setBody(data.draft);
         drafted.current = data.draft;
         setAiGenerated(true);
+        setWrittenFrom(data.from ?? []);
         setShowRefinePanel(false);
         setRefineFeedback("");
       } else if (!quiet) {
@@ -1351,6 +1354,8 @@ const ComposeModal = forwardRef<ComposeHandle, ComposeProps>(function ComposeMod
             </button>
           </p>
         )}
+
+        {!busy && <WrittenFrom from={writtenFrom} className="pb-1.5" />}
 
         {!busy && !showRefinePanel && aiGenerated && (
           <p className="pb-2.5 text-xs text-ink3">

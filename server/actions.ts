@@ -160,7 +160,7 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
     // A conversation of its own, with the email it hands on.
     const { data, error } = await db
       .from("draft_emails")
-      .insert({ user_id: userId, account_id: d.accountId ?? null, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body ?? "")), source: "tabellar", forward: d.forward })
+      .insert({ user_id: userId, account_id: d.accountId ?? null, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body ?? "")), source: "tabellar", forward: d.forward, written_from: d.writtenFrom ?? null })
       .select("id")
       .single();
     if (error) throw new Error(error.message);
@@ -174,7 +174,7 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
       .from("draft_emails")
       .insert({
         user_id: userId, account_id: d.accountId ?? null, from_address: d.from ?? null, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body)), email_id: p.emailId, source: "tabellar",
-        gmail_draft_id: before[0]?.gmail_draft_id ?? null, mailbox_version: before[0]?.mailbox_version ?? null,
+        written_from: d.writtenFrom ?? null, gmail_draft_id: before[0]?.gmail_draft_id ?? null, mailbox_version: before[0]?.mailbox_version ?? null,
       })
       .select("id")
       .single();

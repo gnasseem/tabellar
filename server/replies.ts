@@ -1,9 +1,11 @@
 // Reply drafts: what one is written from, and what it may say.
 //
 // The model is given what a good assistant would look at (draftContext): the
-// thread, what else was written with the same person, the text of the files
+// thread, what else was written with the same person, what the others in the
+// thread or at that company wrote on the same subject, the text of the files
 // attached, the open todos and meetings with them and the calendar on the days
-// the email names. A local model gets a tight, ranked selection, a cloud model
+// the email names. A new email to someone is written from the same. What a
+// draft was given is kept with it, for the user to see (Source). A local model gets a tight, ranked selection, a cloud model
 // more. The parts that are the same for every reply come first, so a local
 // model can reuse the work it did on them.
 //
@@ -26,7 +28,7 @@ import { GAP, looksLikeInstructions } from "./policy.ts";
 import { displayName, profileContext } from "./profile.ts";
 import { calendarAccount, mail, type AttachmentInfo } from "./providers.ts";
 import { daysIn, todayIn } from "./rules.ts";
-import { addressesIn, isBulk, ownAddresses, writtenTo } from "./senders.ts";
+import { addressesIn, isBulk, ownAddresses, SHARED_DOMAINS, writtenTo } from "./senders.ts";
 import { listAccounts } from "./accounts.ts";
 import { broken, CLOSING, displayNameOf, keepRules, ownWords, recipients, splitQuoted, stylePrompt, writingFor, type Recipient, type Writing } from "./writing.ts";
 
@@ -98,37 +100,37 @@ export function withoutFooter(text: string): string {
 
 const dayAs = (iso: string, tz: string, time = true) => new Date(iso).toLocaleString("en-US", { timeZone: tz, weekday: "short", day: "numeric", month: "short", ...(time ? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } : {}) });
 
-type Stored = { id: string; thread_id: string | null; subject: string | null; sender: string | null; sender_email: string | null; recipients: string | null; body_text: string | null; snippet: string | null; received_at: string; label_ids: string[] | null };
+type Stored = { id: string; thread_id: string | null; subject: string | null; sender: string | null; sender_email: string | null; recipients: string | null; cc_recipients: string | null; body_text: string | null; snippet: string | null; received_at: string; label_ids: string[] | null };
 
 // The text of the files attached to the email.
-async function filesText(userId: string, e: EmailRow, about: Set<string>, cap: number): Promise<string> {
+async function filesText(userId: string, e: EmailRow, about: Set<string>, cap: number): Promise<{ name: string; text: string }[]> {
   const files = (e.attachments ?? []).filter((a) => readable(a.filename, a.mime_type) && a.size <= MAX_FILE).slice(0, MAX_FILES);
-  if (!files.length || !e.gmail_id) return "";
+  if (!files.length || !e.gmail_id) return [];
   const account = (await listAccounts(userId)).find((a) => a.id === e.account_id);
-  if (!account) return "";
-  const out: string[] = [];
+  if (!account) return [];
+  const out: { name: string; text: string }[] = [];
   for (const f of files) {
     try {
       const got = await mail(account).attachment(account, e.gmail_id, f.attachment_id);
       const text = got ? await fileText(f.filename, f.mime_type, Buffer.from(got.data, "base64url")) : "";
-      if (text && !looksLikeInstructions(text)) out.push(`Attached file "${f.filename}":\n${gist(text, about, Math.floor(cap / files.length))}`);
+      if (text && !looksLikeInstructions(text)) out.push({ name: f.filename, text: `Attached file "${f.filename}":\n${gist(text, about, Math.floor(cap / files.length))}` });
     } catch (err) {
       console.error("[replies] reading an attachment:", (err as Error).message);
     }
   }
-  return out.join("\n\n");
+  return out;
 }
 
 // What is on the calendar on the days the email names: when the user is taken,
 // and by name only what is with this person.
-async function calendarLines(userId: string, text: string, sent: Date, people: string[], tz: string): Promise<string[]> {
+async function calendarLines(userId: string, text: string, sent: Date, people: string[], tz: string): Promise<{ day: string; line: string }[]> {
   const days = daysIn(text, todayIn(tz, sent)).slice(0, 3);
   if (!days.length) return [];
   const cal = calendarAccount(await listAccounts(userId));
   if (!cal) return [];
   const iso = (d: { y: number; m: number; d: number }) => `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
   const today = iso(todayIn(tz, new Date()));
-  const out: string[] = [];
+  const out: { day: string; line: string }[] = [];
   for (const d of days) {
     if (iso(d) < today) continue;
     try {
@@ -137,7 +139,7 @@ async function calendarLines(userId: string, text: string, sent: Date, people: s
       const at = (t: string) => new Date(t).toLocaleTimeString("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit" });
       const taken = events.map((x) => `${at(x.start!)} to ${at(x.end ?? x.start!)}${x.people.some((p) => people.includes(lc(p))) ? ` ("${x.title}", with them)` : ""}`);
       const name = new Date(noon).toLocaleDateString("en-US", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long" });
-      out.push(`- The user's calendar on ${name}: ${taken.length ? `taken ${taken.join(", ")}` : "nothing on it"}`);
+      out.push({ day: name.split(",")[0], line: `- The user's calendar on ${name}: ${taken.length ? `taken ${taken.join(", ")}` : "nothing on it"}` });
     } catch (err) {
       console.error("[replies] calendar:", (err as Error).message);
       return out;
@@ -146,11 +148,18 @@ async function calendarLines(userId: string, text: string, sent: Date, people: s
   return out;
 }
 
-export type Context = { prompt: string; sources: string; mine: string; own: string; about: string; who: string };
+// One thing a draft was written from, in words for the user, and what opens it.
+export type Source = { kind: "thread" | "email" | "file" | "todos" | "meeting" | "calendar"; label: string; email_id?: string };
+export type Drafted = { text: string; from: Source[] };
+type Given = Source & { text: string };
 
-// Everything a reply to `e` is written from. `sources` is all of it as one
-// text and `mine` what the user wrote in the thread, for the checks on the draft.
-export async function draftContext(userId: string, e: EmailRow, budget: Budget = isLocalModel() ? LOCAL : CLOUD): Promise<Context> {
+export type Context = { prompt: string; sources: string; mine: string; own: string; about: string; who: string; given: Given[] };
+
+// Everything a reply to `e` is written from, or, `fresh`, a new email to its
+// sender, with what the user wants to say as its text. `sources` is all of it
+// as one text and `mine` what the user wrote in the thread, for the checks on
+// the draft; `given` is its parts.
+export async function draftContext(userId: string, e: EmailRow, budget: Budget = isLocalModel() ? LOCAL : CLOUD, fresh = false): Promise<Context> {
   const [me, ownSet, { data: profile }] = await Promise.all([displayNameOf(userId), ownAddresses(userId), db.from("profiles").select("working_hours").eq("id", userId).maybeSingle()]);
   const tz = (profile?.working_hours as { timezone?: string } | null)?.timezone || "UTC";
   const sent = e.received_at ? new Date(e.received_at) : new Date();
@@ -163,7 +172,7 @@ export async function draftContext(userId: string, e: EmailRow, budget: Budget =
   const isMine = (m: Stored) => !!m.label_ids?.includes("SENT") || ownSet.has(lc(m.sender_email));
   const whoOf = (m: Stored) => (isMine(m) ? `${me || "The user"} (the user)` : displayName(m.sender, String(m.sender_email ?? "")));
   const safe = (m: Stored) => isMine(m) || !looksLikeInstructions(m.subject, m.body_text);
-  const FIELDS = "id, thread_id, subject, sender, sender_email, recipients, body_text, snippet, received_at, label_ids";
+  const FIELDS = "id, thread_id, subject, sender, sender_email, recipients, cc_recipients, body_text, snippet, received_at, label_ids";
   const textOf = (m: Stored) => withoutFooter(ownWords(String(m.body_text || m.snippet || "")));
 
   // The thread, newest first until the room is used, then in its order. Without
@@ -184,27 +193,47 @@ export async function draftContext(userId: string, e: EmailRow, budget: Budget =
   }
   const quoted = thread.length || looksLikeInstructions(full.quoted) ? "" : full.quoted.slice(0, budget.thread);
 
-  // The same person in other threads: what speaks of the same things, then the newest.
-  const others: string[] = [];
+  // The same person in other threads: what speaks of the same things, then the
+  // newest; and, only where the subject is the same, the others in the thread
+  // and at the sender's company.
+  const others: Given[] = [];
   if (address.includes("@")) {
+    const domain = address.split("@")[1];
+    const company = SHARED_DOMAINS.has(domain) || [...ownSet].some((a) => a.endsWith(`@${domain}`)) ? "" : domain.replace(/[%,()]/g, "");
+    const around = [...new Set([...thread, e].flatMap((m) => [lc(m.sender_email), ...addressesIn(`${m.recipients ?? ""},${m.cc_recipients ?? ""}`)]))].filter((a) => a.includes("@") && a !== address && !ownSet.has(a)).slice(0, 12);
+    const subject = words(String(e.subject ?? "").replace(/^((re|fwd?|aw|sv|tr)\s*:\s*)+/i, ""));
     const since = new Date(sent.getTime() - OTHERS_DAYS * DAY).toISOString();
     const base = () => db.from("emails").select(FIELDS).eq("user_id", userId).gte("received_at", since).neq("id", e.id || "-").eq("is_calendar", false).eq("is_receipt", false);
     const plain = address.replace(/[%,()]/g, "");
-    const [{ data: from }, { data: to }] = await Promise.all([
+    const beside = [...around.map((a) => `sender_email.ilike.${a.replace(/[%,()]/g, "")}`), ...(company ? [`sender_email.ilike.%@${company}`] : [])];
+    const sentTo = around.map((a) => `recipients.ilike.%${a.replace(/[%,()]/g, "")}%`);
+    const none = Promise.resolve({ data: [] as unknown[] });
+    const [{ data: from }, { data: to }, { data: theirCircle }, { data: toCircle }] = await Promise.all([
       base().ilike("sender_email", plain).order("received_at", { ascending: false }).limit(60),
       base().contains("label_ids", ["SENT"]).ilike("recipients", `%${plain}%`).order("received_at", { ascending: false }).limit(60),
+      subject.size && beside.length ? base().or(beside.join(",")).order("received_at", { ascending: false }).limit(120) : none,
+      subject.size && sentTo.length ? base().contains("label_ids", ["SENT"]).or(sentTo.join(",")).order("received_at", { ascending: false }).limit(60) : none,
     ]);
     const theirs = (m: Stored) => lc(m.sender_email) === address || addressesIn(m.recipients ?? "").includes(address);
-    const found = ([...(from ?? []), ...(to ?? [])] as unknown as Stored[])
-      .filter((m) => theirs(m) && (!e.thread_id || m.thread_id !== e.thread_id) && safe(m) && textOf(m))
+    const near = (m: Stored) => {
+      const who = isMine(m) ? addressesIn(m.recipients ?? "") : [lc(m.sender_email)];
+      return (who.some((a) => around.includes(a)) || (!!company && !isMine(m) && who[0].endsWith(`@${company}`))) && shares(String(m.subject ?? ""), subject) > 0;
+    };
+    const all = new Map(([...(from ?? []), ...(to ?? []), ...(theirCircle ?? []), ...(toCircle ?? [])] as unknown as Stored[]).map((m) => [m.id, m]));
+    const found = [...all.values()]
+      .filter((m) => (theirs(m) || near(m)) && (!e.thread_id || m.thread_id !== e.thread_id) && safe(m) && textOf(m))
       .map((m) => ({ m, score: shares(`${m.subject ?? ""} ${textOf(m)}`, about) }))
       .sort((a, b) => b.score - a.score || b.m.received_at.localeCompare(a.m.received_at));
     let left = budget.others;
     // Mail that shares nothing with this one says little, beyond the newest of it.
-    for (const { m } of [...found.filter((x) => x.score > 1), ...found.filter((x) => x.score <= 1).slice(0, 1)]) {
+    for (const { m } of [...found.filter((x) => x.score > 1), ...found.filter((x) => x.score <= 1 && theirs(x.m)).slice(0, 1)]) {
       if (left < 100) break;
       const text = gist(textOf(m), about, Math.min(budget.other, left)).replace(/\n+/g, " ");
-      others.push(`- ${whoOf(m)}, ${dayAs(m.received_at, tz, false)}, "${m.subject ?? ""}": ${text}`);
+      const to = isMine(m) ? ` to ${addressesIn(m.recipients ?? "")[0] ?? ""}` : "";
+      others.push({
+        kind: "email", email_id: m.id, text: `- ${whoOf(m)}${theirs(m) ? "" : to}, ${dayAs(m.received_at, tz, false)}, "${m.subject ?? ""}": ${text}`,
+        label: `${isMine(m) ? "your email" : `${displayName(m.sender, String(m.sender_email ?? ""))}'s email`} of ${new Date(m.received_at).toLocaleDateString("en-GB", { timeZone: tz, day: "numeric", month: "short" })}`,
+      });
       left -= text.length + 60;
     }
   }
@@ -222,28 +251,45 @@ export async function draftContext(userId: string, e: EmailRow, budget: Budget =
     profileContext(userId),
     profileContext(userId, { sender_email: e.sender_email, subject: e.subject, text: own }),
   ]);
-  const open: string[] = [];
-  for (const t of todos ?? []) open.push(`- Not done yet: ${t.text}${t.due ? ` (due ${t.due})` : ""}`);
+  const open: Given[] = [];
+  const due = (todos ?? []).map((t) => `- Not done yet: ${t.text}${t.due ? ` (due ${t.due})` : ""}`);
+  if (due.length) open.push({ kind: "todos", label: `${due.length} open todo${due.length === 1 ? "" : "s"}`, text: due.join("\n") });
   for (const m of meetings ?? []) {
     const theirs = people.includes(lc((m.emails as { sender_email?: string } | null)?.sender_email)) || JSON.stringify(m.attendees ?? "").toLowerCase().includes(address);
-    if (theirs && m.status !== "cancelled") open.push(`- Meeting ${m.status === "confirmed" ? "on the calendar" : "proposed, not agreed yet"}: ${m.title}, ${dayAs(String(m.start_time), tz)}`);
+    if (theirs && m.status !== "cancelled") open.push({ kind: "meeting", label: `the meeting "${m.title}"`, text: `- Meeting ${m.status === "confirmed" ? "on the calendar" : "proposed, not agreed yet"}: ${m.title}, ${dayAs(String(m.start_time), tz)}` });
   }
-  open.push(...calendar);
+  open.push(...calendar.map((c): Given => ({ kind: "calendar", label: `${c.day}'s calendar`, text: c.line })));
   const notes = (known ?? []).map((k) => `${k.entity}: ${k.info}`).join("\n").slice(0, budget.notes);
 
   const parts = [
     notes && `Notes on ${name}:\n${notes}`,
-    others.length && `Other emails with ${name}:\n${others.join("\n")}`,
-    open.length && `Now:\n${open.slice(0, 8).join("\n")}`,
+    others.length && `Other emails with ${name} and around this:\n${others.map((o) => o.text).join("\n")}`,
+    open.length && `Now:\n${open.flatMap((o) => o.text.split("\n")).slice(0, 8).join("\n")}`,
     lines.length && `Earlier in this thread, oldest first:\n\n${lines.join("\n\n")}`,
     quoted && `Quoted under the email:\n${quoted}`,
-    files,
-    `The email to answer, from ${name}, ${dayAs(sent.toISOString(), tz)}:\nSubject: ${e.subject ?? ""}\n\n${own.slice(0, budget.email)}`,
+    files.map((f) => f.text).join("\n\n"),
+    !fresh && `The email to answer, from ${name}, ${dayAs(sent.toISOString(), tz)}:\nSubject: ${e.subject ?? ""}\n\n${own.slice(0, budget.email)}`,
   ].filter(Boolean) as string[];
   const prompt = parts.join("\n\n");
   // What is said of this sender alone goes with the email; the rest is the same for every reply.
   const sender = whole.startsWith(who) ? whole.slice(who.length).trim() : "";
-  return { prompt, sources: `${whole}\n${prompt}\n${e.sender ?? ""} ${e.sender_email ?? ""}`, mine, own, about: sender, who };
+  const given: Given[] = [
+    ...(lines.length ? [{ kind: "thread" as const, label: "this thread", text: lines.join("\n"), ...(e.id ? { email_id: e.id } : {}) }] : []),
+    ...others,
+    ...files.map((f): Given => ({ kind: "file", label: f.name, text: f.text, email_id: e.id })),
+    ...open,
+  ];
+  return { prompt, sources: `${whole}\n${prompt}\n${e.sender ?? ""} ${e.sender_email ?? ""}`, mine, own: fresh ? "" : own, about: sender, who, given };
+}
+
+// What a draft was written from, what it takes a figure from first.
+const MOST_SOURCES = 8;
+function sourcesOf(c: Context, text: string): Source[] {
+  const figures = runs(text).filter((d) => d.length > 1);
+  const holds = (g: Given) => runs(g.text).some((d) => figures.includes(d));
+  const rank = (g: Given) => (g.kind === "thread" ? 2 : holds(g) ? 1 : 0);
+  const ranked = [...c.given].sort((a, b) => rank(b) - rank(a)).filter((g, i, list) => list.findIndex((x) => x.label === g.label) === i);
+  return ranked.slice(0, MOST_SOURCES).map(({ kind, label, email_id }) => ({ kind, label, ...(email_id ? { email_id } : {}) }));
 }
 
 // ── What a draft may say ────────────────────────────────────────────────────
@@ -467,7 +513,7 @@ export const HOLD = /^\W*HOLD\W*$/;
 // A reply to one email in the user's way of writing. `said` is what the user
 // wants to say, in their words; without it nothing is decided for them. ""
 // when nothing it may say is left.
-export async function draftReply(userId: string, e: EmailRow, said = "", opts: { kind?: Recipient; auto?: boolean } = {}): Promise<string> {
+export async function draftReply(userId: string, e: EmailRow, said = "", opts: { kind?: Recipient; auto?: boolean } = {}): Promise<Drafted> {
   const [writing, context, name] = await Promise.all([writingFor(userId, e.reply_to_email || e.sender_email, opts.kind), draftContext(userId, e), displayNameOf(userId)]);
   const lang = languageOf(`${e.subject ?? ""} ${context.own}`);
   const w = inLanguage(writing, lang);
@@ -478,52 +524,77 @@ export async function draftReply(userId: string, e: EmailRow, said = "", opts: {
     const raw = await generateDraft(ask, context.who, extra);
     return HOLD.test(raw) ? raw : signedOff(tidyChoices(raw, CLOSING, none), w, name);
   };
+  const out = (t: string): Drafted => ({ text: t, from: sourcesOf(context, t) });
   let text = await write();
-  if (HOLD.test(text)) return text;
+  if (HOLD.test(text)) return out(text);
   let p = problemsIn(text, w, context, said, sent);
   if (count(p)) {
     const next = await write(again(p, text, asksDecision(context.own)));
     const q = HOLD.test(next) ? null : problemsIn(next, w, context, said, sent);
-    if (!q) return next;
+    if (!q) return out(next);
     if (count(q) <= count(p)) [text, p] = [next, q];
   }
-  if (!count(p)) return text;
+  if (!count(p)) return out(text);
   const kept = tidyChoices(cut(text, p, w), CLOSING);
   // A greeting and a sign-off alone are no reply.
   const body = kept.replace(w.closing, "").split("\n").slice(1).join(" ");
-  return body.trim().split(/\s+/).filter(Boolean).length > 2 ? signedOff(kept, w, name) : "";
+  return out(body.trim().split(/\s+/).filter(Boolean).length > 2 ? signedOff(kept, w, name) : "");
+}
+
+// "Name <address>", or an address.
+function recipientOf(to: string): { name: string; address: string } {
+  return { name: to.match(/^(.*?)<[^>]+>\s*$/)?.[1].replace(/"/g, "").trim() ?? "", address: to.match(/<([^>]+)>/)?.[1].trim() ?? to.trim().split(/[\s,]/)[0] };
+}
+
+// What an email the user begins is written from: everything with the person
+// it goes to, and on its subject.
+async function freshContext(userId: string, to: { name: string; address: string }, subject: string, say: string): Promise<Context> {
+  const e: EmailRow = { id: "", subject, sender: to.name ? `${to.name} <${to.address}>` : to.address, sender_email: to.address, reply_to_email: null, body_text: say, snippet: null, received_at: null };
+  return draftContext(userId, e, undefined, true);
 }
 
 // A new email, one more in a thread the user wrote last in, or the note on an
-// email handed on, from a few words on what to say.
+// email handed on, from a few words on what to say; checked as a reply is.
 export async function writeTo(
   userId: string,
   m: { to: string; intent?: string; subject?: string; senderName?: string; replyTo?: { subject: string; body?: string }; forward?: { subject: string; from: string; body?: string } },
-): Promise<string> {
-  // "Name <address>", or an address.
-  const name = m.to.match(/^(.*?)<[^>]+>\s*$/)?.[1].replace(/"/g, "").trim() ?? "";
-  const address = m.to.match(/<([^>]+)>/)?.[1].trim() ?? m.to.trim().split(/\s/)[0];
-  const domain = address.split("@")[1] ?? "";
-  const first = name.split(" ")[0];
-  // People and companies that match the recipient.
-  const filters: string[] = [];
-  if (first.length > 1) filters.push(`entity.ilike.%${first}%`, `info.ilike.%${first}%`);
-  if (domain.length > 3) filters.push(`entity.ilike.%${domain}%`, `info.ilike.%${domain}%`);
-  const [writing, senderName, about, { data: facts }, { data: history }] = await Promise.all([
-    writingFor(userId, address),
-    m.senderName || displayNameOf(userId),
-    profileContext(userId, { sender_email: address, subject: m.subject ?? "", text: m.replyTo?.body ?? "" }),
-    filters.length ? db.from("knowledge_base").select("entity, entity_type, info").eq("user_id", userId).in("entity_type", ["person", "company"]).or(filters.join(",")).limit(8) : Promise.resolve({ data: [] }),
-    address ? db.from("email_memory").select("interaction_count, relationship_notes").eq("user_id", userId).eq("sender_email", address).maybeSingle() : Promise.resolve({ data: null }),
-  ]);
-  const background = [
-    about,
-    ((facts ?? []) as Record<string, unknown>[]).map((k) => `${k.entity} (${k.entity_type}): ${k.info}`).join("\n"),
-    history ? `Email history with ${address}: ${history.interaction_count} emails exchanged${history.relationship_notes ? `. ${history.relationship_notes}` : ""}` : "",
-  ].filter(Boolean);
-  return keepRules(writing, (extra) =>
-    composeDraft({ intent: m.intent ?? "", subject: m.subject ?? "", recipientName: name, senderName, replyTo: m.replyTo, forward: m.forward, style: stylePrompt(writing), extra, knowledgeContext: background.join("\n") || undefined }),
-  );
+): Promise<Drafted> {
+  const to = recipientOf(m.to);
+  const said = m.intent ?? "";
+  const subject = m.subject ?? m.replyTo?.subject ?? "";
+  const [w, senderName, c] = await Promise.all([writingFor(userId, to.address), m.senderName || displayNameOf(userId), freshContext(userId, to, subject, said)]);
+  const own = { ...c, sources: [c.sources, subject, m.replyTo?.body, m.forward?.subject, m.forward?.from, m.forward?.body].filter(Boolean).join("\n") };
+  const background = [c.who, c.about, c.prompt].filter(Boolean).join("\n\n");
+  const write = async (extra = "") => {
+    const raw = await composeDraft({ intent: said, subject: m.subject ?? "", recipientName: to.name, senderName, replyTo: m.replyTo, forward: m.forward, style: stylePrompt(w), extra, knowledgeContext: background || undefined });
+    return m.forward ? raw : signedOff(raw, w, senderName);
+  };
+  const text = await settled(await write(), w, own, said, write);
+  return { text, from: sourcesOf(c, text) };
+}
+
+// A text that says nothing it may not: as it is, written once more, or with
+// the sentences cut that still do.
+async function settled(first: string, w: Writing, c: Context, said: string, write: (extra: string) => Promise<string>): Promise<string> {
+  let text = first;
+  let p = problemsIn(text, w, c, said);
+  if (!count(p)) return text;
+  const next = await write(again(p, text, false));
+  const q = problemsIn(next, w, c, said);
+  if (count(q) <= count(p)) [text, p] = [next, q];
+  return count(p) ? cut(text, p, w) : text;
+}
+
+// A text another model wrote for the user (Ask), held to the same: `said` is
+// the user's own words and `seen` the mail it had before it.
+export async function checkedText(userId: string, m: { to: string; subject: string; text: string; said: string; seen: string; answers?: EmailRow | null }): Promise<Drafted> {
+  const to = recipientOf(m.to);
+  const [w, senderName, c] = await Promise.all([writingFor(userId, to.address), displayNameOf(userId), m.answers ? draftContext(userId, m.answers) : freshContext(userId, to, m.subject, m.said)]);
+  const own = { ...c, own: "", sources: `${c.sources}\n${m.subject}\n${m.seen}\n${senderName}` };
+  const write = (extra: string) =>
+    composeDraft({ intent: m.said, subject: m.subject, recipientName: to.name, senderName, replyTo: m.answers ? { subject: m.subject, body: ownWords(String(m.answers.body_text ?? "")) } : undefined, style: stylePrompt(w), extra, knowledgeContext: [c.who, c.about, c.prompt].filter(Boolean).join("\n\n") || undefined });
+  const text = await settled(m.text, w, own, m.said, write);
+  return { text, from: sourcesOf(c, text) };
 }
 
 // A reply to a real email from that kind of sender, to show how Tabellar
@@ -552,5 +623,5 @@ export async function sampleReply(userId: string, kind?: Recipient): Promise<{ w
     .sort((a, b) => Number(b.reply) - Number(a.reply) || String(b.e.received_at).localeCompare(String(a.e.received_at)));
   const made = { id: "", subject: "Thursday", sender: "Sam Lee <sam@example.org>", sender_email: "sam@example.org", reply_to_email: null, snippet: null, received_at: null, body_text: "Hi,\n\nAre you free on Thursday at 3 to go over the draft? If not, tell me what suits you better.\n\nSam" };
   const e: EmailRow = rows[0]?.e ?? made;
-  return { who: displayName(e.sender, e.sender_email ?? ""), subject: e.subject ?? "", text: ownWords(String(e.body_text ?? "")).slice(0, 600), example: !rows[0], draft: await draftReply(userId, e, "", { kind }) };
+  return { who: displayName(e.sender, e.sender_email ?? ""), subject: e.subject ?? "", text: ownWords(String(e.body_text ?? "")).slice(0, 600), example: !rows[0], draft: (await draftReply(userId, e, "", { kind })).text };
 }

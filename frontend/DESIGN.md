@@ -419,6 +419,9 @@ One column at 680px. The bar is back, the subject as its title, then the one act
 ### Email body
 The email's HTML is sanitised and shown in a sandboxed frame with no script, its height following its content and a layout wider than the frame scaled down to fit. Remote images and fonts are blocked until "Show images" (a link above the body, only when there are any); a blocked image gives way to its alt text. Quoted earlier messages (Gmail, Outlook, Apple Mail, plain "On ... wrote:" and ">" lines) are cut, with "Show quoted text" under the body; a forward is never cut. Mail with no HTML is set as text at 13 or 14px with links underlined. In the dark theme, dark text the email sets is lightened and near-white grounds are dropped.
 
+### What a draft was written from
+One 12px ink 3 line under the draft in Replies, the reader and compose: "Written from this thread, Bea Ruiz's email of 12 Nov, colours.csv and Thursday's calendar", each part an underlined link, at most four and then "3 more". An email opens over the window as a 680px dialog with its subject, sender and body; a file in the file dialog; todos and the calendar open their page. Nothing when the draft rests on the email alone.
+
 ### An open answer
 Where an email asks the user to decide, the draft holds the answers in place of the sentence: one row each, the label in an 84px column in medium wax ink, its words in ink 2, 6px corners, hover tone on hover. Taking one gives it the selected tone and ink; taking it again opens it. Two decisions are two groups with the letter between them. Rows in Replies say "To decide" in wax ink until every answer is taken, and Send says "Choose an answer first." Keys 1, 2 and 3 take the first answer still open. In compose the text shows the labels as they are and the labels are small buttons under it. Never a dialog, never a default.
 

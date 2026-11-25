@@ -1749,10 +1749,12 @@ export async function chatWithAssistant(
   history: { role: "user" | "assistant"; content: string }[],
   db?: Db,
   userId?: string,
-): Promise<{ reply: string; tool_calls: ChatToolCall[] }> {
+): Promise<{ reply: string; tool_calls: ChatToolCall[]; seen: string }> {
   requireModel();
   const systemPrompt = buildChatSystemPrompt(context);
   const allToolCalls: ChatToolCall[] = [];
+  // What the tools showed it, for the checks on what it writes.
+  const seen = () => messages.filter((m) => m.role === "tool").map((m) => m.content).join("\n");
 
   let messages: {
     role: string;
@@ -1794,7 +1796,7 @@ export async function chatWithAssistant(
         messages.push({ role: "user", content: reply.trim() ? "Call the tool itself instead of writing the call out." : "Please respond." });
         continue;
       }
-      return { reply, tool_calls: allToolCalls };
+      return { reply, tool_calls: allToolCalls, seen: seen() };
     }
 
     // Model wants to call tools  -  add assistant message and process each tool
@@ -2315,5 +2317,6 @@ export async function chatWithAssistant(
   return {
     reply: finalReply || "I could not finish that. Try asking for one part of it.",
     tool_calls: allToolCalls,
+    seen: seen(),
   };
 }
