@@ -176,9 +176,11 @@ export default function AboutYou() {
         {lines("fact", facts, "Works on the payments team", "Fact")}
       </Group>
 
-      <Group title="Rules" right={add("rule")} note="For what Tabellar makes from mail. Rules for how it writes are in Writing.">
-        {lines("rule", of("rule"), "No todos from job application receipts", "Rule")}
-      </Group>
+      {of("rule").length > 0 && (
+        <Group title="Rules" note="For what Tabellar makes from mail. A new one is a sentence in Automations.">
+          {lines("rule", of("rule"), "No todos from job application receipts", "Rule")}
+        </Group>
+      )}
 
       <Group title="Questions">
         {!open.length && <p className="flex min-h-row items-center text-ink3">No open questions</p>}

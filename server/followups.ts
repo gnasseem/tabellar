@@ -154,6 +154,10 @@ export const judgeSent = serial(async (userId: string): Promise<number> => {
   return judged;
 });
 
+// Sent mail that asks or promises something and has no answer yet
+// (automations.ts waits on it).
+export const unanswered = async (userId: string) => (await candidates(userId)).filter(({ sent }) => sent.awaits_reply === true);
+
 // The Follow-ups list: reminders the user set that are due or waiting (not
 // put off until later, not answered since), then the sent mail Tabellar
 // suggests. A reminder whose thread got an answer is marked replied here.

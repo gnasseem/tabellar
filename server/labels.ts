@@ -14,14 +14,14 @@ import { modelConfigured } from "./llm.ts";
 import { act, engineSettings, undo } from "./actions.ts";
 
 export type Example = { sender: string; subject?: string };
-export type Label = { slug: string; display_name: string; description: string; examples: Example[]; position: number; gmail_label: string | null };
+export type Label = { slug: string; display_name: string; description: string; examples: Example[]; position: number; gmail_label: string | null; automatic: boolean };
 export type Suggestion = { name: string; description: string; senders: string[]; count: number };
 
 const EXAMPLES_IN_PROMPT = 4;
 const MAX_EXAMPLES = 12;
 
 export async function userLabels(userId: string): Promise<Label[]> {
-  const { data } = await db.from("categories").select("slug, display_name, description, examples, position, gmail_label").eq("user_id", userId).order("position", { ascending: true });
+  const { data } = await db.from("categories").select("slug, display_name, description, examples, position, gmail_label, automatic").eq("user_id", userId).order("position", { ascending: true });
   return ((data ?? []) as Record<string, unknown>[]).map((r) => ({
     slug: String(r.slug),
     display_name: String(r.display_name),
@@ -29,6 +29,7 @@ export async function userLabels(userId: string): Promise<Label[]> {
     examples: Array.isArray(r.examples) ? (r.examples as Example[]) : [],
     position: Number(r.position ?? 0),
     gmail_label: (r.gmail_label as string | null) ?? null,
+    automatic: r.automatic !== false,
   }));
 }
 
@@ -53,8 +54,9 @@ export function labelsBySender(labels: Label[], address: string): string[] {
 }
 
 // The labels as the model reads them: slug, the line, and a few examples.
+// One an automation made, which nobody has described, is only its own to apply.
 export function labelsForPrompt(labels: Label[]): { slug: string; description: string }[] {
-  return labels.map((l) => {
+  return labels.filter((l) => l.automatic || l.description || l.examples.length).map((l) => {
     const ex = l.examples
       .filter((x) => x.subject)
       .slice(0, EXAMPLES_IN_PROMPT)

@@ -18,6 +18,7 @@ const FollowupsView = lazy(() => import("./views/FollowupsView"));
 const HistoryView = lazy(() => import("./views/HistoryView"));
 const NewslettersView = lazy(() => import("./views/NewslettersView"));
 const FilesView = lazy(() => import("./views/FilesView"));
+const AutomationsView = lazy(() => import("./views/AutomationsView"));
 const AskView = lazy(() => import("./views/AskView"));
 
 const views: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
@@ -36,6 +37,7 @@ const views: Record<string, React.LazyExoticComponent<React.ComponentType>> = {
   history: HistoryView,
   newsletters: NewslettersView,
   ask: AskView,
+  automations: AutomationsView,
   files: FilesView,
 };
 

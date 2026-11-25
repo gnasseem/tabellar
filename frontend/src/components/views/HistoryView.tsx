@@ -13,9 +13,9 @@ import { Countdown, Empty, Glyph, Menu, SkeletonRows, ViewBar, VirtualList, useS
 
 type LogRow = {
   id: string;
-  kind: "label" | "archive" | "draft" | "todo" | "meeting" | "send" | "unsubscribe";
+  kind: "label" | "archive" | "draft" | "todo" | "meeting" | "send" | "unsubscribe" | "snooze" | "read" | "brief" | "notify" | "vip";
   status: "proposed" | "running" | "done" | "undone" | "dismissed" | "blocked" | "failed";
-  source: "engine" | "agent" | "assistant" | "user";
+  source: "engine" | "automation" | "agent" | "assistant" | "user";
   summary: string;
   detail: Record<string, unknown>;
   hash: string | null;
@@ -31,7 +31,7 @@ type Kind = "all" | LogRow["kind"];
 
 const CHUNK = 1000;
 const LINE = 20; // line height of detail text, so a block's height is known before it is drawn
-const UNDOABLE = new Set(["label", "archive", "draft", "todo", "meeting"]);
+const UNDOABLE = new Set(["label", "archive", "draft", "todo", "meeting", "snooze", "read", "brief", "vip"]);
 const KINDS: { id: Kind; label: string }[] = [
   { id: "all", label: "All" },
   { id: "label", label: "Labels" },
@@ -42,7 +42,7 @@ const KINDS: { id: Kind; label: string }[] = [
   { id: "archive", label: "Archived" },
   { id: "unsubscribe", label: "Unsubscribes" },
 ];
-const SOURCE: Record<string, string> = { engine: "Tabellar, on its own", agent: "A plan from Ask that you approved", assistant: "Ask, at your request", user: "You" };
+const SOURCE: Record<string, string> = { engine: "Tabellar, on its own", automation: "Your automation", agent: "A plan from Ask that you approved", assistant: "Ask, at your request", user: "You" };
 
 // An Autopilot reply that has not gone out yet can still be cancelled.
 function pendingSend(r: LogRow): boolean {
@@ -77,7 +77,7 @@ function about(r: LogRow): string {
   if (r.kind === "todo") return String(d.text ?? r.summary);
   if (r.kind === "meeting") return `${String(d.title ?? "Meeting")}${typeof d.start_time === "string" ? `, ${dayTime(d.start_time)}` : ""}${typeof d.end_time === "string" ? ` to ${clock(d.end_time)}` : ""}${d.location ? `, ${String(d.location)}` : ""}`;
   if (r.kind === "draft" || r.kind === "send") return `To ${recipients(r)}${d.subject ? `, ${String(d.subject)}` : ""}`;
-  if (r.kind === "archive") return Array.isArray(d.emailIds) ? `${d.emailIds.length} emails, archived` : "This email, archived";
+  if (r.kind === "archive") return Array.isArray(d.emailIds) && d.emailIds.length > 1 ? `${d.emailIds.length} emails, archived` : "This email, archived";
   return r.summary;
 }
 
@@ -94,6 +94,11 @@ function undoNote(r: LogRow): string {
   if (r.kind === "draft") return "Undo deletes the draft.";
   if (r.kind === "todo") return "Undo removes the todo.";
   if (r.kind === "meeting") return "Undo removes the proposed meeting. Once it is confirmed, change it in Meetings.";
+  if (r.kind === "snooze") return "Undo returns it to the inbox.";
+  if (r.kind === "read") return "Undo marks it unread.";
+  if (r.kind === "brief") return "Undo puts the Brief back as it was.";
+  if (r.kind === "vip") return "Undo makes them as they were before.";
+  if (r.kind === "notify") return "A notification cannot be taken back.";
   return "An unsubscribe cannot be undone from here.";
 }
 

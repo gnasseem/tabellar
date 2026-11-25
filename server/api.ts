@@ -26,6 +26,7 @@
 //   GET  /files/search          Attachments in the mailboxes beyond the mail kept here
 //   POST /calendar/prep         The last thread with a meeting's people and what is open
 //   POST /actions/approve|dismiss|undo   The action log
+//   GET  /automations, POST /automations/compile|enable|mode|try|delete   What to do from now on
 
 import { followupList, judgeSent } from "./followups.ts";
 import { listNewsletters, unsubscribe, archiveSender, keepSender } from "./newsletters.ts";
@@ -35,7 +36,6 @@ import { searchGoogleContacts, listAllGoogleContacts } from "./gmail.ts";
 import { mail, userCalendar } from "./providers.ts";
 import {
   chatWithAssistant,
-  composeDraft,
   localToUtc,
   refineDraft,
   processFullEmail,
@@ -52,12 +52,13 @@ import { answered, snooze, unsnooze } from "./snooze.ts";
 import { prepFor } from "./prep.ts";
 import { filesInMailboxes } from "./files.ts";
 import { kickEngine, engineStatus, planNew } from "./engine.ts";
-import { draftReply, sampleReply, type EmailRow } from "./replies.ts";
+import { draftReply, sampleReply, writeTo, type EmailRow } from "./replies.ts";
 import { displayNameOf, isRule, keepRules, learnFromEdit, RECIPIENTS, setAvoid, setLine, stylePrompt, writingFor } from "./writing.ts";
 import { learnFromSent, startFirstRead } from "./firstRead.ts";
 import * as onboarding from "./onboarding.ts";
 import { approve, dismiss, undo, engineSettings, setMailState } from "./actions.ts";
 import { answer, applyPref, feedback, profileContext, reopen, setPref, type Feedback } from "./profile.ts";
+import * as automations from "./automations.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
 import { brief, prepareBrief } from "./brief.ts";
 import { applyLabel, labelsBySender, labelsForPrompt, suggestLabels, userLabels } from "./labels.ts";
@@ -192,6 +193,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         archived: typeof archived === "boolean" ? archived : undefined,
         read: typeof read === "boolean" ? read : undefined,
       });
+      if (archived === true) void automations.archivedByHand(userId, ids.map(String)).catch((e) => console.error("[automations] by hand:", (e as Error).message));
       return json({ ok: true });
     }
     // Snooze until a time, or until an answer without one; back undoes it.
@@ -225,6 +227,30 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
       }
       return json({ ok: true, ...made });
+    }
+
+    // ── What to do from now on (automations.ts) ────────────────────────────
+    //   GET  /automations                     each with what it was read as
+    //   POST /automations/compile {text, id?} a sentence; id replaces that one's
+    //   POST /automations/enable {id, on}     on only once its trial was shown
+    //   POST /automations/mode {id, mode}     own or ask
+    //   POST /automations/try|delete {id}
+    if (path === "/automations" && req.method === "GET") return json({ automations: await automations.listAutomations(userId) });
+    if (path.startsWith("/automations/") && req.method === "POST") {
+      const b = await req.json().catch(() => ({}));
+      const id = typeof b.id === "string" && UUID_RE.test(b.id) ? b.id : undefined;
+      try {
+        if (path === "/automations/compile") return json(await automations.compile(userId, String(b.text ?? ""), { id }));
+        if (!id) return json({ error: "id is required" }, 400);
+        if (path === "/automations/enable") await automations.setEnabled(userId, id, b.on === true);
+        else if (path === "/automations/mode") await db.from("automations").update({ mode: b.mode === "ask" ? "ask" : "own" }).eq("id", id).eq("user_id", userId);
+        else if (path === "/automations/try") await automations.tryOut(userId, id);
+        else if (path === "/automations/delete") await automations.remove(userId, id);
+        else return json({ error: "Not found" }, 404);
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
+      return json({ ok: true });
     }
 
     // ── What Tabellar knows about the user ─────────────────────────────────
@@ -519,84 +545,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return json({ draft: await draftReply(userId, e as unknown as EmailRow, String(body.intent ?? "")) }, 200, corsHeaders);
       }
 
-      // Fetch sender's display name
-      let senderName: string = body.senderName || "";
-      if (!senderName) {
-        const { data: profileRow } = await db
-          .from("profiles")
-          .select("display_name")
-          .eq("id", userId)
-          .single();
-        senderName = profileRow?.display_name || "";
-      }
-
-      // Parse recipient name from "Name <email>" or bare email
-      const toRaw: string = body.to || "";
-      const angleMatch = toRaw.match(/^(.*?)<[^>]+>\s*$/);
-      const recipientName = angleMatch
-        ? angleMatch[1].trim().replace(/^"|"$/g, "").trim()
-        : "";
-
-      // Extract recipient email
-      const emailMatch = toRaw.match(/<([^>]+)>/);
-      const recipientEmail = emailMatch
-        ? emailMatch[1].trim()
-        : toRaw.split(/\s/)[0].trim();
-
-      // The user's way of writing and what is known of the recipient
-      const [writing, { data: kbData }, { data: memData }] = await Promise.all([
-        writingFor(userId, recipientEmail),
-        (async () => {
-          // People and companies that match the recipient.
-          const recipientDomain = recipientEmail?.split("@")[1] ?? "";
-          const recipientFirstName = recipientName?.split(" ")[0] ?? "";
-          const filters: string[] = [];
-          if (recipientFirstName.length > 1) filters.push(`entity.ilike.%${recipientFirstName}%`, `info.ilike.%${recipientFirstName}%`);
-          if (recipientDomain.length > 3) filters.push(`entity.ilike.%${recipientDomain}%`, `info.ilike.%${recipientDomain}%`);
-          if (!filters.length) return { data: [] as { entity: string; entity_type: string; info: string }[] };
-          return db
-            .from("knowledge_base")
-            .select("entity, entity_type, info")
-            .eq("user_id", userId)
-            .in("entity_type", ["person", "company"])
-            .or(filters.join(","))
-            .limit(8);
-        })(),
-        recipientEmail
-          ? db
-              .from("email_memory")
-              .select("interaction_count, relationship_notes")
-              .eq("user_id", userId)
-              .eq("sender_email", recipientEmail)
-              .maybeSingle()
-          : Promise.resolve({ data: null }),
-      ]);
-
-      let knowledgeContext: string | undefined;
-      const kbParts: string[] = [];
-      const about = await profileContext(userId, { sender_email: recipientEmail, subject: body.subject ?? "", text: body.replyTo?.body ?? "" });
-      if (about) kbParts.push(about);
-      if (kbData?.length) {
-        kbParts.push(
-          kbData
-            .map(
-              (k: { entity: string; entity_type: string; info: string }) =>
-                `${k.entity} (${k.entity_type}): ${k.info}`,
-            )
-            .join("\n"),
-        );
-      }
-      if (memData) {
-        kbParts.push(
-          `Email history with ${recipientEmail}: ${memData.interaction_count} emails exchanged${memData.relationship_notes ? `. ${memData.relationship_notes}` : ""}`,
-        );
-      }
-      if (kbParts.length) knowledgeContext = kbParts.join("\n");
-
-      const draft = await keepRules(writing, (extra) =>
-        composeDraft({ intent: body.intent ?? "", subject: body.subject ?? "", recipientName, senderName, replyTo: body.replyTo, forward: body.forward, style: stylePrompt(writing), extra, knowledgeContext }),
-      );
-
+      const draft = await writeTo(userId, { to: String(body.to ?? ""), intent: String(body.intent ?? ""), subject: String(body.subject ?? ""), senderName: body.senderName, replyTo: body.replyTo, forward: body.forward });
       return json({ draft }, 200, corsHeaders);
     }
 
@@ -1096,6 +1045,23 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return json({ reply, actions }, 200, corsHeaders);
       }
 
+      // What to do from now on, from the user's own words: kept, but off.
+      const automate = async (said: string): Promise<{ reply: string; action: { type: string; data: Record<string, unknown> } | null }> => {
+        try {
+          const made = await automations.compile(userId, said, { source: "ask" });
+          if ("rule" in made) return { reply: `Kept as a rule: ${made.rule}`, action: { type: "kept_rule", data: { text: made.rule } } };
+          const a = (await automations.listAutomations(userId)).find((x) => x.id === made.id);
+          return { reply: `${a?.when}: ${a?.then.join("; ")}. It is off until you turn it on in Automations.`, action: { type: "make_automation", data: { id: made.id, text: said } } };
+        } catch (e) {
+          return { reply: (e as Error).message, action: null };
+        }
+      };
+      if (message.length < 400 && /^\s*(please\s+)?from now on\b/i.test(message)) {
+        const { reply, action } = await automate(message);
+        await keep(reply, action ? [action] : []);
+        return json({ reply, actions: action ? [action] : [] });
+      }
+
       // Load only what's needed for the system prompt; everything else is fetched on demand by the AI via tools.
       const [writing, profileResult] = await Promise.all([
         writingFor(userId, null),
@@ -1235,6 +1201,12 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
           if (tc.done) actions.push({ type: tc.name, data: tc.arguments });
         } else if (tc.name === "plan_cleanup") {
           actions.push({ type: "plan_cleanup", data: { session_id: await cleanupPlan() } });
+        } else if (tc.name === "make_automation") {
+          // Read from what the user wrote, not from what the model passed on:
+          // an address it found in an email is in no sentence of theirs.
+          const said = String(tc.arguments.sentence ?? "").trim();
+          const { reply, action } = await automate(said && message.toLowerCase().includes(said.toLowerCase()) ? said : message);
+          actions.push(action ?? { type: "make_automation_failed", data: { error: reply } });
         } else if (tc.name === "suggest_reply_options") {
           const args = tc.arguments as {
             options: { label: string; description: string }[];

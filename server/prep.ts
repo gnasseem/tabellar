@@ -96,7 +96,7 @@ export async function prepFor(userId: string, event: { title: string; people: st
 const READ_MS = 10 * 60_000;
 let upcoming: { at: number; events: CalEvent[] } = { at: 0, events: [] };
 
-async function soon(userId: string): Promise<CalEvent[]> {
+export async function soon(userId: string): Promise<CalEvent[]> {
   if (Date.now() - upcoming.at > READ_MS) {
     upcoming.at = Date.now();
     const cal = await userCalendar(userId);

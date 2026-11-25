@@ -28,7 +28,8 @@ type Reply = {
   sendAt?: string;
   actionId?: string | null;
   proposal?: { id: string; hash: string };
-  source: Source | null;
+  source: Source | null; // the email it answers
+  forwarded?: Source | null; // the email it hands on
   raw: any;
 };
 type Head = { head: true; key: string; name: string };
@@ -93,7 +94,7 @@ export default function RepliesView() {
     const drafts = (d.data || []) as any[];
     const sched = (s.data || []) as any[];
     const proposed = (p.data || []) as any[];
-    const ids = [...new Set([...drafts, ...proposed, ...sched].map((x) => x.email_id).filter(Boolean))];
+    const ids = [...new Set([...drafts, ...proposed, ...sched].flatMap((x) => [x.email_id, x.forward?.email_id ?? x.detail?.forward?.email_id]).filter(Boolean))];
     const sources = new Map<string, Source>();
     if (ids.length) {
       const [e, sums] = await Promise.all([
@@ -104,16 +105,17 @@ export default function RepliesView() {
       for (const x of (e.data || []) as any[]) sources.set(x.id, { ...x, summary: summary.get(x.id) });
     }
     const out: Reply[] = [
-      ...sched.map((x) => ({ id: x.id, going: true, to: x.to_addresses || [], subject: x.subject || "", html: x.body_html || "", text: plain(x.body_html || x.body_text || ""), at: x.created_at, sendAt: x.send_at, actionId: x.action_id, source: sources.get(x.email_id) || null, raw: x })),
+      ...sched.map((x) => ({ id: x.id, going: true, to: x.to_addresses || [], subject: x.subject || "", html: x.body_html || "", text: plain(x.body_html || x.body_text || ""), at: x.created_at, sendAt: x.send_at, actionId: x.action_id, source: (!x.forward && sources.get(x.email_id)) || null, forwarded: sources.get(x.forward?.email_id), raw: x })),
       ...drafts.map((x) => {
         const src = sources.get(x.email_id) || null;
-        return { id: x.id, going: false, to: x.to_addresses || [], subject: x.subject || "", html: x.body_html || "", text: plain(x.body_html || ""), at: src?.received_at || x.created_at, source: src, raw: x };
+        return { id: x.id, going: false, to: x.to_addresses || [], subject: x.subject || "", html: x.body_html || "", text: plain(x.body_html || ""), at: src?.received_at || x.created_at, source: src, forwarded: sources.get(x.forward?.email_id), raw: x };
       }),
       // At Suggest a reply waits here to be approved, which sending it does.
       ...proposed.map((x) => {
-        const src = sources.get(x.email_id) || null;
+        const forward = x.detail?.forward ?? null;
+        const src = (!forward && sources.get(x.email_id)) || null;
         const text = String(x.detail?.body ?? "");
-        return { id: x.id, going: false, proposal: { id: x.id, hash: x.hash }, to: x.detail?.to || [], subject: x.detail?.subject || "", html: toHtml(text), text, at: src?.received_at || x.created_at, source: src, raw: { account_id: x.detail?.accountId, from_address: x.detail?.from, email_id: x.email_id, source: "tabellar" } };
+        return { id: x.id, going: false, proposal: { id: x.id, hash: x.hash }, to: x.detail?.to || [], subject: x.detail?.subject || "", html: toHtml(text), text, at: src?.received_at || x.created_at, source: src, forwarded: sources.get(forward?.email_id), raw: { account_id: x.detail?.accountId, from_address: x.detail?.from, email_id: forward ? null : x.email_id, forward, source: "tabellar" } };
       }),
     ];
     setReplies(out);
@@ -166,6 +168,7 @@ export default function RepliesView() {
 
   const rows = useMemo(() => items.filter((i): i is Reply => !("head" in i)), [items]);
   const cursor = rows.find((r) => r.id === cursorId) || rows[0] || null;
+  const about = cursor?.source ?? cursor?.forwarded ?? null;
   const ready = rows.filter((r) => !r.going);
   const selected = ready.filter((r) => picked.has(r.id));
 
@@ -478,17 +481,18 @@ export default function RepliesView() {
                     </>
                   )}
                 </dl>
-                {cursor.source && (
+                {about && (
                   <div className="inset mb-5 mt-4">
                     <div className="mb-1 flex justify-between text-xs text-ink3">
                       <b className="font-semibold text-ink2">
-                        {nameOf(cursor.source.sender) || cursor.source.sender_email} wrote, {dayLabel(cursor.source.received_at).name.toLowerCase()} {clock(cursor.source.received_at)}
+                        {cursor.forwarded && "Forwards what "}
+                        {nameOf(about.sender) || about.sender_email} wrote, {dayLabel(about.received_at).name.toLowerCase()} {clock(about.received_at)}
                       </b>
                       <button className="link" onClick={() => setShowSource(!showSource)}>
                         {showSource ? "Show summary" : "Show the email"}
                       </button>
                     </div>
-                    <p className={`leading-normal text-ink2 ${showSource ? "max-h-80 overflow-y-auto whitespace-pre-line" : ""}`}>{showSource ? cursor.source.body_text || cursor.source.snippet : cursor.source.summary || cursor.source.snippet}</p>
+                    <p className={`leading-normal text-ink2 ${showSource ? "max-h-80 overflow-y-auto whitespace-pre-line" : ""}`}>{showSource ? about.body_text || about.snippet : about.summary || about.snippet}</p>
                   </div>
                 )}
                 {choicesOf(cursor.text).length ? (

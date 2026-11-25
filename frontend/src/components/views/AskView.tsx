@@ -482,6 +482,7 @@ function Plan({ sessionId, current }: { sessionId: string | null; current: strin
 // What Tabellar did while answering, as one quiet line with a way to see it.
 function ActionLine({ action, setView, onSelectOption }: { action: Action; setView: (v: string) => void; onSelectOption?: (text: string) => void }) {
   const d = action.data;
+  const { setViewCache } = useApp();
 
   // A choice Tabellar wants made before it acts: each option is an answer.
   if (action.type === "suggest_options") {
@@ -511,7 +512,10 @@ function ActionLine({ action, setView, onSelectOption }: { action: Action; setVi
   let view = "";
   let viewName = "";
   let failed = false;
-  if (action.type === "create_todo") [text, view, viewName] = [`Added a todo: ${String(d.text ?? "")}`, "todos", "Todos"];
+  if (action.type === "make_automation") [text, view, viewName] = ["Made an automation, off for now", "automations", "Automations"];
+  else if (action.type === "make_automation_failed") [text, failed] = [`The automation was not made: ${String(d.error ?? "")}`, true];
+  else if (action.type === "kept_rule") [text, view, viewName] = ["Kept as a rule", "settings", "Settings"];
+  else if (action.type === "create_todo") [text, view, viewName] = [`Added a todo: ${String(d.text ?? "")}`, "todos", "Todos"];
   else if (action.type === "save_draft") [text, view, viewName] = [`Saved a draft to ${String(d.to ?? "")}`, "replies", "Replies"];
   else if (action.type === "send_email") [text, view, viewName] = [`Sent an email to ${String(d.to ?? "")}${d.subject ? `, ${String(d.subject)}` : ""}`, "sent", "Sent"];
   else if (action.type === "send_email_failed") [text, failed] = [`The email was not sent${d.error ? `: ${String(d.error)}` : "."}`, true];
@@ -534,7 +538,14 @@ function ActionLine({ action, setView, onSelectOption }: { action: Action; setVi
       {view && (
         <>
           {" "}
-          <button className="link" onClick={() => setView(view)}>
+          <button
+            className="link"
+            onClick={() => {
+              if (action.type === "make_automation") setViewCache("automations:open", d.id);
+              if (action.type === "kept_rule") setViewCache("settings:tab", "about");
+              setView(view);
+            }}
+          >
             Open {viewName}
           </button>
         </>

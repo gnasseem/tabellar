@@ -8,7 +8,8 @@
 // proposal. Every two minutes a full cycle runs as well, as a safety net and
 // for the slower work (sent mail for Follow-ups, the first read). Each
 // planned action goes through actions.act(), which asks the
-// policy whether to do it, propose it, or refuse it.
+// policy whether to do it, propose it, or refuse it. What the user told
+// Tabellar to do from now on (automations.ts) runs on each new email first.
 //
 // The model that reads the email has no tools: it returns a category, a
 // summary and suggested actions as JSON. What those suggestions can turn into
@@ -34,6 +35,7 @@ import { ACT_WITHIN_MS, dueOf, meetingOf, RULES_VERSION, todoOf } from "./rules.
 import { judgeSent } from "./followups.ts";
 import { inQuietHours, notify, worthNotifying } from "./notify.ts";
 import { prepareBrief, tellBrief } from "./brief.ts";
+import { endPass, runOnMail, runTimed, startPass } from "./automations.ts";
 import { tellMeetings } from "./prep.ts";
 import { firstReadState, relearnStyle, startFirstRead } from "./firstRead.ts";
 import { listAccounts, refreshStaleSendAs, replyFrom, type Account } from "./accounts.ts";
@@ -137,7 +139,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
 
   const { data: rows } = await db
     .from("email_processed")
-    .select("id, category, urgency, summary, quick_actions, calendar, extra_labels, emails!inner(id, subject, sender, sender_email, reply_to_email, recipients, cc_recipients, body_text, body_html, snippet, received_at, thread_id, gmail_id, account_id, is_calendar, attachments)")
+    .select("id, category, urgency, summary, quick_actions, calendar, extra_labels, emails!inner(id, subject, sender, sender_email, reply_to_email, recipients, cc_recipients, body_text, body_html, snippet, received_at, thread_id, gmail_id, account_id, is_calendar, attachments, label_ids, has_list_unsubscribe, list_id, precedence_header)")
     .eq("user_id", userId)
     .is("engine_at", null)
     .limit(100);
@@ -159,6 +161,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
   const accounts = new Map((await listAccounts(userId)).map((a) => [a.id, a]));
   const accountOf = (accountId: string | null | undefined) => accounts.get(accountId ?? "") ?? null;
   const calendar = calendarAccount([...accounts.values()]);
+  const pass = await startPass(userId, ["mail"]);
 
   const sorted = [...rows].sort((a, b) =>
     String((a.emails as EmailRow).received_at).localeCompare(String((b.emails as EmailRow).received_at)),
@@ -176,10 +179,25 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     const suspicious = looksLikeInstructions(email.subject, email.body_text, email.body_html);
     const actions = (Array.isArray(row.quick_actions) ? row.quick_actions : []) as QuickAction[];
     const from = email.sender?.split("<")[0]?.trim() || email.sender_email || "someone";
+    // The user's automations first: what they made is not made again below,
+    // and of mail they archived or snoozed nothing else is.
+    let told = { notify: false, quiet: false, gone: false };
+    try {
+      if (pass) told = await runOnMail(pass, { ...email, category, summary: row.summary as string | null, extra: (row.extra_labels as string[] | null) ?? [] }, suspicious);
+    } catch (e) {
+      // The model did not answer: this email is planned again in the next pass.
+      console.error("[engine] automation:", (e as Error).message);
+      const tries = (draftTries.get(email.id) ?? 0) + 1;
+      draftTries.set(email.id, tries);
+      if (tries < DRAFT_TRIES) {
+        await planned(null);
+        continue;
+      }
+    }
     // An email read again (its text was filled in later) keeps what was
     // already done or proposed for it; nothing is done twice.
     const { data: before } = await db.from("action_log").select("kind, detail").eq("email_id", email.id).in("status", ["done", "running", "proposed"]);
-    const already = new Set((before ?? []).map((r) => r.kind as string));
+    const already = new Set((before ?? []).filter((r) => !(r.detail as { forward?: unknown } | null)?.forward).map((r) => r.kind as string));
     // Labels count one by one: an email carries its sort and the user's own.
     const labelled = new Set((before ?? []).filter((r) => r.kind === "label").map((r) => String((r.detail as { label?: string } | null)?.label ?? "")));
     let waiting = false;
@@ -198,7 +216,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     // What the user said about this sender and these topics.
     const sender = (email.sender_email ?? "").trim().toLowerCase();
     const prefs = await prefsFor(userId, sender, `${email.subject ?? ""} ${row.summary ?? ""}`);
-    const stopped = (t: Thing) => !!stops(prefs, t);
+    const stopped = (t: Thing) => told.gone || !!stops(prefs, t);
 
     // Label. A planted-instruction email gets the Suspicious label and nothing else.
     const label = suspicious ? SUSPICIOUS_LABEL : LABELS[category];
@@ -346,8 +364,10 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     const news = Date.now() - new Date(email.received_at).getTime() < NEWS_MS;
     const worthIt = news && !stopped("notify") && worthNotifying(profile?.notification_level, { vip: prefs.some((r) => r.value === "vip"), needsUser: category === "action-required" || waiting || asked });
     if (replying) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted: false, replying: true });
-    else if (worthIt && !suspicious) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted });
+    else if (!suspicious && ((news && told.notify) || (worthIt && !told.quiet))) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted });
   }
+
+  if (pass) await endPass(pass);
 
   // One notification per email, or one summary when several arrive together.
   const preview = profile?.notification_preview !== false;
@@ -465,16 +485,21 @@ export async function closePastMeetings(userId: string): Promise<void> {
 // Tabellar wrote (and the user has not changed) once the user has answered.
 export async function withdrawStale(userId: string): Promise<void> {
   const now = new Date().toISOString();
-  const { data: proposals } = await db.from("action_log").select("id, emails!inner(id, thread_id, received_at)").eq("user_id", userId).eq("kind", "draft").eq("status", "proposed");
+  const { data: proposals } = await db.from("action_log").select("id, detail, emails!inner(id, thread_id, received_at)").eq("user_id", userId).eq("kind", "draft").eq("status", "proposed");
   for (const r of proposals ?? []) {
+    // An email handed on is not an answer.
+    if ((r.detail as { forward?: unknown } | null)?.forward) continue;
     if (await laterInThread(r.emails as EmailRow)) await db.from("action_log").update({ status: "dismissed", decided_at: now, reason: MOVED_ON }).eq("id", r.id).eq("status", "proposed");
   }
-  const { data: drafts } = await db.from("draft_emails").select("*, emails!inner(gmail_id, thread_id, account_id)").eq("user_id", userId).eq("source", "tabellar").is("edited_at", null);
+  const { data: drafts } = await db.from("draft_emails").select("*, emails!inner(gmail_id, thread_id, account_id, label_ids)").eq("user_id", userId).eq("source", "tabellar").is("edited_at", null);
   const answered: Parameters<typeof withdrawAnswered>[1] = [];
   for (const d of (drafts ?? []) as unknown as Parameters<typeof withdrawAnswered>[1]) {
     if (!d.emails?.thread_id) continue;
-    const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("thread_id", d.emails.thread_id).contains("label_ids", ["SENT"]).gt("received_at", d.created_at);
-    if (count) answered.push(d);
+    // A follow-up on the user's own mail goes as soon as anyone writes.
+    const followUp = ((d.emails as { label_ids?: string[] | null }).label_ids ?? []).includes("SENT");
+    let q = db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("thread_id", d.emails.thread_id).gt("received_at", d.created_at);
+    if (!followUp) q = q.contains("label_ids", ["SENT"]);
+    if ((await q).count) answered.push(d);
   }
   if (answered.length) await withdrawAnswered(userId, answered);
 }
@@ -641,7 +666,8 @@ function startWatcher(): () => void {
   };
 }
 
-// The Brief's notification and the ones before a meeting, once a minute and
+// The Brief's notification, the ones before a meeting and the automations that
+// run at a time, after silence or before a meeting, once a minute and
 // apart from the cycle, which a long backlog can hold up. The Brief waits for
 // a cycle that has just finished, so it is about this morning's mail.
 let telling = false;
@@ -652,6 +678,7 @@ async function tellUser(): Promise<void> {
     const userId = await localUser();
     if (!userId || (await engineSettings(userId)).paused) return;
     const fresh = !!engineStatus.lastCycleAt && Date.now() - new Date(engineStatus.lastCycleAt).getTime() < 5 * 60_000;
+    await runTimed(userId, { fresh });
     await tellBrief(userId, { fresh });
     await tellMeetings(userId);
   } catch (e) {

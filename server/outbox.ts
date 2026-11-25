@@ -9,12 +9,13 @@
 
 import { db } from "./db.ts";
 import { mail } from "./providers.ts";
-import { checkAutoSend } from "./policy.ts";
+import { checkAutoSend, checkHandOn, looksLikeInstructions } from "./policy.ts";
 import { engineSettings } from "./actions.ts";
 import { notify } from "./notify.ts";
 import { fromLine, type Account } from "./accounts.ts";
 import { messageIdOf, withForward } from "./forward.ts";
 import { htmlToText } from "./mime.ts";
+import { addressesIn } from "./senders.ts";
 import { answered } from "./snooze.ts";
 
 type Row = Record<string, any>;
@@ -37,6 +38,8 @@ export async function closeInterrupted(): Promise<void> {
   const { data } = await db.from("scheduled_emails").update({ status: "failed", error_message: "Tabellar stopped while sending it. Look in Sent before sending it again." }).eq("status", "sending").select("action_id");
   for (const r of data ?? []) if (r.action_id) await db.from("action_log").update({ status: "failed", error: "Tabellar stopped while sending it" }).eq("id", r.action_id);
   await db.from("action_log").update({ status: "failed", error: "Tabellar stopped before it was done" }).eq("status", "running");
+  const { data: trials } = await db.from("automations").select("id, trial").not("trial", "is", null);
+  for (const a of trials ?? []) if ((a.trial as { state?: string }).state === "running") await db.from("automations").update({ trial: { ...(a.trial as object), state: "failed", error: "Tabellar stopped while it was looking." } }).eq("id", a.id);
   await db.from("agent_sessions").update({ status: "error", error: "Tabellar stopped while this was running. Ask again.", pending_question: null, pending_questions: [] }).in("status", ["planning", "executing"]);
 }
 
@@ -47,6 +50,7 @@ async function autopilotRefusal(row: Row): Promise<string | null> {
   if (!row.email_id) return "The email it answered is no longer in Tabellar";
   const { data: email } = await db.from("emails").select("sender_email, reply_to_email, thread_id, received_at").eq("id", row.email_id).maybeSingle();
   if (!email) return "The email it answered is no longer in Tabellar";
+  if (row.forward) return handOnRefusal(row);
   if (email.thread_id !== row.thread_id) return "The reply is not in the thread of the email it answers";
   // Answered by hand inside the window, here or from another device.
   const { count } = await db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", row.user_id).eq("thread_id", row.thread_id).contains("label_ids", ["SENT"]).gt("received_at", email.received_at);
@@ -60,6 +64,16 @@ async function autopilotRefusal(row: Row): Promise<string | null> {
   });
 }
 
+// An email an automation hands on: the automation is still on, still does
+// this on its own, and the address is still one its sentence holds.
+async function handOnRefusal(row: Row): Promise<string | null> {
+  const { data: a } = await db.from("automations").select("text, enabled, mode").eq("id", String(row.automation_id ?? "")).maybeSingle();
+  if (!a?.enabled || a.mode !== "own") return "The automation was turned off before it was sent";
+  const { data: e } = await db.from("emails").select("subject, body_text, body_html").eq("id", row.email_id).maybeSingle();
+  if (looksLikeInstructions(e?.subject as string, e?.body_text as string, e?.body_html as string)) return "The email looks like it is giving instructions to an AI";
+  return checkHandOn({ to: row.to_addresses ?? [], cc: row.cc_addresses ?? [], bcc: row.bcc_addresses ?? [], typed: addressesIn(String(a.text)) });
+}
+
 // Keep a refused Autopilot reply as a draft and say so in History. One the
 // user answered themselves is of no more use.
 async function holdBack(row: Row, reason: string) {
@@ -69,7 +83,7 @@ async function holdBack(row: Row, reason: string) {
     return;
   }
   await db.from("draft_emails").insert({
-    user_id: row.user_id, account_id: row.account_id, from_address: row.from_address, to_addresses: row.to_addresses, subject: row.subject, body_html: row.body_html, email_id: row.email_id, source: "tabellar",
+    user_id: row.user_id, account_id: row.account_id, from_address: row.from_address, to_addresses: row.to_addresses, subject: row.subject, body_html: row.body_html, email_id: row.forward ? null : row.email_id, forward: row.forward, source: "tabellar",
   });
   if (row.action_id) {
     await db.from("action_log").update({ status: "blocked", reason: `${reason}; kept as a draft`, decided_at: new Date().toISOString() }).eq("id", row.action_id);
@@ -128,8 +142,8 @@ export async function sendDueEmails(): Promise<void> {
       await answered(row.user_id, row.thread_id, new Date().toISOString());
       if (autopilot && row.action_id) {
         const { data: a } = await db.from("action_log").select("detail").eq("id", row.action_id).maybeSingle();
-        await db.from("action_log").update({ detail: { ...(a?.detail ?? {}), sentAt: new Date().toISOString() }, reason: "Sent by Autopilot" }).eq("id", row.action_id);
-        notify({ title: "Tabellar", subtitle: "Autopilot sent a reply", body: `To ${(row.to_addresses as string[]).join(", ")}: ${row.subject}` });
+        await db.from("action_log").update({ detail: { ...(a?.detail ?? {}), sentAt: new Date().toISOString() }, reason: row.forward ? "Sent by your automation" : "Sent by Autopilot" }).eq("id", row.action_id);
+        notify({ title: "Tabellar", subtitle: row.forward ? "Forwarded by your automation" : "Autopilot sent a reply", body: `To ${(row.to_addresses as string[]).join(", ")}: ${row.subject}` });
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

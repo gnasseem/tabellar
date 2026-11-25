@@ -15,21 +15,34 @@
 // Never, at any level: deleting or trashing mail (there is no such action, and
 // gmail.ts has no function for it), archiving, forwarding or unsubscribing on
 // its own, or sending to anyone other than the person who wrote.
+//
+// An automation the user wrote (automations.ts) is its own source. It may do
+// what its sentence says at any level but Observe, archiving included, because
+// the user wrote it; it may hand an email on by itself only at Autopilot and
+// only to an address the user typed in that sentence (checkHandOn).
 
 import { createHash } from "node:crypto";
 
 export const LEVELS = ["observe", "suggest", "assist", "autopilot"] as const;
 export type Level = (typeof LEVELS)[number];
 
-export const KINDS = ["label", "archive", "draft", "todo", "meeting", "send", "unsubscribe"] as const;
+// snooze, read, brief (first in the Brief, left out of it, or a digest there),
+// notify and vip (a sender becomes most important) are an automation's.
+export const KINDS = ["label", "archive", "draft", "todo", "meeting", "send", "unsubscribe", "snooze", "read", "brief", "notify", "vip"] as const;
 export type Kind = (typeof KINDS)[number];
 
-// "engine" acts on its own; the others act because the user asked in the window.
-export type Source = "engine" | "agent" | "assistant" | "user";
+// "engine" and "automation" act on their own; the others act because the user asked in the window.
+export type Source = "engine" | "automation" | "agent" | "assistant" | "user";
 
 // What the engine may do on its own at Assist. Archive and unsubscribe are
 // never here, and send only at Autopilot.
 const ENGINE_KINDS: ReadonlySet<string> = new Set(["label", "draft", "todo", "meeting"]);
+
+// What an automation may do on its own. A sender it would make most important
+// is always proposed. What changes nothing in the mailbox is never asked about.
+const AUTOMATION_KINDS: ReadonlySet<string> = new Set(["label", "archive", "snooze", "read", "todo", "draft", "brief", "notify", "vip"]);
+const CHANGES_NOTHING: ReadonlySet<string> = new Set(["brief", "notify"]);
+export const CAP_PER_AUTOMATION = 50; // actions a day, for each automation
 
 // Kinds the user's own window actions may carry out (agent plans, assistant
 // requests, approvals of engine proposals).
@@ -69,6 +82,18 @@ export function checkAutoSend(s: AutoSend | undefined): string | null {
   return null;
 }
 
+// An email handed on by an automation: `typed` are the addresses its sentence
+// holds word for word. Returns why it is refused, or null.
+export type HandOn = { to: string[]; cc?: string[]; bcc?: string[]; typed: string[] };
+export function checkHandOn(s: HandOn | undefined): string | null {
+  if (!s) return "Nothing to check";
+  if (s.to.length !== 1 || s.cc?.length || s.bcc?.length) return "An automation forwards to one address, with nobody copied";
+  const to = s.to[0].trim().toLowerCase();
+  if (!ADDRESS.test(to)) return "The address is not usable";
+  if (!s.typed.some((a) => a.trim().toLowerCase() === to)) return `${s.to[0]} is not in the automation's own words`;
+  return null;
+}
+
 export type Decision = { verdict: "do" | "propose" | "refuse"; reason: string };
 
 export type Request = {
@@ -77,10 +102,13 @@ export type Request = {
   level: string;
   paused: boolean;
   suspicious?: boolean; // the email looks like it is trying to instruct the AI
-  todayCount?: number; // engine actions of this kind so far today
+  todayCount?: number; // engine actions of this kind so far today; for an automation, its own actions
   cycleCount?: number; // engine actions so far in this cycle
   send?: AutoSend; // for an engine send: the reply as it would go out
-  sendCap?: number; // the user's own daily limit on automatic replies
+  sendCap?: number; // the user's own daily limit on automatic sends
+  own?: boolean; // an automation that does not ask first
+  handOn?: HandOn; // for an automation's send
+  sentToday?: number; // automatic sends so far today, the engine's included
 };
 
 // Anything unrecognised, including levels from a later version, is Observe.
@@ -92,6 +120,7 @@ export function decide(r: Request): Decision {
   if (!(KINDS as readonly string[]).includes(r.kind)) return { verdict: "refuse", reason: `Unknown action "${r.kind}"` };
   if (r.paused) return { verdict: "refuse", reason: "Tabellar is paused" };
 
+  if (r.source === "automation") return decideAutomation(r);
   if (r.source !== "engine") {
     return USER_KINDS.has(r.kind) ? { verdict: "do", reason: "Requested in the window" } : { verdict: "refuse", reason: "Not allowed" };
   }
@@ -113,6 +142,24 @@ export function decide(r: Request): Decision {
   if ((r.todayCount ?? 0) >= cap) return { verdict: "refuse", reason: `Daily limit of ${cap} for ${r.kind} reached` };
   if (level === "suggest" && r.kind !== "label") return { verdict: "propose", reason: "Waiting for your approval" };
   return { verdict: "do", reason: level === "autopilot" ? "Autopilot" : level === "assist" ? "Assist" : "Suggest" };
+}
+
+function decideAutomation(r: Request): Decision {
+  const level = normalizeLevel(r.level);
+  const refuse = (reason: string): Decision => ({ verdict: "refuse", reason });
+  if (!AUTOMATION_KINDS.has(r.kind) && r.kind !== "send") return refuse(`An automation never does "${r.kind}"`);
+  if (r.suspicious && r.kind !== "label") return refuse("The email looks like it is giving instructions to an AI, so it is only labelled");
+  if (level === "observe") return refuse("Observe changes nothing");
+  if (r.kind === "send") {
+    if (level !== "autopilot" || !r.own) return refuse("An automation sends only at Autopilot");
+    const why = checkHandOn(r.handOn);
+    if (why) return refuse(why);
+    const cap = Math.min(CAP_PER_DAY.send, Math.max(0, r.sendCap ?? 0));
+    if ((r.sentToday ?? 0) >= cap) return refuse(`Daily limit of ${cap} for send reached`);
+  }
+  if ((r.todayCount ?? 0) >= CAP_PER_AUTOMATION) return refuse(`Daily limit of ${CAP_PER_AUTOMATION} for this automation reached`);
+  if (r.kind === "vip" || (!r.own && !CHANGES_NOTHING.has(r.kind))) return { verdict: "propose", reason: "Your automation asks first" };
+  return { verdict: "do", reason: "Your automation" };
 }
 
 // An approval is bound to the exact proposal the user saw: the hash covers the

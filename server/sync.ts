@@ -12,6 +12,7 @@ import { headerRowOf, mail, type EmailData, type HeaderRow, type MailboxChanges,
 import { analyzeEmailsForUser } from "./analyzeEmails.ts";
 import { addressesIn, indexMail, ownAddresses, rebuildSenders } from "./senders.ts";
 import type { Account } from "./accounts.ts";
+import { archivedByHand } from "./automations.ts";
 import { markSeen } from "./receipts.ts";
 import { answered, wakeThreads } from "./snooze.ts";
 
@@ -233,6 +234,7 @@ async function applyChanges(userId: string, ch: MailboxChanges): Promise<string[
     set.add("TRASH");
     labels.set(gmailId, set);
   }
+  const archived: string[] = [];
   for (const [gmailId, set] of labels) {
     const row = stored.get(gmailId)!;
     const next = { label_ids: [...set], is_read: !set.has("UNREAD"), is_starred: set.has("STARRED"), is_archived: set.has("SENT") ? row.is_archived : !set.has("INBOX") };
@@ -242,7 +244,9 @@ async function applyChanges(userId: string, ch: MailboxChanges): Promise<string[
     // Moved back to the inbox or thrown away in the mailbox: the snooze ends.
     const over = row.is_snoozed && (set.has("INBOX") || set.has("TRASH") || ch.deleted.includes(gmailId)) ? { is_snoozed: false, snooze_until: null } : null;
     if (!same || over) await db.from("emails").update({ ...next, ...over }).eq("id", row.id);
+    if (next.is_archived && !row.is_archived && !next.is_read && !set.has("TRASH")) archived.push(String(row.id));
   }
+  if (archived.length) await archivedByHand(userId, archived).catch((e) => console.error("[sync] by hand:", (e as Error).message));
   return [...back];
 }
 

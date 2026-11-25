@@ -248,6 +248,7 @@ export const NAV: Item[][] = [
   [
     { id: "briefing", icon: "description", label: "Brief" },
     { id: "ask", icon: "chat_bubble", label: "Ask" },
+    { id: "automations", icon: "bolt", label: "Automations" },
   ],
   [
     { id: "sent", icon: "send", label: "Sent" },

@@ -84,6 +84,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       id: "uuid pk =uuid", user_id: "uuid !", email_id: "uuid ! >emails:cascade",
       category: 'text ! ="updates"', extra_labels: "json", summary: "text", urgency: "text",
       quick_actions: "json =[]", calendar: "json", processed_at: "time ! =now", engine_at: "time",
+      brief: "text", // "first" in the Brief or "out" of it, by an automation
     },
     unique: [["email_id"]],
   },
@@ -93,6 +94,8 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       id: "uuid pk =uuid", user_id: "uuid !", slug: "text !", display_name: "text !",
       color: 'text ="#8a857d"', description: 'text =""', examples: "json ! =[]",
       position: "int ! =0", gmail_label: "text", created_at: "time ! =now",
+      // Made by an automation: until the user describes it, only that applies it.
+      automatic: "bool ! =true",
     },
     unique: [["user_id", "slug"]],
   },
@@ -110,7 +113,8 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       from_address: "text", body_html: "text !", body_text: "text", in_reply_to: "text", thread_id: "text",
       send_at: "time !", status: 'text ! ="pending"', error_message: "text", created_at: "time ! =now",
       // "autopilot" rows are Tabellar's own replies, re-checked when they fall due.
-      source: 'text ! ="user"', email_id: "uuid >emails:null", action_id: "uuid",
+      // One with an automation_id hands an email on.
+      source: 'text ! ="user"', email_id: "uuid >emails:null", action_id: "uuid", automation_id: "uuid",
       gmail_draft_id: "text", // sent through Gmail's Drafts, which it then leaves
       // A forwarded email and the attachments left out: {email_id, without} (forward.ts).
       forward: "json", read_receipt: "bool ! =false",
@@ -219,6 +223,18 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       created_at: "time ! =now", answered_at: "time",
     },
   },
+  // What the user told Tabellar to do from now on, in one sentence each: see
+  // automations.ts. spec is what the sentence was read as, trial what it would
+  // have matched, state when it last ran and what it was told about, digest the
+  // mail it last put in the Brief.
+  automations: {
+    cols: {
+      id: "uuid pk =uuid", user_id: "uuid !", text: "text !", spec: "json ! ={}", mode: 'text ! ="own"',
+      enabled: "bool ! =false", enabled_at: "time", tried_at: "time", trial: "json",
+      runs: "int ! =0", last_run: "time", undone: "int ! =0", state: "json ! ={}", digest: "json",
+      source: 'text ! ="user"', created_at: "time ! =now",
+    },
+  },
   // Everything Tabellar does or proposes on its own, and what the agent and
   // assistant do for the user. See policy.ts and actions.ts.
   action_log: {
@@ -226,6 +242,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       id: "uuid pk =uuid", user_id: "uuid !", kind: "text !", status: "text !", source: "text !",
       email_id: "uuid >emails:null", summary: "text !", detail: "json ! ={}", hash: "text",
       reason: "text", error: "text", created_at: "time ! =now", decided_at: "time", undone_at: "time",
+      automation_id: "uuid >automations:null",
     },
   },
   email_signatures: {
@@ -283,6 +300,7 @@ const INDEXES = [
   "CREATE INDEX IF NOT EXISTS agent_sessions_parent ON agent_sessions(parent_id)",
   "CREATE INDEX IF NOT EXISTS action_log_user ON action_log(user_id, created_at DESC)",
   "CREATE INDEX IF NOT EXISTS action_log_status ON action_log(user_id, status)",
+  "CREATE INDEX IF NOT EXISTS action_log_automation ON action_log(automation_id, created_at) WHERE automation_id IS NOT NULL",
   // At most one default signature per account (or per user, for global ones).
   "CREATE UNIQUE INDEX IF NOT EXISTS signatures_one_default ON email_signatures(user_id, coalesce(account_id, '')) WHERE is_default = 1",
 ];

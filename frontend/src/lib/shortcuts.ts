@@ -22,6 +22,7 @@ export const GO_TO_VIEWS: Record<string, string> = {
   s: "sent",
   r: "replies",
   a: "ask",
+  o: "automations",
   h: "history",
   f: "followups",
   l: "labels",
@@ -40,6 +41,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "g s", description: "Go to sent" },
       { keys: "g r", description: "Go to replies" },
       { keys: "g a", description: "Go to ask" },
+      { keys: "g o", description: "Go to automations" },
       { keys: "g h", description: "Go to history" },
       { keys: "g f", description: "Go to follow-ups" },
       { keys: "g l", description: "Go to labels" },
@@ -111,6 +113,14 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "j k", description: "Move" },
       { keys: "Enter", description: "Nudge" },
       { keys: "l", description: "Later" },
+    ],
+  },
+  {
+    title: "Automations",
+    shortcuts: [
+      { keys: "j k", description: "Move" },
+      { keys: "Enter", description: "What it does and did" },
+      { keys: "n", description: "New automation" },
     ],
   },
   {

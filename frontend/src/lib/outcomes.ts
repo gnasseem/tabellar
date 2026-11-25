@@ -69,6 +69,10 @@ const PROPOSED: Record<string, string> = {
   meeting: "Meeting to approve",
   archive: "Archive to approve",
   unsubscribe: "Unsubscribe to approve",
+  label: "Label to approve",
+  snooze: "Snooze to approve",
+  read: "To mark read",
+  vip: "Sender to approve",
 };
 
 export async function api(path: string, body?: unknown) {
@@ -147,7 +151,7 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
     // Labels are plain Gmail labels, shown on the row; undo them in History.
     const d = r.detail || {};
     const base = { key: r.id, at: r.created_at };
-    if (r.kind === "label") {
+    if (r.kind === "label" && r.status !== "proposed") {
       // One of them says the email is held.
       if (r.status === "done" && d.label === "Tabellar/Suspicious") push(r.email_id, { ...base, key: `held:${r.email_id}`, state: "held", short: "Held: written to an AI", title: "Held: written to an AI, only labelled" });
       continue;
@@ -156,14 +160,14 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
       push(r.email_id, { ...base, state: "need", short: PROPOSED[r.kind] || "To approve", title: r.summary, act: { kind: "approve", id: r.id, hash: r.hash || "" } });
     } else if (r.status === "done" && r.kind === "send") {
       const pending = pendingByAction.get(r.id);
-      if (pending) push(r.email_id, { ...base, state: "going", short: "Replying", title: "Replying", sendAt: pending.send_at, act: { kind: "cancel", id: r.id } });
-      else if (d.sentAt) push(r.email_id, { ...base, state: "done", short: `Replied ${when(d.sentAt)}`, title: `Replied ${when(d.sentAt)}` });
+      if (pending) push(r.email_id, { ...base, state: "going", short: d.forward ? "Forwarding" : "Replying", title: d.forward ? `Forwarding to ${d.to?.[0] ?? ""}` : "Replying", sendAt: pending.send_at, act: { kind: "cancel", id: r.id } });
+      else if (d.sentAt) push(r.email_id, { ...base, state: "done", short: `${d.forward ? "Forwarded" : "Replied"} ${when(d.sentAt)}`, title: `${d.forward ? `Forwarded to ${d.to?.[0] ?? ""}` : "Replied"} ${when(d.sentAt)}` });
     } else if (r.status === "done" && r.kind === "draft") {
       const draft = draftById.get(d.draftId);
       if (draft) {
         seenDraft.add(draft.id);
-        push(r.email_id, { ...base, state: "need", short: "Reply ready", title: "Reply drafted", why: draftLine(draft), act: { kind: "review", draftId: draft.id } });
-      } else push(r.email_id, { ...base, state: "info", short: "", title: "Drafted a reply", why: "Sent or discarded since" });
+        push(r.email_id, { ...base, state: "need", short: d.forward ? "Forward ready" : "Reply ready", title: d.forward ? "Forward drafted" : "Reply drafted", why: draftLine(draft), act: { kind: "review", draftId: draft.id } });
+      } else push(r.email_id, { ...base, state: "info", short: "", title: d.forward ? "Drafted a forward" : "Drafted a reply", why: "Sent or discarded since" });
     } else if (r.status === "done" && r.kind === "todo") {
       seenTodoText.add(`${r.email_id}:${d.text}`);
       push(r.email_id, { ...base, state: "done", short: "Todo added", title: `Todo: ${d.text || ""}`, act: { kind: "undo", id: r.id } });
@@ -174,6 +178,8 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
       else if (m && m.status === "confirmed") push(r.email_id, { ...base, state: "done", short: `On calendar, ${when(m.start_time)}`, title: `On calendar: ${m.title}, ${when(m.start_time)}`, act: { kind: "view", view: "meetings" } });
     } else if (r.status === "done" && r.kind === "archive") {
       push(r.email_id, { ...base, state: "done", short: "Archived", title: "Archived", act: { kind: "undo", id: r.id } });
+    } else if (r.status === "done" && ["read", "snooze", "brief", "vip"].includes(r.kind)) {
+      push(r.email_id, { ...base, state: "done", short: "", title: r.summary, act: { kind: "undo", id: r.id } });
     } else if (r.status === "done" && r.kind === "unsubscribe") {
       push(r.email_id, { ...base, state: "done", short: "Unsubscribed", title: r.summary });
     } else if (r.status === "blocked") {
@@ -187,6 +193,7 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
   }
   // Drafts, meetings and todos made elsewhere (the agent, the assistant, by hand).
   for (const d of drafts) if (d.email_id && !seenDraft.has(d.id)) push(d.email_id, { key: d.id, at: d.created_at, state: "need", short: "Reply ready", title: "Reply drafted", why: draftLine(d), act: { kind: "review", draftId: d.id } });
+  for (const d of drafts) if (d.forward?.email_id && !seenDraft.has(d.id)) push(d.forward.email_id, { key: d.id, at: d.created_at, state: "need", short: "Forward ready", title: "Forward drafted", why: draftLine(d), act: { kind: "review", draftId: d.id } });
   for (const m of meetings) {
     if (!m.email_id || seenMeeting.has(m.id)) continue;
     if (m.status === "proposed") push(m.email_id, { key: m.id, at: m.created_at, state: "need", short: "Meeting to confirm", title: `Meeting to confirm: ${m.title}, ${meetingWhen(m)}`, act: { kind: "view", view: "meetings" } });
@@ -238,7 +245,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
     try {
       const [log, drafts, meetings, todos, sched, cal, followups, sent, vips] = await Promise.all([
         supabase.from("action_log").select("id, kind, status, source, email_id, summary, detail, hash, reason, error, created_at").eq("user_id", userId).order("created_at", { ascending: false }).limit(4000),
-        supabase.from("draft_emails").select("id, email_id, subject, to_addresses, body_html, created_at").eq("user_id", userId).order("created_at", { ascending: false }),
+        supabase.from("draft_emails").select("id, email_id, subject, to_addresses, body_html, forward, created_at").eq("user_id", userId).order("created_at", { ascending: false }),
         supabase.from("meetings").select("id, email_id, title, start_time, as_written, status, created_at").eq("user_id", userId),
         supabase.from("todos").select("id, email_id, text, is_completed, created_at").eq("user_id", userId).eq("is_completed", false),
         supabase.from("scheduled_emails").select("id, email_id, action_id, send_at, source, to_addresses, subject").eq("user_id", userId).eq("status", "pending").order("send_at", { ascending: true }),
@@ -315,7 +322,7 @@ export function useOverview(userId: string, live: Record<string, number>, onErro
         todos: raw.todos.length + waiting("todo"),
         meetings: raw.meetings.filter((m) => m.status === "proposed").length + waiting("meeting"),
         followups: raw.followups,
-        proposals: raw.log.filter((r) => r.status === "proposed" && r.kind !== "label").length,
+        proposals: raw.log.filter((r) => r.status === "proposed" && (r.kind !== "label" || r.source === "automation")).length,
       },
     };
   }, [raw, snooze]);

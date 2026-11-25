@@ -18,7 +18,7 @@
 // cut.
 
 import { db } from "./db.ts";
-import { generateDraft } from "./ai.ts";
+import { composeDraft, generateDraft } from "./ai.ts";
 import { choicesOf, MARK, sharedText, tidyChoices, type Choice } from "./choices.ts";
 import { fileText, readable } from "./fileText.ts";
 import { isLocalModel } from "./llm.ts";
@@ -28,7 +28,7 @@ import { calendarAccount, mail, type AttachmentInfo } from "./providers.ts";
 import { daysIn, todayIn } from "./rules.ts";
 import { addressesIn, isBulk, ownAddresses, writtenTo } from "./senders.ts";
 import { listAccounts } from "./accounts.ts";
-import { broken, CLOSING, displayNameOf, ownWords, recipients, splitQuoted, stylePrompt, writingFor, type Recipient, type Writing } from "./writing.ts";
+import { broken, CLOSING, displayNameOf, keepRules, ownWords, recipients, splitQuoted, stylePrompt, writingFor, type Recipient, type Writing } from "./writing.ts";
 
 export type EmailRow = {
   id: string;
@@ -492,6 +492,38 @@ export async function draftReply(userId: string, e: EmailRow, said = "", opts: {
   // A greeting and a sign-off alone are no reply.
   const body = kept.replace(w.closing, "").split("\n").slice(1).join(" ");
   return body.trim().split(/\s+/).filter(Boolean).length > 2 ? signedOff(kept, w, name) : "";
+}
+
+// A new email, one more in a thread the user wrote last in, or the note on an
+// email handed on, from a few words on what to say.
+export async function writeTo(
+  userId: string,
+  m: { to: string; intent?: string; subject?: string; senderName?: string; replyTo?: { subject: string; body?: string }; forward?: { subject: string; from: string; body?: string } },
+): Promise<string> {
+  // "Name <address>", or an address.
+  const name = m.to.match(/^(.*?)<[^>]+>\s*$/)?.[1].replace(/"/g, "").trim() ?? "";
+  const address = m.to.match(/<([^>]+)>/)?.[1].trim() ?? m.to.trim().split(/\s/)[0];
+  const domain = address.split("@")[1] ?? "";
+  const first = name.split(" ")[0];
+  // People and companies that match the recipient.
+  const filters: string[] = [];
+  if (first.length > 1) filters.push(`entity.ilike.%${first}%`, `info.ilike.%${first}%`);
+  if (domain.length > 3) filters.push(`entity.ilike.%${domain}%`, `info.ilike.%${domain}%`);
+  const [writing, senderName, about, { data: facts }, { data: history }] = await Promise.all([
+    writingFor(userId, address),
+    m.senderName || displayNameOf(userId),
+    profileContext(userId, { sender_email: address, subject: m.subject ?? "", text: m.replyTo?.body ?? "" }),
+    filters.length ? db.from("knowledge_base").select("entity, entity_type, info").eq("user_id", userId).in("entity_type", ["person", "company"]).or(filters.join(",")).limit(8) : Promise.resolve({ data: [] }),
+    address ? db.from("email_memory").select("interaction_count, relationship_notes").eq("user_id", userId).eq("sender_email", address).maybeSingle() : Promise.resolve({ data: null }),
+  ]);
+  const background = [
+    about,
+    ((facts ?? []) as Record<string, unknown>[]).map((k) => `${k.entity} (${k.entity_type}): ${k.info}`).join("\n"),
+    history ? `Email history with ${address}: ${history.interaction_count} emails exchanged${history.relationship_notes ? `. ${history.relationship_notes}` : ""}` : "",
+  ].filter(Boolean);
+  return keepRules(writing, (extra) =>
+    composeDraft({ intent: m.intent ?? "", subject: m.subject ?? "", recipientName: name, senderName, replyTo: m.replyTo, forward: m.forward, style: stylePrompt(writing), extra, knowledgeContext: background.join("\n") || undefined }),
+  );
 }
 
 // A reply to a real email from that kind of sender, to show how Tabellar

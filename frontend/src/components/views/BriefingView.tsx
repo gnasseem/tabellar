@@ -13,10 +13,12 @@ import { Glyph, SkeletonRows, ViewBar, clock, shortWhen } from "../ui";
 // to the list. Every line is something the engine stored (brief.ts). Settings,
 // Brief chooses the sections and whether a paragraph opens it.
 
-type Need = { key: string; kind: "reply" | "approve" | "meeting" | "todo" | "question" | "back" | "read"; who: string; text: string; email_id: string | null; id: string; hash?: string; start?: string; due?: string };
+type Need = { key: string; kind: "reply" | "forward" | "approve" | "meeting" | "todo" | "question" | "back" | "read"; who: string; text: string; email_id: string | null; id: string; hash?: string; start?: string; due?: string };
 type Waiting = { key: string; email_id: string; thread_id: string; who: string; address: string; text: string; subject: string; sent_at: string };
 type Handled = { email_id: string; who: string; subject: string; what: string; at: string };
+type Digest = { id: string; title: string; at: string; items: { email_id: string; who: string; text: string; at: string }[] };
 type Brief = {
+  digests: Digest[];
   settings: { sections: string[]; summary: boolean };
   summary: string | null;
   needs: Need[];
@@ -29,7 +31,7 @@ type CalEvent = { id: string; title: string; start: string; end: string; allDay:
 
 const DAY = 86_400_000;
 
-const ACTION: Record<Need["kind"], string> = { reply: "Review", approve: "Approve", meeting: "Add to calendar", todo: "Done", question: "Answer", back: "Open", read: "Read" };
+const ACTION: Record<Need["kind"], string> = { reply: "Review", forward: "Review", approve: "Approve", meeting: "Add to calendar", todo: "Done", question: "Answer", back: "Open", read: "Read" };
 
 function ago(iso: string): string {
   const n = Math.floor((Date.now() - new Date(iso).getTime()) / DAY);
@@ -55,6 +57,7 @@ export default function BriefingView() {
   const [events, setEvents] = useState<CalEvent[] | null>(null);
   const [calError, setCalError] = useState(false);
   const [showHandled, setShowHandled] = useState(false);
+  const [shownDigest, setShownDigest] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [reading, setReading] = useState<string | null>(null);
   const upNext = useUpNext(events);
@@ -72,7 +75,7 @@ export default function BriefingView() {
 
   useEffect(() => {
     load();
-  }, [load, liveChanges.action_log, liveChanges.draft_emails, liveChanges.todos, liveChanges.meetings, liveChanges.questions, liveChanges.email_processed, liveChanges.follow_up_reminders, liveChanges.emails, liveChanges.preferences]);
+  }, [load, liveChanges.action_log, liveChanges.draft_emails, liveChanges.todos, liveChanges.meetings, liveChanges.questions, liveChanges.email_processed, liveChanges.follow_up_reminders, liveChanges.emails, liveChanges.preferences, liveChanges.automations]);
 
   // Today's opening paragraph, when it is on and not written yet, or when a
   // line it was written from is dealt with.
@@ -102,6 +105,7 @@ export default function BriefingView() {
   const act = async (n: Need) => {
     if (n.kind === "reply" || n.kind === "back" || n.kind === "read") return n.email_id && setReading(n.email_id);
     if (n.kind === "question") return setView("inbox");
+    if (n.kind === "forward") return (setViewCache("replies:focus", n.id), setView("replies"));
     setBusy(n.key);
     try {
       if (n.kind === "approve") await mail.approve(n.id, n.hash || "");
@@ -211,6 +215,29 @@ export default function BriefingView() {
                   )}
                 </>
               )}
+
+              {brief.digests.map((d) => (
+                <div key={d.id}>
+                  {head("Digest")}
+                  <button className="row w-[calc(100%-16px)] text-left" aria-expanded={shownDigest === d.id} title={d.title} onClick={() => setShownDigest(shownDigest === d.id ? null : d.id)}>
+                    <span className="w-[26px] flex-none" />
+                    <span className="min-w-0 flex-1 truncate text-ink">
+                      {d.items.length.toLocaleString()} email{d.items.length === 1 ? "" : "s"}
+                      <span className="pl-2 text-ink3">{d.title}</span>
+                    </span>
+                    <span className="flex-none pl-3 text-xs text-ink3">{shownDigest === d.id ? "Hide" : "Show"}</span>
+                  </button>
+                  {shownDigest === d.id &&
+                    d.items.map((m) => (
+                      <div key={m.email_id} className="row cursor-default" onClick={() => setReading(m.email_id)} title={m.text}>
+                        <span className="w-[26px] flex-none" />
+                        <span className="w-[96px] flex-none truncate pr-3 md:w-[164px]">{m.who}</span>
+                        <span className="min-w-0 flex-1 truncate">{m.text}</span>
+                        <time className="w-[46px] flex-none text-right text-xs text-ink3">{shortWhen(m.at)}</time>
+                      </div>
+                    ))}
+                </div>
+              ))}
 
               {show("waiting") && (
                 <>

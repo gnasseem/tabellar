@@ -10,15 +10,18 @@ import { randomUUID } from "node:crypto";
 import { db } from "./db.ts";
 import { mail } from "./providers.ts";
 import type { Account } from "./accounts.ts";
-import { decide, normalizeLevel, proposalHash, type AutoSend, type Kind, type Source } from "./policy.ts";
-import { learn, type Signal } from "./profile.ts";
+import { decide, normalizeLevel, proposalHash, type AutoSend, type HandOn, type Kind, type Source } from "./policy.ts";
+import { learn, setPref, type Signal } from "./profile.ts";
 import { discardDrafts, putInDrafts, textToHtml, threadDrafts } from "./drafts.ts";
+import { snooze, unsnooze } from "./snooze.ts";
+import { undone as automationUndone } from "./automations.ts";
 
 export type Planned = {
   kind: Kind;
   emailId: string | null;
   summary: string; // one line for History, e.g. "Label Important"
   detail: Record<string, unknown>;
+  automationId?: string; // the automation that does it
 };
 
 export type Settings = { level: string; paused: boolean };
@@ -31,7 +34,7 @@ export async function engineSettings(userId: string): Promise<Settings> {
 async function log(userId: string, p: Planned, row: Record<string, unknown>, id: string = randomUUID()) {
   const { data, error } = await db
     .from("action_log")
-    .insert({ id, user_id: userId, kind: p.kind, email_id: p.emailId, summary: p.summary, detail: p.detail, ...row })
+    .insert({ id, user_id: userId, kind: p.kind, email_id: p.emailId, summary: p.summary, detail: p.detail, automation_id: p.automationId ?? null, ...row })
     .select("id")
     .single();
   if (error) throw new Error(error.message);
@@ -92,12 +95,38 @@ export async function setMailState(userId: string, emailIds: string[], state: { 
   }
 }
 
+// One of the user's labels on or off the stored email, beside its mailbox label.
+async function ownLabel(emailId: string, slug: string, on: boolean): Promise<void> {
+  const { data } = await db.from("email_processed").select("extra_labels").eq("email_id", emailId).maybeSingle();
+  const extra = new Set((data?.extra_labels as string[] | null) ?? []);
+  if (on) extra.add(slug);
+  else extra.delete(slug);
+  await db.from("email_processed").update({ extra_labels: [...extra] }).eq("email_id", emailId);
+}
+
 // Make the change. Returns what undo will need (label id, row ids).
 async function execute(userId: string, p: Planned, actionId: string): Promise<Record<string, unknown>> {
   const d = p.detail;
-  if (p.kind === "archive" && Array.isArray(d.emailIds)) {
-    await setMailState(userId, d.emailIds as string[], { archived: true });
+  if ((p.kind === "archive" || p.kind === "read") && (Array.isArray(d.emailIds) || p.kind === "read")) {
+    const ids = Array.isArray(d.emailIds) ? (d.emailIds as string[]) : [p.emailId!];
+    await setMailState(userId, ids, p.kind === "archive" ? { archived: true } : { read: true });
     return {};
+  }
+  if (p.kind === "notify") return {}; // told by whoever planned it
+  if (p.kind === "snooze") return { snoozed: await snooze(userId, [p.emailId!], (d.until as string | null) ?? null) };
+  if (p.kind === "brief" && d.place === "digest") {
+    await db.from("automations").update({ digest: { at: new Date().toISOString(), emails: d.emailIds } }).eq("id", p.automationId ?? "");
+    return {};
+  }
+  if (p.kind === "brief") {
+    const { data } = await db.from("email_processed").select("brief").eq("email_id", p.emailId!).maybeSingle();
+    await db.from("email_processed").update({ brief: d.place }).eq("email_id", p.emailId!);
+    return { before: data?.brief ?? null };
+  }
+  if (p.kind === "vip") {
+    const { data: before } = await db.from("preferences").select("*").eq("user_id", userId).eq("kind", "sender").eq("subject", String(d.address));
+    await setPref(userId, "sender", String(d.address), "vip", "automation", p.summary);
+    return { before: before ?? [] };
   }
   if (p.kind === "send") {
     // Only Autopilot reaches here (the window sends through /send-email), and
@@ -108,8 +137,8 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
       .from("scheduled_emails")
       .insert({
         user_id: userId, account_id: d.accountId, from_address: d.from ?? null, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body)),
-        body_text: d.body, in_reply_to: d.inReplyTo ?? null, thread_id: d.threadId, send_at: sendAt,
-        source: "autopilot", email_id: p.emailId, action_id: actionId,
+        body_text: d.body, in_reply_to: d.inReplyTo ?? null, thread_id: d.threadId ?? null, send_at: sendAt,
+        source: "autopilot", email_id: p.emailId, action_id: actionId, forward: d.forward ?? null, automation_id: p.automationId ?? null,
       })
       .select("id")
       .single();
@@ -121,10 +150,21 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
     if (p.kind === "label") {
       const labelId = await mail(email.account).label(email.account, String(d.label));
       await relabel(email, [labelId], []);
+      if (d.slug) await ownLabel(p.emailId!, String(d.slug), true);
       return { labelId };
     }
     await relabel(email, [], ["INBOX"], { is_archived: true });
     return {};
+  }
+  if (p.kind === "draft" && d.forward) {
+    // A conversation of its own, with the email it hands on.
+    const { data, error } = await db
+      .from("draft_emails")
+      .insert({ user_id: userId, account_id: d.accountId ?? null, to_addresses: d.to, subject: d.subject, body_html: textToHtml(String(d.body ?? "")), source: "tabellar", forward: d.forward })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    return { draftId: data.id };
   }
   if (p.kind === "draft") {
     // One draft per thread: the reply takes the place of an earlier one the
@@ -174,7 +214,7 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
 export async function act(
   userId: string,
   p: Planned,
-  ctx: Settings & { source: Source; suspicious?: boolean; todayCount?: number; cycleCount?: number; send?: AutoSend; sendCap?: number },
+  ctx: Settings & { source: Source; suspicious?: boolean; todayCount?: number; cycleCount?: number; send?: AutoSend; sendCap?: number; own?: boolean; handOn?: HandOn; sentToday?: number },
 ): Promise<"done" | "proposed" | "refused" | "failed"> {
   const decision = decide({ kind: p.kind, ...ctx });
   if (decision.verdict === "refuse") {
@@ -216,7 +256,7 @@ async function loadRow(userId: string, id: string) {
 
 // Carry out a proposal that has been claimed (status "running").
 async function carryOut(userId: string, row: Record<string, unknown>, reason: string): Promise<Record<string, unknown>> {
-  const p: Planned = { kind: row.kind as Kind, emailId: row.email_id as string | null, summary: row.summary as string, detail: row.detail as Record<string, unknown> };
+  const p: Planned = { kind: row.kind as Kind, emailId: row.email_id as string | null, summary: row.summary as string, detail: row.detail as Record<string, unknown>, automationId: (row.automation_id as string | null) ?? undefined };
   try {
     const undoInfo = await execute(userId, p, row.id as string);
     await db.from("action_log").update({ status: "done", detail: { ...p.detail, ...undoInfo }, decided_at: new Date().toISOString(), reason }).eq("id", row.id);
@@ -269,7 +309,7 @@ export async function applyWaitingLabels(userId: string): Promise<number> {
   const settings = await engineSettings(userId);
   const decision = decide({ kind: "label", source: "engine", ...settings });
   if (decision.verdict !== "do") return 0;
-  const { data } = await db.from("action_log").select("*").eq("user_id", userId).eq("kind", "label").eq("status", "proposed");
+  const { data } = await db.from("action_log").select("*").eq("user_id", userId).eq("kind", "label").eq("status", "proposed").eq("source", "engine");
   let done = 0;
   for (const row of data ?? []) {
     if (!(await claim(row.id as string))) continue;
@@ -301,13 +341,29 @@ export async function undo(userId: string, id: string): Promise<void> {
     if (!res.data?.length) throw Object.assign(new Error("This reply was already sent"), { status: 409 });
     // Its text is kept as a draft, to change and send.
     const s = res.data[0];
-    await db.from("draft_emails").insert({ user_id: userId, account_id: s.account_id, from_address: s.from_address, to_addresses: s.to_addresses, subject: s.subject, body_html: s.body_html, email_id: s.email_id, source: "tabellar" });
+    await db.from("draft_emails").insert({ user_id: userId, account_id: s.account_id, from_address: s.from_address, to_addresses: s.to_addresses, subject: s.subject, body_html: s.body_html, email_id: s.forward ? null : s.email_id, forward: s.forward, source: "tabellar" });
   } else if (kind === "archive" && Array.isArray(d.emailIds)) {
     await setMailState(userId, d.emailIds as string[], { archived: false });
+  } else if (kind === "read") {
+    await setMailState(userId, Array.isArray(d.emailIds) ? (d.emailIds as string[]) : [String(row.email_id)], { read: false });
+  } else if (kind === "snooze") {
+    // Back from it already, there is nothing to take back.
+    const { data: still } = await db.from("emails").select("id").eq("is_snoozed", true).in("id", (d.snoozed as string[] | undefined) ?? []);
+    if (still?.length) await unsnooze(userId, still.map((e) => String(e.id)));
+  } else if (kind === "brief" && d.place === "digest") {
+    await db.from("automations").update({ digest: null }).eq("id", String(row.automation_id ?? ""));
+  } else if (kind === "brief") {
+    await db.from("email_processed").update({ brief: d.before ?? null }).eq("email_id", String(row.email_id));
+  } else if (kind === "vip") {
+    await db.from("preferences").delete().eq("user_id", userId).eq("kind", "sender").eq("subject", String(d.address)).eq("value", "vip");
+    const had = (d.before as Record<string, unknown>[] | undefined) ?? [];
+    if (had.length) await db.from("preferences").upsert(had, { onConflict: "user_id,kind,subject,value" });
   } else if (kind === "label" || kind === "archive") {
     const email = await emailWithAccount(row.email_id as string);
-    if (kind === "label") await relabel(email, [], [String(d.labelId)]);
-    else await relabel(email, ["INBOX"], [], { is_archived: false });
+    if (kind === "label") {
+      await relabel(email, [], [String(d.labelId)]);
+      if (d.slug) await ownLabel(String(row.email_id), String(d.slug), false);
+    } else await relabel(email, ["INBOX"], [], { is_archived: false });
   } else if (kind === "draft") {
     await discardDrafts(userId, [String(d.draftId)]);
   } else if (kind === "todo") {
@@ -320,4 +376,5 @@ export async function undo(userId: string, id: string): Promise<void> {
   }
   await db.from("action_log").update({ status: "undone", undone_at: new Date().toISOString() }).eq("id", id);
   await learnFrom(userId, row, "dismissed");
+  if (row.automation_id) await automationUndone(userId, row);
 }

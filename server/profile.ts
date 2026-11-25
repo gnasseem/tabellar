@@ -19,6 +19,7 @@ import { db } from "./db.ts";
 import { mail } from "./providers.ts";
 import type { Account } from "./accounts.ts";
 import { addressesIn } from "./senders.ts";
+import { answered, unanswer, type AutomationAnswer } from "./automations.ts";
 
 export const KINDS = ["fact", "rule", "writing", "sender", "domain", "topic"] as const;
 export const VALUES = ["vip", "normal", "quiet", "ignore", "never_todo", "never_meeting", "never_draft", "never_followup", "not_newsletter"] as const;
@@ -66,7 +67,8 @@ const MAX_OPEN = 3;
 const CONTEXT_CHARS = 1600; // about 400 tokens
 
 export type Pref = { id: string; kind: string; subject: string; value: string; source: string; evidence: string | null };
-export type Option = { label: string; pref?: { kind: string; subject: string; value: string } };
+// An answer with neither, unless it is final, only puts the question off.
+export type Option = { label: string; pref?: { kind: string; subject: string; value: string }; automation?: AutomationAnswer; final?: boolean };
 
 const lc = (s: unknown) => String(s ?? "").trim().toLowerCase();
 const like = (s: string) => s.replace(/%/g, "");
@@ -432,7 +434,7 @@ export async function ask(userId: string, q: { text: string; detail?: string; ab
   const about = lc(q.about);
   const { data: seen } = await db.from("questions").select("status").eq("user_id", userId).eq("about", about).in("status", ["open", "waiting", "answered"]);
   // An answer whose preference the user has deleted since no longer answers it.
-  const forgotten = about.includes("@") && !covers(await prefsFor(userId, about));
+  const forgotten = /^\S+@\S+$/.test(about) && !covers(await prefsFor(userId, about));
   if ((seen ?? []).some((q) => q.status !== "answered" || !forgotten)) return false;
   const { count: open } = await db.from("questions").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "open");
   await db.from("questions").insert({
@@ -479,7 +481,8 @@ export async function answer(userId: string, id: string, index: number): Promise
     await setPref(userId, opt.pref.kind, opt.pref.subject, opt.pref.value, "asked", `${q.text} ${opt.label}`);
     await applyPref(userId, opt.pref.kind, opt.pref.subject, opt.pref.value);
   }
-  await db.from("questions").update({ status: opt.pref ? "answered" : "skipped", answer: opt.label, answered_at: new Date().toISOString() }).eq("id", id);
+  if (opt.automation) await answered(userId, opt.automation);
+  await db.from("questions").update({ status: opt.pref || opt.automation || opt.final ? "answered" : "skipped", answer: opt.label, answered_at: new Date().toISOString() }).eq("id", id);
   await promote(userId);
   const replan = opt.pref && !STOPS[opt.pref.value] && q.email_id ? (q.email_id as string) : null;
   if (replan) {
@@ -498,6 +501,7 @@ export async function reopen(userId: string, id: string): Promise<void> {
   if (q.status !== "answered" && q.status !== "skipped") return;
   const opt = ((q.options as Option[]) ?? []).find((o) => o.label === q.answer);
   if (opt?.pref) await db.from("preferences").delete().eq("user_id", userId).eq("kind", opt.pref.kind).eq("subject", opt.pref.subject).eq("value", opt.pref.value).eq("source", "asked");
+  if (opt?.automation) await unanswer(userId, opt.automation);
   await db.from("questions").update({ status: "open", answer: null, answered_at: null }).eq("id", id);
 }
 
