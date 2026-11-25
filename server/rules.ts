@@ -69,7 +69,7 @@ export function parseTime(s: unknown): number | null {
 // The time a quote gives. A time with no am or pm takes it from the end of its
 // range ("7:30-9:30pm") or from the evening the quote speaks of; morning
 // hours with neither stay as parseTime reads them.
-function timeIn(timeText: string, quote: string): number | null {
+export function timeIn(timeText: string, quote: string): number | null {
   const at = quote.toLowerCase().indexOf(timeText.toLowerCase());
   const said = timeText + (at >= 0 ? quote.slice(at + timeText.length) : "");
   const range = said.match(/^(\d{1,2})(?:[:.h](\d{2}))?\s*(?:-|–|to|until|till)\s*(\d{1,2})(?:[:.h](\d{2}))?\s*([ap])\.?\s*m/i);
@@ -93,7 +93,7 @@ const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "
 const DAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 const MONTH = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
 
-type Day = { y: number; m: number; d: number };
+export type Day = { y: number; m: number; d: number };
 
 // Today in a timezone, with its weekday (0 is Sunday).
 export function todayIn(tz: string, now: Date): Day & { dow: number } {
@@ -216,7 +216,7 @@ export function parseZone(s: unknown): Zone | null | undefined {
 }
 
 // A zone written right after a time: "1:15pm EST", "10am (GST)", "3 PM UTC+4".
-const ZONE_AFTER = /^\s*\(?\s*((?:utc|gmt)\s*[+-]\s*\d{1,2}(?::?\d{2})?|[a-z]{2,5}\b|(?:gulf|eastern|central|mountain|pacific) (?:standard |daylight )?time)/i;
+export const ZONE_AFTER = /^\s*\(?\s*((?:utc|gmt)\s*[+-]\s*\d{1,2}(?::?\d{2})?|[a-z]{2,5}\b|(?:gulf|eastern|central|mountain|pacific) (?:standard |daylight )?time)/i;
 
 function offsetAt(zone: Zone, instant: number): number {
   if ("offset" in zone) return zone.offset;

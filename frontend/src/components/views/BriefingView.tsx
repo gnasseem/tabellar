@@ -26,6 +26,7 @@ type Handled = { email_id: string; who: string; subject: string; what: string; a
 type Digest = { id: string; title: string; at: string; items: { email_id: string; who: string; text: string; at: string }[] };
 type Brief = {
   digests: Digest[];
+  changes: { id: string; text: string; email_id: string | null; at: string }[];
   settings: { sections: string[]; summary: boolean };
   away: string | null;
   summary: string | null;
@@ -398,6 +399,23 @@ export default function BriefingView() {
                     {needs.map(render)}
                   </div>
                   {brief.more > 0 && more(`${brief.more.toLocaleString()} more`, () => setAll(true))}
+                </>
+              )}
+
+              {brief.changes.length > 0 && (
+                <>
+                  {head("Changed on your calendar")}
+                  {brief.changes.map((c) => (
+                    <div key={c.id} className="mx-2 flex min-h-[40px] items-center gap-3.5 rounded-[12px] px-4 py-1.5 transition-colors duration-150 hover:bg-hover">
+                      <Icon name="event" size={16} className="flex-none text-ink3" />
+                      <button className="min-w-0 flex-1 truncate text-left text-ink" title={c.text} onClick={() => (c.email_id ? setReading(c.email_id) : setView("meetings"))}>
+                        {c.text}
+                      </button>
+                      <button className="btn btn-plain btn-sm flex-none" onClick={() => mail.undo(c.id).then(() => (addToast("info", "Undone"), refresh())).catch((e) => addToast("error", (e as Error).message))}>
+                        Undo
+                      </button>
+                    </div>
+                  ))}
                 </>
               )}
 

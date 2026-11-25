@@ -42,7 +42,9 @@ import { place } from "./place.ts";
 import { firstReadState, relearnStyle, startFirstRead } from "./firstRead.ts";
 import { listAccounts, refreshStaleSendAs, replyFrom, type Account } from "./accounts.ts";
 import { syncDrafts, threadDrafts, withdrawAnswered } from "./drafts.ts";
-import { ownWords } from "./writing.ts";
+import { ownWords, recipients } from "./writing.ts";
+import { choicesOf, type Choice } from "./choices.ts";
+import { afterSent, put, settledBefore, settles, slotsFor, withAnswers } from "./scheduling.ts";
 import { gmailLabelOf, userLabels } from "./labels.ts";
 import { ask, covers, MOVED_ON, PASSED, displayName, type Thing, knowsSender, prefsFor, profileContext, retireTrivia, senderQuestion, stops, wroteTo } from "./profile.ts";
 
@@ -80,7 +82,7 @@ const draftTries = new Map<string, number>();
 const NEWS_MS = 24 * 3600_000;
 
 // `tabellar check` swaps this for canned text so Autopilot can be run without a model.
-export const drafter = { draft: (userId: string, e: EmailRow, auto: boolean) => draftReply(userId, e, "", { auto }) };
+export const drafter = { draft: (userId: string, e: EmailRow, auto: boolean, answers?: Choice[]) => draftReply(userId, e, "", { auto, answers }) };
 
 // ── Planning ────────────────────────────────────────────────────────────────
 
@@ -231,10 +233,18 @@ export const planNew = serial(async (userId: string): Promise<void> => {
       }
     }
 
+    // The thread settles a meeting: the time they took, or that it is moved or
+    // off. What is left to answer is what else it asks.
+    const plan = suspicious || email.is_calendar || stopped("meeting") || (await settledBefore(userId, email.id)) ? null : await settles(userId, email, timezone).catch((e) => (console.error("[engine] scheduling:", (e as Error).message), null));
+    const became = plan ? await put(userId, email.id, plan) : "refused";
+    const settled = became === "done" || became === "proposed";
+    if (became === "proposed") waiting = true;
+    if (became === "done" && plan!.detail.op !== "add") notes.push({ email: email.id, sender: "Your calendar", summary: plan!.summary, drafted: false });
+
     const replyTo = (email.reply_to_email || email.sender_email || "").trim();
     const reply = actions.find((a) => a.action === "reply");
     // Someone waits on the user: a reply the model thought of, or a question.
-    const waits = !!reply || ownWords(String(email.body_text ?? "")).includes("?");
+    const waits = settled ? plan!.also : !!reply || ownWords(String(email.body_text ?? "")).includes("?");
     const wantsDraft =
       category === "action-required" && waits && !!replyTo && !NO_REPLY.test(replyTo) && !already.has("draft") && !already.has("send") && !stopped("draft") && !(await laterInThread(email));
     const todo = todoOf(actions, email, category);
@@ -259,6 +269,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     // Autopilot when everything allows it, otherwise saved as a draft.
     let drafted = false;
     let replying = false;
+    let open = false; // a decision left to the user in the draft
     if (wantsDraft && !asked) {
       const subject = /^re:/i.test(email.subject ?? "") ? email.subject! : `Re: ${email.subject ?? ""}`;
       // From the address the email was sent to (an alias, another account).
@@ -279,8 +290,12 @@ export const planNew = serial(async (userId: string): Promise<void> => {
       if (pre.verdict === "refuse" && !trySend) await run(base);
       else if (!existing) {
         try {
-          let written = await drafter.draft(userId, email, trySend);
+          // Asked for a time: the answers are the user's free times.
+          const free = settled ? null : await slotsFor(userId, email, (await recipients(userId))(replyTo) === "org");
+          let written = await drafter.draft(userId, email, trySend && !free, free?.answers);
           let body = written.text.trim();
+          if (free && body && !HOLD.test(body)) body = withAnswers(body, free.answers);
+          if (free) base.detail.offers = free.slots.map((d) => d.toISOString());
           if (trySend && GAP.test(body)) {
             // Kept as a draft, for the user to fill in.
             if (pre.verdict === "refuse") body = "";
@@ -308,7 +323,11 @@ export const planNew = serial(async (userId: string): Promise<void> => {
           if (replying) {
             // Sent (after the cancel window); no draft as well.
           } else if (pre.verdict === "refuse") await run(base);
-          else if (body) drafted = (await run({ ...base, detail: { ...base.detail, body, writtenFrom: written.from } })) === "done";
+          else if (body) {
+            const r = await run({ ...base, detail: { ...base.detail, body, writtenFrom: written.from } });
+            drafted = r === "done";
+            open = choicesOf(body).length > 0 && (r === "done" || r === "proposed");
+          }
         } catch (e) {
           // Planned again in the next pass; what is already done is not repeated.
           console.error("[engine] reply failed:", (e as Error).message);
@@ -325,14 +344,15 @@ export const planNew = serial(async (userId: string): Promise<void> => {
       await run({ kind: "todo", emailId: email.id, summary: `Todo: ${todo.label}`, detail: { text: String(todo.label).trim(), ...(due ? { due } : {}) } });
     }
 
-    // Meeting proposal, only when the email states a time that has not
+    // Not when the reply asks the user about it: saying yes there puts it on the
+    // calendar (afterSent). Meeting proposal, only when the email states a time that has not
     // passed and the calendar has nothing then or with this sender a day
     // either side; if it has, the email is linked to that event instead.
     // Calendar mail never becomes a proposal (the analysis linked it).
     const suggested = email.is_calendar || stopped("meeting") ? undefined : actions.find((a) => a.action === "schedule_meeting");
     const meeting = suggested ? meetingOf(suggested, email, timezone, new Date(email.received_at)) : null;
     const wall = meeting?.dateTime ? parseWallClock(meeting.dateTime) : null;
-    if (meeting && wall !== null && !row.calendar) {
+    if (meeting && wall !== null && !row.calendar && !settled && !open) {
       const start = wallClockToUtc(wall, timezone);
       const minutes = Math.min(Math.max(meeting.duration || 60, 5), 24 * 60);
       const cal = start.getTime() > Date.now() ? calendar : null;
@@ -510,6 +530,13 @@ export async function withdrawStale(userId: string): Promise<void> {
   if (answered.length) await withdrawAnswered(userId, answered);
 }
 
+// What the user said yes to in mail they sent goes on the calendar.
+async function agreeSent(userId: string): Promise<void> {
+  const { data: me } = await db.from("profiles").select("working_hours, onboarding, engine_paused").eq("id", userId).maybeSingle();
+  if (!me || me.engine_paused || me.onboarding !== "done") return;
+  await afterSent(userId, (me.working_hours as { timezone?: string } | null)?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+}
+
 // Sort and plan everything not read yet, a batch at a time.
 const readAll = (userId: string) => readBacklog(userId, () => planNew(userId));
 
@@ -537,6 +564,7 @@ export async function runCycle(): Promise<void> {
     await syncMail(userId);
     await syncDrafts(userId);
     await withdrawStale(userId);
+    await agreeSent(userId);
     if (modelConfigured()) {
       await readAll(userId);
       await judgeSent(userId);
@@ -649,6 +677,7 @@ function startWatcher(): () => void {
         const fresh = await syncMail(userId);
         await syncDrafts(userId);
         await withdrawStale(userId);
+        await agreeSent(userId);
         if (fresh.length && modelConfigured()) void readNew(userId);
       }
       // While none can be reached, ask less and less often.

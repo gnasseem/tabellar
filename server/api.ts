@@ -54,6 +54,8 @@ import { learnFromSent, startFirstRead } from "./firstRead.ts";
 import * as onboarding from "./onboarding.ts";
 import { approve, confirmMeeting, dismiss, undo, engineSettings, setMailState } from "./actions.ts";
 import { answer as answerLine, undoAnswer } from "./answers.ts";
+import { freeOn, type Hours } from "./scheduling.ts";
+import { wallIn } from "./rules.ts";
 import { answer, applyPref, feedback, profileContext, reopen, setPref, type Feedback } from "./profile.ts";
 import * as automations from "./automations.ts";
 import * as telegram from "./telegram.ts";
@@ -573,156 +575,15 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
         return json({ error: "No calendar access" }, 400, corsHeaders);
       }
 
-      const url = new URL(req.url);
-      const durationMin = parseInt(
-        url.searchParams.get("duration") || "30",
-        10,
-      );
-      const dateParam = url.searchParams.get("date"); // YYYY-MM-DD
+      const minutes = parseInt(url.searchParams.get("duration") || "30", 10) || 30;
       const timezone = url.searchParams.get("timezone") || "UTC";
-
-      const now = new Date();
-
-      // Helper: convert a local date+time in the user's timezone to a UTC Date.
-      // Works by computing the offset Intl reports for a UTC guess, then correcting.
-      function zonedToUtc(
-        year: number,
-        month: number,
-        day: number,
-        hour: number,
-        minute: number,
-        tz: string,
-      ): Date {
-        const guess = new Date(Date.UTC(year, month, day, hour, minute, 0, 0));
-        const fmt = new Intl.DateTimeFormat("en-US", {
-          timeZone: tz,
-          year: "numeric",
-          month: "numeric",
-          day: "numeric",
-          hour: "numeric",
-          minute: "numeric",
-          hour12: false,
-        });
-        const parts = Object.fromEntries(
-          fmt.formatToParts(guess).map((p) => [p.type, p.value]),
-        );
-        const tzMs = Date.UTC(
-          parseInt(parts.year),
-          parseInt(parts.month) - 1,
-          parseInt(parts.day),
-          parseInt(parts.hour) % 24,
-          parseInt(parts.minute),
-        );
-        return new Date(guess.getTime() + (guess.getTime() - tzMs));
-      }
-
-      // Parse the requested date components
-      const today = new Date();
-      const [y, mo, d] = dateParam
-        ? dateParam.split("-").map(Number)
-        : [today.getFullYear(), today.getMonth() + 1, today.getDate()];
-
-      // Day of week for the requested date in the user's timezone
-      // Use noon UTC of the date components so there is no day-boundary ambiguity
-      const noonUtc = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0));
-      const dowFmt = new Intl.DateTimeFormat("en-US", {
-        timeZone: timezone,
-        weekday: "short",
-      });
-      const dowStr = dowFmt.format(noonUtc);
-      const dowMap: Record<string, number> = {
-        Sun: 0,
-        Mon: 1,
-        Tue: 2,
-        Wed: 3,
-        Thu: 4,
-        Fri: 5,
-        Sat: 6,
-      };
-      const dayOfWeek = dowMap[dowStr] ?? noonUtc.getDay();
-
-      // Query freeBusy for the full target day in the user's timezone
-      const dayMin = zonedToUtc(y, mo - 1, d, 0, 0, timezone);
-      const dayMax = zonedToUtc(y, mo - 1, d, 23, 59, timezone);
-      dayMax.setSeconds(59, 999);
-
-      let busyPeriods: { start: string; end: string }[];
+      const asked = (url.searchParams.get("date") || wallIn(new Date(), timezone).slice(0, 10)).split("-").map(Number);
+      const { data: me } = await db.from("profiles").select("working_hours").eq("id", userId).single();
       try {
-        busyPeriods = await cal.calendar.busy(cal.account, dayMin, dayMax);
+        return json(await freeOn(cal, me?.working_hours as Hours, timezone, { y: asked[0], m: asked[1], d: asked[2] }, minutes), 200, corsHeaders);
       } catch {
         return json({ error: "Calendar API failed", slots: [] }, 200, corsHeaders);
       }
-
-      // Get working hours from profile
-      const { data: profileData } = await db
-        .from("profiles")
-        .select("working_hours")
-        .eq("id", userId)
-        .single();
-
-      const wh = (profileData?.working_hours as {
-        start?: string;
-        end?: string;
-        days?: number[];
-      } | null) || {
-        start: "09:00",
-        end: "17:00",
-        days: [1, 2, 3, 4, 5],
-      };
-
-      // Return empty if not a working day (checked in user's timezone)
-      if (!(wh.days || [1, 2, 3, 4, 5]).includes(dayOfWeek)) {
-        return json({ slots: [], busy: busyPeriods }, 200, corsHeaders);
-      }
-
-      // Working hours as UTC timestamps for the target date in user's timezone
-      const [startH, startM] = (wh.start || "09:00").split(":").map(Number);
-      const [endH, endM] = (wh.end || "17:00").split(":").map(Number);
-      const slotMs = durationMin * 60000;
-      const stepMs = 15 * 60000;
-
-      const dayStart = zonedToUtc(y, mo - 1, d, startH, startM, timezone);
-      const dayEnd = zonedToUtc(y, mo - 1, d, endH, endM, timezone);
-
-      // Clamp to now for today
-      if (dayStart < now) {
-        dayStart.setTime(Math.max(dayStart.getTime(), now.getTime()));
-      }
-
-      // Round up to next 15-min mark (in UTC ms, which aligns with any tz)
-      const rawMinutes = Math.floor(dayStart.getTime() / (15 * 60000));
-      dayStart.setTime(
-        (rawMinutes + (dayStart.getTime() % (15 * 60000) > 0 ? 1 : 0)) *
-          15 *
-          60000,
-      );
-
-      // Generate all free slots for the target date (no cap)
-      const slots: { start: string; end: string }[] = [];
-
-      for (
-        let t = dayStart.getTime();
-        t + slotMs <= dayEnd.getTime();
-        t += stepMs
-      ) {
-        const slotStart = new Date(t);
-        const slotEnd = new Date(t + slotMs);
-
-        const isBusy = busyPeriods.some((b: { start: string; end: string }) => {
-          const bs = new Date(b.start).getTime();
-          const be = new Date(b.end).getTime();
-          return slotStart.getTime() < be && slotEnd.getTime() > bs;
-        });
-
-        if (!isBusy) {
-          slots.push({
-            start: slotStart.toISOString(),
-            end: slotEnd.toISOString(),
-          });
-        }
-      }
-
-      return json({ slots, busy: busyPeriods }, 200, corsHeaders);
     }
 
     // ── GET /calendar/events ───────────────────────────────────────────────

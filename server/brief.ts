@@ -82,7 +82,9 @@ export type HandledItem = { email_id: string; who: string; subject: string; what
 // The mail an automation gathered at its time.
 export type Digest = { id: string; title: string; at: string; items: { email_id: string; who: string; text: string; at: string }[] };
 
-export type Brief = { settings: BriefSettings; away: string | null; summary: string | null; digests: Digest[]; needs: NeedItem[]; more: number; proof: NeedItem | null; waiting: WaitingItem[]; waitingMore: number; handled: HandledItem[]; day: string; at: string };
+// What was put on the calendar, moved or taken off by mail.
+export type Change = { id: string; text: string; email_id: string | null; at: string };
+export type Brief = { settings: BriefSettings; changes: Change[]; away: string | null; summary: string | null; digests: Digest[]; needs: NeedItem[]; more: number; proof: NeedItem | null; waiting: WaitingItem[]; waitingMore: number; handled: HandledItem[]; day: string; at: string };
 
 type Row = Record<string, unknown>;
 
@@ -108,7 +110,7 @@ export async function brief(userId: string, { all: every = false } = {}): Promis
   const written = profile?.brief_summary as Summary | null;
   const max = LENGTHS[settings.length];
 
-  const [drafts, proposals, meetings, todos, questions, recent, prefs, owed, back, hidden, unread, placed, gathered, leaving] = await Promise.all([
+  const [drafts, proposals, meetings, todos, questions, recent, prefs, owed, back, hidden, unread, placed, gathered, events, leaving] = await Promise.all([
     db.from("draft_emails").select("id, email_id, subject, to_addresses, forward, created_at").eq("user_id", userId).or("email_id.not.is.null,forward.not.is.null").order("created_at", { ascending: false }).limit(200),
     db.from("action_log").select("id, kind, email_id, summary, detail, hash, created_at").eq("user_id", userId).eq("status", "proposed").or("kind.neq.label,source.eq.automation").order("created_at", { ascending: false }).limit(200),
     db.from("meetings").select("id, email_id, title, start_time, as_written").eq("user_id", userId).eq("status", "proposed").order("start_time", { ascending: true }).limit(100),
@@ -128,6 +130,7 @@ export async function brief(userId: string, { all: every = false } = {}): Promis
     db.from("emails").select("id, subject, sender, sender_email, received_at, email_processed(summary)").eq("user_id", userId).eq("is_read", false).eq("is_archived", false).eq("is_calendar", false).gte("received_at", new Date(Date.now() - 7 * DAY).toISOString()).not("label_ids", "cs", '{"SENT"}').order("received_at", { ascending: false }).limit(500),
     db.from("email_processed").select("email_id, brief").eq("user_id", userId).not("brief", "is", null).order("processed_at", { ascending: false }).limit(2000),
     db.from("automations").select("id, text, digest").eq("user_id", userId).not("digest", "is", null),
+    db.from("action_log").select("id, summary, email_id, created_at").eq("user_id", userId).eq("kind", "event").eq("status", "done").gte("created_at", since).order("created_at", { ascending: false }).limit(20),
     db.from("scheduled_emails").select("thread_id").eq("user_id", userId).eq("status", "pending"),
   ]);
   // Where an automation put an email: first, or out of the Brief.
@@ -242,7 +245,7 @@ export async function brief(userId: string, { all: every = false } = {}): Promis
     for (const r of (data ?? []) as Row[]) {
       const d = (r.detail as Row | null) ?? {};
       const words =
-        r.kind === "label" ? String(d.label ?? "").replace(/^Tabellar\//, "") : r.kind === "todo" ? "Todo added" : r.kind === "archive" ? "Archived" : r.kind === "send" ? "Replied" : r.kind === "meeting" ? "Meeting proposed" : r.kind === "unsubscribe" ? "Unsubscribed" : r.kind === "snooze" ? "Snoozed" : r.kind === "read" ? "Marked read" : "";
+        r.kind === "label" ? String(d.label ?? "").replace(/^Tabellar\//, "") : r.kind === "todo" ? "Todo added" : r.kind === "archive" ? "Archived" : r.kind === "send" ? "Replied" : r.kind === "meeting" ? "Meeting proposed" : r.kind === "unsubscribe" ? "Unsubscribed" : r.kind === "snooze" ? "Snoozed" : r.kind === "read" ? "Marked read" : r.kind === "event" ? "On calendar" : "";
       if (!words) continue;
       if (r.kind !== "label") acted.add(String(r.email_id));
       const list = done.get(String(r.email_id)) ?? [];
@@ -281,6 +284,7 @@ export async function brief(userId: string, { all: every = false } = {}): Promis
 
   return {
     settings,
+    changes: ((events.data ?? []) as Row[]).map((r) => ({ id: String(r.id), text: String(r.summary), email_id: (r.email_id as string) ?? null, at: String(r.created_at) })),
     away: await awayLine(userId, profile?.away as Away | null),
     digests,
     summary: settings.summary && current(written, today, settings, all.map((n) => n.key)) ? written!.text : null,

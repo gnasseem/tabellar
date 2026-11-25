@@ -297,7 +297,7 @@ function sourcesOf(c: Context, text: string): Source[] {
 const WEEKDAY = /\b(?:mon|tues|wednes|thurs|fri|satur|sun)day\b/gi;
 const MONTH = /\b(?:january|february|march|april|june|july|august|september|october|november|december)\b/gi;
 
-const sentencesOf = (text: string) => text.split("\n").flatMap((l) => l.match(/[^.!?]+(?:[.!?](?=\S)[^.!?]*)*[.!?]*\s*/g) ?? []).map((s) => s.trim()).filter(Boolean);
+export const sentencesOf = (text: string) => text.split("\n").flatMap((l) => l.match(/[^.!?]+(?:[.!?](?=\S)[^.!?]*)*[.!?]*\s*/g) ?? []).map((s) => s.trim()).filter(Boolean);
 
 // Something said to be done or attached. A draft is written before anything
 // is done, so only what the sources say was done is.
@@ -305,7 +305,7 @@ const DONE =
   /\b(?:I(?:'ve| have)(?: just| already| now)? (?:sent|attached|forwarded|shared|signed|paid|submitted|uploaded|spoken|talked|checked|confirmed|reviewed|added|updated|scheduled|booked)|I(?: just| already) (?:sent|signed|paid|shared|checked)|(?:please )?(?:find|see) (?:the )?attached|(?:is|are|it's) attached|attached (?:is|are)|you(?:'ll| will) (?:find|receive) (?:a |the |an )?(?:invite|invitation|copy|file|document)|ci-joint|en pièce jointe|j'ai (?:bien )?(?:envoyé|signé|transmis|vérifié|payé))\b/i;
 
 // The user agreeing, promising or accepting.
-const COMMITS = new RegExp(
+export const COMMITS = new RegExp(
   [
     "\\b(?:that|this|it|which|time|date|day|(?:mon|tues|wednes|thurs|fri|satur|sun)day|tomorrow|\\d(?:\\s?[ap]m)?)(?: [\\w:]+){0,5} (?:works|suits|would work|will work|is (?:good|fine|perfect|great|okay|ok))\\b",
     "\\bworks (?:well|perfectly|great|fine|best|for (?:me|us))",
@@ -325,7 +325,7 @@ const COMMITS = new RegExp(
   ].join("|"),
   "iu",
 );
-const NEGATED = /\b(?:can't|cannot|won't|don't|doesn't|didn't|unable|unfortunately|ne (?:peux|pourrai|serai|viendrai))\b|^(?:if|whether|once|unless)\b/i;
+export const NEGATED = /\b(?:can't|cannot|won't|don't|doesn't|didn't|unable|unfortunately|ne (?:peux|pourrai|serai|viendrai))\b|^(?:if|whether|once|unless)\b/i;
 
 // The email asks the user to decide something: a time, money, an event, a
 // favour, a thing by a day.
@@ -513,11 +513,11 @@ export const HOLD = /^\W*HOLD\W*$/;
 // A reply to one email in the user's way of writing. `said` is what the user
 // wants to say, in their words; without it nothing is decided for them. ""
 // when nothing it may say is left.
-export async function draftReply(userId: string, e: EmailRow, said = "", opts: { kind?: Recipient; auto?: boolean } = {}): Promise<Drafted> {
+export async function draftReply(userId: string, e: EmailRow, said = "", opts: { kind?: Recipient; auto?: boolean; answers?: Choice[] } = {}): Promise<Drafted> {
   const [writing, context, name] = await Promise.all([writingFor(userId, e.reply_to_email || e.sender_email, opts.kind), draftContext(userId, e), displayNameOf(userId)]);
   const lang = languageOf(`${e.subject ?? ""} ${context.own}`);
   const w = inLanguage(writing, lang);
-  const ask = [stylePrompt(w), context.about, context.prompt, LANGUAGES[lang] && `Write in ${LANGUAGES[lang].name}, the language of the email.`, said && `What the user wants to say: ${said}\nWhat this settles is decided: write it, without labels.`, opts.auto && AUTO].filter(Boolean).join("\n\n");
+  const ask = [stylePrompt(w), context.about, context.prompt, LANGUAGES[lang] && `Write in ${LANGUAGES[lang].name}, the language of the email.`, said && `What the user wants to say: ${said}\nWhat this settles is decided: write it, without labels.`, opts.answers && "When to meet is taken care of: say nothing about days, times or availability, and write no labels. Answer the rest, if there is anything else.", opts.auto && AUTO].filter(Boolean).join("\n\n");
   const sent = e.received_at ? new Date(e.received_at) : new Date();
   const none = (c: Choice[]) => (oneSided(c) ? (LANGUAGES[lang]?.none ?? NONE) : null);
   const write = async (extra = "") => {

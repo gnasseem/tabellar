@@ -266,6 +266,7 @@ async function briefMessage(userId: string, b: Brief, me: Row | null): Promise<O
       console.error("[telegram] calendar:", (e as Error).message);
     }
   }
+  if (b.changes.length) head.push(b.changes.map((c) => clip(line1(c.text), 140)).join("\n"));
   const count = b.needs.length + b.more;
   const lines = has("needs") ? b.needs.map((n) => lineOf(n, tz, b.day, summaries)) : [];
   if (has("waiting")) for (const w of b.waiting.slice(0, WAITING)) lines.push({ key: w.key, who: `Waiting on ${w.who}`, text: line1(w.text), about: "" });

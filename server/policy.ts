@@ -26,9 +26,10 @@ import { createHash } from "node:crypto";
 export const LEVELS = ["observe", "suggest", "assist", "autopilot"] as const;
 export type Level = (typeof LEVELS)[number];
 
-// snooze, read, brief (first in the Brief, left out of it, or a digest there),
+// event puts a meeting on the calendar, moves it or takes it off, when the
+// thread agreed on it (scheduling.ts). snooze, read, brief (first in the Brief, left out of it, or a digest there),
 // notify and vip (a sender becomes most important) are an automation's.
-export const KINDS = ["label", "archive", "draft", "todo", "meeting", "send", "unsubscribe", "snooze", "read", "brief", "notify", "vip"] as const;
+export const KINDS = ["label", "archive", "draft", "todo", "meeting", "send", "unsubscribe", "snooze", "read", "brief", "notify", "vip", "event"] as const;
 export type Kind = (typeof KINDS)[number];
 
 // "engine" and "automation" act on their own, "mcp" for an AI program the user
@@ -37,7 +38,7 @@ export type Source = "engine" | "automation" | "mcp" | "agent" | "assistant" | "
 
 // What the engine may do on its own at Assist. Archive and unsubscribe are
 // never here, and send only at Autopilot.
-const ENGINE_KINDS: ReadonlySet<string> = new Set(["label", "draft", "todo", "meeting"]);
+const ENGINE_KINDS: ReadonlySet<string> = new Set(["label", "draft", "todo", "meeting", "event"]);
 
 // What an automation may do on its own. A sender it would make most important
 // is always proposed. What changes nothing in the mailbox is never asked about.
@@ -56,7 +57,7 @@ const USER_KINDS: ReadonlySet<string> = new Set(KINDS);
 // Caps on what the engine does or proposes: per cycle (one sync and analysis
 // pass) and per calendar day.
 export const CAP_PER_CYCLE = 60;
-export const CAP_PER_DAY: Record<string, number> = { label: 500, draft: 25, todo: 60, meeting: 30, send: 20 };
+export const CAP_PER_DAY: Record<string, number> = { label: 500, draft: 25, todo: 60, meeting: 30, send: 20, event: 20 };
 
 // An automatic reply, as the engine wants to send it. `writer` is the address
 // of the person whose email is being answered (Reply-To if set, else From),
@@ -113,6 +114,7 @@ export type Request = {
   sendCap?: number; // the user's own daily limit on automatic sends
   own?: boolean; // an automation that does not ask first
   handOn?: HandOn; // for an automation's send
+  agreed?: boolean; // for an event: the user wrote that time, or said yes to it, in the thread
   sentToday?: number; // automatic sends so far today, the engine's included
 };
 
@@ -138,6 +140,7 @@ export function decide(r: Request): Decision {
     return { verdict: "refuse", reason: "The email looks like it is giving instructions to an AI, so it is only labelled" };
   }
   if (level === "observe") return { verdict: "refuse", reason: "Observe changes nothing" };
+  if (r.kind === "event" && !r.agreed) return { verdict: "refuse", reason: "Only a time the user agreed to goes on the calendar" };
   if (autoSend) {
     const why = checkAutoSend(r.send);
     if (why) return { verdict: "refuse", reason: why };

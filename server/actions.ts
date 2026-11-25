@@ -206,7 +206,38 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
     if (error) throw new Error(error.message);
     return { meetingId: data.id };
   }
+  if (p.kind === "event" && d.op === "add") {
+    const { data, error } = await db
+      .from("meetings")
+      .insert({ user_id: userId, email_id: p.emailId, title: d.title, start_time: d.start_time, end_time: d.end_time, location: d.location ?? null, quote: d.quote ?? null, status: "proposed" })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    try {
+      const { link } = await confirmMeeting(userId, String(data.id));
+      return { meetingId: data.id, link };
+    } catch (e) {
+      await db.from("meetings").delete().eq("id", data.id);
+      throw e;
+    }
+  }
+  if (p.kind === "event") return changeEvent(userId, String(d.meetingId), d.op === "cancel" ? null : { start_time: String(d.start_time), end_time: String(d.end_time) });
   throw new Error(`Tabellar cannot carry out "${p.kind}" from the action log`);
+}
+
+// A meeting on the calendar, at another time or (null) off it. Nobody is told.
+async function changeEvent(userId: string, id: string, to: { start_time: string; end_time: string } | null): Promise<Record<string, unknown>> {
+  const { data: m } = await db.from("meetings").select("*").eq("id", id).eq("user_id", userId).maybeSingle();
+  const cal = await userCalendar(userId);
+  if (!m?.calendar_event_id || !cal) throw new Error("The meeting is no longer on the calendar");
+  if (to) {
+    await cal.calendar.update(cal.account, String(m.calendar_event_id), { start: to.start_time, end: to.end_time }, false);
+    await db.from("meetings").update(to).eq("id", id);
+  } else {
+    await cal.calendar.cancel(cal.account, String(m.calendar_event_id), false);
+    await db.from("meetings").update({ status: "cancelled", calendar_event_id: null }).eq("id", id);
+  }
+  return {};
 }
 
 // Decide, then do, propose or refuse. Refusals for Observe and pause are not
@@ -214,7 +245,7 @@ async function execute(userId: string, p: Planned, actionId: string): Promise<Re
 export async function act(
   userId: string,
   p: Planned,
-  ctx: Settings & { source: Source; suspicious?: boolean; todayCount?: number; cycleCount?: number; send?: AutoSend; sendCap?: number; own?: boolean; handOn?: HandOn; sentToday?: number },
+  ctx: Settings & { source: Source; suspicious?: boolean; todayCount?: number; cycleCount?: number; send?: AutoSend; sendCap?: number; own?: boolean; handOn?: HandOn; sentToday?: number; agreed?: boolean },
 ): Promise<"done" | "proposed" | "refused" | "failed"> {
   const decision = decide({ kind: p.kind, ...ctx });
   if (decision.verdict === "refuse") {
@@ -366,6 +397,14 @@ async function takeBack(userId: string, row: Record<string, unknown>): Promise<v
     await discardDrafts(userId, [String(d.draftId)]);
   } else if (kind === "todo") {
     await db.from("todos").delete().eq("id", String(d.todoId)).eq("user_id", userId);
+  } else if (kind === "event" && d.op === "add") {
+    await changeEvent(userId, String(d.meetingId), null);
+    await db.from("meetings").delete().eq("id", String(d.meetingId));
+  } else if (kind === "event" && d.op === "move") {
+    await changeEvent(userId, String(d.meetingId), d.before as { start_time: string; end_time: string });
+  } else if (kind === "event") {
+    await db.from("meetings").update({ status: "proposed" }).eq("id", String(d.meetingId));
+    await confirmMeeting(userId, String(d.meetingId));
   } else if (kind === "meeting") {
     const gone = await db.from("meetings").delete().eq("id", String(d.meetingId)).eq("user_id", userId).eq("status", "proposed").select("id");
     if (!gone.data?.length) throw Object.assign(new Error("The meeting was already confirmed or removed; change it in Meetings"), { status: 409 });

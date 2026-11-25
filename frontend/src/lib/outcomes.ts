@@ -67,6 +67,7 @@ const PROPOSED: Record<string, string> = {
   send: "Reply to approve",
   todo: "Todo to approve",
   meeting: "Meeting to approve",
+  event: "Calendar to approve",
   archive: "Archive to approve",
   unsubscribe: "Unsubscribe to approve",
   label: "Label to approve",
@@ -176,6 +177,9 @@ function build(log: any[], drafts: any[], meetings: any[], todos: any[], sched: 
       if (m) seenMeeting.add(m.id);
       if (m && m.status === "proposed") push(r.email_id, { ...base, state: "need", short: "Meeting to confirm", title: `Meeting to confirm: ${m.title}, ${meetingWhen(m)}`, act: { kind: "view", view: "meetings" } });
       else if (m && m.status === "confirmed") push(r.email_id, { ...base, state: "done", short: `On calendar, ${when(m.start_time)}`, title: `On calendar: ${m.title}, ${when(m.start_time)}`, act: { kind: "view", view: "meetings" } });
+    } else if (r.status === "done" && r.kind === "event") {
+      if (d.meetingId) seenMeeting.add(d.meetingId);
+      push(r.email_id, { ...base, state: "done", short: d.op === "cancel" ? "Called off" : d.op === "move" ? "Moved" : "On calendar", title: r.summary, act: { kind: "undo", id: r.id } });
     } else if (r.status === "done" && r.kind === "archive") {
       push(r.email_id, { ...base, state: "done", short: "Archived", title: "Archived", act: { kind: "undo", id: r.id } });
     } else if (r.status === "done" && ["read", "snooze", "brief", "vip"].includes(r.kind)) {

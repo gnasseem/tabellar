@@ -13,9 +13,9 @@ import { Countdown, Empty, Glyph, Menu, SkeletonRows, ViewBar, VirtualList, useS
 
 type LogRow = {
   id: string;
-  kind: "label" | "archive" | "draft" | "todo" | "meeting" | "send" | "unsubscribe" | "snooze" | "read" | "brief" | "notify" | "vip";
+  kind: "label" | "archive" | "draft" | "todo" | "meeting" | "send" | "unsubscribe" | "snooze" | "read" | "brief" | "notify" | "vip" | "event";
   status: "proposed" | "running" | "done" | "undone" | "dismissed" | "blocked" | "failed";
-  source: "engine" | "automation" | "agent" | "assistant" | "user";
+  source: "engine" | "automation" | "mcp" | "agent" | "assistant" | "user";
   summary: string;
   detail: Record<string, unknown>;
   hash: string | null;
@@ -31,7 +31,7 @@ type Kind = "all" | LogRow["kind"];
 
 const CHUNK = 1000;
 const LINE = 20; // line height of detail text, so a block's height is known before it is drawn
-const UNDOABLE = new Set(["label", "archive", "draft", "todo", "meeting", "snooze", "read", "brief", "vip"]);
+const UNDOABLE = new Set(["label", "archive", "draft", "todo", "meeting", "snooze", "read", "brief", "vip", "event"]);
 const KINDS: { id: Kind; label: string }[] = [
   { id: "all", label: "All" },
   { id: "label", label: "Labels" },
@@ -39,6 +39,7 @@ const KINDS: { id: Kind; label: string }[] = [
   { id: "send", label: "Replies sent" },
   { id: "todo", label: "Todos" },
   { id: "meeting", label: "Meetings" },
+  { id: "event", label: "Calendar" },
   { id: "archive", label: "Archived" },
   { id: "unsubscribe", label: "Unsubscribes" },
 ];
@@ -81,6 +82,8 @@ function about(r: LogRow): string {
   return r.summary;
 }
 
+const opOf = (r: LogRow) => r.detail.op;
+
 // How to take a row back, or why there is nothing to take back.
 function undoNote(r: LogRow): string {
   if (r.status === "blocked") return "Nothing was changed.";
@@ -94,6 +97,7 @@ function undoNote(r: LogRow): string {
   if (r.kind === "draft") return "Undo deletes the draft.";
   if (r.kind === "todo") return "Undo removes the todo.";
   if (r.kind === "meeting") return "Undo removes the proposed meeting. Once it is confirmed, change it in Meetings.";
+  if (r.kind === "event") return opOf(r) === "add" ? "Undo takes it off the calendar." : opOf(r) === "move" ? "Undo moves it back." : "Undo puts it back on the calendar.";
   if (r.kind === "snooze") return "Undo returns it to the inbox.";
   if (r.kind === "read") return "Undo marks it unread.";
   if (r.kind === "brief") return "Undo puts the Brief back as it was.";
