@@ -380,6 +380,7 @@ export default function HistoryView() {
           )
         ) : (
           <VirtualList
+            page
             items={items}
             heightOf={heightOf}
             render={renderItem}

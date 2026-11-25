@@ -837,9 +837,9 @@ export default function AppShell({
         resetSolveAgent,
       }}
     >
-      <div className="flex h-screen overflow-hidden bg-canvas text-ink">
+      <div className="flex h-screen overflow-hidden bg-tray text-ink">
         <Sidebar />
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
+        <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-canvas lg:my-2 lg:mr-2 lg:rounded-[14px] lg:shadow-sheet">{children}</main>
       </div>
       <div>
         {composeOpen && (

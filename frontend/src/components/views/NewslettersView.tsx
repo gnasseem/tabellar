@@ -290,7 +290,7 @@ export default function NewslettersView() {
     <>
       {selected.length ? (
         <header className="bar">
-          <b className="bar-title mr-1.5">{selected.length} selected</b>
+          <b className="bar-subject mr-1.5">{selected.length} selected</b>
           {tab === "clean" && (
             <button className="btn btn-pri" onClick={() => cleanSelected(selected)}>
               Unsubscribe and archive
@@ -326,7 +326,7 @@ export default function NewslettersView() {
         </ViewBar>
       )}
       {pages.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 border-b border-line py-2 pl-5 pr-3.5 text-xs text-ink2">
+        <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1 border-b border-line py-2 pl-6 pr-3.5 text-xs text-ink2">
           <b className="font-semibold text-ink">Finish on their page</b>
                     {pages.map((p) => (
             <a key={p.addr} href={p.url} target="_blank" rel="noopener noreferrer" className="link">
@@ -345,7 +345,7 @@ export default function NewslettersView() {
             <SkeletonRows count={18} />
           </div>
         ) : error ? (
-          <p className="px-5 py-4 text-danger" role="alert">
+          <p className="px-6 py-4 text-danger" role="alert">
             Could not load the senders: {error}.{" "}
             <button className="link !text-danger" onClick={() => (setLoading(true), load())}>
               Try again
@@ -402,7 +402,7 @@ export default function NewslettersView() {
         )}
       </div>
       {cursor && !selected.length && (
-        <div className="flex flex-none items-center gap-1.5 border-t border-line py-2 pl-5 pr-3.5 md:hidden">
+        <div className="flex flex-none items-center gap-1.5 border-t border-line py-2 pl-6 pr-3.5 md:hidden">
           <span className="min-w-0 flex-1 truncate text-xs text-ink2">{cursor.name}</span>
           {actions(cursor)}
         </div>

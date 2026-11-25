@@ -280,7 +280,7 @@ export default function AskView() {
   const title = (openId && list?.find((c) => c.id === openId)?.title) || "Ask";
 
   const conversations = (
-    <nav className={`flex-none flex-col overflow-y-auto border-line px-2 py-2 md:flex md:w-[232px] md:border-r ${listOpen ? "flex w-full" : "hidden"}`} aria-label="Conversations">
+    <nav className={`flex-none flex-col overflow-y-auto border-line px-2 py-2 ${list?.length ? "md:flex md:w-[232px] md:border-r" : "md:hidden"} ${listOpen ? "flex w-full" : "hidden"}`} aria-label="Conversations">
       <button className={`flex h-item w-full flex-none items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${!openId ? "bg-sel font-medium text-ink" : "text-ink2 hover:bg-hover"}`} onClick={startNew}>
         <Icon name="add" size={16} className="text-ink3" />
         New conversation
@@ -319,7 +319,7 @@ export default function AskView() {
   return (
     <>
       <ViewBar
-        title={<h1 className="bar-title min-w-0 flex-none truncate md:max-w-[50%]">{title}</h1>}
+        title={<h1 className={title === "Ask" ? "bar-title flex-none" : "bar-subject min-w-0 flex-none md:max-w-[50%]"}>{title}</h1>}
         search={false}
         right={
           <span className="flex items-center gap-0.5 md:hidden">
@@ -336,14 +336,14 @@ export default function AskView() {
         {conversations}
         <div className={`min-h-0 min-w-0 flex-1 flex-col md:flex ${listOpen ? "hidden" : "flex"}`}>
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-[720px] px-5 pb-6 pt-5">
+            <div className={`mx-auto w-full max-w-[720px] px-5 pb-6 pt-5 ${messages?.length === 0 && !working ? "grid min-h-full content-center" : ""}`}>
               {messages === null ? (
                 <SkeletonRows count={4} />
               ) : messages.length === 0 && !working ? (
                 <Empty icon="chat_bubble" title="Ask about your mail">
-                  <span className="-mx-2 mt-1 flex flex-col items-center">
+                  <span className="mt-4 flex flex-wrap justify-center gap-2">
                     {STARTERS.map((q) => (
-                      <button key={q} className="btn btn-plain" onClick={() => send(q)}>
+                      <button key={q} className="btn rounded-full px-4" onClick={() => send(q)}>
                         {q}
                       </button>
                     ))}
@@ -411,8 +411,8 @@ export default function AskView() {
               <div ref={bottomRef} />
             </div>
           </div>
-          <div className="flex-none border-t border-line">
-            <div className="mx-auto flex w-full max-w-[720px] items-end gap-1.5 px-5 pb-3 pt-2.5">
+          <div className="flex-none px-5 pb-5 pt-1">
+            <div className="addfield mx-auto !h-auto min-h-12 w-full max-w-[720px] !items-end !gap-1.5 py-2 !pr-2.5">
               <textarea
                 ref={textareaRef}
                 value={input}
@@ -429,7 +429,7 @@ export default function AskView() {
                 placeholder="Ask about your mail"
                 aria-label="Ask Tabellar"
                 rows={1}
-                className="input max-h-40 min-h-[28px] flex-1 resize-none overflow-y-auto !py-[5px]"
+                className="max-h-40 min-h-[30px] flex-1 resize-none overflow-y-auto bg-transparent py-[5px] text-[14px] text-ink outline-none"
                 disabled={working}
               />
               <button className={`iconbtn ${recording ? "!text-danger" : ""}`} onClick={toggleMic} disabled={working} aria-label={recording ? "Stop recording" : "Speak the question"} title={recording ? "Stop recording" : "Speak the question"}>

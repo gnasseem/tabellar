@@ -231,13 +231,13 @@ export default function ScheduledView() {
         />
       </ViewBar>
       <div className="flex min-h-0 flex-1">
-        <div ref={listRef} className={`w-full flex-none overflow-y-auto border-line md:w-[440px] md:border-r ${open ? "hidden md:block" : ""}`} role="listbox" aria-label="Scheduled mail">
+        <div ref={listRef} className={`w-full flex-none overflow-y-auto border-line ${rows.length || loading ? "md:w-[38%] md:min-w-[320px] md:max-w-[440px] md:border-r" : ""} ${open ? "hidden md:block" : ""}`} role="listbox" aria-label="Scheduled mail">
           {loading ? (
             <div className="pt-9">
               <SkeletonRows count={6} tall />
             </div>
           ) : error ? (
-            <p className="px-5 py-4 text-danger" role="alert">
+            <p className="px-6 py-4 text-danger" role="alert">
               {error} Check that Tabellar is still running, then{" "}
               <button className="link !text-danger" onClick={() => loadScheduled()}>
                 try again

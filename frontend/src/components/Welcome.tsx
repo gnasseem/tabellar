@@ -1,13 +1,13 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Logo from "@/components/Logo";
-import { Glyph } from "@/components/ui";
+import { Glyph, initials } from "@/components/ui";
 import type { Session } from "@/lib/db";
 import { here, host, vault } from "@/lib/host";
 import { appearanceOf, applyAppearance, useTheme, type ThemeChoice } from "@/lib/appearance";
 import { api, formatBytes, setupPost, type Onboarding, type SetupState } from "@/lib/setup";
 import { CloudPanel, ErrorLine, Icon, LocalPanel, localPair, modelLabel, ProgressBar, RadioDot, ui, useLocalJob, useSetupState, useTimeLeft } from "./ModelSetup";
 import AddMailbox, { SignIn } from "./AddMailbox";
-import { AboutStep, ExamplesStep, FlowContext, PeopleStep, Step } from "./SetupSteps";
+import { AboutStep, ExamplesStep, FlowContext, Go, PeopleStep, Sheet, Step } from "./SetupSteps";
 import { confirmLevel, type Level } from "./Sidebar";
 
 // The first run: what Tabellar is, the mailboxes (the first read starts the
@@ -119,37 +119,21 @@ export default function Welcome({ session, error, again = false }: { session?: S
 
   const header = (
     <>
-      <Logo size={22} />
-      {step !== "welcome" && (
-        <ol className="ml-auto hidden items-center gap-1 md:flex" aria-label="Steps">
-          {STEPS.map((s, i) => {
-            const n = i + 1;
-            const current = n === at;
-            const open = !!profile && n <= reached && !current;
-            return (
-              <li key={s.id}>
-                <button
-                  type="button"
-                  disabled={!open}
-                  onClick={() => go(s.id)}
-                  aria-current={current ? "step" : undefined}
-                  className={`flex h-7 items-center gap-1 rounded-md px-2 text-[12.5px] transition-colors duration-150 ${current ? "font-medium text-ink" : n <= reached ? "text-ink2 hover:bg-hover hover:text-ink" : "text-ink3"}`}
-                >
-                  {n < at && <Glyph state="done" className="-ml-1" />}
-                  {s.title}
-                </button>
-              </li>
-            );
-          })}
-        </ol>
-      )}
+      <Logo size={25} />
       {again && (
-        <a href="/" className={`link ${step === "welcome" ? "ml-auto" : "ml-4"}`}>
+        <a href="/" className="link ml-auto">
           Back to Tabellar
         </a>
       )}
     </>
   );
+  const steps =
+    step === "welcome"
+      ? []
+      : STEPS.map((s, i) => {
+          const n = i + 1;
+          return { title: s.title, state: n < at ? ("done" as const) : n === at ? ("now" as const) : ("later" as const), go: !!profile && n <= reached && n !== at ? () => go(s.id) : undefined };
+        });
 
   const failure = error ?? (!state ? stateError : "");
   let content: ReactNode;
@@ -174,11 +158,11 @@ export default function Welcome({ session, error, again = false }: { session?: S
   else if (step === "people") content = <PeopleStep onNext={next} />;
   else content = <LevelStep again={again} current={String(profile.autonomy_level ?? "suggest")} />;
 
-  return <FlowContext.Provider value={{ header, onboarding, back: previous, userId }}>{content}</FlowContext.Provider>;
+  return <FlowContext.Provider value={{ header, steps: failure || !state ? [] : steps, onboarding, back: failure || !state ? undefined : previous, userId }}>{content}</FlowContext.Provider>;
 }
 
 function Loading() {
-  return <Step bare title="" text="" />;
+  return <Step title="" text="" />;
 }
 
 // ── Welcome ─────────────────────────────────────────────────────────────────
@@ -186,7 +170,7 @@ function Loading() {
 function WelcomeStep({ onNext }: { onNext: () => void }) {
   return (
     <Step
-      bare
+      big
       title="Tabellar handles your mail"
       text={
         <>
@@ -195,75 +179,43 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
           You decide how much it does on its own.
         </>
       }
-      aside={<InboxPicture />}
-    >
-      <button type="button" className="btn btn-pri h-9 px-4 text-[14px]" onClick={onNext} autoFocus>
-        Get started
-      </button>
-    </Step>
+      actions={
+        <Go onClick={onNext} autoFocus>
+          Get started
+        </Go>
+      }
+      stage={<MorningPicture />}
+    />
   );
 }
 
-// The Inbox as it looks once Tabellar is at work: each email one line that
-// ends in what was done with it. Drawn with the window's own parts.
-const PICTURE: { state: "need" | "going" | "done"; who: string; subject: string; status: string; time: string }[] = [
-  { state: "need", who: "Maya Okafor", subject: "Contract for the March pilot", status: "Reply ready", time: "9:41" },
-  { state: "going", who: "Daniel Reyes", subject: "Dinner on Thursday?", status: "Replying in 2:41", time: "9:12" },
-  { state: "need", who: "Priya Natarajan", subject: "Move the review to 3pm?", status: "Meeting to confirm", time: "8:55" },
-  { state: "done", who: "Sam Whitaker", subject: "Notes from today", status: "Todo added", time: "8:30" },
-  { state: "done", who: "Northwind Bank", subject: "Your statement is ready", status: "Filed", time: "7:02" },
-  { state: "done", who: "The Weekly Brief", subject: "Five things this week", status: "Newsletter", time: "6:15" },
-  { state: "done", who: "Alex Kim", subject: "Re: Offsite agenda", status: "Handled", time: "Mon" },
+// A morning's mail, each email a slip that ends in what was done with it. The
+// slips are dealt one after another and each is then dealt with.
+const PICTURE: { state: "need" | "going" | "done"; who: string; subject: string; status: string }[] = [
+  { state: "need", who: "Maya Okafor", subject: "Contract for the March pilot", status: "Reply ready" },
+  { state: "done", who: "Northwind Bank", subject: "Your statement is ready", status: "Filed" },
+  { state: "done", who: "Sam Whitaker", subject: "Can you send the notes by Friday?", status: "Todo added" },
+  { state: "going", who: "Daniel Reyes", subject: "Dinner on Thursday?", status: "Replying in 2:41" },
+  { state: "need", who: "Priya Natarajan", subject: "Move the review to 3pm?", status: "Meeting to confirm" },
+  { state: "done", who: "The Weekly Brief", subject: "Five things this week", status: "Newsletter" },
 ];
 
-function InboxPicture() {
+function MorningPicture() {
   return (
-    <figure
-      role="img"
-      aria-label="The Tabellar Inbox: each email on one line, ending in what Tabellar did with it"
-      className="pointer-events-none select-none overflow-hidden rounded-[12px] bg-canvas shadow-pop"
-    >
-      <div aria-hidden className="flex">
-        <div className="hidden w-[148px] flex-none border-r border-line bg-side px-2 pb-4 pt-3 sm:block">
-          <div className="px-1.5 pb-3">
-            <Logo size={16} />
-          </div>
-          {[
-            ["description", "Brief", ""],
-            ["inbox", "Inbox", "2"],
-            ["chat_bubble", "Ask", ""],
-            ["bolt", "Automations", ""],
-            ["reply", "Replies", "1"],
-          ].map(([icon, label, count], i) => (
-            <div key={label} className={`flex h-7 items-center gap-2 rounded-md px-2 ${i === 1 ? "bg-sel font-medium text-ink" : "text-ink2"}`}>
-              <Icon name={icon} size={15} className="text-ink3" />
-              <span className="flex-1">{label}</span>
-              {count && <span className={`text-xs ${i === 1 ? "font-semibold text-wax-ink" : "text-ink3"}`}>{count}</span>}
-            </div>
-          ))}
+    <figure role="img" aria-label="Six emails, each ending in what Tabellar did with it" className="mx-auto grid w-full max-w-[560px] select-none gap-2.5">
+      {PICTURE.map((r, i) => (
+        <div key={r.who} aria-hidden className="slip flex h-[62px] items-center gap-3.5 rounded-[14px] bg-canvas px-4 text-ink shadow-pop" style={{ animationDelay: `${120 + i * 110}ms`, marginLeft: `${[0, 1.75, 0.5, 2.5, 1, 2][i]}rem`, marginRight: `${[2.5, 0.75, 2, 0, 1.5, 0.5][i]}rem` }}>
+          <span className="grid h-9 w-9 flex-none place-items-center rounded-full bg-field text-[12.5px] font-semibold text-ink2">{initials(r.who)}</span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13px] font-[650]">{r.who}</span>
+            <span className="block truncate text-[13px] text-ink2">{r.subject}</span>
+          </span>
+          <span className={`slip-status flex flex-none items-center gap-1.5 text-[12.5px] max-sm:hidden ${r.state === "done" ? "text-ink3" : "font-medium text-ink"}`} style={{ animationDelay: `${900 + i * 260}ms` }}>
+            <Glyph state={r.state} />
+            {r.status}
+          </span>
         </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex h-11 items-center gap-3 border-b border-line px-4">
-            <b className="text-[14px] font-[650] text-ink">Inbox</b>
-            <span className="flex h-6 items-center gap-1 rounded-md bg-sel px-2 font-medium text-ink">
-              Needs you <span className="text-xs font-semibold text-wax-ink">2</span>
-            </span>
-            <span className="px-1 text-ink2">All</span>
-          </div>
-          <div className="flex h-[30px] items-end px-4 pb-[6px] text-xs font-[650] text-ink">Today</div>
-          <div className="pb-2">
-            {PICTURE.map((r) => (
-              <div key={r.who} className="mx-1.5 grid h-8 grid-cols-[22px_112px_minmax(0,1fr)_118px_36px] items-center gap-x-2 rounded-md pl-1.5 pr-2 text-ink2">
-                <Glyph state={r.state} />
-                <span className={`truncate ${r.state === "need" ? "font-[650] text-ink" : "text-ink"}`}>{r.who}</span>
-                <span className={`truncate ${r.state === "need" ? "font-medium text-ink" : "text-ink"}`}>{r.subject}</span>
-                <span className={`truncate text-[12.5px] ${r.state === "need" ? "font-semibold text-wax-ink" : r.state === "going" ? "font-medium text-wax-ink" : "text-ink3"}`}>{r.status}</span>
-                <span className="text-right text-xs text-ink3">{r.time}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      ))}
     </figure>
   );
 }
@@ -303,20 +255,16 @@ function MailboxesStep({ state, refresh, accounts, reloadAccounts, signedIn, aga
   return (
     <Step
       title={has ? "Your mail" : "Add your mail"}
-      text={has ? `${onboarding && onboarding.read.step !== "done" ? "It is being read now. " : ""}Add another mailbox, or carry on.` : "Tabellar starts reading as soon as one is connected. You can add more now or later."}
+      text={has ? `${onboarding && onboarding.read.step !== "done" ? "It is being read now. " : ""}Add another mailbox, or carry on.` : "Reading starts as soon as one is connected. You can add more later."}
       actions={
-        has && (
-          <button type="button" className={`btn h-8 px-3.5 ${adding ? "" : "btn-pri"}`} onClick={onNext}>
-            Continue
-          </button>
-        )
+        has && <Go onClick={onNext}>Continue</Go>
       }
-      aside={<WhatStays />}
+      stage={<WhatStays />}
     >
       {has && (
         <ul className="mb-5 border-t border-line-soft">
           {accounts.map((a) => (
-            <li key={a.id} className="flex h-10 items-center gap-2.5 border-b border-line-soft">
+            <li key={a.id} className="flex h-12 items-center gap-2.5 border-b border-line-soft text-[14px]">
               <Glyph state="done" />
               <span className="min-w-0 flex-1 truncate text-ink">{a.address}</span>
               <span className="flex-none text-xs text-ink3">{nameOf(a.choice)}</span>
@@ -325,7 +273,7 @@ function MailboxesStep({ state, refresh, accounts, reloadAccounts, signedIn, aga
         </ul>
       )}
       {has && !adding ? (
-        <button type="button" className="btn h-8 px-3.5" onClick={() => setAdding(true)}>
+        <button type="button" className="btn h-9 px-3.5" onClick={() => setAdding(true)}>
           <Icon name="add" size={15} />
           Add another
         </button>
@@ -343,7 +291,7 @@ function MailboxesStep({ state, refresh, accounts, reloadAccounts, signedIn, aga
           }}
         />
       )}
-      <p className="mt-10">
+      <p className="mt-8">
         <button type="button" className="link" onClick={() => setOwn(true)}>
           {state.google.clientId ? "Your own Google client" : "Advanced: use your own Google client"}
         </button>
@@ -353,18 +301,23 @@ function MailboxesStep({ state, refresh, accounts, reloadAccounts, signedIn, aga
 }
 
 function WhatStays() {
-  const block = (title: string, text: string) => (
-    <div>
-      <h2 className="text-[13px] font-[650] text-ink">{title}</h2>
-      <p className="mt-1 text-ink2">{text}</p>
+  const block = (icon: string, title: string, text: string) => (
+    <div className="grid grid-cols-[36px_minmax(0,1fr)] gap-x-4 border-b border-line-soft py-5 first:pt-2 last:border-0 last:pb-2">
+      <span className="grid h-9 w-9 place-items-center rounded-full bg-field text-ink2">
+        <Icon name={icon} size={17} />
+      </span>
+      <div>
+        <h2 className="font-brand text-[19px] font-[620] leading-tight text-ink">{title}</h2>
+        <p className="mt-1.5 text-[14px] leading-[1.55] text-ink2">{text}</p>
+      </div>
     </div>
   );
   return (
-    <div className="max-w-[440px] space-y-5 leading-[1.6] lg:border-l lg:border-line lg:pl-10">
-      {block(`What stays on ${here()}`, `Your mail, in one file in your home folder. Keys and sign-in tokens, in ${vault()}. Nothing is hosted anywhere else.`)}
-      {block("What leaves it", `Calls to your mail provider, to read and act on your own mail and calendar, and calls to the model you choose. With a model on ${here()}, nothing else leaves at all.`)}
-      {block("What it never does", "Delete mail, archive on its own, or send anything before you choose a level that allows it.")}
-    </div>
+    <Sheet>
+      {block("home", `Stays on ${here()}`, `Your mail, in one file in your home folder. Keys and sign-in tokens, in ${vault()}. Nothing is hosted anywhere else.`)}
+      {block("send", "Leaves it", `Calls to your mail provider, and to the model you choose. With a model on ${here()}, nothing else leaves at all.`)}
+      {block("shield", "Never happens", "Mail deleted, archived on its own, or sent before you choose a level that allows it.")}
+    </Sheet>
   );
 }
 
@@ -457,12 +410,13 @@ function OwnGoogleClient({ state, refresh, onDone }: { state: SetupState; refres
           title="Your own Google client"
           text="For an organisation that blocks apps Google has not verified, or to sign in through a Google Cloud project you control. It takes about five minutes, once."
           actions={
-            <button type="button" className="btn btn-pri h-8 px-3.5" onClick={onDone} disabled={!configured && !state.google.builtIn}>
+            <Go onClick={onDone} disabled={!configured && !state.google.builtIn}>
               {configured ? "Use it to sign in" : "Done"}
-            </button>
+            </Go>
           }
-          aside={
-            <ol className="border-t border-line-soft">
+          stage={
+            <Sheet>
+            <ol>
               {GOOGLE_STEPS.map((s, i) => (
                 <li key={s.title} className="grid grid-cols-[28px_minmax(0,1fr)] border-b border-line-soft py-3">
                   <span className="text-ink3">{i + 1}</span>
@@ -480,6 +434,7 @@ function OwnGoogleClient({ state, refresh, onDone }: { state: SetupState; refres
                 <p className="text-ink2">Give the downloaded file to Tabellar, here on the left.</p>
               </li>
             </ol>
+            </Sheet>
           }
         >
           <div className={`-mx-3 rounded-[10px] px-3 py-2 transition-colors duration-150 ${dragging ? "bg-sel" : ""}`}>
@@ -543,15 +498,15 @@ function BigChoice({ on, onClick, title, tag, detail }: { on: boolean; onClick: 
       role="radio"
       aria-checked={on}
       onClick={onClick}
-      className={`grid w-full grid-cols-[22px_minmax(0,1fr)] items-start rounded-[9px] px-3 py-3 text-left transition-[background-color,box-shadow] duration-150 ${on ? "bg-sel" : "shadow-control hover:bg-hover"}`}
+      className={`grid w-full grid-cols-[26px_minmax(0,1fr)] items-start rounded-[12px] px-4 py-3.5 text-left transition-[background-color,box-shadow] duration-150 ${on ? "bg-raised shadow-chosen" : "shadow-control hover:bg-hover"}`}
     >
       <RadioDot on={on} />
       <span className="min-w-0">
         <span className="flex items-baseline gap-2">
-          <span className="text-[14px] font-[650] text-ink">{title}</span>
+          <span className="text-[15px] font-[650] text-ink">{title}</span>
           <span className="text-[12.5px] text-ink3">{tag}</span>
         </span>
-        <span className="mt-1 block text-[12.5px] leading-snug text-ink2">{detail}</span>
+        <span className="mt-1 block text-[13px] leading-snug text-ink2">{detail}</span>
       </span>
     </button>
   );
@@ -601,36 +556,38 @@ function ModelStep({ state, refresh, onNext }: { state: SetupState; refresh: () 
       actions={
         <>
           {((!ready && !running) || choosing) && (
-            <button type="button" className="btn btn-plain h-8" onClick={onNext}>
+            <button type="button" className={`btn h-10 px-4 text-[14px] ${choosing ? "" : "btn-plain order-1"}`} onClick={onNext}>
               Skip for now
             </button>
           )}
           {/* Until one is chosen in a panel, the panel has the one wax button. */}
-          <button type="button" className={`btn h-8 px-3.5 ${choosing ? "" : "btn-pri"}`} disabled={choosing} onClick={go}>
-            {label}
-          </button>
+          {!choosing && <Go onClick={go}>{label}</Go>}
         </>
       }
-      aside={
+      stage={
         where === "cloud" ? (
-          <CloudPanel state={state} slot="careful" current={current} refresh={refresh} />
+          <Sheet title="Your provider">
+            <CloudPanel state={state} slot="careful" current={current} refresh={refresh} />
+          </Sheet>
         ) : advanced ? (
-          <LocalPanel state={state} slot="careful" current={current} refresh={refresh} />
+          <Sheet title="Models">
+            <LocalPanel state={state} slot="careful" current={current} refresh={refresh} />
+          </Sheet>
         ) : (
-          <div className="max-w-[520px]">
-            <div className="border-t border-line-soft">
+          <Sheet title={`Picked for ${here()}`}>
+            <div>
               {[
                 { what: pair.fast ? "Writes drafts" : "Reads and writes", name: pair.careful },
                 ...(pair.fast ? [{ what: "Reads each email", name: pair.fast }] : []),
               ].map((r) => (
-                <div key={r.name} className="grid h-10 grid-cols-[140px_minmax(0,1fr)_auto] items-center gap-3 border-b border-line-soft">
+                <div key={r.name} className="grid min-h-12 grid-cols-[116px_minmax(0,1fr)_auto] items-center gap-3 border-b border-line-soft text-[14px]">
                   <span className="text-ink3">{r.what}</span>
-                  <span className="truncate font-mono text-[12.5px] text-ink">{r.name}</span>
+                  <span className="truncate font-mono text-[13px] text-ink">{r.name}</span>
                   <span className="text-xs text-ink3">{sizeOf(r.name)}</span>
                 </div>
               ))}
               {!state.ollama.installed && (
-                <div className="grid h-10 grid-cols-[140px_minmax(0,1fr)_auto] items-center gap-3 border-b border-line-soft">
+                <div className="grid min-h-12 grid-cols-[116px_minmax(0,1fr)_auto] items-center gap-3 border-b border-line-soft text-[14px]">
                   <span className="text-ink3">Runs them</span>
                   <span className="text-ink">Ollama, the free app for local models</span>
                   <span className="text-xs text-ink3">230 MB</span>
@@ -638,7 +595,7 @@ function ModelStep({ state, refresh, onNext }: { state: SetupState; refresh: () 
               )}
             </div>
             <p className="mt-3 text-[12.5px] leading-normal text-ink3">
-              Picked for {here()}'s {state.local.memoryGb} GB of memory. Downloads once, then runs offline{state.local.small ? "; with this much memory a cloud model writes drafts faster and closer to your voice" : ""}.
+              For {state.local.memoryGb} GB of memory. Downloads once, then runs offline{state.local.small ? "; with this much memory a cloud model writes drafts faster and closer to your voice" : ""}.
             </p>
             {(running || localReady || job?.error) && (
               <div className="mt-6">
@@ -657,7 +614,7 @@ function ModelStep({ state, refresh, onNext }: { state: SetupState; refresh: () 
                 )}
               </div>
             )}
-          </div>
+          </Sheet>
         )
       }
     >
@@ -694,11 +651,51 @@ function ModelStep({ state, refresh, onNext }: { state: SetupState; refresh: () 
 // ── Level ───────────────────────────────────────────────────────────────────
 
 const LEVEL_ROWS: { id: Level; label: string; text: string }[] = [
-  { id: "observe", label: "Observe", text: "Sorts mail and tells you what came in. Makes nothing." },
-  { id: "suggest", label: "Suggest", text: "Labels mail. Drafts, todos and meetings wait for you to approve them." },
-  { id: "assist", label: "Assist", text: "Also drafts replies, adds todos and proposes meetings on its own. Sends nothing." },
-  { id: "autopilot", label: "Autopilot", text: "Also replies to the person who wrote, in the thread, after a few minutes in which you can cancel. A few a day at most." },
+  { id: "observe", label: "Observe", text: "Sorts mail and tells you what came in." },
+  { id: "suggest", label: "Suggest", text: "Labels mail. The rest waits for your yes." },
+  { id: "assist", label: "Assist", text: "Also drafts, todos and meetings on its own. Sends nothing." },
+  { id: "autopilot", label: "Autopilot", text: "Also replies, after minutes in which you can cancel." },
 ];
+
+// What one email becomes at each level: each line is made, waits for a yes, is
+// on its way out, or is not there yet.
+type Made = "done" | "need" | "going" | "off";
+const OUTCOMES: { what: string; at: Record<Level, Made> }[] = [
+  { what: "Sorted: needs an answer", at: { observe: "done", suggest: "done", assist: "done", autopilot: "done" } },
+  { what: "Label: Pilot", at: { observe: "off", suggest: "done", assist: "done", autopilot: "done" } },
+  { what: "Reply drafted", at: { observe: "off", suggest: "need", assist: "done", autopilot: "done" } },
+  { what: "Todo: Send the signed copy", at: { observe: "off", suggest: "need", assist: "done", autopilot: "done" } },
+  { what: "Meeting: Thursday at 15:00", at: { observe: "off", suggest: "need", assist: "need", autopilot: "need" } },
+  { what: "Reply sent", at: { observe: "off", suggest: "off", assist: "off", autopilot: "going" } },
+];
+const SAYS: Record<Made, string> = { done: "Done", need: "Asks you", going: "In 5 minutes, unless you cancel", off: "" };
+
+function LevelPicture({ level }: { level: Level }) {
+  return (
+    <Sheet>
+      <p className="flex items-center gap-3.5">
+        <span aria-hidden className="grid h-9 w-9 flex-none place-items-center rounded-full bg-field text-[12.5px] font-semibold text-ink2">MO</span>
+        <span className="min-w-0">
+          <span className="block font-[650]">Maya Okafor</span>
+          <span className="block truncate text-ink3">Contract for the March pilot</span>
+        </span>
+      </p>
+      <p className="mt-4 text-[14.5px] leading-[1.6] text-ink2">Could you send back the signed copy this week? And are you free on Thursday at 3 to go through it?</p>
+      <ul className="mt-5 border-t border-line pt-2" aria-live="polite">
+        {OUTCOMES.map((o) => {
+          const made = o.at[level];
+          return (
+            <li key={o.what} className={`flex h-10 items-center gap-2.5 text-[14px] transition-opacity duration-300 ${made === "off" ? "opacity-35" : ""}`}>
+              {made === "off" ? <span className="h-4 w-4 flex-none" /> : <Glyph state={made} />}
+              <span className={`min-w-0 flex-1 truncate ${made === "off" ? "text-ink3" : "text-ink"}`}>{o.what}</span>
+              <span className={`flex-none text-[13px] ${made === "need" || made === "going" ? "font-medium text-ink" : "text-ink3"}`}>{SAYS[made]}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </Sheet>
+  );
+}
 
 function LevelStep({ again, current }: { again: boolean; current: string }) {
   const [level, setLevel] = useState<Level>(again && LEVEL_ROWS.some((l) => l.id === current) ? (current as Level) : "suggest");
@@ -722,37 +719,37 @@ function LevelStep({ again, current }: { again: boolean; current: string }) {
   };
   return (
     <Step
-      title="Level"
-      text="How much Tabellar does on its own. Change it any time at the foot of the sidebar, where Pause stops everything."
+      title="How much should it do on its own?"
+      text="Change it any time at the foot of the sidebar, where Pause stops everything."
       actions={
-        <button type="button" className="btn btn-pri h-8 px-3.5" disabled={busy} onClick={finish}>
+        <Go disabled={busy} onClick={finish}>
           {busy ? "Opening" : "Open Tabellar"}
-        </button>
+        </Go>
       }
-      aside={
-        <div>
-          <div role="radiogroup" aria-label="Level" className="max-w-[600px] space-y-1">
-            {LEVEL_ROWS.map((l) => (
-              <button
-                key={l.id}
-                type="button"
-                role="radio"
-                aria-checked={level === l.id}
-                onClick={() => l.id !== level && confirmLevel(l.id) && setLevel(l.id)}
-                className={`grid w-full grid-cols-[22px_92px_minmax(0,1fr)] items-start rounded-[9px] px-3 py-3 text-left transition-colors duration-150 ${level === l.id ? "bg-sel" : "hover:bg-hover"}`}
-              >
-                <RadioDot on={level === l.id} />
-                <span className={`text-[14px] ${level === l.id ? "font-[650] text-ink" : "font-medium text-ink"}`}>{l.label}</span>
-                <span className="leading-snug text-ink2">{l.text}</span>
-              </button>
-            ))}
-          </div>
-          <div className="mt-3">
-            <ErrorLine text={error} />
-          </div>
-        </div>
-      }
-    />
+      stage={<LevelPicture level={level} />}
+    >
+      <div role="radiogroup" aria-label="Level" className="space-y-1.5">
+        {LEVEL_ROWS.map((l) => (
+          <button
+            key={l.id}
+            type="button"
+            role="radio"
+            aria-checked={level === l.id}
+            onClick={() => l.id !== level && confirmLevel(l.id) && setLevel(l.id)}
+            className={`grid w-full grid-cols-[26px_minmax(0,1fr)] items-start rounded-[12px] px-4 py-3 text-left transition-[background-color,box-shadow] duration-150 ${level === l.id ? "bg-raised shadow-chosen" : "shadow-control hover:bg-hover"}`}
+          >
+            <RadioDot on={level === l.id} />
+            <span className="min-w-0">
+              <span className="block text-[15px] font-[650] leading-tight text-ink">{l.label}</span>
+              <span className="mt-1 block text-[13px] leading-snug text-ink2">{l.text}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+      <div className="mt-3">
+        <ErrorLine text={error} />
+      </div>
+    </Step>
   );
 }
 
@@ -761,7 +758,6 @@ function LevelStep({ again, current }: { again: boolean; current: string }) {
 function NotAnswering({ message }: { message: string }) {
   return (
     <Step
-      bare
       title="Tabellar is not answering"
       text={
         <>

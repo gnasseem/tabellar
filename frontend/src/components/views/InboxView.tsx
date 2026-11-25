@@ -618,7 +618,7 @@ export default function InboxView() {
           <b className={`shrink truncate ${filed ? "font-normal text-ink3" : need ? "font-medium text-ink" : "font-normal text-ink"}`}>{e.subject || "(no subject)"}</b>
           {!filed && <span className="mail-sum min-w-0 flex-1 truncate text-ink3">{e.email_processed?.summary || e.snippet}</span>}
         </span>
-        <span className={`mail-state truncate text-[12.5px] ${filed ? "filed" : ""} ${need ? "font-semibold text-wax-ink" : t.state === "going" ? "font-medium text-wax-ink" : t.state === "held" ? "font-medium text-warn" : t.state === "failed" ? "font-medium text-danger" : t.state === "done" ? "text-ink2" : "text-ink3"}`}>
+        <span className={`mail-state truncate text-[12.5px] ${filed ? "filed" : ""} ${need ? "font-medium text-ink" : t.state === "going" ? "font-medium text-wax-ink" : t.state === "held" ? "font-medium text-warn" : t.state === "failed" ? "font-medium text-danger" : t.state === "done" ? "text-ink2" : "text-ink3"}`}>
           {t.text}
           {t.state === "going" && t.sendAt && (
             <>
@@ -673,7 +673,7 @@ export default function InboxView() {
       {snoozeMenu}
       {picked.size ? (
         <header className="bar">
-          <b className="bar-title mr-1.5">{picked.size} selected</b>
+          <b className="bar-subject mr-1.5">{picked.size} selected</b>
           {waiting > 0 && (
             <button className="btn btn-pri" onClick={() => approve(selected)}>
               Approve {waiting}
@@ -725,7 +725,7 @@ export default function InboxView() {
         </ViewBar>
       )}
       {syncError && (
-        <div className="flex items-center gap-2 border-b border-line bg-danger-soft px-5 py-1.5 text-xs text-danger" role="alert">
+        <div className="flex items-center gap-2 border-b border-line bg-danger-soft px-6 py-1.5 text-xs text-danger" role="alert">
           <Icon name="error" size={14} />
           <span className="flex-1">{syncError}</span>
           <button className="link !text-danger" onClick={() => syncInbox()}>
@@ -897,7 +897,7 @@ function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thre
         }}
       />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <header className="px-5 pb-3 pt-4">
+        <header className="px-6 pb-3 pt-5">
           <div className="flex items-start gap-2">
             <div className="min-w-0 flex-1">
               <h2 className="truncate text-[15px] font-[650] leading-tight tracking-[-0.01em]">{senderName(e)}</h2>
@@ -914,7 +914,7 @@ function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thre
           {e.email_processed?.summary && <p className="mt-1 line-clamp-2 leading-normal text-ink2">{e.email_processed.summary}</p>}
           <OutcomeLines outcomes={thread.outcomes} className="mt-2" />
         </header>
-        <div className="border-t border-line-soft px-5 pb-6 pt-4">
+        <div className="border-t border-line-soft px-6 pb-6 pt-4">
           {body === null ? (
             <div className="space-y-2 pt-1" aria-busy="true">
               <span className="skel block h-2.5 w-full" />
@@ -926,7 +926,7 @@ function Details({ thread, primary, onOpen, onReply, onArchive }: { thread: Thre
           )}
         </div>
       </div>
-      <div className="flex flex-none flex-wrap items-center gap-2 border-t border-line py-2.5 pl-5 pr-3.5">
+      <div className="flex flex-none flex-wrap items-center gap-2 border-t border-line py-2.5 pl-6 pr-4">
         {waiting && (
           <button className="btn btn-pri" onClick={primary.run}>
             {primary.label}

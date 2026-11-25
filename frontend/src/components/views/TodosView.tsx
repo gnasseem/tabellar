@@ -254,7 +254,7 @@ export default function TodosView() {
           {fromMail && !done && <NotThis thing="todo" id={t?.id} proposal={item.proposal?.id} who={src?.sender} onDone={load} />}
         </span>
         {item.proposal && (
-          <button className="link flex-none !text-wax-ink" onClick={(e) => (e.stopPropagation(), add(item.proposal!))}>
+          <button className="btn-act" onClick={(e) => (e.stopPropagation(), add(item.proposal!))}>
             Add
           </button>
         )}
@@ -266,14 +266,14 @@ export default function TodosView() {
   return (
     <>
       <ViewBar title="Todos" search="Search todos" />
-      <form className="mx-2 flex flex-none items-center pb-1 pl-1.5 pr-3 pt-2.5" onSubmit={addTodo}>
-        <span className="grid w-[26px] flex-none place-items-center text-ink3">
-          <Icon name="add" size={15} />
-        </span>
-        <input ref={inputRef} className="input" value={newTodo} onChange={(e) => setNewTodo(e.target.value)} placeholder="Add a todo" aria-label="Add a todo" />
-      </form>
+      <div className="page flex-none px-3 pb-1 pt-5">
+        <form className="addfield" onSubmit={addTodo}>
+          <Icon name="add" size={17} className="text-ink3" />
+          <input ref={inputRef} value={newTodo} onChange={(e) => setNewTodo(e.target.value)} placeholder="Add a todo" aria-label="Add a todo" />
+        </form>
+      </div>
       {loadError && (
-        <p className="px-5 pt-3 text-danger" role="alert">
+        <p className="px-6 pt-3 text-danger" role="alert">
           Your todos could not be loaded: {loadError}.{" "}
           <button className="link !text-danger" onClick={load}>
             Try again
@@ -290,7 +290,7 @@ export default function TodosView() {
         q ? <Empty icon="search" title="Nothing matches that search" /> : <Empty icon="checklist" title="No todos" />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col" role="listbox" aria-label="Todos">
-          <VirtualList items={items} heightOf={heightOf} render={render} cursor={cursorIndex} />
+          <VirtualList items={items} heightOf={heightOf} render={render} cursor={cursorIndex} page />
         </div>
       )}
     </>

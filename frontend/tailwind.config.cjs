@@ -14,7 +14,7 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        canvas: token("bg"), side: token("side"), raised: token("raised"),
+        canvas: token("bg"), tray: token("tray"), "tray-sel": token("tray-sel"), stage: token("stage"), side: token("side"), raised: token("raised"),
         hover: token("hover"), sel: token("sel"), field: token("field"),
         line: token("line"), "line-soft": token("line-soft"),
         ink: token("ink"), ink2: token("ink2"), ink3: token("ink3"), ink4: token("ink4"),
@@ -33,6 +33,8 @@ module.exports = {
       fontSize: { base: ["13px", "1.4"] },
       boxShadow: {
         control: "var(--shadow-control)",
+        sheet: "var(--shadow-sheet)",
+        chosen: "0 0 0 1.5px var(--wax)",
         pop: "var(--shadow-pop)",
       },
     },

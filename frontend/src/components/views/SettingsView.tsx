@@ -67,7 +67,7 @@ export default function SettingsView() {
     <Saved.Provider value={flash}>
       <ViewBar title="Settings" search={false} right={<span className="text-xs text-ink3" aria-live="polite">{saved ? "Saved" : ""}</span>} />
       <div className="flex min-h-0 flex-1">
-        <nav className={`flex-none overflow-y-auto border-line px-2 py-3 md:block md:w-[200px] md:border-r ${listOpen ? "block w-full" : "hidden"}`} aria-label="Settings sections">
+        <nav className={`flex-none overflow-y-auto px-3 py-4 md:block md:w-[208px] ${listOpen ? "block w-full" : "hidden"}`} aria-label="Settings sections">
           {SECTIONS.map((s) => (
             <button key={s.id} aria-current={section === s.id ? "page" : undefined} onClick={() => go(s.id)} className={item(section === s.id)}>
               {s.label}
@@ -79,11 +79,11 @@ export default function SettingsView() {
         </nav>
 
         <div key={section} className={`min-h-0 min-w-0 flex-1 overflow-y-auto md:block ${listOpen ? "hidden" : "block"}`}>
-          <div className="max-w-[680px] px-5 pb-12 pt-5 md:px-8">
+          <div className="mx-auto max-w-[720px] px-6 pb-16 pt-8 md:px-10">
             <button className="link mb-3 md:hidden" onClick={() => setListOpen(true)}>
               All settings
             </button>
-            <h2 className="bar-title mb-5">{SECTIONS.find((s) => s.id === section)!.label}</h2>
+            <h2 className="mb-6 font-brand text-[28px] font-[620] leading-none text-ink">{SECTIONS.find((s) => s.id === section)!.label}</h2>
             {section === "general" && <General />}
             {section === "accounts" && <Accounts />}
             {section === "about" && <AboutYou />}

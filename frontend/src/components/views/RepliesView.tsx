@@ -350,7 +350,7 @@ export default function RepliesView() {
     <>
       {selected.length ? (
         <header className="bar">
-          <b className="bar-title mr-1.5">{selected.length} selected</b>
+          <b className="bar-subject mr-1.5">{selected.length} selected</b>
           <button className="btn btn-pri" disabled={sending} onClick={() => send(selected)}>
             Send {selected.length}
           </button>
@@ -393,7 +393,7 @@ export default function RepliesView() {
         />
       )}
       <div className="flex min-h-0 flex-1">
-        <div ref={listRef} className={`w-full flex-none overflow-y-auto border-line md:w-[440px] md:border-r ${cursorId && cursor ? "hidden md:block" : ""}`} role="listbox" aria-label="Replies">
+        <div ref={listRef} className={`w-full flex-none overflow-y-auto border-line md:w-[36%] md:min-w-[320px] md:max-w-[440px] md:border-r ${cursorId && cursor ? "hidden md:block" : ""}`} role="listbox" aria-label="Replies">
           {replies === null ? (
             <div className="pt-9">
               <SkeletonRows count={9} tall />

@@ -16,11 +16,11 @@ export const ACCENTS: { id: Accent; label: string }[] = [
   { id: "violet", label: "Violet" },
   { id: "graphite", label: "Graphite" },
 ];
-// The root font size in px; 16 is the size the classes are written at.
-const ROOT: Record<TextSize, number> = { small: 15, default: 16, large: 18, larger: 20 };
-// List rows and group headers at the default text size (--row and --head in index.css).
-const ROW: Record<Density, number> = { comfortable: 32, compact: 28 };
-const HEAD: Record<Density, number> = { comfortable: 34, compact: 30 };
+// The root font size in px; lengths are written as they are at 16.
+const ROOT: Record<TextSize, number> = { small: 16, default: 17, large: 18.5, larger: 20 };
+// List rows and group headers at 16px (--row and --head in index.css).
+const ROW: Record<Density, number> = { comfortable: 34, compact: 29 };
+const HEAD: Record<Density, number> = { comfortable: 38, compact: 32 };
 
 export function appearanceOf(profile: { appearance?: unknown } | null | undefined): Appearance {
   const a = (profile?.appearance ?? {}) as Partial<Appearance>;

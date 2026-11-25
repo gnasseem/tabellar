@@ -33,7 +33,7 @@ export default function AddMailbox({ state, refresh, google, beforeSignIn, onAdd
   const choice = state.mailboxes.find((c) => c.id === id) ?? state.mailboxes[0];
   return (
     <div className="space-y-5">
-      <div role="radiogroup" aria-label="Mailbox" className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+      <div role="radiogroup" aria-label="Mailbox" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {state.mailboxes.map((c) => (
           <button
             key={c.id}
@@ -41,7 +41,7 @@ export default function AddMailbox({ state, refresh, google, beforeSignIn, onAdd
             role="radio"
             aria-checked={c.id === id}
             onClick={() => setId(c.id)}
-            className={`flex h-[54px] min-w-0 flex-col justify-center rounded-[9px] px-3 text-left transition-[background-color,box-shadow] duration-150 ${c.id === id ? "bg-sel" : "bg-raised shadow-control hover:bg-hover"}`}
+            className={`flex h-[60px] min-w-0 flex-col justify-center rounded-[12px] px-3.5 text-left transition-[background-color,box-shadow] duration-150 ${c.id === id ? "bg-raised shadow-chosen" : "bg-raised shadow-control hover:bg-hover"}`}
           >
             <span className="truncate font-medium text-ink">{c.name}</span>
             <span className="truncate text-xs text-ink3">{hintOf(c)}</span>

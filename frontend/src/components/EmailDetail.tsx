@@ -372,7 +372,7 @@ export default function EmailDetail({ email, onBack, onArchive, onReply, onMarkU
         <button className="iconbtn" onClick={onBack} title="Back" aria-label="Back">
           <Icon name="arrow_back" size={16} />
         </button>
-        <h1 className="bar-title ml-1 min-w-0 flex-1 truncate" title={email.subject || undefined}>
+        <h1 className="bar-subject ml-1 min-w-0 flex-1" title={email.subject || undefined}>
           {email.subject || "(no subject)"}
         </h1>
         <button className="btn" onClick={replyTo}>

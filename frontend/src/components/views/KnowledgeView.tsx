@@ -219,7 +219,7 @@ export default function KnowledgeView({ onPeople }: { onPeople?: () => void }) {
 
         {current && (
           <div className="flex w-full flex-none flex-col border-line md:w-[360px] md:border-l">
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-[18px]">
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5 pt-[18px]">
               <button className="link mb-3 md:hidden" onClick={() => setSelectedId(null)}>
                 Back to facts
               </button>
@@ -268,7 +268,7 @@ export default function KnowledgeView({ onPeople }: { onPeople?: () => void }) {
                 <dd>{current.use_count ? `${current.use_count} ${current.use_count === 1 ? "time" : "times"}${current.last_used_at ? `, last ${shortWhen(current.last_used_at)}` : ""}` : "Not yet"}</dd>
               </dl>
             </div>
-            <div className="flex flex-none items-center gap-2 border-t border-line px-5 py-[11px]">
+            <div className="flex flex-none items-center gap-2 border-t border-line px-6 py-[11px]">
               <button className="btn btn-pri" disabled={!dirty} onClick={() => saveKnowledge(current)}>
                 Save
               </button>

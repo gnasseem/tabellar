@@ -156,7 +156,7 @@ function People({ onFacts }: { onFacts: () => void }) {
 
         {selected && (
           <div className="flex w-full flex-none flex-col border-line md:w-[360px] md:border-l">
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-[18px]">
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5 pt-[18px]">
               <button className="link mb-3 md:hidden" onClick={() => setSelected(null)}>
                 Back to people
               </button>
@@ -189,7 +189,7 @@ function People({ onFacts }: { onFacts: () => void }) {
                 />
               </label>
             </div>
-            <div className="flex flex-none items-center gap-2 border-t border-line px-5 py-[11px]">
+            <div className="flex flex-none items-center gap-2 border-t border-line px-6 py-[11px]">
               <button className="btn btn-pri" onClick={saveNotes} disabled={savingNotes || notes === (selected.relationship_notes ?? "")}>
                 {savingNotes ? "Saving" : "Save notes"}
               </button>

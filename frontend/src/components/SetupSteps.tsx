@@ -1,62 +1,130 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import Icon from "@/components/Icon";
-import { Glyph, Tick } from "@/components/ui";
+import { Tick, initials } from "@/components/ui";
 import { createClient } from "@/lib/db";
 import { LABEL_COLORS, slugOf } from "@/lib/labelColors";
 import { api, formatBytes, type Onboarding } from "@/lib/setup";
-import { Bar, useTimeLeft } from "./ModelSetup";
+import { useTimeLeft } from "./ModelSetup";
 
-// The frame every first-run step is set in, the live line along its bottom,
-// and the steps that use the mail read meanwhile: About you, Examples, and
-// People and labels. The flow itself is in Welcome.tsx.
+// The frame every first-run step is set in, and the steps that use the mail
+// read meanwhile: About you, Examples, and People and labels. The flow itself
+// is in Welcome.tsx.
 
 export type Flow = {
   header: ReactNode;
+  // The steps there are and the one shown; none on the welcome screen.
+  steps: { title: string; state: "done" | "now" | "later"; go?: () => void }[];
   onboarding: Onboarding | null;
   back?: () => void;
   userId: string | null;
 };
-export const FlowContext = createContext<Flow>({ header: null, onboarding: null, userId: null });
+export const FlowContext = createContext<Flow>({ header: null, steps: [], onboarding: null, userId: null });
 
-// One step: the question and its controls on the left, what it is about on
-// the right, and the way on along the bottom with what is being read.
-export function Step({ title, text, children, aside, actions, bare }: { title: string; text: ReactNode; children?: ReactNode; aside?: ReactNode; actions?: ReactNode; bare?: boolean }) {
-  const { header, onboarding, back } = useContext(FlowContext);
+// One step: the question and its controls on paper at the left, and at the
+// right the stage, a sheet of wax in the accent, where what the answer does is
+// laid out. What is being read meanwhile runs along the foot of the stage. On
+// a narrow window the stage comes under the question.
+export function Step({ title, text, children, stage, actions, big }: { title: string; text: ReactNode; children?: ReactNode; stage?: ReactNode; actions?: ReactNode; big?: boolean }) {
+  const { header, steps, onboarding, back } = useContext(FlowContext);
   return (
-    <div className="flex h-full flex-col bg-canvas text-ink">
-      <header className="flex h-[52px] flex-none items-center gap-6 px-5">{header}</header>
-      <main className="min-h-0 flex-1 overflow-y-auto">
-        <div className={`ob-enter mx-auto grid w-full max-w-[1320px] gap-x-[clamp(40px,6vw,104px)] gap-y-10 px-6 pb-16 sm:px-10 lg:grid-cols-[minmax(0,400px)_minmax(0,1fr)] lg:px-14 ${bare ? "min-h-full content-center py-10" : "pt-[clamp(28px,7vh,76px)]"}`}>
-          <section className="min-w-0">
-            {title && <h1 className="text-[26px] font-[650] leading-[1.15] tracking-[-0.018em] text-ink [text-wrap:balance]">{title}</h1>}
-            <div className="mt-3 max-w-[42ch] text-[14px] leading-[1.55] text-ink2 [text-wrap:pretty]">{text}</div>
+    <div className="flex h-full flex-col overflow-y-auto bg-canvas text-ink lg:flex-row lg:overflow-hidden">
+      <section className="flex flex-none flex-col lg:w-[44%] lg:min-w-[440px] lg:max-w-[600px]">
+        <header className="flex h-[72px] flex-none items-center gap-6 px-6 sm:px-10 lg:px-14">{header}</header>
+        <main className="flex min-h-0 flex-1 flex-col px-6 sm:px-10 lg:overflow-y-auto lg:px-14">
+          <div key={title} className="ob-enter my-auto w-full max-w-[460px] py-6">
+            {steps.length > 0 && <Steps steps={steps} />}
+            {title && <h1 className={`font-brand font-[600] leading-[1.04] tracking-[-0.012em] text-ink [text-wrap:balance] ${big ? "text-[54px]" : "text-[40px]"}`}>{title}</h1>}
+            <div className="mt-4 max-w-[44ch] text-[15px] leading-[1.55] text-ink2 [text-wrap:pretty]">{text}</div>
             {children && <div className="mt-8">{children}</div>}
-          </section>
-          {aside && <div className="min-w-0 lg:pt-1">{aside}</div>}
-        </div>
-      </main>
-      {!bare && (
-        <footer className="flex min-h-[60px] flex-none flex-wrap items-center gap-x-6 gap-y-2 border-t border-line px-5 py-3">
-          <div className="min-w-0 flex-1">
-            <Live o={onboarding} />
+            {big && <div className="mt-9">{actions}</div>}
           </div>
-          <div className="ml-auto flex flex-none items-center gap-2">
+        </main>
+        {!big && (actions || back) && (
+          <footer className="flex min-h-[84px] flex-none flex-wrap items-center gap-2 px-6 py-4 max-lg:order-last max-lg:sticky max-lg:bottom-0 max-lg:z-10 max-lg:bg-canvas sm:px-10 lg:px-14">
+            {actions}
+            <span className="flex-1" />
             {back && (
-              <button type="button" className="btn btn-plain h-8" onClick={back}>
+              <button type="button" className="btn btn-plain h-10 px-3 text-[14px]" onClick={back}>
                 Back
               </button>
             )}
-            {actions}
+          </footer>
+        )}
+      </section>
+      <aside className="stage relative flex min-h-[320px] flex-1 flex-col overflow-hidden lg:m-2 lg:ml-0 lg:rounded-[18px]">
+        <Tablets />
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-8 sm:px-10 lg:px-[clamp(32px,5vw,80px)] lg:py-12">
+          <div key={title} className="stage-enter my-auto w-full">
+            {stage}
           </div>
-        </footer>
+        </div>
+        <Live o={onboarding} />
+      </aside>
+    </div>
+  );
+}
+
+// The primary button of a step.
+export function Go({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button type="button" className="btn btn-pri h-10 rounded-[10px] px-5 text-[14px]" {...props}>
+      {children}
+    </button>
+  );
+}
+
+// How far along: one tablet a step, sealed once done, each with its name.
+function Steps({ steps }: { steps: Flow["steps"] }) {
+  return (
+    <ol className="mb-7 flex gap-1.5" aria-label="Steps">
+      {steps.map((s) => (
+        <li key={s.title} className="flex-1 sm:max-w-[56px]">
+          <button
+            type="button"
+            title={s.title}
+            aria-label={s.title}
+            aria-current={s.state === "now" ? "step" : undefined}
+            disabled={!s.go}
+            onClick={s.go}
+            className="group flex h-5 w-full items-center"
+          >
+            <span className={`h-[5px] w-full rounded-full transition-colors duration-300 ${s.state === "done" ? "bg-wax group-enabled:group-hover:bg-wax-ink" : s.state === "now" ? "bg-ink" : "bg-sel group-enabled:group-hover:bg-ink4"}`} />
+          </button>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+// The mark, large and cropped, pressed into the wax.
+function Tablets() {
+  return (
+    <svg aria-hidden viewBox="0 0 100 100" className="pointer-events-none absolute -bottom-[16%] -right-[14%] h-[92%] max-h-[900px] text-black opacity-[0.09]">
+      <rect width="100" height="33" rx="5" fill="currentColor" />
+      <rect y="40" width="46.5" height="60" rx="5" fill="currentColor" />
+      <rect x="53.5" y="40" width="46.5" height="60" rx="5" fill="currentColor" />
+    </svg>
+  );
+}
+
+// A sheet of paper on the stage.
+export function Sheet({ title, note, children, className = "" }: { title?: string; note?: ReactNode; children: ReactNode; className?: string }) {
+  return (
+    <div className={`mx-auto w-full max-w-[600px] rounded-[16px] bg-canvas px-6 pb-5 pt-5 text-ink shadow-pop sm:px-7 ${className}`}>
+      {title && (
+        <div className="mb-2 flex items-baseline justify-between gap-4">
+          <h2 className="font-brand text-[21px] font-[620] leading-tight text-ink">{title}</h2>
+          {note && <span className="text-xs text-ink3">{note}</span>}
+        </div>
       )}
+      {children}
     </div>
   );
 }
 
 // What the server is doing meanwhile: the model download, then the first
 // read (headers of 90 days, the sent mail, the last 30 days sorted).
-export function Live({ o }: { o: Onboarding | null }) {
+function Live({ o }: { o: Onboarding | null }) {
   const job = o?.local && !o.local.done ? o.local : null;
   const left = useTimeLeft(job ?? undefined);
   if (!o) return null;
@@ -69,32 +137,26 @@ export function Live({ o }: { o: Onboarding | null }) {
   }
   const r = o.read;
   const n = (x: number) => x.toLocaleString();
-  if (r.error) items.push(<LiveItem key="read" label={`Reading stopped: ${r.error}. It starts again on its own.`} failed />);
+  if (r.error) items.push(<LiveItem key="read" label={`Reading stopped: ${r.error.replace(/\.+$/, "")}. It starts again on its own.`} failed />);
   else if (r.step === "headers") items.push(r.headers_total ? <LiveItem key="read" label="Reading the last 90 days" pct={(r.headers / r.headers_total) * 100} numbers={`${n(r.headers)} of ${n(r.headers_total)} emails`} /> : <LiveItem key="read" label="Connecting to your mailbox" pct={null} />);
   else if (r.step === "sent") items.push(o.model ? <LiveItem key="read" label={r.learned ? "Working out labels to suggest" : "Learning from your sent mail"} pct={null} /> : <LiveItem key="read" label={`${n(r.headers_total || r.headers)} emails listed. ${noModel(o) ? "Sorting needs a model." : "Sorting starts once the model is ready."}`} />);
   else if (r.step === "deep") items.push(r.deep_total ? <LiveItem key="read" label="Sorting the last 30 days" pct={(r.deep / r.deep_total) * 100} numbers={`${n(r.deep)} of ${n(r.deep_total)}`} /> : <LiveItem key="read" label="Fetching the last 30 days" pct={null} />);
   else items.push(<LiveItem key="read" label={`Your mail is read: ${n(o.sorted)} emails sorted`} done />);
   if (r.step === "headers" && o.model && !r.learned && !r.error) items.push(<LiveItem key="sent" label="Learning from your sent mail" pct={null} />);
-  return <div className="flex min-w-0 flex-wrap items-center gap-x-8 gap-y-1.5">{items}</div>;
+  return <div className="relative flex min-h-[64px] flex-none flex-wrap items-center gap-x-8 gap-y-1.5 px-5 py-4 sm:px-10 lg:px-[clamp(32px,5vw,80px)]">{items}</div>;
 }
 
 function LiveItem({ label, pct, numbers, failed, done }: { label: string; pct?: number | null; numbers?: string; failed?: boolean; done?: boolean }) {
   return (
-    <div className="flex min-w-0 max-w-full items-center gap-3" role="status" aria-live="polite">
-      {done ? <Glyph state="done" /> : failed ? <Glyph state="failed" /> : null}
-      <span className={`min-w-0 truncate text-[12.5px] ${failed ? "text-danger" : "text-ink2"}`}>{label}</span>
-      {pct !== undefined && <Bar pct={pct === null ? null : Math.min(100, pct)} className="w-24 flex-none" />}
-      {numbers && <span className="flex-none text-xs text-ink3">{numbers}</span>}
-    </div>
-  );
-}
-
-// A section heading on the right of a step.
-function Heading({ title, note }: { title: string; note?: ReactNode }) {
-  return (
-    <div className="mb-1.5 flex items-baseline justify-between gap-4 border-b border-line pb-2">
-      <h2 className="text-[13px] font-[650] text-ink">{title}</h2>
-      {note && <span className="text-xs text-ink3">{note}</span>}
+    <div className="flex min-w-0 max-w-full items-center gap-3 text-white" role="status" aria-live="polite">
+      {done ? <Icon name="check" size={15} /> : failed ? <Icon name="warning" size={15} /> : null}
+      <span className={`min-w-0 text-[13px] ${failed ? "leading-snug" : "truncate"}`}>{label}</span>
+      {pct !== undefined && (
+        <span className="relative h-[3px] w-28 flex-none overflow-hidden rounded-full bg-white/30">
+          {pct === null ? <span className="ob-indeterminate absolute inset-y-0 w-2/5 rounded-full bg-white" /> : <span className="block h-full rounded-full bg-white transition-[width] duration-300 ease-out" style={{ width: `${Math.max(2, Math.min(100, pct))}%` }} />}
+        </span>
+      )}
+      {numbers && <span className="flex-none text-[12.5px] text-white/80">{numbers}</span>}
     </div>
   );
 }
@@ -204,29 +266,29 @@ export function AboutStep({ onNext }: { onNext: () => void }) {
   return (
     <Step
       title="About you"
-      text="Tabellar keeps this in mind for every email. It fills in from your sent mail as that is read; change anything that is off."
+      text="Kept in mind for every email. It fills in from your sent mail; change anything that is off."
       actions={
-        <button type="button" className="btn btn-pri h-8 px-3.5" disabled={saving} onClick={save}>
+        <Go disabled={saving} onClick={save}>
           {saving ? "Saving" : "Continue"}
-        </button>
+        </Go>
       }
-      aside={
-        <div>
-          <Heading title="From your sent mail" note={about?.learned ? `${about.sent.toLocaleString()} emails read` : undefined} />
+      stage={
+        <Sheet title="From your sent mail" note={about?.learned ? `${about.sent.toLocaleString()} emails read` : undefined}>
           {reading ? (
             noModel(onboarding) ? <Waiting lines={0} text={NEEDS_MODEL} /> : <Waiting lines={5} text={onboarding && !onboarding.model ? "Read once the model is ready." : "Reading your sent mail. What it shows appears here."} />
           ) : !facts.length ? (
-            <p className="py-3 text-ink3">Nothing more to note.</p>
+            <p className="py-2 text-ink3">Nothing more to note.</p>
           ) : (
-            <ul>
+            <ul className="lg:max-h-[52vh] lg:overflow-y-auto">
               {facts.map((f) => {
                 const off = removed.has(f.id);
                 return (
-                  <li key={f.id} className="group flex min-h-10 items-center gap-3 border-b border-line-soft py-2">
-                    <span className={`min-w-0 flex-1 leading-snug ${off ? "text-ink3 line-through decoration-ink4" : "text-ink2"}`}>{f.value}</span>
+                  <li key={f.id} className="flex min-h-11 items-center gap-3 border-b border-line-soft py-2 last:border-0">
+                    <span className={`min-w-0 flex-1 text-[14px] leading-snug ${off ? "text-ink3 line-through decoration-ink4" : "text-ink"}`}>{f.value}</span>
                     <button
                       type="button"
-                      className={`link flex-none ${off ? "" : "opacity-0 focus-visible:opacity-100 group-hover:opacity-100"}`}
+                      className="link flex-none"
+                      aria-label={`${off ? "Keep" : "Remove"}: ${f.value}`}
                       onClick={() => setRemoved((s) => (s.has(f.id) ? new Set([...s].filter((x) => x !== f.id)) : new Set(s).add(f.id)))}
                     >
                       {off ? "Keep" : "Remove"}
@@ -237,18 +299,18 @@ export function AboutStep({ onNext }: { onNext: () => void }) {
             </ul>
           )}
           {error && <p className="mt-2 text-xs text-danger">{error}</p>}
-        </div>
+        </Sheet>
       }
     >
       <div className="space-y-5">
         <Field label="Role" note={learnedRole ? "From your sent mail" : undefined}>
-          <input className="input h-9" value={roleValue} onChange={(e) => setRole(e.target.value)} placeholder="Such as Head of sales at Acme" spellCheck={false} />
+          <input className="input h-10 text-[14px]" value={roleValue} onChange={(e) => setRole(e.target.value)} placeholder="Such as Head of sales at Acme" spellCheck={false} />
         </Field>
         <Field label="Working on" note={learnedWork ? "From your sent mail" : undefined}>
-          <textarea className="input min-h-[60px] resize-none" rows={2} value={workValue} onChange={(e) => setWork(e.target.value)} placeholder="Such as the spring launch and hiring two engineers" />
+          <textarea className="input min-h-[64px] resize-none text-[14px]" rows={2} value={workValue} onChange={(e) => setWork(e.target.value)} placeholder="Such as the spring launch and hiring two engineers" />
         </Field>
         <Field label="Never tell me about">
-          <div className="flex min-h-9 flex-wrap items-center gap-1.5 rounded-[7px] bg-field px-1.5 py-1 focus-within:shadow-[0_0_0_2px_color-mix(in_oklch,var(--wax)_55%,transparent)]">
+          <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-[8px] bg-field px-1.5 py-1 focus-within:shadow-[0_0_0_2px_color-mix(in_oklch,var(--wax)_55%,transparent)]">
             {topics.map((t) => (
               <span key={t} className="inline-flex h-6 items-center gap-1 rounded-md bg-raised pl-2 pr-1 text-[12.5px] text-ink shadow-control">
                 {t}
@@ -314,6 +376,7 @@ const QUESTION: Record<Example["kind"], string> = {
   followup: "Follow up here?",
   newsletter: "Treat as a newsletter?",
 };
+const ANSWERED: Record<Answer, string> = { yes: "Yes", no: "No", never: "Never" };
 
 function loadAnswers(): Record<string, Answer> {
   try {
@@ -380,63 +443,98 @@ export function ExamplesStep({ onNext }: { onNext: () => void }) {
     setBusy(null);
   };
 
-  const answered = list.filter((e) => answers[e.key]).length;
-  const waiting = !readDone && list.length < 6;
+  const answered = list.filter((e) => answers[e.key]);
+  const now = list.find((e) => !answers[e.key]);
+  const left = list.length - answered.length;
+  const waiting = !readDone && list.length < MOST;
+
+  // Y, N and X answer the letter on top.
+  useEffect(() => {
+    const onKey = (ev: KeyboardEvent) => {
+      if (!now || busy || ev.repeat || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      const a = ({ y: "yes", n: "no", x: "never" } as const)[ev.key.toLowerCase() as "y" | "n" | "x"];
+      if (!a || (a === "never" && now.kind === "newsletter")) return;
+      ev.preventDefault();
+      void answer(now, a);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
+
   return (
     <Step
       title="Would you want these?"
-      text="Examples from your own mail, of what Tabellar would do. Your answers decide what it does from now on; Never covers everything from that sender."
+      text="From your own mail: what Tabellar would do. Your answers decide what it does from now on."
       actions={
-        <button type="button" className="btn btn-pri h-8 px-3.5" onClick={onNext}>
-          Continue
-        </button>
+        now && !answered.length ? (
+          <button type="button" className="btn h-10 rounded-[10px] px-5 text-[14px]" onClick={onNext}>
+            Skip
+          </button>
+        ) : (
+          <Go onClick={onNext}>Continue</Go>
+        )
       }
-      aside={
-        <div>
-          <Heading title="From your mail" note={list.length ? `${answered} of ${list.length} answered` : undefined} />
-          <ul>
-            {list.map((e) => {
-              const a = answers[e.key];
-              return (
-                <li key={e.key} className="ob-enter grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-6 border-b border-line-soft py-3">
-                  <div className="min-w-0">
-                    <p className="text-xs text-ink3">{QUESTION[e.kind]}</p>
-                    <p className={`mt-0.5 truncate text-[14px] font-medium ${a ? "text-ink2" : "text-ink"}`} title={e.what}>
-                      {e.kind === "followup" ? `"${e.what}"` : e.what}
-                    </p>
-                    <p className="mt-0.5 truncate text-[12.5px] text-ink3" title={detail(e)}>
-                      {detail(e)}
-                    </p>
-                  </div>
-                  {a ? (
-                    <span className="text-[12.5px] text-ink2">
-                      {a === "yes" ? "Yes" : a === "no" ? "No" : `Never for ${firstName(e.who)}`}
-                    </span>
-                  ) : (
-                    <div className="grid grid-cols-[auto_auto_132px] items-center gap-1.5">
-                      <button type="button" className="btn btn-sm" disabled={busy === e.key} onClick={() => answer(e, "yes")}>
-                        Yes
-                      </button>
-                      <button type="button" className="btn btn-sm" disabled={busy === e.key} onClick={() => answer(e, "no")}>
-                        No
-                      </button>
-                      {e.kind !== "newsletter" && (
-                        <button type="button" className="btn btn-plain btn-sm !block max-w-full justify-self-start truncate" disabled={busy === e.key} onClick={() => answer(e, "never")}>
-                          Never for {firstName(e.who)}
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-          {waiting && <Waiting lines={noModel(onboarding) ? 0 : list.length ? 2 : 4} text={noModel(onboarding) ? NEEDS_MODEL : onboarding && !onboarding.model ? "Examples appear once the model is ready and your mail is sorted." : "More appear here as your mail is sorted."} />}
-          {!waiting && !list.length && <p className="py-3 text-ink3">Nothing to ask about yet. Tabellar asks in the Brief when it needs to.</p>}
-          {failed && <p className="mt-2 text-xs text-danger">{failed}</p>}
-        </div>
+      stage={
+        now ? (
+          <div className="mx-auto w-full max-w-[560px]">
+            <div className="relative">
+              {/* The letters under the one on top. */}
+              {left > 2 && <span aria-hidden className="absolute inset-x-7 -bottom-4 top-6 rounded-[16px] bg-canvas opacity-35" />}
+              {left > 1 && <span aria-hidden className="absolute inset-x-3.5 -bottom-2 top-3 rounded-[16px] bg-canvas opacity-60" />}
+              <div key={now.key} className="deal relative flex min-h-[200px] flex-col rounded-[16px] bg-canvas px-7 pb-6 pt-6 text-ink shadow-pop">
+                <p className="flex items-baseline justify-between gap-4 text-[13px] text-ink3">
+                  <span className="font-medium text-wax-ink">{QUESTION[now.kind]}</span>
+                  <span>{left === 1 ? "Last one" : `${left} left`}</span>
+                </p>
+                <p className="mt-4 font-brand text-[27px] font-[600] leading-[1.15] text-ink [overflow-wrap:anywhere] [text-wrap:balance]">{now.kind === "followup" ? `"${now.what}"` : now.what}</p>
+                <p className="mt-3 text-[14px] leading-snug text-ink2">{detail(now)}</p>
+                {now.quote && now.kind !== "newsletter" && now.quote !== now.what && <p className="mt-2 line-clamp-3 text-[13px] leading-snug text-ink3">"{now.quote}"</p>}
+              </div>
+            </div>
+            <div className="mt-10 flex flex-wrap items-center justify-center gap-2.5" role="group" aria-label={QUESTION[now.kind]}>
+              <button type="button" className="btn h-12 min-w-[112px] justify-center rounded-full px-6 text-[15px]" disabled={busy === now.key} onClick={() => answer(now, "yes")} title="Y">
+                <Icon name="check" size={17} />
+                Yes
+              </button>
+              <button type="button" className="btn h-12 min-w-[112px] justify-center rounded-full px-6 text-[15px]" disabled={busy === now.key} onClick={() => answer(now, "no")} title="N">
+                <Icon name="close" size={17} />
+                No
+              </button>
+              {now.kind !== "newsletter" && (
+                <button type="button" className="h-12 max-w-[240px] truncate rounded-full px-5 text-[15px] text-white transition-colors duration-150 hover:bg-white/15 disabled:opacity-50" disabled={busy === now.key} onClick={() => answer(now, "never")} title="X">
+                  Never for {firstName(now.who)}
+                </button>
+              )}
+            </div>
+            {failed && <p className="mt-4 text-center text-[13px] text-white">{failed}</p>}
+          </div>
+        ) : (
+          <Sheet>
+            {waiting ? (
+              <Waiting lines={noModel(onboarding) ? 0 : 4} text={noModel(onboarding) ? NEEDS_MODEL : onboarding && !onboarding.model ? "Examples appear once the model is ready and your mail is sorted." : answered.length ? "More appear here as your mail is sorted." : "The first ones appear here as your mail is sorted."} />
+            ) : (
+              <p className="py-2 text-[14px] text-ink2">{answered.length ? "That is all of them." : "Nothing to ask about yet. Tabellar asks in the Brief when it needs to."}</p>
+            )}
+          </Sheet>
+        )
       }
-    />
+    >
+      {answered.length > 0 && (
+        <ul className="border-t border-line-soft" aria-label="Answered">
+          {answered
+            .slice(-5)
+            .reverse()
+            .map((e) => (
+              <li key={e.key} className="ob-enter flex h-10 items-center gap-3 border-b border-line-soft">
+                <span className={`w-[46px] flex-none text-[13px] ${answers[e.key] === "yes" ? "font-medium text-ink" : "text-ink3"}`}>{ANSWERED[answers[e.key]]}</span>
+                <span className="min-w-0 flex-1 truncate text-ink2" title={e.what}>
+                  {e.what}
+                </span>
+              </li>
+            ))}
+        </ul>
+      )}
+    </Step>
   );
 }
 
@@ -504,77 +602,74 @@ export function PeopleStep({ onNext }: { onNext: () => void }) {
   const suggestions = labels.value?.suggestions;
   return (
     <Step
-      title="People and labels"
-      text="Tick the people who matter most: their mail counts as important. Keep the labels you want, and click a name to change it."
+      title="Who matters most?"
+      text="Their mail counts as important, always."
       actions={
-        <button type="button" className="btn btn-pri h-8 px-3.5" disabled={saving} onClick={save}>
+        <Go disabled={saving} onClick={save}>
           {saving ? "Saving" : "Continue"}
-        </button>
+        </Go>
       }
-      aside={
-        <div className="grid gap-x-12 gap-y-10 xl:grid-cols-2">
-          <div className="min-w-0">
-            <Heading title="People you deal with most" />
-            {!list.length ? (
-              people.value && readDone ? (
-                <p className="py-3 text-ink3">No one yet.</p>
-              ) : (
-                <Waiting lines={5} text="Worked out from who you write to and answer." />
-              )
-            ) : (
-              <ul>
-                {list.map((p) => {
-                  const on = vip[p.address] ?? p.vip;
-                  return (
-                    <li key={p.address} className="flex h-10 items-center gap-3 border-b border-line-soft">
-                      <Tick checked={on} onChange={(v) => toggleVip(p, v)} label={`${p.name} matters`} />
-                      <span className="min-w-0 flex-1 truncate" title={p.address}>
-                        <span className={on ? "font-medium text-ink" : "text-ink"}>{p.name}</span>
-                        {p.name !== p.address && <span className="ml-2 text-ink3">{p.address.split("@")[1]}</span>}
-                      </span>
-                      {p.sent > 0 && <span className="flex-none text-xs text-ink3">{p.sent} sent</span>}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-          <div className="min-w-0">
-            <Heading title="Suggested labels" />
-            {!suggestions ? (
-              <Waiting lines={noModel(onboarding) ? 0 : 4} text={noModel(onboarding) ? NEEDS_MODEL : onboarding && !onboarding.model ? "Suggested once the model is ready." : "Suggested from who writes to you and about what, once enough mail is read."} />
-            ) : !suggestions.length ? (
-              <p className="py-3 text-ink3">None to suggest. Labels can be made any time in Labels.</p>
-            ) : (
-              <ul>
-                {suggestions.map((s) => {
-                  const kept = !dropped.has(s.name);
-                  return (
-                    <li key={s.name} className="flex items-start gap-3 border-b border-line-soft py-2.5">
-                      <span className="pt-[5px]">
-                        <Tick checked={kept} onChange={(v) => setDropped((d) => (v ? new Set([...d].filter((x) => x !== s.name)) : new Set(d).add(s.name)))} label={`Keep ${s.name}`} />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <input
-                          className={`-ml-1 h-7 w-full rounded-md bg-transparent px-1 font-medium outline-none transition-colors duration-150 hover:bg-hover focus:bg-field ${kept ? "text-ink" : "text-ink3 line-through"}`}
-                          value={names[s.name] ?? s.name}
-                          onChange={(e) => setNames((n) => ({ ...n, [s.name]: e.target.value }))}
-                          disabled={!kept}
-                          aria-label={`Name of the label ${s.name}`}
-                          spellCheck={false}
-                        />
-                        <span className="block text-[12.5px] leading-snug text-ink3">{s.description}</span>
-                      </span>
-                      <span className="flex-none pt-1.5 text-xs text-ink3">{s.count.toLocaleString()} emails</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            {failed && <p className="mt-2 text-xs text-danger">{failed}</p>}
-          </div>
-        </div>
+      stage={
+        <Sheet title="Labels to keep" note={suggestions?.length ? "Click a name to change it" : undefined}>
+          {!suggestions ? (
+            <Waiting lines={noModel(onboarding) ? 0 : 4} text={noModel(onboarding) ? NEEDS_MODEL : onboarding && !onboarding.model ? "Suggested once the model is ready." : "Suggested from who writes to you and about what, once enough mail is read."} />
+          ) : !suggestions.length ? (
+            <p className="py-2 text-ink3">None to suggest. Labels can be made any time in Labels.</p>
+          ) : (
+            <ul className="lg:max-h-[56vh] lg:overflow-y-auto">
+              {suggestions.map((s) => {
+                const kept = !dropped.has(s.name);
+                return (
+                  <li key={s.name} className="flex items-start gap-3 border-b border-line-soft py-3 last:border-0">
+                    <span className="pt-[5px]">
+                      <Tick checked={kept} onChange={(v) => setDropped((d) => (v ? new Set([...d].filter((x) => x !== s.name)) : new Set(d).add(s.name)))} label={`Keep ${s.name}`} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <input
+                        className={`-ml-1 h-7 w-full rounded-md bg-transparent px-1 text-[14px] font-medium outline-none transition-colors duration-150 hover:bg-hover focus:bg-field ${kept ? "text-ink" : "text-ink3 line-through"}`}
+                        value={names[s.name] ?? s.name}
+                        onChange={(e) => setNames((n) => ({ ...n, [s.name]: e.target.value }))}
+                        disabled={!kept}
+                        aria-label={`Name of the label ${s.name}`}
+                        spellCheck={false}
+                      />
+                      <span className="block text-[13px] leading-snug text-ink3">{s.description}</span>
+                    </span>
+                    <span className="flex-none pt-1.5 text-xs text-ink3">{s.count.toLocaleString()} emails</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Sheet>
       }
-    />
+    >
+      {!list.length ? (
+        people.value && readDone ? (
+          <p className="text-ink3">No one yet.</p>
+        ) : (
+          <Waiting lines={5} text="Worked out from who you write to and answer." />
+        )
+      ) : (
+        <ul className="-mx-2">
+          {list.map((p) => {
+            const on = vip[p.address] ?? p.vip;
+            return (
+              <li key={p.address}>
+                <label className={`flex h-12 items-center gap-3 rounded-[10px] px-2 transition-colors duration-150 ${on ? "bg-sel" : "hover:bg-hover"}`}>
+                  <span aria-hidden className={`grid h-8 w-8 flex-none place-items-center rounded-full text-[12px] font-semibold ${on ? "bg-ink text-canvas" : "bg-field text-ink2"}`}>{initials(p.name)}</span>
+                  <span className="min-w-0 flex-1 truncate" title={p.address}>
+                    <span className={`text-[14px] text-ink ${on ? "font-medium" : ""}`}>{p.name}</span>
+                    {p.name !== p.address && <span className="ml-2 text-ink3">{p.address.split("@")[1]}</span>}
+                  </span>
+                  <Tick checked={on} onChange={(v) => toggleVip(p, v)} label={`${p.name} matters most`} />
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {failed && <p className="mt-2 text-xs text-danger">{failed}</p>}
+    </Step>
   );
 }

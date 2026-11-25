@@ -99,9 +99,9 @@ export function localPair(state: SetupState) {
 
 // Buttons and fields at the size used during setup, a little larger than in
 // the rest of the window.
-const btnPrimary = "btn btn-pri h-8 px-3.5";
-const btnSecondary = "btn h-8 px-3.5";
-const input = "input h-8";
+const btnPrimary = "btn btn-pri h-9 px-4";
+const btnSecondary = "btn h-9 px-4";
+const input = "input h-9";
 
 export const ui = { btnPrimary, btnSecondary, input };
 
@@ -118,8 +118,8 @@ export function ErrorLine({ text }: { text: string }) {
 
 export function RadioDot({ on }: { on: boolean }) {
   return (
-    <span aria-hidden className={`mt-[2.5px] grid h-3.5 w-3.5 flex-none place-items-center rounded-full border-[1.2px] transition-colors duration-150 ${on ? "border-ink" : "border-ink4"}`}>
-      {on && <span className="h-1.5 w-1.5 rounded-full bg-ink" />}
+    <span aria-hidden className={`mt-[1.5px] grid h-4 w-4 flex-none place-items-center rounded-full border-[1.4px] transition-colors duration-150 ${on ? "border-wax" : "border-ink4"}`}>
+      {on && <span className="h-2 w-2 rounded-full bg-wax" />}
     </span>
   );
 }

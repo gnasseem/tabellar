@@ -58,9 +58,9 @@ function NavItem({ id, icon, label, count, need, on: forced }: { id: string; ico
         setView(id);
         setSidebarOpen(false);
       }}
-      className={`flex h-item w-full items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${on ? "bg-sel font-medium text-ink" : "text-ink2 hover:bg-sel/55"}`}
+      className={`flex h-item w-full items-center gap-2.5 rounded-[8px] px-2.5 text-left transition-colors duration-150 ${on ? "bg-tray-sel font-medium text-ink shadow-control" : "text-ink2 hover:bg-ink/5"}`}
     >
-      <Icon name={icon} size={16} className={on ? "text-ink" : "text-ink3"} />
+      <Icon name={icon} size={16} className={on ? "text-wax-ink" : "text-ink3"} />
       <span className="flex-1 truncate">{label}</span>
       {count ? <span className={`text-xs ${need ? "count-need" : "text-ink3"}`}>{count.toLocaleString()}</span> : null}
     </button>
@@ -174,7 +174,7 @@ function AccountSwitch() {
   return (
     <div ref={ref} className="relative mx-2 mb-3 mt-0.5">
       <button
-        className="flex h-item w-full items-center gap-2 rounded-md px-2 text-left text-ink2 transition-colors duration-150 hover:bg-sel/55"
+        className="flex h-item w-full items-center gap-2 rounded-[8px] px-2 text-left text-ink2 transition-colors duration-150 hover:bg-ink/5"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Account"
@@ -269,17 +269,17 @@ export default function Sidebar() {
     <>
       {sidebarOpen && <div className="fixed inset-0 z-40 bg-scrim lg:hidden" onClick={() => setSidebarOpen(false)} />}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-56 flex-none flex-col border-r border-line bg-side transition-transform duration-200 ease-out lg:static lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
+        className={`fixed inset-y-0 left-0 z-50 flex w-[232px] flex-none flex-col bg-tray transition-transform duration-200 ease-out lg:static lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}
       >
-        <div className="flex h-bar flex-none items-center pl-4 pr-2.5">
-          <Logo size={22} className="flex-1" />
-          <button className="iconbtn" title="New message (C)" aria-label="New message" onClick={() => openCompose()}>
+        <div className="flex h-[68px] flex-none items-center pl-5 pr-3">
+          <Logo size={25} className="flex-1" />
+          <button className="grid h-8 w-8 flex-none place-items-center rounded-full bg-tray-sel text-ink shadow-control transition-colors duration-150 hover:bg-hover" title="New message (C)" aria-label="New message" onClick={() => openCompose()}>
             <Icon name="compose" size={16} />
           </button>
         </div>
         {/* Above the scrolling part, which would clip its menu. */}
         <AccountSwitch />
-        <nav className="flex flex-1 flex-col gap-3 overflow-y-auto px-2 pb-2 pt-0.5">
+        <nav className="flex flex-1 flex-col gap-4 overflow-y-auto px-2.5 pb-2 pt-1">
           {groups.map((g) => (
             <div key={g[0].id}>
               {g.map((i) => (
@@ -289,7 +289,7 @@ export default function Sidebar() {
           ))}
         </nav>
         <GoingOut />
-        <div className="mx-2 border-t border-line pb-2 pt-1.5">
+        <div className="mx-2.5 border-t border-line pb-3 pt-2">
           <Engine />
           <NavItem id="settings" icon="settings" label="Settings" on={view === "settings" || view === "history" || view === "relationships"} />
         </div>

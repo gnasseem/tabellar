@@ -228,7 +228,7 @@ export default function AutomationsView() {
       )}
       {d.status === "proposed" ? (
         <span className="flex flex-none gap-3">
-          <button className="link !text-wax-ink" disabled={busy === d.id} onClick={() => act(d.id, () => mail.approve(d.id, d.hash || ""))}>
+          <button className="btn-act" disabled={busy === d.id} onClick={() => act(d.id, () => mail.approve(d.id, d.hash || ""))}>
             Approve
           </button>
           <button className="link" disabled={busy === d.id} onClick={() => act(d.id, () => mail.dismiss(d.id))}>
@@ -332,13 +332,13 @@ export default function AutomationsView() {
     <>
       <ViewBar title="Automations" search={false} />
       <div className="min-h-0 flex-1 overflow-y-auto pb-10">
-        <div className="w-full max-w-[880px]">
-          <form className="mx-2 flex flex-none items-center pb-1 pl-1.5 pr-3 pt-2.5" onSubmit={(e) => (e.preventDefault(), compile(text))}>
-            <span className="grid w-[26px] flex-none place-items-center text-ink3">
-              <Icon name="add" size={15} />
-            </span>
-            <input ref={input} className="input" value={text} onChange={(e) => setText(e.target.value)} placeholder="When something happens, do this from now on" aria-label="New automation" disabled={!!reading} maxLength={400} />
-          </form>
+        <div className="page">
+          <div className="px-3 pb-2 pt-6">
+            <form className="addfield" onSubmit={(e) => (e.preventDefault(), compile(text))}>
+              <Icon name="bolt" size={17} className="text-ink3" />
+              <input ref={input} value={text} onChange={(e) => setText(e.target.value)} placeholder="When something happens, do this from now on" aria-label="New automation" disabled={!!reading} maxLength={400} />
+            </form>
+          </div>
           {error && editing === null && (
             <p className="pb-1 pl-10 pr-5 pt-1 text-danger" role="alert">
               {error}
@@ -352,7 +352,7 @@ export default function AutomationsView() {
             </div>
           )}
           {failed && !list ? (
-            <p className="px-5 pt-3 text-danger" role="alert">
+            <p className="px-6 pt-3 text-danger" role="alert">
               Your automations could not be loaded.{" "}
               <button className="link !text-danger" onClick={load}>
                 Try again

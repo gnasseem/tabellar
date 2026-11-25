@@ -2,7 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-/* The wordmark face. Everything else is set in the system face. */
+/* The display face: the wordmark and the titles. Everything else is set in
+   the system face. */
 @font-face {
   font-family: "Ysabeau Office";
   src: url("./assets/fonts/ysabeau-office.woff2") format("woff2");
@@ -10,22 +11,25 @@
   font-display: swap;
 }
 
-/* Tokens. Warm neutral surfaces, three steps of ink, and one accent, sealing
+/* Tokens. The window is a warm tray with the content on it as a sheet of
+   paper. Warm neutral surfaces, three steps of ink, and one accent, sealing
    wax red unless the user picks another, kept for what needs the user:
    waiting decisions, primary actions and replies about to go out. Amber is
    only for held mail and cautions. Sizes are at the default text size. */
 :root {
-  --bg: oklch(1 0 0);
-  --side: oklch(0.968 0.004 75);
+  --tray: oklch(0.945 0.009 78);
+  --tray-sel: oklch(0.995 0.003 85);
+  --bg: oklch(0.995 0.002 85);
+  --side: oklch(0.967 0.006 80);
   --raised: oklch(1 0 0);
-  --line: oklch(0.912 0.004 75);
-  --line-soft: oklch(0.948 0.003 75);
-  --hover: oklch(0.968 0.003 75);
-  --sel: oklch(0.932 0.005 75);
-  --field: oklch(0.955 0.004 75);
-  --ink: oklch(0.2 0.006 60);
-  --ink2: oklch(0.4 0.006 60);
-  --ink3: oklch(0.535 0.005 60);
+  --line: oklch(0.905 0.007 78);
+  --line-soft: oklch(0.943 0.005 78);
+  --hover: oklch(0.968 0.005 80);
+  --sel: oklch(0.94 0.008 78);
+  --field: oklch(0.957 0.006 80);
+  --ink: oklch(0.21 0.012 55);
+  --ink2: oklch(0.4 0.01 58);
+  --ink3: oklch(0.515 0.009 60);
   --ink4: oklch(0.7 0.004 60);
   --on-wax: oklch(1 0 0);
   --warn: oklch(0.52 0.12 65);
@@ -39,27 +43,30 @@
   --ok-line: oklch(0.6 0.13 155 / 0.35);
   --run: oklch(0.62 0.13 150);
   --scrim: oklch(0 0 0 / 0.3);
-  --row: 32px;
-  --row2: 9px;
-  --head: 34px;
-  --bar: 52px;
-  --item: 28px;
-  --setting: 52px;
+  --row: 34px;
+  --row2: 10px;
+  --head: 38px;
+  --bar: 60px;
+  --item: 30px;
+  --setting: 54px;
   --shadow-pri: 0 1px 2px color-mix(in oklch, var(--wax-ink) 35%, transparent);
   --shadow-control: 0 1px 2px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14);
+  --shadow-sheet: 0 0 0 0.5px oklch(0.3 0.02 60 / 0.12), 0 1px 2px oklch(0.3 0.02 60 / 0.05), 0 6px 20px -10px oklch(0.3 0.02 60 / 0.14);
   --shadow-pop: 0 10px 32px oklch(0.2 0.01 60 / 0.16), 0 2px 6px oklch(0.2 0.01 60 / 0.08), 0 0 0 0.5px oklch(0.2 0.01 60 / 0.14);
   color-scheme: light;
 }
 
 .dark {
-  --bg: oklch(0.205 0.004 60);
-  --side: oklch(0.176 0.004 60);
-  --raised: oklch(0.25 0.004 60);
-  --line: oklch(0.29 0.004 60);
-  --line-soft: oklch(0.25 0.004 60);
-  --hover: oklch(0.24 0.004 60);
-  --sel: oklch(0.295 0.005 60);
-  --field: oklch(0.255 0.004 60);
+  --tray: oklch(0.165 0.005 60);
+  --tray-sel: oklch(0.262 0.006 60);
+  --bg: oklch(0.213 0.005 60);
+  --side: oklch(0.186 0.005 60);
+  --raised: oklch(0.262 0.006 60);
+  --line: oklch(0.302 0.006 60);
+  --line-soft: oklch(0.26 0.005 60);
+  --hover: oklch(0.246 0.005 60);
+  --sel: oklch(0.288 0.006 60);
+  --field: oklch(0.262 0.005 60);
   --ink: oklch(0.945 0.004 75);
   --ink2: oklch(0.77 0.005 75);
   --ink3: oklch(0.64 0.005 75);
@@ -75,6 +82,7 @@
   --ok-line: oklch(0.75 0.13 155 / 0.35);
   --run: oklch(0.74 0.14 150);
   --shadow-control: 0 1px 2px oklch(0 0 0 / 0.4), 0 0 0 0.5px oklch(1 0 0 / 0.12);
+  --shadow-sheet: 0 0 0 0.5px oklch(1 0 0 / 0.09), 0 8px 24px -12px oklch(0 0 0 / 0.5);
   --shadow-pop: 0 12px 36px oklch(0 0 0 / 0.5), 0 0 0 0.5px oklch(1 0 0 / 0.14);
   color-scheme: dark;
 }
@@ -139,15 +147,28 @@
 }
 
 [data-density="compact"] {
-  --row: 28px;
-  --row2: 5px;
-  --head: 30px;
-  --bar: 44px;
-  --item: 25px;
-  --setting: 42px;
+  --row: 29px;
+  --row2: 6px;
+  --head: 32px;
+  --bar: 48px;
+  --item: 26px;
+  --setting: 44px;
+}
+
+/* The wax stage of the first run. Derived from the accent, and deep in both
+   themes, so what lies on it is lit paper. */
+:root {
+  --stage: oklch(from var(--wax) calc(l - 0.035) calc(c * 0.98) h);
+}
+.dark {
+  --stage: oklch(from var(--wax) 0.4 calc(c * 0.8) calc(h - 3));
 }
 
 @layer base {
+  /* The default text size; Settings, Appearance changes it (lib/appearance.ts). */
+  html {
+    font-size: 106.25%;
+  }
   html,
   body,
   #root {
@@ -155,7 +176,7 @@
   }
   body {
     color: var(--ink);
-    background: var(--bg);
+    background: var(--tray);
     font-family: system-ui, -apple-system, "SF Pro Text", "Helvetica Neue", sans-serif;
     font-size: 13px;
     line-height: 1.4;
@@ -210,7 +231,7 @@
   /* Buttons: .btn is the standard control, .btn-pri the one primary action in
      a region, .btn-plain a quiet text action. */
   .btn {
-    @apply inline-flex h-7 items-center gap-1.5 whitespace-nowrap rounded-[7px] bg-raised px-[11px] text-[13px] font-medium text-ink shadow-control transition-colors duration-150;
+    @apply inline-flex h-[30px] items-center gap-1.5 whitespace-nowrap rounded-[8px] bg-raised px-[11px] text-[13px] font-medium text-ink shadow-control transition-colors duration-150;
   }
   .btn:hover {
     background: var(--hover);
@@ -230,6 +251,13 @@
   }
   .btn-plain:hover {
     @apply bg-hover text-ink;
+  }
+  /* A quiet action in the accent at the end of a row: Add, Approve. */
+  .btn-act {
+    @apply inline-flex h-6 flex-none items-center whitespace-nowrap rounded-md px-2 text-xs font-semibold text-wax-ink transition-colors duration-150;
+  }
+  .btn-act:hover {
+    @apply bg-wax-soft;
   }
   .btn-danger {
     @apply text-danger;
@@ -258,20 +286,24 @@
 
   /* The bar at the top of every view: title, filters, search. */
   .bar {
-    @apply flex h-bar min-w-0 flex-none items-center gap-2 border-b border-line pl-5 pr-3.5 md:gap-3.5;
+    @apply flex h-bar min-w-0 flex-none items-center gap-2 border-b border-line-soft pl-6 pr-4 md:gap-4;
   }
   .bar > .seg {
     @apply min-w-0 overflow-x-auto;
     scrollbar-width: none;
   }
   .bar-title {
-    @apply text-[15px] font-[650] tracking-[-0.01em] text-ink;
+    @apply font-brand text-[23px] font-[620] leading-none tracking-[-0.004em] text-ink;
+  }
+  /* A title that is the user's mail, not the window's own word. */
+  .bar-subject {
+    @apply truncate text-[15px] font-[650] tracking-[-0.01em] text-ink;
   }
   .seg {
     @apply flex gap-0.5;
   }
   .seg > button {
-    @apply flex h-[26px] flex-none items-center gap-1.5 whitespace-nowrap rounded-md px-[9px] text-ink2 transition-colors duration-150;
+    @apply flex h-7 flex-none items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-ink2 transition-colors duration-150;
   }
   .seg > button:hover {
     @apply bg-hover;
@@ -288,7 +320,7 @@
     @apply font-semibold text-wax-ink;
   }
   .searchbox {
-    @apply flex h-7 w-[380px] min-w-[36px] shrink items-center gap-[7px] rounded-[7px] bg-field pl-2 pr-1.5 text-ink3;
+    @apply flex h-8 w-[340px] min-w-[36px] shrink items-center gap-2 rounded-full bg-field pl-3 pr-2 text-ink3;
   }
   .searchbox input {
     @apply min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none;
@@ -299,7 +331,7 @@
 
   /* Sticky group header inside a list: Today, Yesterday, Ready to send. */
   .day {
-    @apply sticky top-0 z-[2] flex h-head items-end gap-2 bg-canvas px-5 pb-[7px] text-xs;
+    @apply sticky top-0 z-[2] flex h-head items-end gap-2 bg-canvas px-6 pb-2 text-[12.5px];
   }
   .day > b {
     @apply font-[650] text-ink;
@@ -315,9 +347,14 @@
     box-shadow: inset 0 0 0 1px var(--line);
   }
 
+  /* A page that is read down rather than across: one centred column. */
+  .page {
+    @apply mx-auto w-full max-w-[860px];
+  }
+
   /* One-line list row: the default for anything listed at volume. */
   .row {
-    @apply mx-2 flex h-row items-center rounded-md pl-1.5 pr-3 text-ink2;
+    @apply mx-3 flex h-row items-center rounded-[8px] pl-1.5 pr-3 text-ink2;
   }
   .row:hover {
     @apply bg-hover;
@@ -373,7 +410,7 @@
   }
   /* Two-line row with a hairline under it. */
   .row2 {
-    @apply relative mx-2 rounded-[7px] py-row2 pl-1.5 pr-3;
+    @apply relative mx-3 rounded-[8px] py-row2 pl-1.5 pr-3;
   }
   .row2::after {
     content: "";
@@ -406,13 +443,24 @@
 
   /* Form fields. */
   .input {
-    @apply h-7 w-full rounded-[7px] bg-field px-2.5 text-[13px] text-ink outline-none;
+    @apply h-8 w-full rounded-[8px] bg-field px-2.5 text-[13px] text-ink outline-none;
   }
   .input:focus {
     box-shadow: 0 0 0 2px color-mix(in oklch, var(--wax) 55%, transparent);
   }
   textarea.input {
     @apply h-auto py-2 leading-normal;
+  }
+
+  /* The one field a page begins with: add a todo, say an automation. */
+  .addfield {
+    @apply flex h-11 items-center gap-3 rounded-[12px] bg-raised px-3.5 shadow-control transition-shadow duration-150;
+  }
+  .addfield input {
+    @apply min-w-0 flex-1 bg-transparent text-[14px] text-ink outline-none;
+  }
+  .addfield:focus-within {
+    box-shadow: 0 0 0 2px color-mix(in oklch, var(--wax) 55%, transparent);
   }
 
   /* Menus and popovers. */
@@ -442,7 +490,7 @@
     @apply mx-auto flex max-w-[380px] flex-col items-center px-6 py-16 text-center;
   }
   .empty h3 {
-    @apply mt-3 text-[15px] font-[650] tracking-[-0.01em] text-ink;
+    @apply mt-4 font-brand text-[22px] font-[620] leading-tight text-ink;
   }
   .empty p {
     @apply mt-1.5 text-[13px] leading-relaxed text-ink2;
@@ -508,7 +556,17 @@
   background: var(--bg);
 }
 
-/* First-run setup. */
+/* First-run setup: the stage is wax in the accent, and what is on it paper. */
+.stage {
+  background: var(--stage);
+}
+.stage :focus-visible {
+  outline-color: var(--ink);
+}
+.stage > div > :focus-visible,
+.stage [role="group"] :focus-visible {
+  outline-color: white;
+}
 @keyframes ob-enter {
   from {
     opacity: 0.35;
@@ -521,6 +579,50 @@
 }
 .ob-enter {
   animation: ob-enter 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.stage-enter {
+  animation: ob-enter 560ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* A letter dealt onto the stack. */
+@keyframes deal {
+  from {
+    opacity: 0.6;
+    transform: translateY(14px) scale(0.965) rotate(-0.6deg);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.deal {
+  animation: deal 380ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* The welcome: each email comes in, then is dealt with. */
+@keyframes slip {
+  from {
+    opacity: 0;
+    transform: translateX(56px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes slip-status {
+  from {
+    opacity: 0;
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0);
+  }
+}
+.slip {
+  animation: slip 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.slip-status {
+  animation: slip-status 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 @keyframes ob-indeterminate {
   from {
@@ -536,6 +638,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ob-enter,
+  .stage-enter,
+  .deal,
+  .slip,
+  .slip-status,
   .ob-indeterminate,
   .skel,
   .solve-fade-in,

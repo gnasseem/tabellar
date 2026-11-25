@@ -157,7 +157,7 @@ export default function FollowupsView() {
         <span className="min-w-0 flex-1 truncate text-ink2">{f.asked || f.subject}</span>
         {f.seen_at && <span className="flex-none pl-3 text-xs text-ink3 group-hover:hidden group-aria-selected:hidden">Seen {shortWhen(f.seen_at)}</span>}
         <span className={`flex flex-none items-center gap-3 pl-3 max-md:hidden max-md:group-aria-selected:flex ${reveal}`}>
-          <button className="link !text-wax-ink" onClick={(e) => (e.stopPropagation(), nudge(f))}>
+          <button className="btn-act" onClick={(e) => (e.stopPropagation(), nudge(f))}>
             Nudge
           </button>
           <button className="link" onClick={(e) => (e.stopPropagation(), later(f))}>
@@ -176,7 +176,7 @@ export default function FollowupsView() {
     <>
       <ViewBar title="Follow-ups" search="Search follow-ups" />
       {error && (
-        <p className="px-5 pt-3 text-danger" role="alert">
+        <p className="px-6 pt-3 text-danger" role="alert">
           Follow-ups could not be loaded.{" "}
           <button className="link !text-danger" onClick={load}>
             Try again
@@ -190,8 +190,8 @@ export default function FollowupsView() {
       ) : !rows.length ? (
         q ? <Empty icon="search" title="Nothing matches that search" /> : error ? null : <Empty icon="schedule_send" title="Nobody owes you an answer" />
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col pt-1.5" role="listbox" aria-label="Follow-ups">
-          <VirtualList items={rows} heightOf={heightOf} render={render} cursor={cursor ? rows.indexOf(cursor) : -1} />
+        <div className="flex min-h-0 flex-1 flex-col pt-4" role="listbox" aria-label="Follow-ups">
+          <VirtualList items={rows} heightOf={heightOf} render={render} cursor={cursor ? rows.indexOf(cursor) : -1} page />
         </div>
       )}
     </>

@@ -307,6 +307,7 @@ export default function MeetingsView() {
   const loading = pending === null || events === null;
   const list = (
     <div className="min-h-0 flex-1 overflow-y-auto pb-4" role="listbox" aria-label="Meetings">
+      <div className={form ? "" : "page"}>
       {loading ? (
         <div className="pt-9">
           <SkeletonRows count={10} />
@@ -342,7 +343,7 @@ export default function MeetingsView() {
                         )}
                         {p.emailId && <NotThis thing="meeting" id={p.meetingId ?? undefined} proposal={p.proposal?.id} who={src?.sender} onDone={loadPending} />}
                       </span>
-                      <button className="link !text-wax-ink" disabled={busy === p.key} onClick={(e) => (e.stopPropagation(), confirm(p))}>
+                      <button className="btn-act" disabled={busy === p.key} onClick={(e) => (e.stopPropagation(), confirm(p))}>
                         Add to calendar
                       </button>
                     </div>
@@ -366,7 +367,7 @@ export default function MeetingsView() {
             </>
           )}
           {calError && (
-            <p className="px-5 pt-4 text-danger" role="alert">
+            <p className="px-6 pt-4 text-danger" role="alert">
               The calendar could not be read.{" "}
               <button className="link !text-danger" onClick={loadEvents}>
                 Try again
@@ -415,6 +416,7 @@ export default function MeetingsView() {
           ))}
         </>
       )}
+      </div>
     </div>
   );
 
@@ -482,7 +484,7 @@ function Scheduler({ form, free, onSubmit, onCancel }: { form: Form; free: (day:
 
   return (
     <div className="flex w-full flex-none flex-col border-line md:w-[400px] md:border-l">
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5 pt-5">
         <div className="flex items-center">
           <h2 className="text-[15px] font-[650] tracking-[-0.01em] text-ink">{form.mode === "new" ? "New meeting" : "Change time"}</h2>
           <span className="flex-1" />
@@ -539,7 +541,7 @@ function Scheduler({ form, free, onSubmit, onCancel }: { form: Form; free: (day:
           )}
         </div>
       </div>
-      <div className="flex flex-none items-center gap-2 border-t border-line px-5 py-[11px]">
+      <div className="flex flex-none items-center gap-2 border-t border-line px-6 py-3">
         <button
           className="btn btn-pri"
           disabled={saving || !d.title.trim() || !d.start}

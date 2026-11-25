@@ -291,7 +291,7 @@ export default function SentView() {
               <SkeletonRows count={22} />
             </div>
           ) : error && !emails.length ? (
-            <p className="px-5 py-4 text-danger" role="alert">
+            <p className="px-6 py-4 text-danger" role="alert">
               {error} Check that Tabellar is still running, then{" "}
               <button className="link !text-danger" onClick={() => (setLoading(true), loadSent())}>
                 try again

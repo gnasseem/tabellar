@@ -229,6 +229,7 @@ export function VirtualList<T>({
   cursor,
   onEnd,
   sticky,
+  page,
   className = "",
 }: {
   items: T[];
@@ -237,6 +238,7 @@ export function VirtualList<T>({
   cursor?: number; // index kept in view (keyboard position)
   onEnd?: () => void; // called when the last rows come into view
   sticky?: (firstVisible: number) => ReactNode; // header pinned above the rows
+  page?: boolean; // set in one centred column
   className?: string;
 }) {
   const { head: headHeight } = useSizes();
@@ -297,11 +299,14 @@ export function VirtualList<T>({
     <div className={`relative min-h-0 flex-1 ${className}`}>
       {sticky && <div className="pointer-events-none absolute inset-x-0 top-0 z-[3] [&>*]:pointer-events-auto">{sticky(first)}</div>}
       <div ref={ref} className="h-full overflow-y-auto" onScroll={(e) => setScroll((e.target as HTMLDivElement).scrollTop)}>
-        <div style={{ height: total, paddingTop: offsets[from] }}>{slice}</div>
+        <div className={page ? "page" : ""} style={{ height: total, paddingTop: offsets[from] }}>{slice}</div>
       </div>
     </div>
   );
 }
+
+// Two letters for a person or a company.
+export const initials = (who: string) => who.split("@")[0].split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
 
 // Minutes and seconds until a time, ticking once a second while mounted.
 export function Countdown({ until, className = "" }: { until: string; className?: string }) {
@@ -372,7 +377,7 @@ export function OutcomeLines({ outcomes, className = "" }: { outcomes: Outcome[]
                 ? ["Done", () => markDone(a.id), false]
               : ["Show", () => (setView(a.view), Promise.resolve()), false];
     return (
-      <button className={`link flex-none ${wax ? "!text-wax-ink" : ""}`} onClick={() => run().catch(() => {})}>
+      <button className={wax ? "btn-act -mr-2" : "link flex-none"} onClick={() => run().catch(() => {})}>
         {label}
       </button>
     );

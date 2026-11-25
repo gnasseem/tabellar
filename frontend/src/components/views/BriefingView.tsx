@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Icon from "@/components/Icon";
+import { Mark } from "@/components/Logo";
 import { api } from "@/lib/outcomes";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { blocksOf, choicesOf } from "../../../../server/choices.ts";
@@ -7,7 +8,7 @@ import { useApp } from "../AppShell";
 import { confirmLevel } from "../Sidebar";
 import { ReaderById } from "../EmailDetail";
 import { MeetingPrep, useUpNext } from "../Prep";
-import { Glyph, SkeletonRows, ViewBar, clock, shortWhen } from "../ui";
+import { SkeletonRows, clock, initials, shortWhen } from "../ui";
 
 // The Brief: where the window opens. What needs the user today, each line with
 // its answers (server/answers.ts), so nothing has to be opened to deal with it;
@@ -55,6 +56,21 @@ function when(n: Line): string {
   if (n.kind === "todo") return n.due && n.due < today() ? "Overdue" : "Today";
   if (n.kind === "meeting" && n.start) return shortWhen(n.start) === clock(n.start) ? clock(n.start) : `${new Date(n.start).toLocaleDateString([], { weekday: "short" })} ${clock(n.start)}`;
   return "";
+}
+
+// What a line is, apart from what it says: "Todo to approve: Send the form".
+function lead(n: Line): [string, string] {
+  const m = /^((?:Reply|Forward|Todo|Meeting|Follow-up|Label) (?:to approve|drafted|to send|to confirm)): (.+)$/.exec(n.text);
+  return m ? [m[1], m[2]] : ["", n.text];
+}
+
+// Who a line is from, as two letters; a question is asked by Tabellar.
+function Monogram({ who, asks }: { who: string; asks: boolean }) {
+  return (
+    <span aria-hidden className="grid h-9 w-9 flex-none place-items-center rounded-full bg-sel text-[12.5px] font-semibold tracking-[0.01em] text-ink2">
+      {asks || who === "Tabellar" ? <Mark size={18} /> : initials(who)}
+    </span>
+  );
 }
 
 // What a line's answers stand on: a draft as it would go out, with the answers
@@ -110,7 +126,7 @@ function Shows({ line, onAnswer }: { line: Line; onAnswer: (a: Answer) => void }
 }
 
 export default function BriefingView() {
-  const { mail, profile, setView, setViewCache, updateProfile, addToast, notifyDraftChange, liveChanges } = useApp();
+  const { mail, profile, setView, setSidebarOpen, setViewCache, updateProfile, addToast, notifyDraftChange, liveChanges } = useApp();
   const [brief, setBrief] = useState<Brief | null>(null);
   const [failed, setFailed] = useState(false);
   const [events, setEvents] = useState<CalEvent[] | null>(null);
@@ -263,21 +279,31 @@ export default function BriefingView() {
 
   if (reading) return <ReaderById emailId={reading} onClose={() => (setReading(null), load())} />;
 
-  const head = (name: string) => (
-    <div className="day !static">
-      <b>{name}</b>
+  const head = (name: string, action?: ReactNode) => (
+    <div className="flex items-baseline justify-between gap-4 px-6 pb-2 pt-9">
+      <h2 className="font-brand text-[19px] font-[620] leading-none text-ink">{name}</h2>
+      {action}
     </div>
   );
-  const quiet = (text: string) => <p className="flex h-row items-center pl-[40px] text-ink3">{text}</p>;
+  const quiet = (text: string) => <p className="px-6 py-1.5 text-ink3">{text}</p>;
+  // Under a section: what is past its length.
+  const more = (text: string, run: () => void) => (
+    <p className="px-6 pt-2">
+      <button className="link" onClick={run}>
+        {text}
+      </button>
+    </p>
+  );
   const render = (n: Line) => {
     const on = cursor === n;
     const need = n.kind !== "wait";
+    const [kind, text] = lead(n);
     const answers = (className: string) => (
-      <span className={`flex-none items-center gap-0.5 pl-3 ${className}`}>
+      <span className={`flex-none items-center gap-1 ${className}`}>
         {n.options.map((o, i) => (
           <button
             key={o.pick}
-            className={`btn btn-plain btn-sm max-w-[190px] ${i === 0 ? `!font-medium ${need ? "!text-wax-ink" : "!text-ink"}` : ""}`}
+            className={`btn btn-sm max-w-[190px] ${i > 0 ? "btn-plain" : on && need ? "btn-pri" : ""}`}
             title={o.sends ?? o.label}
             onClick={(e) => (e.stopPropagation(), void answer(n, o))}
             onDoubleClick={(e) => e.stopPropagation()}
@@ -288,47 +314,65 @@ export default function BriefingView() {
       </span>
     );
     return (
-      <div key={n.key} data-line>
-        <div role="option" aria-selected={on} className="row cursor-default" title={on ? undefined : n.text} onClick={() => setCursorKey(n.key)} onDoubleClick={() => open(n)}>
-          <span className="grid w-[26px] flex-none place-items-center">{need && <Glyph state={n.kind === "question" || n.kind === "proof" ? "info" : "need"} />}</span>
-          <span className={`w-[96px] flex-none truncate pr-3 text-ink md:w-[164px] ${need ? "font-[650]" : ""}`}>{n.who}</span>
-          <span className={`min-w-0 flex-1 truncate ${need ? "font-medium text-ink" : "text-ink2"}`}>{n.text}</span>
-          {when(n) && <span className="flex-none pl-3 text-right text-xs text-ink3 max-md:hidden">{when(n)}</span>}
-          {answers("hidden md:flex")}
+      <div key={n.key} data-line className={`mx-2 rounded-[12px] transition-colors duration-150 ${on ? "bg-side" : "hover:bg-hover"}`}>
+        <div role="option" aria-selected={on} className="flex min-h-[58px] cursor-default items-center gap-3.5 px-4 py-2" title={on ? undefined : n.text} onClick={() => setCursorKey(n.key)} onDoubleClick={() => open(n)}>
+          <Monogram who={n.who} asks={n.kind === "question" || n.kind === "proof"} />
+          <span className="min-w-0 flex-1">
+            <span className="flex min-w-0 items-baseline gap-2">
+              <span className={`truncate text-[14px] text-ink ${need ? "font-[650]" : "font-medium"}`}>{n.who}</span>
+              <span className="flex-none text-xs text-ink3">{[kind, when(n)].filter(Boolean).join(", ")}</span>
+            </span>
+            <span className={`block truncate text-[13.5px] leading-snug ${need ? "text-ink" : "text-ink2"}`}>{text}</span>
+          </span>
+          {answers("hidden pl-2 md:flex")}
         </div>
-        {on && (
-          <div className="pb-2.5 pl-[40px] pr-5 pt-1.5 text-[12.5px] leading-relaxed text-ink2 md:pl-[204px]">
-            <div className="max-w-[62ch]">
-              <Shows line={n} onAnswer={(a) => void answer(n, a)} />
-            </div>
-            {answers("-ml-5 mt-1 flex flex-wrap md:hidden")}
+        {on && (n.shows || n.options.length > 0) && (
+          <div className={`px-4 pb-3 pl-[65px] text-[13px] leading-relaxed text-ink2 ${n.shows ? "" : "md:hidden"}`}>
+            {n.shows && (
+              <div className="max-w-[62ch] rounded-[10px] bg-canvas px-4 py-3 shadow-control">
+                <Shows line={n} onAnswer={(a) => void answer(n, a)} />
+              </div>
+            )}
+            {answers("mt-2 flex flex-wrap md:hidden")}
           </div>
         )}
       </div>
     );
   };
-  const day = new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+  const now = new Date();
+  const weekday = now.toLocaleDateString([], { weekday: "long" });
+  const date = now.toLocaleDateString([], { day: "numeric", month: "long" });
+  const nextUp = events?.find((e) => !e.allDay && new Date(e.start).getTime() > Date.now());
+  const count = needs.length + (brief?.more ?? 0);
+  const owed = waiting.length + (show("waiting") ? (brief?.waitingMore ?? 0) : 0);
+  // Where things stand, from the lines below.
+  const stands = [
+    show("needs") && (count ? `${count.toLocaleString()} ${count === 1 ? "thing needs" : "things need"} you.` : "Nothing needs you."),
+    owed > 0 && `${owed.toLocaleString()} ${owed === 1 ? "person owes" : "people owe"} you an answer.`,
+    show("calendar") && nextUp && `${nextUp.title} at ${clock(nextUp.start)}.`,
+  ].filter(Boolean).join(" ");
 
   return (
     <>
-      <ViewBar
-        title={
-          <span className="flex min-w-0 flex-none items-baseline gap-2">
-            <h1 className="bar-title">Brief</h1>
-            <span className="truncate text-xs text-ink3">{day}</span>
-          </span>
-        }
-        search={false}
-        right={
+      <div className="relative min-h-0 flex-1 overflow-y-auto pb-16">
+        <header className="flex items-start gap-3 px-4 pt-4 lg:absolute lg:right-0 lg:top-0 lg:z-[1]">
+          <button className="iconbtn lg:hidden" onClick={() => setSidebarOpen(true)} aria-label="Show sidebar">
+            <Icon name="menu" size={16} />
+          </button>
+          <span className="flex-1" />
           <button className="iconbtn" title="Brief settings" aria-label="Brief settings" onClick={() => (setViewCache("settings:tab", "brief"), setView("settings"))}>
             <Icon name="settings" size={16} />
           </button>
-        }
-      />
-      <div className="min-h-0 flex-1 overflow-y-auto pb-10">
-        <div ref={listRef} className="w-full max-w-[880px]">
+        </header>
+        <div ref={listRef} className="mx-auto w-full max-w-[800px]">
+          <div className="px-6 pb-1 pt-6 lg:pt-14">
+            <h1 className="font-brand text-[42px] font-[600] leading-[1.02] tracking-[-0.012em] text-ink">
+              {weekday} <span className="inline-block text-ink3">{date}</span>
+            </h1>
+            {brief && stands && <p className="mt-3 max-w-[60ch] text-[15px] leading-[1.5] text-ink2">{stands}</p>}
+          </div>
           {failed && !brief ? (
-            <p className="px-5 pt-4 text-danger" role="alert">
+            <p className="px-6 pt-6 text-danger" role="alert">
               The brief could not be loaded.{" "}
               <button className="link !text-danger" onClick={load}>
                 Try again
@@ -340,9 +384,9 @@ export default function BriefingView() {
             </div>
           ) : (
             <>
-              {brief.away && <p className="px-5 pt-4 text-ink2">{brief.away}</p>}
+              {brief.away && <p className="px-6 pt-3 text-ink2">{brief.away}</p>}
               {brief.settings.summary && (brief.summary || writing) && (
-                <p className="max-w-[68ch] px-5 pb-1.5 pt-4 leading-relaxed text-ink" aria-busy={writing || undefined}>
+                <p className="max-w-[68ch] px-6 pt-4 text-[14px] leading-relaxed text-ink" aria-busy={writing || undefined}>
                   {brief.summary || <span className="skel mt-1 block h-2.5 w-[60%]" />}
                 </p>
               )}
@@ -353,31 +397,25 @@ export default function BriefingView() {
                   <div role="listbox" aria-label="Needs you today">
                     {needs.map(render)}
                   </div>
-                  {brief.more > 0 && (
-                    <p className="flex h-row items-center pl-[40px]">
-                      <button className="link" onClick={() => setAll(true)}>
-                        {brief.more.toLocaleString()} more
-                      </button>
-                    </p>
-                  )}
+                  {brief.more > 0 && more(`${brief.more.toLocaleString()} more`, () => setAll(true))}
                 </>
               )}
 
               {brief.digests.map((d) => (
                 <div key={d.id}>
-                  {head("Digest")}
-                  <button className="row w-[calc(100%-16px)] text-left" aria-expanded={shownDigest === d.id} title={d.title} onClick={() => setShownDigest(shownDigest === d.id ? null : d.id)}>
-                    <span className="w-[26px] flex-none" />
-                    <span className="min-w-0 flex-1 truncate text-ink">
-                      {d.items.length.toLocaleString()} email{d.items.length === 1 ? "" : "s"}
-                      <span className="pl-2 text-ink3">{d.title}</span>
-                    </span>
-                    <span className="flex-none pl-3 text-xs text-ink3">{shownDigest === d.id ? "Hide" : "Show"}</span>
-                  </button>
+                  {head(
+                    "Digest",
+                    <button className="link" aria-expanded={shownDigest === d.id} onClick={() => setShownDigest(shownDigest === d.id ? null : d.id)}>
+                      {shownDigest === d.id ? "Hide" : "Show"}
+                    </button>,
+                  )}
+                  <p className="truncate px-6 py-1 text-ink2" title={d.title}>
+                    {d.items.length.toLocaleString()} email{d.items.length === 1 ? "" : "s"}
+                    <span className="pl-2 text-ink3">{d.title}</span>
+                  </p>
                   {shownDigest === d.id &&
                     d.items.map((m) => (
-                      <div key={m.email_id} className="row cursor-default" onClick={() => setReading(m.email_id)} title={m.text}>
-                        <span className="w-[26px] flex-none" />
+                      <div key={m.email_id} className="row cursor-default !mx-2 !px-4" onClick={() => setReading(m.email_id)} title={m.text}>
                         <span className="w-[96px] flex-none truncate pr-3 md:w-[164px]">{m.who}</span>
                         <span className="min-w-0 flex-1 truncate">{m.text}</span>
                         <time className="w-[46px] flex-none text-right text-xs text-ink3">{shortWhen(m.at)}</time>
@@ -392,63 +430,48 @@ export default function BriefingView() {
                   <div role="listbox" aria-label="Waiting on others">
                     {waiting.map(render)}
                   </div>
-                  {brief.waitingMore > 0 && (
-                    <p className="flex h-row items-center pl-[40px]">
-                      <button className="link" onClick={() => setView("followups")}>
-                        {brief.waitingMore.toLocaleString()} more in Follow-ups
-                      </button>
-                    </p>
-                  )}
+                  {brief.waitingMore > 0 && more(`${brief.waitingMore.toLocaleString()} more in Follow-ups`, () => setView("followups"))}
                 </>
               )}
 
               {show("calendar") && (calError || !!events?.length) && (
                 <>
                   {head("Today's calendar")}
-                  {calError ? (
-                    quiet("The calendar could not be read")
-                  ) : (
-                    events!.map((ev) => {
-                      const over = !ev.allDay && new Date(ev.end).getTime() < Date.now();
-                      return (
-                        <div key={ev.id}>
-                        <a className="row" href={ev.htmlLink || undefined} target="_blank" rel="noopener noreferrer">
-                          <span className="w-[26px] flex-none" />
-                          <span className={`w-[96px] flex-none truncate pr-3 md:w-[164px] ${over ? "text-ink3" : "text-ink"}`}>{ev.allDay ? (
-                              "All day"
-                            ) : (
-                              <>
-                                {clock(ev.start)}
-                                <span className="max-md:hidden"> to {clock(ev.end)}</span>
-                              </>
-                            )}</span>
-                          <span className={`min-w-0 flex-1 truncate ${over ? "text-ink3" : "text-ink"}`}>{ev.title}</span>
-                          {ev.attendees.length > 0 && <span className="min-w-0 max-w-[40%] flex-none truncate pl-3 text-ink3 max-md:hidden">{ev.attendees.join(", ")}</span>}
-                        </a>
-                        {upNext === ev.id && !!ev.people?.length && <MeetingPrep title={ev.title} people={ev.people} onOpen={setReading} className="pl-10 md:pl-[204px]" />}
-                        </div>
-                      );
-                    })
-                  )}
+                  {calError
+                    ? quiet("The calendar could not be read")
+                    : events!.map((ev) => {
+                        const over = !ev.allDay && new Date(ev.end).getTime() < Date.now();
+                        return (
+                          <div key={ev.id}>
+                            <a className="mx-2 grid min-h-[44px] grid-cols-[84px_2px_minmax(0,1fr)] items-center gap-x-4 rounded-[12px] px-4 py-1.5 transition-colors duration-150 hover:bg-hover" href={ev.htmlLink || undefined} target="_blank" rel="noopener noreferrer">
+                              <span className={`leading-tight ${over ? "text-ink3" : "text-ink"}`}>{ev.allDay ? "All day" : `${clock(ev.start)} to ${clock(ev.end)}`}</span>
+                              <span className={`h-full min-h-[28px] rounded-full ${upNext === ev.id ? "bg-wax" : "bg-line"}`} />
+                              <span className="min-w-0">
+                                <span className={`block truncate ${over ? "text-ink3" : "font-medium text-ink"}`}>{ev.title}</span>
+                                {ev.attendees.length > 0 && <span className="block truncate text-[12.5px] text-ink3">{ev.attendees.join(", ")}</span>}
+                              </span>
+                            </a>
+                            {upNext === ev.id && !!ev.people?.length && <MeetingPrep title={ev.title} people={ev.people} onOpen={setReading} className="pl-6 md:pl-[126px]" />}
+                          </div>
+                        );
+                      })}
                 </>
               )}
 
               {show("handled") && brief.handled.length > 0 && (
                 <>
-                  {head("Handled for you")}
-                  <button className="row w-[calc(100%-16px)] text-left" aria-expanded={showHandled} onClick={() => setShowHandled(!showHandled)}>
-                    <span className="grid w-[26px] flex-none place-items-center">
-                      <Glyph state="done" />
-                    </span>
-                    <span className="flex-1 text-ink">
-                      {brief.handled.length.toLocaleString()} email{brief.handled.length === 1 ? "" : "s"} since yesterday
-                    </span>
-                    <span className="text-xs text-ink3">{showHandled ? "Hide" : "Show"}</span>
-                  </button>
+                  {head(
+                    "Handled for you",
+                    <button className="link" aria-expanded={showHandled} onClick={() => setShowHandled(!showHandled)}>
+                      {showHandled ? "Hide" : "Show"}
+                    </button>,
+                  )}
+                  <p className="px-6 py-1 text-ink2">
+                    {brief.handled.length.toLocaleString()} email{brief.handled.length === 1 ? "" : "s"} since yesterday
+                  </p>
                   {showHandled &&
                     brief.handled.map((h) => (
-                      <div key={h.email_id} className="row cursor-default" onClick={() => setReading(h.email_id)} title={h.subject}>
-                        <span className="w-[26px] flex-none" />
+                      <div key={h.email_id} className="row cursor-default !mx-2 !px-4" onClick={() => setReading(h.email_id)} title={h.subject}>
                         <span className="w-[96px] flex-none truncate pr-3 md:w-[164px]">{h.who}</span>
                         <span className="min-w-0 flex-1 truncate">{h.subject}</span>
                         <span className="w-[172px] flex-none truncate pl-3 text-[12.5px] text-ink3 max-md:hidden">{h.what}</span>

@@ -319,7 +319,7 @@ function Editor({ label, next, gmailLabels, onSave, onCancel, onDelete, onMove }
         setSaving(false);
       }}
     >
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5 pt-4">
         <div className="flex items-center">
           <h2 className="text-[15px] font-[650] tracking-[-0.01em] text-ink">{label ? label.display_name : "New label"}</h2>
           <span className="flex-1" />
@@ -402,7 +402,7 @@ function Editor({ label, next, gmailLabels, onSave, onCancel, onDelete, onMove }
           </ul>
         )}
       </div>
-      <div className="flex flex-none items-center gap-2 border-t border-line px-5 py-[11px]">
+      <div className="flex flex-none items-center gap-2 border-t border-line px-6 py-[11px]">
         <button type="submit" className="btn btn-pri" disabled={saving || !d.name.trim()}>
           {label ? "Save" : "Add label"}
         </button>
