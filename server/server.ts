@@ -9,7 +9,9 @@
 // page. API calls carry the access token in an Authorization header, which a
 // cross-site page cannot set. The browser gets the token inside index.html,
 // which is only served with a session cookie, and the cookie is only handed out
-// in exchange for a one-time code minted by `tabellar open`.
+// in exchange for a one-time code minted by `tabellar open`. A Tabellar with a
+// public name (access.ts) answers on it too, to passkey sessions only; the
+// access token and the codes' own sign-in stay on this machine.
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -21,7 +23,7 @@ import { CONFIG_PATH, KEYCHAIN, MAC, loadConfig, accessToken, googleClient } fro
 import { db, execute, callRpc, changes, type Change } from "./db.ts";
 import type { QuerySpec } from "./query.ts";
 import { handleApi } from "./api.ts";
-import { handleSetup, startOllama } from "./setup.ts";
+import { handleSetup, refreshPlus, startOllama } from "./setup.ts";
 import { signInUrl, finishSignIn } from "./google.ts";
 import { finishMicrosoftSignIn, isMicrosoftState, microsoftClientId, microsoftSignInUrl } from "./microsoft.ts";
 import { closeInterrupted, sendDueEmails } from "./outbox.ts";
@@ -33,6 +35,7 @@ import { beat, startKeepAwake } from "./awake.ts";
 import { startMenuBar } from "./menubar.ts";
 import { CHANNELS, macos } from "./notify.ts";
 import { startTelegram } from "./telegram.ts";
+import { addPasskey, challenge, checkPasskey, cookieFor, endSession, isFirstCode, isSession, PUBLIC_HEADERS, publicUrl, SESSION_COOKIE, signInPage, startSession } from "./access.ts";
 import { spawn } from "node:child_process";
 
 const DIST = fileURLToPath(new URL("../frontend/dist/", import.meta.url));
@@ -79,12 +82,12 @@ code{background:#f1f3f4;padding:.15em .4em;border-radius:4px}@media (prefers-col
 </head><body><h1>${title}</h1>${body}</body></html>`;
 }
 
-async function readBody(req: IncomingMessage): Promise<Buffer> {
+async function readBody(req: IncomingMessage, max = MAX_BODY): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY) throw Object.assign(new Error("Request body too large"), { status: 413 });
+    if (size > max) throw Object.assign(new Error("Request body too large"), { status: 413 });
     chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks);
@@ -100,10 +103,12 @@ function mintLoginCode(): string {
   return code;
 }
 
+const goodLoginCode = (code: string) => (loginCodes.get(code) ?? 0) > Date.now();
+
 function useLoginCode(code: string): boolean {
-  const expires = loginCodes.get(code);
+  const good = goodLoginCode(code);
   loginCodes.delete(code);
-  return !!expires && expires > Date.now();
+  return good;
 }
 
 // ── Sign-in ─────────────────────────────────────────────────────────────────
@@ -128,24 +133,56 @@ export function startServer({ headless = false, stop = () => {} } = {}): Promise
   const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
   const redirectUri = `http://127.0.0.1:${port}/oauth/callback`;
   const sessionCookie = `${COOKIE}=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`;
+  const pub = publicUrl();
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
     const path = url.pathname;
     try {
-      if (!hosts.has(req.headers.host ?? "")) return send(res, 421, "Wrong host");
+      // What is asked for by the public name, or comes from anywhere but this
+      // machine, is the internet's.
+      const outside = !!pub && (req.headers.host === pub.host || !/^(::ffff:)?127\.|^::1$/.test(req.socket.remoteAddress ?? ""));
+      if (outside) for (const [k, v] of Object.entries(PUBLIC_HEADERS)) res.setHeader(k, v);
+      if (outside ? req.headers.host !== pub.host : !hosts.has(req.headers.host ?? "")) return send(res, 421, "Wrong host");
       const origin = req.headers.origin;
-      if (origin && !origins.has(origin)) return send(res, 403, "Cross-origin requests are not allowed");
+      if (origin && (outside ? origin !== pub.origin : !origins.has(origin))) return send(res, 403, "Cross-origin requests are not allowed");
 
       const bearer = (req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
-      const hasToken = sameSecret(bearer, token);
-      const hasCookie = sameSecret(cookie(req, COOKIE), token);
+      const session = outside ? cookie(req, SESSION_COOKIE) : undefined;
+      const hasToken = outside ? isSession(bearer) : sameSecret(bearer, token);
+      const hasCookie = outside ? isSession(session) : sameSecret(cookie(req, COOKIE), token);
+
+      if (outside && path.startsWith("/auth/")) {
+        if (req.method !== "POST") return send(res, 405, "POST only");
+        const body = JSON.parse((await readBody(req, 16_384)).toString("utf8") || "{}");
+        if (path === "/auth/challenge") return sendJson(res, 200, { challenge: challenge() });
+        if (path === "/auth/passkey") {
+          const code = String(body.code ?? "");
+          if (!goodLoginCode(code) && !isFirstCode(code)) return sendJson(res, 401, { error: "This link has been used or has expired." });
+          addPasskey(body);
+          loginCodes.delete(code);
+          res.setHeader("Set-Cookie", cookieFor(startSession()));
+          return sendJson(res, 200, { ok: true });
+        }
+        if (path === "/auth/sign-in") {
+          checkPasskey(body);
+          res.setHeader("Set-Cookie", cookieFor(startSession()));
+          return sendJson(res, 200, { ok: true });
+        }
+        if (path === "/auth/sign-out" && hasToken) {
+          endSession(bearer, !!body.all);
+          res.setHeader("Set-Cookie", cookieFor(""));
+          return sendJson(res, 200, { ok: true });
+        }
+        return sendJson(res, 404, { error: "Not found" });
+      }
 
       // Token-only endpoints: the API, the database bridge, the CLI.
       if (path.startsWith("/api/") || path === "/db" || path === "/db/rpc" || path === "/session" || path === "/auth/login-code" || path === "/stop") {
         if (!hasToken) return sendJson(res, 401, { error: "Missing or wrong access token" });
+        if (outside && path === "/stop") return sendJson(res, 404, { error: "Not found" });
         if (path === "/auth/login-code" && req.method === "POST") return sendJson(res, 200, { code: mintLoginCode() });
-        if (path === "/session" && req.method === "GET") return sendJson(res, 200, { ...(await sessionInfo()), host: { mac: MAC, headless, keychain: KEYCHAIN } });
+        if (path === "/session" && req.method === "GET") return sendJson(res, 200, { ...(await sessionInfo()), host: { mac: MAC, headless, keychain: KEYCHAIN, hosted: !!pub } });
         // Ends this process, for `tabellar move`.
         if (path === "/stop" && req.method === "POST") {
           res.once("close", stop);
@@ -179,7 +216,7 @@ export function startServer({ headless = false, stop = () => {} } = {}): Promise
       }
 
       if (path === "/events") {
-        if (!hasCookie && !sameSecret(url.searchParams.get("token") ?? undefined, token)) return send(res, 401, "Not signed in");
+        if (!hasCookie && (outside || !sameSecret(url.searchParams.get("token") ?? undefined, token))) return send(res, 401, "Not signed in");
         res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store", Connection: "keep-alive" });
         res.write(": connected\n\n");
         const onChange = (c: Change) => res.write(`data: ${JSON.stringify(c)}\n\n`);
@@ -198,11 +235,15 @@ export function startServer({ headless = false, stop = () => {} } = {}): Promise
         if (!hasCookie) return send(res, 401, page("Not signed in", "<p>Open Tabellar from the terminal with <code>tabellar open</code>.</p>"), "text/html; charset=utf-8");
         if (url.searchParams.get("provider") === "microsoft") {
           if (!microsoftClientId()) return send(res, 400, page("Outlook sign-in is not set up", "<p>Add the Microsoft app's client ID first. <a href=\"/\">Back to Tabellar</a></p>"), "text/html; charset=utf-8");
-          // Microsoft only lets a desktop app come back to localhost.
-          res.writeHead(302, { Location: microsoftSignInUrl(`http://localhost:${port}/oauth/callback`) });
+          // Microsoft only lets a desktop app come back to localhost. A public
+          // name is not registered with Microsoft; the one address that is
+          // sends the browser on to the name in the state.
+          const back = outside ? process.env.TABELLAR_MICROSOFT_RETURN : `http://localhost:${port}/oauth/callback`;
+          if (!back) return send(res, 400, page("Outlook sign-in is not set up", "<p><a href=\"/\">Back to Tabellar</a></p>"), "text/html; charset=utf-8");
+          res.writeHead(302, { Location: microsoftSignInUrl(back, outside ? pub.hostname : "") });
           return res.end();
         }
-        if (!googleClient()) {
+        if (!googleClient() || outside) {
           return send(res, 400, page("Google sign-in is not set up", "<p>Add your Google client first. <a href=\"/\">Back to Tabellar</a></p>"), "text/html; charset=utf-8");
         }
         res.writeHead(302, { Location: signInUrl(redirectUri) });
@@ -213,7 +254,8 @@ export function startServer({ headless = false, stop = () => {} } = {}): Promise
         // Reached from Google, so it is authenticated by the one-time state
         // that only this server knows, not by the cookie.
         const err = url.searchParams.get("error");
-        const home = `http://127.0.0.1:${port}/`;
+        if (outside && !hasCookie) return send(res, 401, "Not signed in");
+        const home = outside ? `${pub.origin}/` : `http://127.0.0.1:${port}/`;
         if (err) return send(res, 400, page("Sign-in cancelled", `<p>The sign-in said: ${err.replace(/[<>&]/g, "")}. <a href="${home}">Back to Tabellar</a></p>`), "text/html; charset=utf-8");
         try {
           await completeSignIn(url.searchParams.get("code") ?? "", url.searchParams.get("state") ?? "");
@@ -245,6 +287,13 @@ export function startServer({ headless = false, stop = () => {} } = {}): Promise
 
       // Everything else is the app itself.
       const code = url.searchParams.get("code");
+      if (outside && (code || !hasCookie)) {
+        const nonce = randomBytes(16).toString("base64");
+        const good = !!code && (goodLoginCode(code) || isFirstCode(code));
+        return send(res, 200, signInPage(good ? code : null, nonce), "text/html; charset=utf-8", {
+          "Content-Security-Policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
+        });
+      }
       if (code && path === "/") {
         if (!useLoginCode(code)) return send(res, 401, page("Link expired", "<p>Run <code>tabellar open</code> again.</p>"), "text/html; charset=utf-8");
         res.writeHead(302, { Location: "/", "Set-Cookie": sessionCookie });
@@ -255,11 +304,11 @@ export function startServer({ headless = false, stop = () => {} } = {}): Promise
       }
       const index = join(DIST, "index.html");
       if (!existsSync(index)) return send(res, 503, page("Interface not built", "<p>Run <code>npm run build</code> in the Tabellar folder.</p>"), "text/html; charset=utf-8");
-      const html = (await readFile(index, "utf8")).replace("<head>", `<head><script>window.__TABELLAR_TOKEN__=${JSON.stringify(token)}</script>`);
+      const html = (await readFile(index, "utf8")).replace("<head>", `<head><script>window.__TABELLAR_TOKEN__=${JSON.stringify(outside ? session : token)}</script>`);
       return send(res, 200, html, "text/html; charset=utf-8");
     } catch (e) {
       const status = (e as { status?: number }).status ?? 500;
-      console.error(`[server] ${req.method} ${path}:`, e);
+      if (status !== 401) console.error(`[server] ${req.method} ${path}:`, e);
       if (!res.headersSent) sendJson(res, status, { error: (e as Error).message });
       else res.end();
     }
@@ -278,10 +327,11 @@ export function startServer({ headless = false, stop = () => {} } = {}): Promise
       clearInterval(timer);
       reject((e as NodeJS.ErrnoException).code === "EADDRINUSE" ? new Error(`Port ${port} is in use by another program. Change "port" in ${CONFIG_PATH}, or stop that program.`) : e);
     });
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(port, pub ? "0.0.0.0" : "127.0.0.1", () => {
       closeInterrupted().catch((e) => console.error("[scheduled] interrupted sends:", e));
       // A local model needs Ollama running; start it if it is not.
       if ([loadConfig().model, loadConfig().fastModel].some((m) => m?.format === "ollama")) startOllama().catch(() => {});
+      refreshPlus().catch((e) => console.error("[plus]", (e as Error).message));
       const stopEngine = startEngine();
       if (headless) CHANNELS.splice(CHANNELS.indexOf(macos), 1);
       const stopKeepAwake = headless ? () => {} : startKeepAwake();

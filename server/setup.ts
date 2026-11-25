@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { homedir, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { MAC, loadConfig, saveConfig, googleClient, BUILT_IN_GOOGLE, modelKey, modelKeyName, HOME, type ModelConfig, type Slot, secrets } from "./config.ts";
+import { MAC, loadConfig, saveConfig, googleClient, BUILT_IN_GOOGLE, PLUS_URL, modelKey, modelKeyName, HOME, type ModelConfig, type Slot, secrets } from "./config.ts";
 // providers.ts, imap.ts and accounts.ts open the database, so they are
 // imported only when used: `tabellar setup`, `status` and `check` must not
 // touch it.
@@ -431,7 +431,12 @@ async function modelChosen(): Promise<void> {
 
 export type Provider = { id: string; name: string; format: ModelConfig["format"]; baseUrl: string; keyUrl: string; suggested?: string };
 
+// Tabellar+ is first where it is offered: its code is exchanged for a model
+// key of the person's own (activatePlus), and the rest is OpenRouter.
+const PLUS: Provider = { id: "plus", name: "Tabellar+", format: "openai", baseUrl: "https://openrouter.ai/api/v1", keyUrl: "" };
+
 export const PROVIDERS: Provider[] = [
+  ...(PLUS_URL ? [PLUS] : []),
   { id: "openrouter", name: "OpenRouter", format: "openai", baseUrl: "https://openrouter.ai/api/v1", keyUrl: "https://openrouter.ai/settings/keys" },
   { id: "anthropic", name: "Anthropic", format: "anthropic", baseUrl: "https://api.anthropic.com/v1", keyUrl: "https://console.anthropic.com/settings/keys", suggested: "claude-opus-5-5" },
   { id: "openai", name: "OpenAI", format: "openai", baseUrl: "https://api.openai.com/v1", keyUrl: "https://platform.openai.com/api-keys" },
@@ -465,6 +470,29 @@ export async function listModels(p: Provider, base: string, key: string): Promis
   } catch {
     return null;
   }
+}
+
+// Exchange a Tabellar+ code for a model key with a monthly limit, and use it
+// for both slots. Mail goes from here to the model, never through Tabellar+.
+export async function activatePlus(code: string): Promise<void> {
+  const r = await fetch(`${PLUS_URL}/api/key`, { method: "POST", signal: AbortSignal.timeout(30_000), headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: code.trim() }) });
+  const d = (await r.json().catch(() => ({}))) as { key?: string; careful?: string; fast?: string; error?: string };
+  if (!r.ok || !d.key || !d.careful || !d.fast) throw new Error(d.error ?? "Tabellar+ could not be reached. Try again in a minute.");
+  const slot = (model: string): ModelConfig => ({ provider: "plus", format: PLUS.format, baseUrl: PLUS.baseUrl, model });
+  saveModel("careful", slot(d.careful), d.key);
+  saveModel("fast", slot(d.fast));
+}
+
+// At each start: a Tabellar+ server takes up its model, and the models are
+// those Tabellar+ uses now.
+export async function refreshPlus(): Promise<void> {
+  if (!PLUS_URL) return;
+  if (process.env.TABELLAR_PLUS_CODE && !loadConfig().model) return activatePlus(process.env.TABELLAR_PLUS_CODE);
+  const config = loadConfig();
+  if (config.model?.provider !== "plus" && config.fastModel?.provider !== "plus") return;
+  const d = (await (await fetch(`${PLUS_URL}/api/models`, { signal: AbortSignal.timeout(30_000) })).json()) as { careful?: string; fast?: string };
+  if (config.model?.provider === "plus" && d.careful) saveModel("careful", { ...config.model, model: d.careful });
+  if (config.fastModel?.provider === "plus" && d.fast) saveModel("fast", { ...config.fastModel, model: d.fast });
 }
 
 // The key saved for this provider.
@@ -575,6 +603,13 @@ export async function handleSetup(req: Request, path: string): Promise<Response>
       const config = loadConfig();
       const current = [config.model, config.fastModel].find((m) => m?.provider === p.id)?.model;
       return json({ models: models ?? [], suggested: current ?? p.suggested });
+    }
+
+    if (path === "/plus" && req.method === "POST") {
+      if (!PLUS_URL) return json({ error: "Tabellar+ is not offered here." }, 400);
+      await activatePlus(String(body.code ?? ""));
+      await modelChosen();
+      return json({ ok: true });
     }
 
     if (path === "/model" && req.method === "POST") {

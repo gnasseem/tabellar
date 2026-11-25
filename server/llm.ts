@@ -73,6 +73,7 @@ export function modelFailure(slot: Slot, status: number, text: string): string {
   }
   const m = slotModel(slot);
   if (m?.format === "ollama") return status === 404 ? `${m.model} is not here. Choose a model in Settings, under Models.` : said || "The local model is not answering.";
+  if (m?.provider === "plus" && [401, 402, 403, 429].includes(status)) return status === 429 ? "The model is busy. Try again in a minute." : "This month's Tabellar+ allowance is used up, or the subscription has ended. Choose another model in Settings, under Models.";
   if (status === 401 || status === 403) return `The API key was not accepted. Check it in Settings, under Models.${said ? ` (${said.slice(0, 160)})` : ""}`;
   if (status === 429) return said ? `The model provider refused: ${said.slice(0, 200)}` : "The model provider is over its limit. Try again in a minute.";
   return status ? `The model provider answered with an error (${status})${said ? `: ${said.slice(0, 200)}` : ""}` : "The model provider could not be reached.";
@@ -84,12 +85,13 @@ export async function chatCompletion(req: ChatRequest, signal?: AbortSignal): Pr
   if (m.format === "ollama") return ollama(m.baseUrl, m.model, req, signal);
   const key = modelKey(m);
   if (!key) throw new Error("No API key is saved for the model. Add one in Settings, under Models.");
-  return m.format === "anthropic" ? anthropic(m.baseUrl, m.model, key, req, signal) : openai(m.baseUrl, m.model, key, req, signal);
+  return m.format === "anthropic" ? anthropic(m.baseUrl, m.model, key, req, signal) : openai(m, key, req, signal);
 }
 
 // ── OpenAI-compatible (OpenAI, OpenRouter, Groq, Cerebras, ...) ─────────────
 
-async function openai(baseUrl: string, model: string, key: string, req: ChatRequest, signal?: AbortSignal): Promise<Response> {
+async function openai({ baseUrl, model, provider }: ModelConfig, key: string, req: ChatRequest, signal?: AbortSignal): Promise<Response> {
+  const plus = provider === "plus";
   const openRouter = baseUrl.includes("openrouter.ai");
   const body: Record<string, unknown> = {
     model,
@@ -105,7 +107,8 @@ async function openai(baseUrl: string, model: string, key: string, req: ChatRequ
   }
   if (openRouter) {
     // Only route to providers that neither log nor train on the data.
-    body.provider = { data_collection: "deny", allow_fallbacks: true };
+    // With Tabellar+, only to those that keep nothing at all.
+    body.provider = { data_collection: "deny", allow_fallbacks: true, ...(plus ? { zdr: true } : {}) };
     if (req.reasoning) body.reasoning = { effort: "medium" };
   }
   const send = () =>

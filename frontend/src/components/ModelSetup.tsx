@@ -313,7 +313,7 @@ export function LocalPanel({ state, slot, current: model, refresh, onSaved }: Pa
 
 export function CloudPanel({ state, slot, current: model, refresh, onSaved }: PanelProps) {
   const current = model && model.format !== "ollama" ? model : null;
-  const [providerId, setProviderId] = useState(current?.provider ?? "openrouter");
+  const [providerId, setProviderId] = useState(current?.provider ?? (state.providers.some((p) => p.id === "plus") ? "plus" : "openrouter"));
   const provider = state.providers.find((p) => p.id === providerId) ?? state.providers[0];
   const [baseUrl, setBaseUrl] = useState(current?.provider === "custom" ? current.baseUrl : "");
   const [key, setKey] = useState("");
@@ -348,7 +348,7 @@ export function CloudPanel({ state, slot, current: model, refresh, onSaved }: Pa
     setKey("");
     setError("");
     setSelected(current?.provider === providerId ? current.model : "");
-    if (provider.hasKey && providerId !== "custom") check("");
+    if (provider.hasKey && providerId !== "custom" && providerId !== "plus") check("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerId]);
 
@@ -387,82 +387,134 @@ export function CloudPanel({ state, slot, current: model, refresh, onSaved }: Pa
         </div>
       </div>
 
-      {providerId === "custom" && (
-        <label className="block">
-          <span className="label mb-1 block">Base URL</span>
-          <input className={input} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://example.com/v1" spellCheck={false} />
-        </label>
-      )}
-
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          check(key);
-        }}
-      >
-        <div className="mb-1 flex items-baseline justify-between gap-3">
-          <label htmlFor="api-key" className="label">
-            API key
-          </label>
-          {provider.keyUrl && (
-            <a href={provider.keyUrl} target="_blank" rel="noreferrer" className="link">
-              Get a key from {provider.name}
-            </a>
+      {providerId === "plus" ? (
+        <PlusForm
+          current={current?.provider === "plus" && current.ready}
+          onSaved={async () => {
+            await refresh();
+            onSaved?.();
+          }}
+        />
+      ) : (
+        <>
+          {providerId === "custom" && (
+            <label className="block">
+              <span className="label mb-1 block">Base URL</span>
+              <input className={input} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://example.com/v1" spellCheck={false} />
+            </label>
           )}
-        </div>
-        <div className="flex gap-2">
-          <input
-            id="api-key"
-            type="password"
-            autoComplete="off"
-            spellCheck={false}
-            className={`${input} font-mono`}
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            placeholder={provider.hasKey ? "Saved. Paste a new one to replace it." : "Paste your key"}
-          />
-          <button type="submit" className={`${btnSecondary} flex-none`} disabled={busy !== "" || (!key && !provider.hasKey)}>
-            {busy === "check" ? "Checking" : models && !key ? "Refresh" : "Check key"}
-          </button>
-        </div>
-        <p className="mt-1.5 text-xs text-ink2">Stored in {vault()}. Usage is billed by {providerId === "custom" ? "your provider" : provider.name}.</p>
-      </form>
 
-      {models && (
-        <div>
-          <div className="mb-1 flex items-baseline justify-between">
-            <span className="label">Model</span>
-            {models.length > 0 && <span className="text-xs text-ink3">{models.length} available</span>}
-          </div>
-          {models.length ? (
-            <>
-              <label className="searchbox !w-full">
-                <Icon name="search" size={15} />
-                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search models" aria-label="Search models" spellCheck={false} />
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              check(key);
+            }}
+          >
+            <div className="mb-1 flex items-baseline justify-between gap-3">
+              <label htmlFor="api-key" className="label">
+                API key
               </label>
-              <div role="radiogroup" aria-label="Model" className="-mx-2 mt-1 max-h-64 overflow-y-auto overscroll-contain">
-                {shown.map((m) => (
-                  <Choice key={m} mono on={selected === m} onClick={() => setSelected(m)} title={m} />
-                ))}
-                {!shown.length && <p className="px-2 py-2 text-ink3">No model matches "{query}".</p>}
-              </div>
-            </>
-          ) : (
-            <input className={`${input} font-mono`} value={selected} onChange={(e) => setSelected(e.target.value)} placeholder="Model name" spellCheck={false} aria-label="Model name" />
-          )}
-          <div className="mt-3 flex min-h-8 items-center gap-3">
-            {inUse ? (
-              <InUse name={selected} />
-            ) : (
-              <button type="button" className={btnPrimary} disabled={!selected.trim() || busy !== ""} onClick={save}>
-                {busy === "save" ? "Saving" : selected ? `Use ${selected.length > 32 ? selected.slice(0, 31) + "…" : selected}` : "Choose a model"}
+              {provider.keyUrl && (
+                <a href={provider.keyUrl} target="_blank" rel="noreferrer" className="link">
+                  Get a key from {provider.name}
+                </a>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <input
+                id="api-key"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                className={`${input} font-mono`}
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+                placeholder={provider.hasKey ? "Saved. Paste a new one to replace it." : "Paste your key"}
+              />
+              <button type="submit" className={`${btnSecondary} flex-none`} disabled={busy !== "" || (!key && !provider.hasKey)}>
+                {busy === "check" ? "Checking" : models && !key ? "Refresh" : "Check key"}
               </button>
-            )}
-          </div>
-        </div>
+            </div>
+            <p className="mt-1.5 text-xs text-ink2">Stored in {vault()}. Usage is billed by {providerId === "custom" ? "your provider" : provider.name}.</p>
+          </form>
+
+          {models && (
+            <div>
+              <div className="mb-1 flex items-baseline justify-between">
+                <span className="label">Model</span>
+                {models.length > 0 && <span className="text-xs text-ink3">{models.length} available</span>}
+              </div>
+              {models.length ? (
+                <>
+                  <label className="searchbox !w-full">
+                    <Icon name="search" size={15} />
+                    <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search models" aria-label="Search models" spellCheck={false} />
+                  </label>
+                  <div role="radiogroup" aria-label="Model" className="-mx-2 mt-1 max-h-64 overflow-y-auto overscroll-contain">
+                    {shown.map((m) => (
+                      <Choice key={m} mono on={selected === m} onClick={() => setSelected(m)} title={m} />
+                    ))}
+                    {!shown.length && <p className="px-2 py-2 text-ink3">No model matches "{query}".</p>}
+                  </div>
+                </>
+              ) : (
+                <input className={`${input} font-mono`} value={selected} onChange={(e) => setSelected(e.target.value)} placeholder="Model name" spellCheck={false} aria-label="Model name" />
+              )}
+              <div className="mt-3 flex min-h-8 items-center gap-3">
+                {inUse ? (
+                  <InUse name={selected} />
+                ) : (
+                  <button type="button" className={btnPrimary} disabled={!selected.trim() || busy !== ""} onClick={save}>
+                    {busy === "save" ? "Saving" : selected ? `Use ${selected.length > 32 ? selected.slice(0, 31) + "…" : selected}` : "Choose a model"}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          <ErrorLine text={error} />
+        </>
       )}
-      <ErrorLine text={error} />
     </div>
+  );
+}
+
+// Tabellar+: one code, no key and no model to choose. Both slots are set.
+function PlusForm({ current, onSaved }: { current: boolean; onSaved: () => Promise<void> }) {
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const use = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await setupPost("/plus", { code });
+      setCode("");
+      await onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setBusy(false);
+  };
+  return (
+    <form
+      className="space-y-1.5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        use();
+      }}
+    >
+      <label htmlFor="plus-code" className="label block">
+        Your Tabellar+ code
+      </label>
+      <div className="flex gap-2">
+        <input id="plus-code" type="password" className={`${input} font-mono`} value={code} onChange={(e) => setCode(e.target.value)} placeholder={current ? "In use. Paste a new one to replace it." : "Paste your code"} spellCheck={false} autoComplete="off" />
+        <button type="submit" className={`${btnSecondary} flex-none`} disabled={busy || !code.trim()}>
+          {busy ? "Checking" : "Use it"}
+        </button>
+      </div>
+      <p className="text-xs leading-normal text-ink2">The mail being read goes from {here()} straight to the model, at companies that keep none of it. It does not pass through Tabellar.</p>
+      <ErrorLine text={error} />
+    </form>
   );
 }
 

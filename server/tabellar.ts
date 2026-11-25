@@ -25,8 +25,9 @@ import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { loadConfig, saveConfig, modelKeyName, accessToken, googleClient, sibling, BUILT_IN_GOOGLE, HOME, KEYCHAIN, MAC, type Config, type ModelConfig, type Slot, secrets } from "./config.ts";
+import { loadConfig, saveConfig, modelKeyName, accessToken, googleClient, sibling, BUILT_IN_GOOGLE, BUILT_IN_MICROSOFT, HOME, KEYCHAIN, MAC, type Config, type ModelConfig, type Slot, secrets } from "./config.ts";
 import { autostartHere, autostartInstalled, installAutostart, removeAutostart } from "./autostart.ts";
+import { publicUrl } from "./access.ts";
 import { lock, unlock } from "./place.ts";
 import {
   findClientFiles, saveGoogleClient, saveMicrosoftClient, useBuiltInGoogleClient, moveToTrash, OLLAMA_URL, LOCAL_CHOICES, SMALL_MAC_GB, memoryGb, recommendedLocalModel,
@@ -79,7 +80,9 @@ async function openWindow() {
   const r = await fetch(`${baseUrl()}/auth/login-code`, { method: "POST", headers: { Authorization: `Bearer ${accessToken()}` } });
   if (!r.ok) throw new Error(`Tabellar did not answer (${r.status})`);
   const { code } = (await r.json()) as { code: string };
-  const link = `${baseUrl()}/?code=${code}`;
+  const pub = publicUrl();
+  const link = `${pub?.origin ?? baseUrl()}/?code=${code}`;
+  if (pub) return console.log(`Open this within 5 minutes and make a passkey:\n  ${link}`);
   if (MAC && !process.env.SSH_CONNECTION) return void spawnSync("open", [link]);
   const { port } = loadConfig();
   console.log(`Open this within 5 minutes:\n  ${link}`);
@@ -219,7 +222,8 @@ async function chooseModel(ids: string[], suggested: string): Promise<string> {
 }
 
 async function setupCloud(current?: ModelConfig): Promise<ModelConfig> {
-  const p = PROVIDERS[await choose("   Provider:", PROVIDERS.map((x) => x.name), Math.max(0, PROVIDERS.findIndex((x) => x.id === current?.provider)))];
+  const list = PROVIDERS.filter((x) => x.id !== "plus"); // its code goes in the window
+  const p = list[await choose("   Provider:", list.map((x) => x.name), Math.max(0, list.findIndex((x) => x.id === current?.provider)))];
   const same = current?.provider === p.id;
   let base = p.baseUrl;
   if (p.id === "custom") base = await ask("   Base URL (usually ends in /v1):", same ? current!.baseUrl : "");
@@ -371,7 +375,7 @@ async function status() {
   console.log(`Running:  ${up ? `yes, http://127.0.0.1:${config.port}` : "no"}`);
   const client = googleClient();
   console.log(`Google:   ${client ? (client.own ? "your own sign-in client" : "built-in sign-in client") : "not set up (tabellar setup)"}`);
-  console.log(`Outlook:  ${config.microsoftClientId ? `app ${config.microsoftClientId}` : "no Azure app yet (tabellar setup microsoft)"}`);
+  console.log(`Outlook:  ${config.microsoftClientId ? `app ${config.microsoftClientId}` : BUILT_IN_MICROSOFT ? "built-in app" : "no Azure app yet (tabellar setup microsoft)"}`);
   const where = (m: ModelConfig) => (m.format === "ollama" ? "here (Ollama)" : `via ${PROVIDERS.find((p) => p.id === m.provider)?.name ?? m.baseUrl}`);
   const m = config.model;
   console.log(`Model:    ${m ? `${m.model} ${where(m)}` : "not set up (tabellar setup)"}`);

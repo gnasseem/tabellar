@@ -45,6 +45,15 @@ export const BUILT_IN_GOOGLE = {
   clientSecret: "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",
 };
 
+// The app registered with Microsoft that ships with Tabellar: its Application
+// (client) ID. A public client, so there is no secret. When empty, the user
+// registers their own.
+export const BUILT_IN_MICROSOFT = "";
+
+// The Tabellar+ service (plus/), where a code is exchanged for a model key.
+// When empty, Tabellar+ is not offered.
+export const PLUS_URL = process.env.TABELLAR_PLUS_URL ?? "";
+
 export type ModelConfig = {
   provider?: string; // "ollama", "openrouter", "anthropic", "openai", ... (setup's provider list)
   // Wire format: Ollama's native chat API, Anthropic Messages, or OpenAI chat completions.

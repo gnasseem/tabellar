@@ -2,9 +2,9 @@
 // and delta queries for what changed. microsoftMailbox is the "microsoft"
 // mailbox in providers.ts.
 //
-// Sign-in is OAuth for installed apps with PKCE against the app the user
-// registered in Microsoft's Azure portal (config.json microsoftClientId; a
-// public client, so there is no secret). Microsoft sends the browser back to
+// Sign-in is OAuth for installed apps with PKCE against Tabellar's own app, or
+// the one the user registered in Microsoft's Azure portal (config.json
+// microsoftClientId; a public client, so there is no secret). Microsoft sends the browser back to
 // http://localhost:<port>/oauth/callback. The refresh token is kept in the
 // Keychain under accounts.token_ref and replaced whenever Microsoft issues
 // a new one; access tokens stay in memory.
@@ -15,7 +15,7 @@
 // labels are Outlook categories.
 
 import { createHash, randomBytes } from "node:crypto";
-import { loadConfig, secrets } from "./config.ts";
+import { BUILT_IN_MICROSOFT, loadConfig, secrets } from "./config.ts";
 import { calendarHeaders, type CalendarEvent } from "./rules.ts";
 import { htmlToText } from "./mime.ts";
 import type { Box, CalEvent, Calendar, EmailData, HeaderRow, LabelChange, LinkedEvent, Mail, NewEvent, Outgoing, Sent } from "./providers.ts";
@@ -26,7 +26,7 @@ const GRAPH = "https://graph.microsoft.com/v1.0";
 const SCOPES = ["offline_access", "openid", "email", "profile", "User.Read", "Mail.ReadWrite", "Mail.Send", "Calendars.ReadWrite", "MailboxSettings.Read"];
 const DAY = 86_400_000;
 
-export const microsoftClientId = () => loadConfig().microsoftClientId ?? "";
+export const microsoftClientId = () => loadConfig().microsoftClientId || BUILT_IN_MICROSOFT;
 
 // ── Tokens ──────────────────────────────────────────────────────────────────
 
@@ -68,8 +68,9 @@ function accessToken(ref: string, renew = false): Promise<string> {
 
 const pending = new Map<string, { verifier: string; redirectUri: string; expires: number }>();
 
-export function microsoftSignInUrl(redirectUri: string): string {
-  const state = `ms.${randomBytes(24).toString("base64url")}`;
+// `host` is the public name the browser is to be sent on to, if there is one.
+export function microsoftSignInUrl(redirectUri: string, host = ""): string {
+  const state = `ms.${randomBytes(24).toString("base64url")}${host ? `.${host}` : ""}`;
   const verifier = randomBytes(48).toString("base64url");
   for (const [k, v] of pending) if (v.expires < Date.now()) pending.delete(k);
   pending.set(state, { verifier, redirectUri, expires: Date.now() + 10 * 60_000 });

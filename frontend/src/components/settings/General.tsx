@@ -7,6 +7,11 @@ import { useApp } from "../AppShell";
 import { LevelControl } from "../Sidebar";
 import { Group, Row, Switch, useProfile } from "./parts";
 
+async function signOut(all: boolean) {
+  await fetch("/auth/sign-out", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${window.__TABELLAR_TOKEN__ ?? ""}` }, body: JSON.stringify({ all }) });
+  window.location.replace("/");
+}
+
 export default function General() {
   const { addToast, mail } = useApp();
   const { profile, save: keep } = useProfile();
@@ -77,6 +82,18 @@ export default function General() {
               <Switch label="Menu bar" on={profile.menu_bar !== false} onChange={(v) => save({ menu_bar: v })} />
             </Row>
           </>
+        )}
+        {host.hosted && (
+          <Row name="Sign out" text="Here, or in every browser">
+            <span className="flex gap-2">
+              <button className="btn" onClick={() => signOut(false)}>
+                Here
+              </button>
+              <button className="btn" onClick={() => signOut(true)}>
+                Everywhere
+              </button>
+            </span>
+          </Row>
         )}
         <Row name="First-run steps" text="Mail, model, About you, examples from your mail, people and labels, level">
           <button

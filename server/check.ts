@@ -3166,6 +3166,141 @@ console.log("\nMCP");
   }
 }
 
+// ── On a public name ────────────────────────────────────────────────────────
+// A real server with a public name, a passkey made here, and a fake Tabellar+.
+console.log("\nOn a public name");
+{
+  const { spawn, spawnSync } = await import("node:child_process");
+  const { createServer: listenOn } = await import("node:net");
+  const { createServer: http, request } = await import("node:http");
+  const { generateKeyPairSync, sign, createHash, randomBytes } = await import("node:crypto");
+  const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+  const { networkInterfaces, tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const port = await new Promise<number>((done) => { const s = listenOn().listen(0, "127.0.0.1", () => { const p = (s.address() as { port: number }).port; s.close(() => done(p)); }); });
+  const plusCodes: string[] = [];
+  const plus = http((req, res) => {
+    let body = "";
+    req.on("data", (d) => (body += d));
+    req.on("end", () => {
+      if (req.url === "/api/key") plusCodes.push(JSON.parse(body).code);
+      res.end(JSON.stringify({ key: "sk-or-capped", careful: "big", fast: "small" }));
+    });
+  });
+  const plusPort = await new Promise<number>((r) => plus.listen(0, "127.0.0.1", () => r((plus.address() as { port: number }).port)));
+  const home = mkdtempSync(join(tmpdir(), "tabellar-public-"));
+  const first = randomBytes(32).toString("base64url");
+  const env = {
+    ...process.env, TABELLAR_HOME: home, TABELLAR_PASSPHRASE: "only for this check", TABELLAR_PUBLIC_URL: "https://me.example", TABELLAR_FIRST_CODE: first,
+    TABELLAR_PLUS_URL: `http://127.0.0.1:${plusPort}`, TABELLAR_PLUS_CODE: "the code", SSH_CONNECTION: "x",
+  };
+  writeFileSync(join(home, "config.json"), JSON.stringify({ port }));
+  const server = spawn(process.execPath, [sibling("tabellar"), "serve"], { env, stdio: ["ignore", "pipe", "pipe"] });
+  let out = "";
+  server.stdout!.on("data", (t) => (out += t));
+  server.stderr!.on("data", (t) => (out += t));
+  type Reply = { status: number; text: string; cookie: string; headers: Record<string, unknown> };
+  const ask = (path: string, { body, token, cookie, host = "me.example", origin, to = "127.0.0.1" }: { body?: unknown; token?: string; cookie?: string; host?: string; origin?: string; to?: string } = {}) =>
+    new Promise<Reply>((done, fail) => {
+      const req = request({ host: to, port, path, method: body === undefined ? "GET" : "POST", headers: { Host: host, ...(origin ? { Origin: origin } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(cookie ? { Cookie: cookie } : {}) } }, (res) => {
+        let text = "";
+        res.on("data", (d) => (text += d));
+        res.on("end", () => done({ status: res.statusCode!, text, cookie: String(res.headers["set-cookie"]?.[0] ?? "").split(";")[0], headers: res.headers }));
+      });
+      req.on("error", fail);
+      req.end(body === undefined ? undefined : JSON.stringify(body));
+    });
+  const b64 = (b: Buffer) => b.toString("base64url");
+  const sha = (b: Buffer | string) => createHash("sha256").update(b).digest();
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const keyId = randomBytes(16);
+  const said = (type: string, challenge: string, origin = "https://me.example") => Buffer.from(JSON.stringify({ type, challenge, origin }));
+  const data = (flags: number, extra = Buffer.alloc(0), name = "me.example") => Buffer.concat([sha(name), Buffer.from([flags, 0, 0, 0, 0]), extra]);
+  const challenge = async () => JSON.parse((await ask("/auth/challenge", { body: {} })).text).challenge as string;
+  const register = async (code: string, origin?: string) => {
+    const length = Buffer.alloc(2);
+    length.writeUInt16BE(keyId.length);
+    return ask("/auth/passkey", { body: {
+      code, id: b64(keyId), clientDataJSON: b64(said("webauthn.create", await challenge(), origin)),
+      authenticatorData: b64(data(69, Buffer.concat([Buffer.alloc(16), length, keyId, Buffer.from("cose")]))), publicKey: b64(publicKey.export({ format: "der", type: "spki" })), alg: -7,
+    } });
+  };
+  const assertion = (client: Buffer, auth = data(5), key = privateKey) => ({ id: b64(keyId), clientDataJSON: b64(client), authenticatorData: b64(auth), signature: b64(sign("sha256", Buffer.concat([auth, sha(client)]), key)) });
+  const signIn = (a: unknown) => ask("/auth/sign-in", { body: a });
+  try {
+    for (let i = 0; i < 300 && !/Tabellar is running at/.test(out) && server.exitCode === null; i++) await new Promise((r) => setTimeout(r, 100));
+    const own = spawnSync(process.execPath, ["--input-type=module", "-e", `const { secrets } = await import(${JSON.stringify(new URL(sibling("config"), "file://").href)}); console.log(secrets.get("access-token"));`], { env, encoding: "utf8" }).stdout.trim();
+    const local = `127.0.0.1:${port}`;
+    const opened = await ask("/");
+    const withOwn = [await ask("/session", { token: own }), await ask("/api/health", { token: own }), await ask("/db", { token: own, body: {} }), await ask("/stop", { token: own, body: {} }), await ask("/auth/login-code", { token: own, body: {} })];
+    const here = await ask("/api/health", { token: own, host: local });
+    const lan = Object.values(networkInterfaces()).flat().find((n) => n && !n.internal && n.family === "IPv4")?.address;
+    const fromLan = lan ? await ask("/api/health", { token: own, host: local, to: lan }).catch(() => null) : null;
+    ok("the machine's own token opens nothing from outside, and still does on the machine", () => {
+      assert.ok(own.length === 64 && here.status === 200);
+      assert.deepEqual(withOwn.map((r) => r.status), [401, 401, 401, 401, 404]);
+      assert.ok(!opened.text.includes(own) && /Open the link you were given/.test(opened.text) && /nonce-/.test(String(opened.headers["content-security-policy"])));
+      if (fromLan) assert.equal(fromLan.status, 421);
+    });
+    const badCode = await register(randomBytes(32).toString("base64url"));
+    const badOrigin = await register(first, "https://evil.example");
+    const look = await ask(`/?code=${first}`);
+    const made = await register(first);
+    const again = await register(first);
+    const stale = await ask(`/?code=${first}`);
+    ok("the first code makes one passkey, from this page only, and then is nothing", () => {
+      assert.deepEqual([badCode.status, badOrigin.status, made.status, again.status], [401, 401, 200, 401]);
+      assert.ok(/Make a passkey/.test(look.text) && !look.cookie && made.cookie.startsWith("__Host-tabellar=") && !/Make a passkey/.test(stale.text));
+    });
+    const session = made.cookie.split("=")[1];
+    const inside = await ask("/", { cookie: made.cookie });
+    const asSession = [await ask("/session", { token: session }), await ask("/stop", { token: session, body: {} }), await ask("/session", { token: session, origin: "https://evil.example" }), await ask("/session", { token: session, host: "other.example" })];
+    ok("a session reads, and does not stop the server or work from another page", () => {
+      assert.ok(inside.text.includes(session) && !inside.text.includes(own));
+      assert.deepEqual(asSession.map((r) => r.status), [200, 404, 403, 421]);
+      assert.equal(JSON.parse(asSession[0].text).host.hosted, true);
+    });
+    const c1 = said("webauthn.get", await challenge());
+    const good = await signIn(assertion(c1));
+    const bad = [
+      await signIn(assertion(c1)), // the same answer again
+      await signIn(assertion(said("webauthn.get", b64(randomBytes(32))))),
+      await signIn(assertion(said("webauthn.get", await challenge(), "https://evil.example"))),
+      await signIn(assertion(said("webauthn.create", await challenge()))),
+      await signIn(assertion(said("webauthn.get", await challenge()), data(1))),
+      await signIn(assertion(said("webauthn.get", await challenge()), data(5, undefined, "evil.example"))),
+      await signIn(assertion(said("webauthn.get", await challenge()), data(5), generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey)),
+      await signIn({ ...assertion(said("webauthn.get", await challenge())), id: "other" }),
+    ];
+    ok("the passkey signs in once per question; a replay, another site, no check of the person or another key does not", () => {
+      assert.equal(good.status, 200);
+      assert.deepEqual(bad.map((r) => r.status), bad.map(() => 401));
+    });
+    const state = JSON.parse((await ask("/api/setup/state", { token: session })).text);
+    const google = await ask("/oauth/start", { cookie: made.cookie });
+    ok("it does not sign in to Google, and has taken up its own capped model key", () => {
+      assert.ok(!state.mailboxes.some((m: { provider: string }) => m.provider === "gmail") && state.mailboxes.length > 5 && google.status === 400);
+      assert.deepEqual([state.model.provider, state.model.model, state.fastModel.model, state.model.ready, plusCodes], ["plus", "big", "small", true, ["the code"]]);
+      assert.equal(state.providers[0].id, "plus");
+    });
+    const link = spawnSync(process.execPath, [sibling("tabellar"), "open"], { env, encoding: "utf8" }).stdout.match(/https:\/\/me\.example(\/\S+)/)?.[1] ?? "";
+    const another = await ask(link);
+    await ask("/auth/sign-out", { token: session, body: { all: true } });
+    const after = [await ask("/session", { token: session }), await ask("/session", { token: good.cookie.split("=")[1] })];
+    ok("a link from the server adds a passkey, and signing out everywhere ends every session", () => {
+      assert.match(another.text, /Make a passkey/);
+      assert.deepEqual(after.map((r) => r.status), [401, 401]);
+    });
+  } catch (e) {
+    console.error(out);
+    throw e;
+  } finally {
+    server.kill();
+    plus.close();
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
 // ── Always on ───────────────────────────────────────────────────────────────
 console.log("Always on");
 {

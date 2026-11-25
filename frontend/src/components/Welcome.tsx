@@ -292,9 +292,11 @@ function MailboxesStep({ state, refresh, accounts, reloadAccounts, signedIn, aga
         />
       )}
       <p className="mt-8">
-        <button type="button" className="link" onClick={() => setOwn(true)}>
-          {state.google.clientId ? "Your own Google client" : "Advanced: use your own Google client"}
-        </button>
+        {!host.hosted && (
+          <button type="button" className="link" onClick={() => setOwn(true)}>
+            {state.google.clientId ? "Your own Google client" : "Advanced: use your own Google client"}
+          </button>
+        )}
       </p>
     </Step>
   );
@@ -314,7 +316,9 @@ function WhatStays() {
   );
   return (
     <Sheet>
-      {block("home", `Stays on ${here()}`, `Your mail, in one file in your home folder. Keys and sign-in tokens, in ${vault()}. Nothing is hosted anywhere else.`)}
+      {host.hosted
+        ? block("home", "Stays on your server", "Your mail, keys and sign-ins, on a server of your own that Tabellar+ runs, on an encrypted disk. Whoever runs Tabellar+ looks after that server, so it is not out of their reach.")
+        : block("home", `Stays on ${here()}`, `Your mail, in one file in your home folder. Keys and sign-in tokens, in ${vault()}. Nothing is hosted anywhere else.`)}
       {block("send", "Leaves it", `Calls to your mail provider, and to the model you choose. With a model on ${here()}, nothing else leaves at all.`)}
       {block("shield", "Never happens", "Mail deleted, archived on its own, or sent before you choose a level that allows it.")}
     </Sheet>

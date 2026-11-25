@@ -99,7 +99,7 @@ function matches(row: Record<string, any>, f: NonNullable<Listener["filter"]>): 
 
 function connect() {
   if (source) return;
-  source = new EventSource(`/events?token=${encodeURIComponent(TOKEN)}`);
+  source = new EventSource(host.hosted ? "/events" : `/events?token=${encodeURIComponent(TOKEN)}`);
   source.onmessage = (e) => {
     const change = JSON.parse(e.data) as { table: string; eventType: ChangePayload["eventType"]; new: Record<string, any>; old: Record<string, any> };
     const payload: ChangePayload = { schema: "public", ...change, commit_timestamp: new Date().toISOString() };

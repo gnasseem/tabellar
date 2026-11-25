@@ -2,6 +2,7 @@
 !bin
 !server
 !frontend
+!plus
 !package.json
 !package-lock.json
 frontend/node_modules

@@ -44,7 +44,7 @@
     "build": "npm run build --workspace tabellar-frontend",
     "build:server": "rm -rf dist && tsc -p server --noEmit false --outDir dist --rewriteRelativeImportExtensions",
     "dev": "npm run dev --workspace tabellar-frontend",
-    "typecheck": "tsc -p server && npm run typecheck --workspace tabellar-frontend",
+    "typecheck": "tsc -p server && tsc -p plus && npm run typecheck --workspace tabellar-frontend",
     "prepack": "npm run build && npm run build:server",
     "prepublishOnly": "node -e \"import('./server/config.ts').then((c) => { if (!c.BUILT_IN_GOOGLE.clientId) { console.error('Fill in BUILT_IN_GOOGLE in server/config.ts before publishing.'); process.exit(1); } })\""
   },

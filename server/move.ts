@@ -21,7 +21,7 @@ type Header = { config: Config; secrets: Record<string, string>; timezone: strin
 // The secrets a mailbox, a model, the bot or the user's own Google client needs.
 // The access token is this machine's own.
 function secretNames(refs: unknown[]): string[] {
-  return [...new Set(["google-client-secret", ...[...PROVIDERS.map((p) => p.id), "custom"].map((id) => modelKeyName(id)), ...refs.map(String)])];
+  return [...new Set(["google-client-secret", ...[...PROVIDERS.map((p) => p.id), "custom", "plus"].map((id) => modelKeyName(id)), ...refs.map(String)])];
 }
 
 // Write everything into `path` and close this place. Called with the lock held.

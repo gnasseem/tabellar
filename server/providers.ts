@@ -18,11 +18,12 @@
 
 import type { Account } from "./accounts.ts";
 import type { CalendarEvent } from "./rules.ts";
-import { googleClient, loadConfig } from "./config.ts";
+import { publicUrl } from "./access.ts";
+import { googleClient } from "./config.ts";
 import { db } from "./db.ts";
 import { gmailMailbox } from "./gmail.ts";
 import { imapMailbox } from "./imap.ts";
-import { microsoftMailbox } from "./microsoft.ts";
+import { microsoftClientId, microsoftMailbox } from "./microsoft.ts";
 
 export interface AttachmentInfo {
   filename: string;
@@ -314,12 +315,12 @@ export const CHOICES: Choice[] = [
   { id: "imap", name: "Other", provider: "imap", calendar: false },
 ];
 
-// Whether a choice can be used now: Google with a client, Microsoft once an
-// app is registered (config.json microsoftClientId).
+// Whether a choice can be used now: Google with a client, Microsoft with an
+// app. A server with a public name never signs in to Google: mail read through
+// Google's API stays on the user's own machine.
 export function choicesForWindow() {
-  const config = loadConfig();
-  return CHOICES.map((c) => ({
+  return CHOICES.filter((c) => c.provider !== "gmail" || !publicUrl()).map((c) => ({
     ...c,
-    ready: c.provider === "gmail" ? !!googleClient() : c.provider === "microsoft" ? !!config.microsoftClientId : true,
+    ready: c.provider === "gmail" ? !!googleClient() : c.provider === "microsoft" ? !!microsoftClientId() : true,
   }));
 }
