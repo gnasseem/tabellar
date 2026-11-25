@@ -1,5 +1,3 @@
-/* The public pages. The page is set like the mark: tablets with a channel
-   between them, black, paper and one in sealing wax. */
 @font-face {
   font-family: "Ysabeau Office";
   src: url("fonts/ysabeau-office.woff2") format("woff2");
@@ -108,7 +106,6 @@ a {
   color: var(--ink);
 }
 
-/* Tablets */
 main,
 .pair {
   display: grid;
@@ -156,15 +153,7 @@ main,
 .btn:active {
   transform: translateY(1px);
 }
-.quiet {
-  display: inline-flex;
-  align-items: center;
-  min-height: 52px;
-  color: var(--on-wax);
-  font-weight: 600;
-}
 
-/* The first tablet */
 .first {
   display: grid;
   grid-template-rows: auto auto 1fr;
@@ -218,16 +207,13 @@ h1 {
   line-height: 0.96;
   letter-spacing: -0.025em;
 }
+.say p + .btn {
+  margin-top: 24px;
+}
 .say p {
   max-width: 34ch;
   font-size: clamp(18px, 1.5vw, 23px);
   line-height: 1.4;
-}
-.acts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 26px;
-  margin-top: 24px;
 }
 .shot {
   display: block;
@@ -251,12 +237,11 @@ h1 {
   }
 }
 
-/* How much it does: four levels over the same five emails */
 .levels {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
   gap: 36px clamp(32px, 6vw, 104px);
-  align-items: start;
+  align-items: center;
 }
 fieldset {
   margin: clamp(24px, 3vw, 40px) 0 0;
@@ -369,12 +354,7 @@ legend {
     clip-path: inset(0 100% 0 0);
   }
 }
-.slips + p {
-  margin-top: 16px;
-  font-size: 0.86em;
-}
 
-/* Two tablets */
 .pair {
   grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr);
 }
@@ -385,10 +365,8 @@ legend {
 }
 .seen h2,
 .never h2 {
+  margin-bottom: clamp(26px, 3.4vw, 46px);
   font-size: clamp(30px, 3.2vw, 46px);
-}
-.seen p {
-  margin: 16px 0 clamp(28px, 4vw, 52px);
 }
 .seen .window {
   width: calc(100% + var(--pad));
@@ -409,26 +387,22 @@ legend {
 .never ul {
   flex: 1;
   display: grid;
-  margin: clamp(22px, 2.6vw, 38px) 0 0;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 .never li {
-  padding: 18px 0;
+  padding: 20px 0;
   border-top: 1px solid var(--line);
-  line-height: 1.4;
+  color: var(--ink);
+  font-size: clamp(21px, 1.9vw, 28px);
+  font-weight: 600;
+  line-height: 1.25;
 }
 .never li:last-child {
   padding-bottom: 0;
 }
-.never b {
-  display: block;
-  color: var(--ink);
-  font-size: 1.14em;
-  font-weight: 650;
-}
 
-/* The plans, set as the mark itself */
 .plans {
   padding: clamp(56px, 8vw, 120px) 0 0;
 }
@@ -476,35 +450,9 @@ legend {
 .mark .price {
   color: var(--on-tablet);
 }
-.mark dl {
-  margin: 26px 0 34px;
-}
-.mark dl div {
-  display: grid;
-  grid-template-columns: 8.2em 1fr;
-  gap: 4px 14px;
-  padding: 11px 0;
-  border-top: 1px solid var(--tablet-line);
-  line-height: 1.4;
-}
-.always dl div {
-  border-color: oklch(0.64 0.16 32);
-}
-.mark dt {
-  color: var(--on-tablet);
-  font-weight: 600;
-}
-.mark dd {
-  margin: 0;
-}
 .mark .act {
   margin-top: auto;
-}
-.mark .act + p {
-  margin-top: 14px;
-  font-size: 0.86em;
-}
-.line {
+  padding-top: 34px;
   color: var(--on-tablet);
   font-weight: 600;
 }
@@ -539,20 +487,7 @@ pre button {
 pre button:hover {
   background: oklch(0.4 0.012 56);
 }
-.free ol {
-  margin: 18px 0 0;
-  padding: 0 0 0 1.1em;
-  font-size: 0.92em;
-}
-.free li {
-  padding: 2px 0;
-}
-.free ol + p {
-  margin-top: 14px;
-  font-size: 0.92em;
-}
 
-/* Reading: the Google paragraph, the privacy page */
 .read {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
@@ -683,9 +618,6 @@ article code {
   }
   .slips em {
     text-align: left;
-  }
-  .mark dl div {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 @media (prefers-reduced-motion: reduce) {
