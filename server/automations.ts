@@ -755,9 +755,9 @@ export async function runTimed(userId: string, { fresh = true, now = new Date(),
   }
 }
 
-function tell(p: Pass, title: string, body: string): void {
+function tell(p: Pass, title: string, body: string, emails: string[] = []): void {
   if (inQuietHours(p.profile)) return;
-  notify(p.profile?.notification_preview === false ? { title: "Tabellar", body: "One of your automations ran." } : { title, body });
+  notify({ ...(p.profile?.notification_preview === false ? { title: "Tabellar", body: "One of your automations ran." } : { title, body }), emails });
 }
 
 async function onTime(p: Pass, a: Automation, t: Extract<Trigger, { on: "time" }>, fresh: boolean, now: Date): Promise<void> {
@@ -797,7 +797,7 @@ async function onTime(p: Pass, a: Automation, t: Extract<Trigger, { on: "time" }
     else if (x.do === "notify") {
       const r = await doIt(p, a, { kind: "notify", emailId: null, summary: "Notified you", detail: {} });
       note(r);
-      if (r === "done") tell(p, "Tabellar", found.length ? `${emails(found.length)}: ${a.text}` : a.text);
+      if (r === "done") tell(p, "Tabellar", found.length ? `${emails(found.length)}: ${a.text}` : a.text, found.map((m) => m.id));
     }
   }
   if (made) await ran(a, 1);

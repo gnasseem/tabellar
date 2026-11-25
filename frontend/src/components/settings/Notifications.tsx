@@ -1,6 +1,7 @@
 // Settings, Notifications, and Hours and calendar, whose working hours are
 // also the notifications' quiet hours.
 import { ChoiceRow, Group, Row, Switch, useProfile } from "./parts";
+import { Telegram } from "./Telegram";
 
 // Monday first, as the week is read; the stored numbers keep Sunday as 0.
 const WEEK: [number, string][] = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"]];
@@ -64,6 +65,7 @@ export function Notifications({ go }: { go: (section: string) => void }) {
           <Switch label="Show sender and summary" on={profile.notification_preview !== false} onChange={(v) => save({ notification_preview: v })} />
         </Row>
       </Group>
+      <Telegram />
     </>
   );
 }

@@ -1,7 +1,7 @@
 // The Tabellar server: serves the interface, the local API, the database
 // bridge and the live event stream, on 127.0.0.1 only, and runs the
 // background engine (engine.ts), the timer for scheduled sends and snoozed
-// mail, and the menu bar item (menubar.ts).
+// mail, the menu bar item (menubar.ts) and Telegram (telegram.ts).
 //
 // Access: every request must name this machine as its Host (which defeats DNS
 // rebinding) and, when a browser sends an Origin, come from Tabellar's own
@@ -29,6 +29,7 @@ import { startEngine, windowClosed, windowOpened } from "./engine.ts";
 import { connectAccount } from "./accounts.ts";
 import { wakeDue } from "./snooze.ts";
 import { startMenuBar } from "./menubar.ts";
+import { startTelegram } from "./telegram.ts";
 import { spawn } from "node:child_process";
 
 const DIST = fileURLToPath(new URL("../frontend/dist/", import.meta.url));
@@ -273,11 +274,13 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
       if ([loadConfig().model, loadConfig().fastModel].some((m) => m?.format === "ollama")) startOllama().catch(() => {});
       const stopEngine = startEngine();
       const stopMenuBar = startMenuBar(() => spawn("open", [`http://127.0.0.1:${port}/?code=${mintLoginCode()}`], { stdio: "ignore" }).on("error", () => {}));
+      const stopTelegram = startTelegram();
       resolve({
         port,
         close: () => {
           stopEngine();
           stopMenuBar();
+          stopTelegram();
           clearInterval(timer);
           server.close();
         },

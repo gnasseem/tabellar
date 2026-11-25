@@ -2,7 +2,7 @@
 
 A personal email agent that runs on your Mac. Tabellar keeps a local copy of your mail (Gmail, Outlook and Microsoft 365, iCloud, Fastmail, Yahoo, or any IMAP mailbox), sorts it into your own labels, drafts replies in your style, pulls out todos and meetings, tracks mail that got no answer, answers questions about your inbox, and can plan and carry out a whole inbox cleanup that you approve. It keeps working in the background with the window closed, within limits you set.
 
-There is no hosted service and no sign-up. Your mail is stored in one SQLite file on your Mac. The AI runs either on your Mac through Ollama, free and private, or with a cloud provider of your choice on your own API key. The only outside calls are to your mail provider for your mail and calendar, and to the cloud provider if you pick one. The [privacy policy](https://gnasseem.github.io/tabellar/privacy.html) says this in full.
+There is no hosted service and no sign-up. Your mail is stored in one SQLite file on your Mac. The AI runs either on your Mac through Ollama, free and private, or with a cloud provider of your choice on your own API key. The only outside calls are to your mail provider for your mail and calendar, to the cloud provider if you pick one, and to Telegram if you connect a bot. The [privacy policy](https://gnasseem.github.io/tabellar/privacy.html) says this in full.
 
 ## What it does
 
@@ -25,6 +25,7 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 - **What it knows about you**: before it makes a todo or a draft from someone you have never written to or read mail from, Tabellar asks ("Do you deal with Voyage AI?") in the Brief. Every todo, meeting, follow-up and newsletter has a menu for "Not this", "Never for this sender" and "Not interested in this topic", and turning down the same kind of thing twice from one sender is remembered. All of it is listed in Settings, under About you, where you can change or delete it, and every prompt Tabellar writes reads it.
 - **How you write**: a reply is written from the whole thread, what else you wrote with that person, the files attached, your open todos and your calendar, and says nothing those do not. The greeting, sign-off, tone and length of your drafts are learned from your last 200 sent emails, separately for your organisation, people you know and strangers, and from what you change in drafts. All of it is editable in Settings, with rules ("never open with I hope this finds you well") and phrases that drafts are checked against, and a sample reply to see the result.
 - **Notifications**: macOS notifications for what needs you, or only for the people you marked most important, or none; quiet outside your working hours if you like.
+- **Telegram**: the same on your phone, through a bot of your own, set up in two minutes in Settings, Notifications. The Brief comes at its time as one message with the answers as buttons, and what needs you when it arrives; a reply Autopilot is about to send comes with Cancel. Write to it to ask about your mail, or "from now on ..." to make an automation, with Turn on under what it would have matched. It answers one chat, yours. Telegram can read what a bot sends, so it gets who wrote, the summary and short answers, a longer draft only when you press Read, and no attachment.
 - **Menu bar**: how many emails need you, with a menu to open the window and to pause. Settings, General turns it off.
 - **Also**: search with operators, archived mail included, full keyboard use (press `?` for the keys), light, dark or auto, an accent colour, density and text size, which pages the sidebar shows, phishing warnings, signatures, templates, scheduled send and undo send, several mailboxes in one inbox, and sending from your Gmail aliases (replies go out from the address the mail was sent to).
 
@@ -130,7 +131,9 @@ server/
   receipts.ts   read receipts: asking, and what comes back
   files.ts      attachments found in the mailboxes
   menubar.ts    the menu bar item
-  notify.ts     notifications (macOS)
+  notify.ts     notifications (macOS, Telegram)
+  telegram.ts   your own Telegram bot: the Brief and its answers on your phone
+  ask.ts        Ask, from the window and from Telegram
   writing.ts    how you write, and the rules drafts keep to
   replies.ts    what a reply draft is written from, and what it may say
   choices.ts    the answers a draft leaves to you, shared by server and interface

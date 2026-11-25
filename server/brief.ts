@@ -372,8 +372,8 @@ export async function tellBrief(userId: string, { at = new Date(), fresh = true 
   if (!b.needs.length) return false;
   const count = b.needs.length + b.more;
   const title = `${count} ${count === 1 ? "thing needs" : "things need"} you today`;
-  if (me.notification_preview === false) notify({ title: "Brief", body: title });
-  else notify({ title: "Brief", subtitle: title, body: b.needs.slice(0, 3).map((n) => short(n.who === "Todo" || n.who === "Tabellar" ? n.text : `${n.who}: ${n.text}`, 76)).join("\n") });
+  if (me.notification_preview === false) notify({ title: "Brief", body: title, brief: b });
+  else notify({ title: "Brief", subtitle: title, brief: b, body: b.needs.slice(0, 3).map((n) => short(n.who === "Todo" || n.who === "Tabellar" ? n.text : `${n.who}: ${n.text}`, 76)).join("\n") });
   return true;
 }
 

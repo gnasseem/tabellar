@@ -1,8 +1,9 @@
 // Telling the user something happened. One small interface with a list of
-// channels; macOS Notification Center is the first, and another channel can be
-// added to CHANNELS without touching the callers.
+// channels: macOS Notification Center, and Telegram once it is started
+// (telegram.ts), whose messages can be answered.
 
 import { spawn } from "node:child_process";
+import type { Brief } from "./brief.ts";
 
 export const LEVELS = ["vip", "needs", "none"] as const;
 
@@ -46,9 +47,11 @@ export function inQuietHours(profile: Record<string, unknown> | null | undefined
   return !((h.days.includes(now.weekday) && now.minute >= start) || (h.days.includes(yesterday) && now.minute < end));
 }
 
-export type Note = { title: string; subtitle?: string; body: string };
+// For a channel that can be answered from: the emails it is about, the Brief it
+// is, or the scheduled_emails row that went out.
+export type Note = { title: string; subtitle?: string; body: string; emails?: string[]; brief?: Brief; sent?: string };
 
-type Channel = (n: Note) => void;
+export type Channel = (n: Note) => void;
 
 // Title and text are passed as arguments to an AppleScript run handler, never
 // spliced into the script, so nothing in an email can inject AppleScript.

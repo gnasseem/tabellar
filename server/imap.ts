@@ -22,17 +22,14 @@
 import { connect as tlsConnect } from "node:tls";
 import { connect as netConnect, type Socket } from "node:net";
 import { createHash } from "node:crypto";
+import { secrets } from "./config.ts";
 import { db } from "./db.ts";
-import { keychainDelete, keychainGet, keychainSet } from "./config.ts";
 import { calendarHeaders, parseIcs } from "./rules.ts";
 import { addressOf as address, htmlToText, newMessageId, parseHeaders, partAt, readMessage, writeMessage } from "./mime.ts";
 import type { ImapServer } from "./accounts.ts";
 import type { Box, EmailData, HeaderRow, Mail, MailboxChanges, Outgoing, Sent } from "./providers.ts";
 import { isReceipt, receiptOf } from "./receipts.ts";
 import { addressesIn } from "./senders.ts";
-
-// `tabellar check` swaps these so its fake mailbox needs no Keychain item.
-export const secrets = { get: keychainGet, set: keychainSet, delete: keychainDelete };
 
 const DAY = 86_400_000;
 const TIMEOUT_MS = 60_000;

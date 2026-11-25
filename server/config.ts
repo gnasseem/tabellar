@@ -115,6 +115,10 @@ export function keychainDelete(account: string): void {
   keychainCache.delete(account);
 }
 
+// What keeps a mailbox's password or a bot's token. `tabellar check` swaps
+// these, so what it makes up needs no Keychain.
+export const secrets = { get: keychainGet, set: keychainSet, delete: keychainDelete };
+
 // The token the interface and CLI present to the local server.
 export function accessToken(): string {
   let token = keychainGet("access-token");

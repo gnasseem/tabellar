@@ -262,6 +262,15 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
     },
     unique: [["user_id", "thread_id"]],
   },
+  // The user's own Telegram bot and the one chat it talks to (telegram.ts):
+  // the code that pairs them, the next update to read, and the messages whose
+  // buttons still answer something. The bot's token is in the Keychain.
+  telegram: {
+    cols: {
+      user_id: "uuid pk", bot: "text !", token_ref: "text !", chat: "int", who: "text",
+      code: "text", code_until: "time", next: "int ! =0", messages: "json ! =[]",
+    },
+  },
   // Ask: one row per conversation, its messages kept whole.
   conversations: {
     cols: {

@@ -156,7 +156,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
   const today = await countsToday(userId);
   const userLabelList = await userLabels(userId);
   let cycleCount = 0;
-  const notes: { sender: string; summary: string; drafted: boolean; replying?: boolean }[] = [];
+  const notes: { email: string; sender: string; summary: string; drafted: boolean; replying?: boolean }[] = [];
 
   const accounts = new Map((await listAccounts(userId)).map((a) => [a.id, a]));
   const accountOf = (accountId: string | null | undefined) => accounts.get(accountId ?? "") ?? null;
@@ -363,8 +363,8 @@ export const planNew = serial(async (userId: string): Promise<void> => {
     // Mail that has been there a while (the first read, mail read again) is not news.
     const news = Date.now() - new Date(email.received_at).getTime() < NEWS_MS;
     const worthIt = news && !stopped("notify") && worthNotifying(profile?.notification_level, { vip: prefs.some((r) => r.value === "vip"), needsUser: category === "action-required" || waiting || asked });
-    if (replying) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted: false, replying: true });
-    else if (!suspicious && ((news && told.notify) || (worthIt && !told.quiet))) notes.push({ sender: from, summary: String(row.summary || email.subject || ""), drafted });
+    if (replying) notes.push({ email: email.id, sender: from, summary: String(row.summary || email.subject || ""), drafted: false, replying: true });
+    else if (!suspicious && ((news && told.notify) || (worthIt && !told.quiet))) notes.push({ email: email.id, sender: from, summary: String(row.summary || email.subject || ""), drafted });
   }
 
   if (pass) await endPass(pass);
@@ -377,6 +377,7 @@ export const planNew = serial(async (userId: string): Promise<void> => {
       title: preview ? n.sender : "Tabellar",
       subtitle: `Autopilot replies in ${delayMinutes} min`,
       body: preview ? `${n.summary} Cancel it in Replies.` : "Autopilot will send a reply. Cancel it in Replies.",
+      emails: [n.email],
     });
   }
   // Nothing else outside the working hours, when the user asked for that.
@@ -384,13 +385,14 @@ export const planNew = serial(async (userId: string): Promise<void> => {
   notes.length = 0;
   notes.push(...rest);
   if (notes.length > 3) {
-    notify({ title: "Tabellar", body: `${notes.length} new emails need your attention${notes.some((n) => n.drafted) ? ", with reply drafts ready" : ""}.` });
+    notify({ title: "Tabellar", body: `${notes.length} new emails need your attention${notes.some((n) => n.drafted) ? ", with reply drafts ready" : ""}.`, emails: notes.map((n) => n.email) });
   } else {
     for (const n of notes) {
       notify({
         title: preview ? n.sender : "Tabellar",
         subtitle: n.drafted ? "Reply draft ready" : undefined,
         body: preview ? n.summary : "A new email needs your attention.",
+        emails: [n.email],
       });
     }
   }
@@ -696,6 +698,8 @@ export async function pauseIfCopied(): Promise<void> {
   if (!me || me.home === HOME) return;
   if (me.home) {
     await db.from("scheduled_emails").update({ status: "failed", error_message: "Not sent: this is a copy of another Tabellar folder." }).eq("status", "pending");
+    // The bot answers to the original alone.
+    await db.from("telegram").delete().eq("user_id", me.id);
     console.log("This data folder was copied from " + me.home + ", so Tabellar is paused.");
   }
   await db.from("profiles").update(me.home ? { home: HOME, engine_paused: true } : { home: HOME }).eq("id", me.id);

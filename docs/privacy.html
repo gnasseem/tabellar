@@ -13,7 +13,7 @@
       <a class="brand" href="./"><img src="logo.svg" alt="" />Tabellar</a>
 
       <h1>Privacy policy</h1>
-      <p>Last updated 23 November 2026.</p>
+      <p>Last updated 25 November 2026.</p>
       <p>
         Tabellar is open source software that runs on your own Mac. There is no Tabellar server, no Tabellar account and no telemetry. Tabellar's developer never receives your mail, your calendar, your contacts, your sign-in tokens or any record of how you use the app.
       </p>
@@ -31,15 +31,18 @@
 
       <h2>Where your data is stored</h2>
       <p>
-        On your Mac only. Mail, calendar entries, contacts and everything Tabellar derives from them (summaries, drafts, todos, the log of its actions) are kept in one database file in the <code>.tabellar</code> folder of your home folder. Google sign-in tokens and any AI provider key are kept in the macOS Keychain. Tabellar listens only on your own machine and is not reachable from the network.
+        On your Mac only. Mail, calendar entries, contacts and everything Tabellar derives from them (summaries, drafts, todos, the log of its actions) are kept in one database file in the <code>.tabellar</code> folder of your home folder. Google sign-in tokens, any AI provider key and the token of a Telegram bot are kept in the macOS Keychain. Tabellar listens only on your own machine and is not reachable from the network.
       </p>
 
       <h2>Who your data is shared with</h2>
-      <p>Nobody, with one exception that you control: the AI model you choose.</p>
+      <p>Nobody, with two exceptions that you control: the AI model you choose, and a Telegram bot if you connect one.</p>
       <ul>
         <li><b>A model on your Mac</b> (through Ollama): the text of your mail never leaves your computer.</li>
         <li>
           <b>A cloud AI provider</b> that you pick and connect with your own API key: the text of the mail being read, summarised or answered is sent from your Mac directly to that provider, under your own account and that provider's terms. It does not pass through Tabellar's developer. Tabellar tells you this before you choose, and you can switch to a model on your Mac at any time.
+        </li>
+        <li>
+          <b>Telegram</b>, off unless you make a bot of your own and paste its token: what needs you is sent from your Mac to that bot, in the one chat you paired. That is who wrote, the summary and the short answers you can give, a longer draft when you ask to read it, your events of the day, and the answers to what you ask there. Attachments are never sent. Telegram can read messages to and from bots. You can disconnect it in Settings at any time, and "Show sender and summary" turned off keeps it to saying that mail arrived.
         </li>
       </ul>
       <p>Your data is never sold, never used for advertising, and never used by Tabellar or its developer to train AI models. No person other than you reads it.</p>

@@ -1,6 +1,7 @@
 // Answering a line of the Brief, whatever it is: a draft (send it, with the
 // answer chosen where it leaves one open, or discard it), something proposed,
-// a meeting, a todo, a question, mail to look at, someone who owes an answer.
+// a meeting, a todo, a question, mail to look at, someone who owes an answer;
+// and a reply Autopilot is about to send, or an automation not turned on yet.
 // The window, and anything else the user answers from, calls options() and
 // answer() and nothing else.
 //
@@ -13,8 +14,8 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { db } from "./db.ts";
-import { act, approve, confirmMeeting, dismiss, engineSettings, setMailState, unapprove } from "./actions.ts";
-import { archivedByHand } from "./automations.ts";
+import { act, approve, confirmMeeting, dismiss, engineSettings, setMailState, unapprove, undo as undoAction } from "./actions.ts";
+import { archivedByHand, listAutomations, remove as removeAutomation, setEnabled } from "./automations.ts";
 import { choicesOf, choose } from "./choices.ts";
 import { discardDrafts, putInDrafts, queueDraft, textToHtml, UNDO_SEND_MS, unqueue, unsendable } from "./drafts.ts";
 import { followupList } from "./followups.ts";
@@ -35,8 +36,9 @@ const MOST = 3; // answers to a line
 
 type Row = Record<string, any>;
 // `undo` takes it back; `ms` is how long that lasts, when not the ten minutes.
-// `next` is the line that goes on from here, when one answer was not all.
-type Done = { said: string; undo?: () => Promise<unknown>; ms?: number; link?: string | null; next?: string; replan?: boolean };
+// `next` is the line that goes on from here, when one answer was not all;
+// `queued` the scheduled_emails row it became.
+type Done = { said: string; undo?: () => Promise<unknown>; ms?: number; link?: string | null; next?: string; queued?: string; replan?: boolean };
 type Choice = { label: string; run: () => Promise<Done>; sends?: string };
 // What a line says beyond its one row (who a draft goes to and its text, the
 // sentence a meeting came from), and the answers it takes. `stamp` is the rest
@@ -61,7 +63,8 @@ export async function options(userId: string, key: string): Promise<Options | nu
 const busy = new Set<string>();
 const undos = new Map<string, { run: () => Promise<unknown>; until: number }>();
 
-export async function answer(userId: string, key: string, pick: string): Promise<{ said: string; undo: string | null; ms: number | null; link: string | null; next: string | null; replan: boolean }> {
+export type Answered = { said: string; undo: string | null; ms: number | null; link: string | null; next: string | null; queued: string | null; replan: boolean };
+export async function answer(userId: string, key: string, pick: string): Promise<Answered> {
   if (busy.has(key)) throw said("That is being answered already");
   busy.add(key);
   try {
@@ -73,7 +76,7 @@ export async function answer(userId: string, key: string, pick: string): Promise
     for (const [id, u] of undos) if (u.until < Date.now()) undos.delete(id);
     const id = done.undo ? randomUUID() : null;
     if (id) undos.set(id, { run: done.undo!, until: Date.now() + (done.ms ?? UNDO_MS) + 1000 });
-    return { said: done.said, undo: id, ms: done.ms ?? null, link: done.link ?? null, next: done.next ?? null, replan: !!done.replan };
+    return { said: done.said, undo: id, ms: done.ms ?? null, link: done.link ?? null, next: done.next ?? null, queued: done.queued ?? null, replan: !!done.replan };
   } finally {
     busy.delete(key);
   }
@@ -91,7 +94,7 @@ export async function undoAnswer(id: string): Promise<{ said?: string }> {
 async function lineOf(userId: string, key: string): Promise<Line | null> {
   const kind = key.slice(0, key.indexOf(":"));
   const id = key.slice(key.indexOf(":") + 1);
-  const of: Record<string, (userId: string, id: string) => Promise<Line | null>> = { draft, act: proposal, meeting, todo, question, back, read, wait, proof };
+  const of: Record<string, (userId: string, id: string) => Promise<Line | null>> = { draft, act: proposal, meeting, todo, question, back, read, wait, proof, sending, automation };
   const line = of[kind] ? await of[kind](userId, id) : null;
   return line && { ...line, choices: line.choices.slice(0, MOST) };
 }
@@ -109,6 +112,7 @@ async function sendIt(userId: string, draftId: string, html?: string): Promise<D
   return {
     said: `Sending to ${q.to[0]}${q.to.length > 1 ? ` and ${q.to.length - 1} more` : ""} in ${UNDO_SEND_MS / 1000} seconds`,
     ms: UNDO_SEND_MS,
+    queued: q.id,
     undo: async () => ((await unqueue(userId, [q.id])).length ? "Not sent" : "Too late, already sent"),
   };
 }
@@ -405,7 +409,7 @@ async function wait(userId: string, id: string): Promise<Line | null> {
     if (outcome !== "done") throw said((await engineSettings(userId)).paused ? "Tabellar is paused" : "The follow-up could not be kept");
     const { data: now } = await db.from("draft_emails").select("id").eq("user_id", userId).eq("email_id", f.email_id);
     const made = (now ?? []).map((r) => String(r.id)).filter((x) => !had.has(x));
-    return { said: "Follow-up drafted", undo: () => discardDrafts(userId, made) };
+    return { said: "Follow-up drafted", next: made.length ? `draft:${made[0]}` : undefined, undo: () => discardDrafts(userId, made) };
   };
   return {
     to: f.recipient_email,
@@ -414,6 +418,53 @@ async function wait(userId: string, id: string): Promise<Line | null> {
       ...(modelConfigured() ? [{ label: "Nudge", run: nudge }] : []),
       { label: `In ${LATER_DAYS} days`, run: () => mark(`Back in ${LATER_DAYS} days`, { status: "snoozed", snooze_until: new Date(Date.now() + LATER_DAYS * DAY).toISOString() }) },
       { label: "Drop", run: () => mark("Dropped", { status: "dismissed", snooze_until: null }) },
+    ],
+  };
+}
+
+// ── What Autopilot is about to send ─────────────────────────────────────────
+
+async function sending(userId: string, id: string): Promise<Line | null> {
+  const { data: s } = await db.from("scheduled_emails").select("id, action_id, to_addresses, cc_addresses, bcc_addresses, subject, body_html").eq("id", id).eq("user_id", userId).eq("status", "pending").not("action_id", "is", null).maybeSingle();
+  if (!s) return null;
+  const cancel = async (): Promise<Done> => {
+    await undoAction(userId, String(s.action_id));
+    return { said: "Cancelled, kept as a draft" };
+  };
+  return { to: namesOf(s), shows: htmlToText(String(s.body_html ?? "")), stamp: s.subject, choices: [{ label: "Cancel", run: cancel }] };
+}
+
+// ── An automation that is off ───────────────────────────────────────────────
+
+const MATCHES = 3;
+
+// Once its trial is there to look at.
+async function automation(userId: string, id: string): Promise<Line | null> {
+  const a = (await listAutomations(userId)).find((x) => x.id === id);
+  if (!a || a.enabled || !a.tried_at || a.trial?.state !== "done") return null;
+  const count = a.trial.matches.length + a.trial.more;
+  const some = a.trial.matches.slice(0, MATCHES).map((m) => `${m.who}: ${m.subject}`);
+  const shows = [`${a.when}: ${a.then.join("; ")}.`, count ? `It would have matched ${count}${count > some.length ? `, ${some.length} of them` : ""}:` : "It would have matched nothing yet.", ...some].join("\n");
+  return {
+    to: "",
+    shows,
+    stamp: [a.text, a.mode],
+    choices: [
+      {
+        label: "Turn on",
+        run: async () => {
+          await setEnabled(userId, id, true);
+          return { said: "On from now on", undo: () => setEnabled(userId, id, false) };
+        },
+      },
+      {
+        label: "Delete",
+        run: async () => {
+          const { data: row } = await db.from("automations").select("*").eq("id", id).eq("user_id", userId).single();
+          await removeAutomation(userId, id);
+          return { said: "Deleted", undo: () => Promise.resolve(db.from("automations").insert(row!)) };
+        },
+      },
     ],
   };
 }

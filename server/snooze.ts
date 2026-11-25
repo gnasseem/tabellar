@@ -79,7 +79,7 @@ export async function wakeDue(): Promise<void> {
       const { data: me } = await db.from("profiles").select("notification_level, notification_preview").eq("id", rows[0].user_id).maybeSingle();
       if (me?.notification_level === "none") continue;
       const r = rows[0];
-      notify(me?.notification_preview === false ? { title: "Tabellar", body: "A snoozed email is back." } : { title: displayName(r.sender, r.sender_email ?? ""), subtitle: "Back from snooze", body: r.subject || "(no subject)" });
+      notify({ ...(me?.notification_preview === false ? { title: "Tabellar", body: "A snoozed email is back." } : { title: displayName(r.sender, r.sender_email ?? ""), subtitle: "Back from snooze", body: r.subject || "(no subject)" }), emails: [String(r.id)] });
     }
   } finally {
     waking = false;

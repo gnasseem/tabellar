@@ -143,7 +143,7 @@ export async function sendDueEmails(): Promise<void> {
       if (autopilot && row.action_id) {
         const { data: a } = await db.from("action_log").select("detail").eq("id", row.action_id).maybeSingle();
         await db.from("action_log").update({ detail: { ...(a?.detail ?? {}), sentAt: new Date().toISOString() }, reason: row.forward ? "Sent by your automation" : "Sent by Autopilot" }).eq("id", row.action_id);
-        notify({ title: "Tabellar", subtitle: row.forward ? "Forwarded by your automation" : "Autopilot sent a reply", body: `To ${(row.to_addresses as string[]).join(", ")}: ${row.subject}` });
+        notify({ title: "Tabellar", subtitle: row.forward ? "Forwarded by your automation" : "Autopilot sent a reply", body: `To ${(row.to_addresses as string[]).join(", ")}: ${row.subject}`, sent: String(row.id) });
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
