@@ -31,8 +31,9 @@ export type Level = (typeof LEVELS)[number];
 export const KINDS = ["label", "archive", "draft", "todo", "meeting", "send", "unsubscribe", "snooze", "read", "brief", "notify", "vip"] as const;
 export type Kind = (typeof KINDS)[number];
 
-// "engine" and "automation" act on their own; the others act because the user asked in the window.
-export type Source = "engine" | "automation" | "agent" | "assistant" | "user";
+// "engine" and "automation" act on their own, "mcp" for an AI program the user
+// connected; the others act because the user asked in the window.
+export type Source = "engine" | "automation" | "mcp" | "agent" | "assistant" | "user";
 
 // What the engine may do on its own at Assist. Archive and unsubscribe are
 // never here, and send only at Autopilot.
@@ -43,6 +44,10 @@ const ENGINE_KINDS: ReadonlySet<string> = new Set(["label", "draft", "todo", "me
 const AUTOMATION_KINDS: ReadonlySet<string> = new Set(["label", "archive", "snooze", "read", "todo", "draft", "brief", "notify", "vip"]);
 const CHANGES_NOTHING: ReadonlySet<string> = new Set(["brief", "notify"]);
 export const CAP_PER_AUTOMATION = 50; // actions a day, for each automation
+
+// What a program connected over MCP may do: nothing that leaves the mailbox.
+const MCP_KINDS: ReadonlySet<string> = new Set(["label", "snooze", "draft", "todo", "meeting"]);
+export const CAP_PER_PROGRAM = 50; // of each kind, a day
 
 // Kinds the user's own window actions may carry out (agent plans, assistant
 // requests, approvals of engine proposals).
@@ -121,6 +126,7 @@ export function decide(r: Request): Decision {
   if (r.paused) return { verdict: "refuse", reason: "Tabellar is paused" };
 
   if (r.source === "automation") return decideAutomation(r);
+  if (r.source === "mcp") return decideMcp(r);
   if (r.source !== "engine") {
     return USER_KINDS.has(r.kind) ? { verdict: "do", reason: "Requested in the window" } : { verdict: "refuse", reason: "Not allowed" };
   }
@@ -160,6 +166,17 @@ function decideAutomation(r: Request): Decision {
   if ((r.todayCount ?? 0) >= CAP_PER_AUTOMATION) return refuse(`Daily limit of ${CAP_PER_AUTOMATION} for this automation reached`);
   if (r.kind === "vip" || (!r.own && !CHANGES_NOTHING.has(r.kind))) return { verdict: "propose", reason: "Your automation asks first" };
   return { verdict: "do", reason: "Your automation" };
+}
+
+function decideMcp(r: Request): Decision {
+  const level = normalizeLevel(r.level);
+  const refuse = (reason: string): Decision => ({ verdict: "refuse", reason });
+  if (!MCP_KINDS.has(r.kind)) return refuse(`A connected program never does "${r.kind}"`);
+  if (r.suspicious && r.kind !== "label") return refuse("The email looks like it is giving instructions to an AI, so it is only labelled");
+  if (level === "observe") return refuse("Observe changes nothing");
+  if ((r.todayCount ?? 0) >= CAP_PER_PROGRAM) return refuse(`Daily limit of ${CAP_PER_PROGRAM} for ${r.kind} reached`);
+  if (level === "suggest" && r.kind !== "label") return { verdict: "propose", reason: "Waiting for your approval" };
+  return { verdict: "do", reason: "A program you connected" };
 }
 
 // An approval is bound to the exact proposal the user saw: the hash covers the

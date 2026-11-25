@@ -102,6 +102,22 @@ export TABELLAR_PASSPHRASE='a passphrase you make up' && tabellar autostart on
 
 That starts Tabellar with the machine through systemd, with the passphrase in `~/.config/tabellar.env`, readable by you only. `tabellar serve` runs it in the foreground. On a Mac mini, `tabellar autostart on` and automatic login do the same with the Keychain.
 
+### Claude and other AI programs
+
+Tabellar is an MCP server, so an AI program you already use can read what Tabellar knows and prepare work in it: the Brief, search, conversations, people, todos, meetings, drafts, labels, automations. It has no tool that sends. Drafts, meetings and automations wait for you in Tabellar, at the level you set, and everything is in History. The program sees the mail it asks for, and so does the company behind it.
+
+```bash
+claude mcp add tabellar -- tabellar mcp
+```
+
+For the Claude desktop app, in its `claude_desktop_config.json`:
+
+```json
+{ "mcpServers": { "tabellar": { "command": "tabellar", "args": ["mcp"] } } }
+```
+
+Tabellar has to be running.
+
 ### Moving to another machine
 
 ```bash
@@ -197,6 +213,7 @@ server/
   notify.ts     notifications (macOS, Telegram)
   telegram.ts   your own Telegram bot: the Brief and its answers on your phone
   ask.ts        Ask, from the window and from Telegram
+  mcp.ts        the MCP server; mcpCalls.ts does what it is asked
   writing.ts    how you write, and the rules drafts keep to
   replies.ts    what a reply draft is written from, and what it may say
   choices.ts    the answers a draft leaves to you, shared by server and interface

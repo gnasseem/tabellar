@@ -42,7 +42,7 @@ const KINDS: { id: Kind; label: string }[] = [
   { id: "archive", label: "Archived" },
   { id: "unsubscribe", label: "Unsubscribes" },
 ];
-const SOURCE: Record<string, string> = { engine: "Tabellar, on its own", automation: "Your automation", agent: "A plan from Ask that you approved", assistant: "Ask, at your request", user: "You" };
+const SOURCE: Record<string, string> = { engine: "Tabellar, on its own", automation: "Your automation", mcp: "A program you connected", agent: "A plan from Ask that you approved", assistant: "Ask, at your request", user: "You" };
 
 // An Autopilot reply that has not gone out yet can still be cancelled.
 function pendingSend(r: LogRow): boolean {

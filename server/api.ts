@@ -60,6 +60,7 @@ import * as telegram from "./telegram.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./autostart.ts";
 import { brief, decisions, prepareBrief, proofShown } from "./brief.ts";
 import { applyLabel, labelsBySender, labelsForPrompt, suggestLabels, userLabels } from "./labels.ts";
+import { mcpCall } from "./mcpCalls.ts";
 import { runAgentStepParallel, answerPendingQuestion } from "./agentLoop.ts";
 import { executeAgentPlan } from "./agentExecute.ts";
 
@@ -990,6 +991,16 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       const { ids } = await req.json();
       if (!Array.isArray(ids) || !ids.length) return json({ error: "ids required" }, 400);
       return json({ discarded: await discardDrafts(userId, ids.map(String)) });
+    }
+
+    // A call from a program connected over MCP (mcp.ts).
+    if (path === "/mcp" && req.method === "POST") {
+      const { name, arguments: args } = await req.json();
+      try {
+        return json({ text: await mcpCall(userId, String(name ?? ""), args) });
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
     }
 
     // ── POST /chat ───────────────────────────────────────────────────────────

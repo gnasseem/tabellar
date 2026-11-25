@@ -39,7 +39,9 @@ type Row = Record<string, any>;
 // `next` is the line that goes on from here, when one answer was not all;
 // `queued` the scheduled_emails row it became.
 type Done = { said: string; undo?: () => Promise<unknown>; ms?: number; link?: string | null; next?: string; queued?: string; replan?: boolean };
-type Choice = { label: string; run: () => Promise<Done>; sends?: string };
+// `own` is the user's own to give, and not for a program to give for them:
+// what sends, invites, turns something on, or approves what a program proposed.
+type Choice = { label: string; run: () => Promise<Done>; sends?: string; own?: boolean };
 // What a line says beyond its one row (who a draft goes to and its text, the
 // sentence a meeting came from), and the answers it takes. `stamp` is the rest
 // of what the answers stand on.
@@ -54,17 +56,22 @@ function pickOf(key: string, line: Line, i: number): string {
   return `${i}.${createHash("sha256").update(JSON.stringify([key, line.to, line.shows, line.stamp ?? null, c.label, c.sends ?? ""])).digest("hex").slice(0, 12)}`;
 }
 
-// The answers of a line, or null when it no longer waits.
-export async function options(userId: string, key: string): Promise<Options | null> {
+const forUser = (c: Choice) => c.own || c.sends !== undefined;
+
+// The answers of a line, or null when it no longer waits. `program`: those a
+// connected program may give.
+export async function options(userId: string, key: string, { program = false } = {}): Promise<Options | null> {
   const line = await lineOf(userId, key);
-  return line && { to: line.to, shows: line.shows, options: line.choices.map((c, i) => ({ pick: pickOf(key, line, i), label: c.label, ...(c.sends === undefined ? {} : { sends: c.sends }) })) };
+  if (!line) return null;
+  const all = line.choices.map((c, i) => ({ c, o: { pick: pickOf(key, line, i), label: c.label, ...(c.sends === undefined ? {} : { sends: c.sends }) } }));
+  return { to: line.to, shows: line.shows, options: all.filter(({ c }) => !program || !forUser(c)).map(({ o }) => o) };
 }
 
 const busy = new Set<string>();
 const undos = new Map<string, { run: () => Promise<unknown>; until: number }>();
 
 export type Answered = { said: string; undo: string | null; ms: number | null; link: string | null; next: string | null; queued: string | null; replan: boolean };
-export async function answer(userId: string, key: string, pick: string): Promise<Answered> {
+export async function answer(userId: string, key: string, pick: string, { program = false } = {}): Promise<Answered> {
   if (busy.has(key)) throw said("That is being answered already");
   busy.add(key);
   try {
@@ -72,6 +79,7 @@ export async function answer(userId: string, key: string, pick: string): Promise
     if (!line) throw said("That was already answered");
     const i = line.choices.findIndex((_, n) => pickOf(key, line, n) === pick);
     if (i < 0) throw said("This changed after you saw it. Look again.");
+    if (program && forUser(line.choices[i])) throw said("That is the user's own to answer, in Tabellar", 403);
     const done = await line.choices[i].run();
     for (const [id, u] of undos) if (u.until < Date.now()) undos.delete(id);
     const id = done.undo ? randomUUID() : null;
@@ -173,6 +181,7 @@ async function proposal(userId: string, id: string): Promise<Line | null> {
   const { data: p } = await db.from("action_log").select("*").eq("id", id).eq("user_id", userId).eq("status", "proposed").maybeSingle();
   if (!p) return null;
   const d = (p.detail as Row | null) ?? {};
+  const program = p.source === "mcp" || p.kind === "vip";
   const yes = () => approve(userId, id, String(p.hash ?? ""));
   // Taken back, it waits again; what approving taught is forgotten.
   const reverse = async (change: () => Promise<unknown>) => {
@@ -228,11 +237,11 @@ async function proposal(userId: string, id: string): Promise<Line | null> {
       });
       return { said: "On your calendar", link: made!.link, undo: async () => (await made!.undo(), await back()) };
     };
-    return { to: "", shows: aboutMeeting(d), stamp: p.hash, choices: [{ label: "Add to calendar", run: add }, no] };
+    return { to: "", shows: aboutMeeting(d), stamp: p.hash, choices: [{ label: "Add to calendar", run: add, own: program }, no] };
   }
   const label = p.kind === "todo" ? "Add" : "Approve";
   const run = async (): Promise<Done> => ({ undo: await reverse(yes), said: p.kind === "todo" ? "Todo added" : String(p.summary) });
-  return { to: "", shows: p.kind === "todo" ? [d.quote ? `"${d.quote}"` : "", d.due ? `By ${d.due}` : ""].filter(Boolean).join("\n") : "", stamp: p.hash, choices: [{ label, run }, no] };
+  return { to: "", shows: p.kind === "todo" ? [d.quote ? `"${d.quote}"` : "", d.due ? `By ${d.due}` : ""].filter(Boolean).join("\n") : "", stamp: p.hash, choices: [{ label, run, own: program }, no] };
 }
 
 // ── Meetings, todos, questions ──────────────────────────────────────────────
@@ -250,6 +259,7 @@ async function meeting(userId: string, id: string): Promise<Line | null> {
     choices: [
       {
         label: "Add to calendar",
+        own: Array.isArray(m.attendees) && m.attendees.length > 0,
         run: async () => {
           const made = await confirmMeeting(userId, id);
           return { said: "On your calendar", link: made.link, undo: made.undo };
@@ -297,6 +307,7 @@ async function question(userId: string, id: string): Promise<Line | null> {
     shows: [q.text, q.detail].filter(Boolean).join("\n"),
     choices: ((q.options as QuestionOption[] | null) ?? []).map((o, i) => ({
       label: o.label,
+      own: !!o.automation,
       run: async () => {
         let replan: string | null = null;
         const undo = await reversible(db, userId, async () => ({ replan } = await answerQuestion(userId, id, i)));
@@ -452,6 +463,7 @@ async function automation(userId: string, id: string): Promise<Line | null> {
     choices: [
       {
         label: "Turn on",
+        own: true,
         run: async () => {
           await setEnabled(userId, id, true);
           return { said: "On from now on", undo: () => setEnabled(userId, id, false) };
@@ -485,7 +497,7 @@ async function proof(userId: string): Promise<Line | null> {
     shows: "",
     stamp: me.autonomy_level,
     choices: [
-      { label: "Autopilot for people I know", run: () => set("Autopilot is on, for people you know", { autonomy_level: "autopilot", autopilot_known_only: true }) },
+      { label: "Autopilot for people I know", own: true, run: () => set("Autopilot is on, for people you know", { autonomy_level: "autopilot", autopilot_known_only: true }) },
       { label: "No", run: () => set("Left as it is", {}) },
     ],
   };

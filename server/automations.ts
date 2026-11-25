@@ -304,7 +304,8 @@ export async function compile(userId: string, sentence: string, opts: { id?: str
   for (let i = 0; i < 2 && !spec; i++) {
     const raw = await models.read(text, { labels: known.labels.map((l) => l.display_name), accounts: known.accounts }, wrong);
     if (raw.rule && !addressesIn(text).length) {
-      if (!isRule(text)) throw fail("Say what should happen, and when.");
+      // A rule is at work at once, so a program cannot make one.
+      if (!isRule(text) || opts.source === "mcp") throw fail("Say what should happen, and when.");
       await setPref(userId, "rule", "", text, "user");
       return { rule: text };
     }

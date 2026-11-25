@@ -16,6 +16,8 @@
 //   tabellar move [file]   Write everything into one encrypted file and stop
 //                     here for good; `start <file>` or `serve <file>` goes on
 //                     from it elsewhere. `move back` if that place is gone
+//   tabellar mcp      What Tabellar knows and may do, for Claude and other AI
+//                     programs that start it themselves (it never sends)
 //   tabellar check    Safety checks, with planted-instruction emails
 
 import { createInterface } from "node:readline/promises";
@@ -430,9 +432,10 @@ try {
     await openWindow();
   } else if (command === "status") await status();
   else if (command === "autostart") await autostart();
+  else if (command === "mcp") await (await import("./mcp.ts")).serveMcp();
   else if (command === "check") check();
   else {
-    console.log("Usage: tabellar <setup|start|serve|open|status|autostart|move|check>");
+    console.log("Usage: tabellar <setup|start|serve|open|status|autostart|move|mcp|check>");
     process.exitCode = command === "help" ? 0 : 1;
   }
 } catch (e) {
