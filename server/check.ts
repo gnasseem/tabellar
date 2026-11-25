@@ -1193,6 +1193,8 @@ for (const n of ["INBOX", "Sent", "Drafts", "Archive"]) folder(n);
 const textOf = (raw: string) => Buffer.from(raw.split("\r\n\r\n")[1] ?? "", "base64").toString();
 const copiesOf = (mid: string) => [...store].flatMap(([n, f]) => f.msgs.filter((m) => m.raw.includes(`Message-ID: <${mid}>`)).map(() => n));
 const PASS = "abcd-efgh-ijkl-mnop";
+let asGmail = false; // the same server with Gmail's folders and labels
+const imapCaps = () => `IMAP4rev1 IDLE MOVE UIDPLUS${asGmail ? " X-GM-EXT-1" : ""}`;
 const imapServer = net.createServer((sock) => {
   let box = "";
   let buf = Buffer.alloc(0);
@@ -1203,7 +1205,7 @@ const imapServer = net.createServer((sock) => {
     return all.filter((u) => set.split(",").some((r) => { const [a, b] = r.split(":"); return b === undefined ? u === +a : u >= +a && (b === "*" || u <= +b); }));
   };
   const literal = (s: string) => `{${Buffer.byteLength(s)}}\r\n${s}`;
-  sock.write("* OK [CAPABILITY IMAP4rev1 IDLE MOVE UIDPLUS] ready\r\n");
+  sock.write(`* OK [CAPABILITY ${imapCaps()}] ready\r\n`);
   sock.on("data", (d: Buffer) => {
     buf = Buffer.concat([buf, d]);
     for (;;) {
@@ -1225,21 +1227,21 @@ const imapServer = net.createServer((sock) => {
       const arg = args.join(" ");
       const name = (arg.match(/^"([^"]*)"/)?.[1] ?? args[0] ?? "").replace(/"/g, "");
       const C = cmd?.toUpperCase();
-      if (C === "CAPABILITY") say("* CAPABILITY IMAP4rev1 IDLE MOVE UIDPLUS");
+      if (C === "CAPABILITY") say(`* CAPABILITY ${imapCaps()}`);
       if (C === "LOGIN") { if (arg.endsWith(`"${PASS}"`)) say(`${tag} OK logged in`); else say(`${tag} NO [AUTHENTICATIONFAILED] wrong password`); continue; }
-      if (C === "LIST") for (const n of store.keys()) say(`* LIST (${{ Sent: "\\Sent", Drafts: "\\Drafts", Archive: "\\Archive" }[n] ?? ""}) "/" "${n}"`);
+      if (C === "LIST") for (const n of store.keys()) say(`* LIST (${{ Sent: "\\Sent", Drafts: "\\Drafts", Archive: "\\Archive", "[Gmail]/All Mail": "\\All", "[Gmail]/Drafts": "\\Drafts", "[Gmail]/Sent Mail": "\\Sent", "[Gmail]/Trash": "\\Trash", "[Gmail]/Important": "\\Important" }[n] ?? ""}) "/" "${n}"`);
       if (C === "SELECT") { if (!store.has(name)) { say(`${tag} NO no such folder`); continue; } box = name; const f = folder(box); say(`* ${f.msgs.length} EXISTS`); say("* OK [UIDVALIDITY 7] ok"); say(`* OK [UIDNEXT ${f.next}] ok`); }
       if (C === "STATUS") { const f = folder(name); say(`* STATUS "${name}" (MESSAGES ${f.msgs.length} UIDNEXT ${f.next} UNSEEN ${f.msgs.filter((m) => !m.flags.has("\\Seen")).length})`); }
       if (C === "CREATE") folder(name);
       if (C === "IDLE") { idling.add(sock); say("+ idling"); continue; }
       if (C === "SEARCH") {
         const f = folder(box).msgs;
-        const id = arg.match(/^HEADER MESSAGE-ID "(.*)"$/i)?.[1];
+        const id = arg.match(/HEADER MESSAGE-ID "(.*?)"/i)?.[1];
         const q = id ? `Message-ID: <${id.replace(/[<>]/g, "")}` : arg.match(/^TO "(.*)"$/i)?.[1];
         const since = arg.match(/^SINCE (\S+)/i)?.[1];
         const type = arg.match(/^HEADER CONTENT-TYPE "(.*?)"/i)?.[1];
         const range = arg.match(/^UID (\S+)/i)?.[1];
-        const hits = range ? uidsIn(range) : f.filter((m) => (type ? m.raw.split("\r\n\r\n")[0].includes(type) : q ? m.raw.split("\r\n\r\n")[0].includes(q) : since ? m.date >= new Date(since) : true)).map((m) => m.uid);
+        const hits = range ? uidsIn(range) : f.filter((m) => (type ? m.raw.split("\r\n\r\n")[0].includes(type) : q ? m.raw.split("\r\n\r\n")[0].includes(q) : since ? m.date >= new Date(since) : true) && !(/UNDRAFT/.test(arg) && m.flags.has("\\Draft"))).map((m) => m.uid);
         say(`* SEARCH ${hits.join(" ")}`.trim());
       }
       if (C === "FETCH") {
@@ -1255,7 +1257,14 @@ const imapServer = net.createServer((sock) => {
       }
       if (C === "STORE") {
         const flags = arg.match(/\((.*)\)/)![1].split(" ");
-        for (const m of folder(box).msgs) if (uidsIn(args[0]).includes(m.uid)) for (const fl of flags) args[1].startsWith("+") ? m.flags.add(fl) : m.flags.delete(fl);
+        if (/X-GM-LABELS/.test(args[1])) {
+          for (const m of folder(box).msgs.filter((x) => uidsIn(args[0]).includes(x.uid))) for (const l of flags) {
+            const n = l === "\\Inbox" ? "INBOX" : l.replace(/"/g, "");
+            const has = folder(n).msgs.some((x) => x.raw === m.raw);
+            if (args[1].startsWith("+") && !has) put(n, m.raw, [...m.flags], m.date);
+            if (args[1].startsWith("-")) folder(n).msgs = folder(n).msgs.filter((x) => x.raw !== m.raw);
+          }
+        } else for (const m of folder(box).msgs) if (uidsIn(args[0]).includes(m.uid)) for (const fl of flags) args[1].startsWith("+") ? m.flags.add(fl) : m.flags.delete(fl);
       }
       if (C === "COPY" || C === "MOVE") {
         const to = arg.match(/"([^"]*)"$/)![1];
@@ -1533,6 +1542,46 @@ ok("a receipt that says the message was deleted unread marks nothing", () => {
 const found = await box.files!(imapAccount, { text: "", from: "" }, 10);
 ok("messages with attachments are found in the mailbox", () => assert.ok(found.includes("one@fake.example") && !found.includes("three@people.example")));
 await box.disconnect(imapAccount);
+
+asGmail = true;
+store.clear();
+for (const n of ["INBOX", "[Gmail]/All Mail", "[Gmail]/Drafts", "[Gmail]/Sent Mail", "[Gmail]/Trash", "[Gmail]/Important"]) folder(n);
+const gm = "Message-ID: <g1@people.example>\nFrom: Bo <bo@people.example>\nTo: me@gmail.example\nSubject: Lunch\n\nLunch?\n";
+for (const n of ["INBOX", "[Gmail]/All Mail", "[Gmail]/Important"]) put(n, gm);
+const gmSent = "Message-ID: <g2@gmail.example>\nFrom: me@gmail.example\nTo: bo@people.example\nSubject: Hi\n\nHello.\n";
+for (const n of ["[Gmail]/Sent Mail", "[Gmail]/All Mail"]) put(n, gmSent, ["\\Seen"]);
+put("[Gmail]/All Mail", "Message-ID: <g3@gmail.example>\nFrom: me@gmail.example\nTo: bo@people.example\nSubject: Half\n\nUnfinished.\n", ["\\Draft"]);
+const gmailUser = randomUUID();
+await db.from("profiles").insert({ id: gmailUser, email: "me@gmail.example", notification_level: "none" });
+const { data: gmailRow } = await db.from("accounts").insert({ user_id: gmailUser, provider: "imap", address: "me@gmail.example", token_ref: "imap:gm", server: linked.server, is_default: true }).select("*").single();
+const gmailAccount = gmailRow as unknown as import("./accounts.ts").Account;
+const gIds = await box.list(gmailAccount, { days: 90, cap: 100, inbox: false });
+const gRows = await box.headerRows(gmailAccount, gIds);
+ok("Gmail over IMAP: All Mail is the archive, without the drafts in it, and says what is in the Inbox and Sent", () => {
+  assert.deepEqual(Object.fromEntries(gRows.map((r) => [r.gmail_id, r.labels])), { "g1@people.example": ["INBOX", "UNREAD"], "g2@gmail.example": ["SENT"] });
+});
+await box.modify(gmailAccount, ["g1@people.example"], ["Tabellar/Work"], []);
+const gLabelled = copiesOf("g1@people.example").sort();
+const gNames = await box.labelNames(gmailAccount);
+await box.modify(gmailAccount, ["g1@people.example"], [], ["INBOX", "UNREAD"]);
+const gArchived = copiesOf("g1@people.example").sort();
+await box.modify(gmailAccount, ["g1@people.example"], ["INBOX"], ["Tabellar/Work"]);
+ok("labels, archiving and back are Gmail's own labels, and All Mail keeps the email", () => {
+  assert.deepEqual(gLabelled, ["INBOX", "Tabellar/Work", "[Gmail]/All Mail", "[Gmail]/Important"]);
+  assert.deepEqual(gNames, ["Tabellar", "Tabellar/Work"]);
+  assert.deepEqual(gArchived, ["Tabellar/Work", "[Gmail]/All Mail", "[Gmail]/Important"]);
+  assert.deepEqual(copiesOf("g1@people.example").sort(), ["INBOX", "[Gmail]/All Mail", "[Gmail]/Important"]);
+  assert.ok(folder("[Gmail]/All Mail").msgs[0].flags.has("\\Seen") && !store.has("Archive"));
+});
+const gDraft = await box.saveDraft(gmailAccount, null, { to: ["bo@people.example"], subject: "Later", html: "<p>Later.</p>" } as import("./providers.ts").Outgoing);
+await box.discardDraft(gmailAccount, gDraft);
+const gSent = await box.send(gmailAccount, { to: ["bo@people.example"], subject: "Yes", html: "<p>Yes.</p>" } as import("./providers.ts").Outgoing);
+ok("a discarded draft goes to Gmail's Trash, and what SMTP sent is not put in Sent twice", () => {
+  assert.equal(folder("[Gmail]/Drafts").msgs.length, 0);
+  assert.equal(folder("[Gmail]/Trash").msgs.length, 1);
+  assert.deepEqual(copiesOf(gSent.id), []);
+});
+await box.disconnect(gmailAccount);
 imapServer.close();
 smtpServer.close();
 for (const s of idling) s.destroy();

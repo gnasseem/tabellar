@@ -10,7 +10,7 @@ import { ErrorLine, ui } from "./ModelSetup";
 // servers before the account is kept.
 
 const HINTS: Record<string, string> = {
-  gmail: "Gmail, Workspace",
+  gmail: "With calendar",
   microsoft: "Microsoft 365",
   imap: "Any IMAP server",
 };

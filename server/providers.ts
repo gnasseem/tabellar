@@ -291,6 +291,26 @@ export const CHOICES: Choice[] = [
     imap: { host: "imap.mail.yahoo.com", port: 993 }, smtp: { host: "smtp.mail.yahoo.com", port: 465 },
     passwordUrl: "https://login.yahoo.com/account/security/app-passwords",
   },
+  {
+    id: "gmail-password", name: "Gmail", provider: "imap", calendar: false,
+    imap: { host: "imap.gmail.com", port: 993 }, smtp: { host: "smtp.gmail.com", port: 465 },
+    passwordUrl: "https://myaccount.google.com/apppasswords",
+  },
+  {
+    id: "aol", name: "AOL", provider: "imap", calendar: false,
+    imap: { host: "imap.aol.com", port: 993 }, smtp: { host: "smtp.aol.com", port: 465 },
+    passwordUrl: "https://login.aol.com/account/security/app-passwords",
+  },
+  {
+    id: "zoho", name: "Zoho", provider: "imap", calendar: false,
+    imap: { host: "imap.zoho.com", port: 993 }, smtp: { host: "smtp.zoho.com", port: 465 },
+    passwordUrl: "https://accounts.zoho.com/home#security/app_password",
+  },
+  {
+    id: "gmx", name: "GMX", provider: "imap", calendar: false,
+    imap: { host: "imap.gmx.com", port: 993 }, smtp: { host: "mail.gmx.com", port: 465 },
+    passwordUrl: "https://support.gmx.com/security/2fa/application-specific-passwords.html",
+  },
   { id: "imap", name: "Other", provider: "imap", calendar: false },
 ];
 

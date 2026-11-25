@@ -1,6 +1,6 @@
 # Tabellar
 
-A personal email agent that runs on your Mac. Tabellar keeps a local copy of your mail (Gmail, Outlook and Microsoft 365, iCloud, Fastmail, Yahoo, or any IMAP mailbox), sorts it into your own labels, drafts replies in your style, pulls out todos and meetings, tracks mail that got no answer, answers questions about your inbox, and can plan and carry out a whole inbox cleanup that you approve. It keeps working in the background with the window closed, within limits you set.
+A personal email agent that runs on your Mac. Tabellar keeps a local copy of your mail (Gmail, Outlook and Microsoft 365, iCloud, Fastmail, Yahoo, AOL, Zoho, GMX, or any IMAP mailbox), sorts it into your own labels, drafts replies in your style, pulls out todos and meetings, tracks mail that got no answer, answers questions about your inbox, and can plan and carry out a whole inbox cleanup that you approve. It keeps working in the background with the window closed, within limits you set.
 
 There is no hosted service and no sign-up. Your mail is stored in one SQLite file on your Mac. The AI runs either on your Mac through Ollama, free and private, or with a cloud provider of your choice on your own API key. The only outside calls are to your mail provider for your mail and calendar, to the cloud provider if you pick one, and to Telegram if you connect a bot. The [privacy policy](https://gnasseem.github.io/tabellar/privacy.html) says this in full.
 
@@ -35,7 +35,7 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 
 - macOS, or Linux for [a server of your own](#on-a-server)
 - Node.js 24 or newer
-- A mailbox: Google (Gmail), Outlook or Microsoft 365 (after registering a free app, below), or iCloud, Fastmail, Yahoo or any IMAP and SMTP server with an app password
+- A mailbox: Google (Gmail), Outlook or Microsoft 365 (after registering a free app, below), or iCloud, Fastmail, Yahoo, AOL, Zoho, GMX, Gmail or any IMAP and SMTP server with an app password
 - For cloud AI, an API key from OpenRouter, Anthropic, OpenAI, Google Gemini, Groq, Mistral, DeepSeek, xAI, Together, Cerebras, or any OpenAI-compatible endpoint. Local AI needs nothing extra: Tabellar installs [Ollama](https://ollama.com) for you.
 
 ## Install
@@ -143,27 +143,30 @@ docker run -it --rm --network host --env-file ~/tabellar.env -v tabellar:/data t
 
 When it says it is running, press Ctrl-C and use the `docker run -d` line above. To move out of a container, `docker stop tabellar`, then run `tabellar move /data/out.move` in the same way. If the new place is gone for good, `tabellar move back` opens the old one again.
 
-### iCloud, Fastmail, Yahoo and other IMAP mailboxes
+### iCloud, Fastmail, Yahoo, Gmail and other mailboxes with an app password
 
 These sign in with an app password, a password made for one app that you can revoke on its own:
 
 - **iCloud**: at [account.apple.com](https://account.apple.com), Sign-In and Security, App-Specific Passwords, add one named Tabellar. Your Apple Account needs two-factor authentication.
 - **Fastmail**: Settings, Privacy & Security, Manage app passwords, New app password, with access to IMAP and SMTP.
-- **Yahoo**: Account Security, Generate app password.
+- **Yahoo**, **AOL**: Account Security, Generate app password.
+- **Gmail** without Google's sign-in: turn on 2-Step Verification, then make one at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords). For personal accounts; work and school accounts, and those with Advanced Protection, usually cannot make one. Google ends it when you change your Google password. All Mail has to be shown in IMAP (Gmail's settings, Labels).
+- **Zoho**: My Account, Security, App Passwords. The tile is for personal accounts at zoho.com. For a business address or another region choose Other with your servers (imappro.zoho.com and smtppro.zoho.com, or the same at zoho.eu, zoho.in).
+- **GMX**: turn on IMAP in the mail settings; an application-specific password if you use two-factor. Addresses at gmx.net, gmx.de, gmx.at or gmx.ch: Other, with imap.gmx.net (993) and mail.gmx.net (465).
 - **Other**: your provider's IMAP and SMTP servers and ports (usually 993 and 465 or 587), and the password it gives mail apps.
 
-Tabellar signs in to both servers to check the password before it keeps the account; nothing is sent. Folders are labels: a label is a copy in a `Tabellar/...` folder, archiving moves mail to Archive, and taking a label off never deletes the last copy of an email. These mailboxes have no calendar; meetings go on the calendar of a Google or Outlook account when you have one.
+Tabellar signs in to both servers to check the password before it keeps the account; nothing is sent. Folders are labels: a label is a copy in a `Tabellar/...` folder, archiving moves mail to Archive, and taking a label off never deletes the last copy of an email. In Gmail they are Gmail's own labels, and its archive is All Mail. These mailboxes have no calendar; meetings go on the calendar of a Google or Outlook account when you have one.
 
 ### Outlook and Microsoft 365
 
 Microsoft only lets an app sign in once it is registered, which is free and takes about ten minutes, once:
 
-1. Sign in to [portal.azure.com](https://portal.azure.com) with any Microsoft account (a work account needs permission to register apps), open **App registrations** and choose **New registration**.
-2. Name it Tabellar. Under **Supported account types**, choose **Accounts in any organizational directory and personal Microsoft accounts**.
+1. Microsoft keeps app registrations in a directory. A work account has one, and needs permission to register apps in it. A personal Microsoft account gets one with a [free Azure account](https://azure.microsoft.com/free) (a phone and a card to prove it is you; nothing is charged). Then sign in to [entra.microsoft.com](https://entra.microsoft.com), open **App registrations** and choose **New registration**.
+2. Name it Tabellar. Under **Supported account types**, choose **Any Entra ID Tenant + Personal Microsoft accounts**.
 3. Under **Redirect URI**, choose the platform **Public client/native (mobile & desktop)** and enter `http://localhost:4848/oauth/callback` (with your own port if you changed it). Register.
 4. On the app's **Overview** page, copy the **Application (client) ID**. There is no secret to make.
 5. Under **API permissions**, **Add a permission**, **Microsoft Graph**, **Delegated permissions**, add `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `MailboxSettings.Read`, `User.Read` and `offline_access`.
-6. In Tabellar, choose Outlook when adding a mailbox, paste the ID and save (or run `tabellar setup microsoft`), then **Sign in with Microsoft**.
+6. In Tabellar, choose Outlook when adding a mailbox, paste the ID and save (or run `tabellar setup microsoft`), then **Sign in with Microsoft**. Many organisations let only their administrator approve an app that reads mail; personal Outlook accounts do not need that.
 
 Tabellar then reads Outlook mail and the Outlook calendar through Microsoft Graph, with delta queries for what changed; labels are Outlook categories.
 

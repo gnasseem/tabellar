@@ -1,5 +1,5 @@
-// IMAP and SMTP, for iCloud, Fastmail, Yahoo and any other mailbox that
-// takes an app password, on node:tls with no dependency. imapMailbox is the
+// IMAP and SMTP, for iCloud, Fastmail, Yahoo, Gmail without Google's sign-in
+// and any other mailbox that takes an app password, on node:tls with no dependency. imapMailbox is the
 // "imap" mailbox in providers.ts.
 //
 // The app password is among the secrets (accounts.token_ref names the item);
@@ -15,6 +15,9 @@
 //   the Inbox or Archive; the last copy is moved to Archive instead. Nothing
 //   else is ever deleted, apart from the older version of a draft Tabellar
 //   saved itself when it saves a newer one.
+// - Gmail (X-GM-EXT-1) has real labels: they, and the Inbox, are put on and
+//   taken off in All Mail, which is its Archive, and no copy is deleted. A
+//   draft Tabellar saved goes to Trash. Gmail keeps what SMTP sent itself.
 // - There is no change history: a sync compares the Inbox of the last 31
 //   days with what is stored. IDLE tells the engine at once when the Inbox
 //   changes, and a STATUS every few seconds catches the rest.
@@ -421,14 +424,14 @@ function session<T>(a: Box, fn: (c: Conn) => Promise<T>): Promise<T> {
 
 // `prefix` is what the server puts before every folder of the user's, such as
 // "INBOX." where all folders sit under the Inbox.
-type Folders = { delim: string; prefix: string; names: string[]; sent: string; drafts: string; archive: string | null; special: Set<string> };
+type Folders = { delim: string; prefix: string; names: string[]; sent: string; drafts: string; trash: string; archive: string | null; special: Set<string>; gmail: boolean };
 const folderCache = new Map<string, Folders>();
 
 async function folders(c: Conn, a: Box, fresh = false): Promise<Folders> {
   const cached = folderCache.get(a.id);
   if (cached && !fresh) return cached;
   const rows = await c.cmd('LIST "" "*"');
-  const f: Folders = { delim: "/", prefix: "", names: [], sent: "", drafts: "", archive: null, special: new Set(["INBOX"]) };
+  const f: Folders = { delim: "/", prefix: "", names: [], sent: "", drafts: "", trash: "", archive: null, special: new Set(["INBOX"]), gmail: c.caps.has("X-GM-EXT-1") };
   const byName = (re: RegExp) => f.names.find((n) => re.test(n.slice(n.startsWith(f.prefix) ? f.prefix.length : 0))) ?? "";
   for (const r of rows) {
     if (str(r[1]).toUpperCase() !== "LIST") continue;
@@ -439,18 +442,24 @@ async function folders(c: Conn, a: Box, fresh = false): Promise<Folders> {
     f.names.push(name);
     if (attrs.includes("\\sent")) f.sent = name;
     if (attrs.includes("\\drafts")) f.drafts = name;
-    if (attrs.includes("\\archive")) f.archive = name;
-    if (attrs.some((x) => ["\\sent", "\\drafts", "\\archive", "\\trash", "\\junk", "\\all", "\\flagged"].includes(x))) f.special.add(name);
+    if (attrs.includes("\\trash")) f.trash = name;
+    if (attrs.includes(f.gmail ? "\\all" : "\\archive")) f.archive = name;
+    if (attrs.some((x) => ["\\sent", "\\drafts", "\\archive", "\\trash", "\\junk", "\\all", "\\flagged", "\\important"].includes(x))) f.special.add(name);
   }
   const under = f.names.filter((n) => n.toUpperCase() !== "INBOX");
   if (under.length && under.every((n) => n.toUpperCase().startsWith(`INBOX${f.delim}`))) f.prefix = under[0].slice(0, 5 + f.delim.length);
   f.sent ||= byName(/^(sent|sent messages|sent items|sent mail)$/i) || `${f.prefix}Sent`;
   f.drafts ||= byName(/^drafts?$/i) || `${f.prefix}Drafts`;
+  if (f.gmail && !f.archive) throw new Error("Gmail hides All Mail from mail programs. In Gmail's settings, under Labels, tick Show in IMAP for All Mail.");
   f.archive ??= byName(/^(archive|archives)$/i) || null;
   for (const n of [f.sent, f.drafts, f.archive ?? "", ...f.names.filter((n) => /^(inbox[./])?(trash|deleted messages|deleted items|junk|spam|bulk mail)$/i.test(n))]) if (n) f.special.add(n);
   folderCache.set(a.id, f);
   return f;
 }
+
+// Where mail is, the most telling place first: in Gmail what is in the Inbox
+// or Sent is in All Mail too.
+const mailFolders = (f: Folders) => ["INBOX", f.sent, ...(f.archive ? [f.archive] : [])];
 
 // A label's folder: "Tabellar/Work" with the server's separator.
 const folderOf = (f: Folders, label: string) => f.prefix + label.split("/").join(f.delim);
@@ -543,6 +552,9 @@ async function readHeads(c: Conn, a: Box, folder: string, uids: number[]): Promi
   return out;
 }
 
+// Gmail's search does not promise to find part of a header, so it is asked its own way too.
+const byId = (c: Conn, id: string) => c.search(c.caps.has("X-GM-EXT-1") ? `OR HEADER MESSAGE-ID ${quote(`<${id}>`)} X-GM-RAW ${quote(`rfc822msgid:${id}`)}` : `HEADER MESSAGE-ID ${quote(id)}`);
+
 // Find messages by id in these folders (the Inbox and Archive by default):
 // where they were last seen, else by searching for their Message-ID.
 async function locate(c: Conn, a: Box, ids: string[], inFolders?: string[]): Promise<Map<string, { folder: string; uid: number }>> {
@@ -561,7 +573,7 @@ async function locate(c: Conn, a: Box, ids: string[], inFolders?: string[]): Pro
     await c.select(folder);
     for (const id of [...missing]) {
       const byUid = /^uid:\d+:(\d+):(.*)$/.exec(id);
-      const uid = byUid ? (byUid[2] === folder ? Number(byUid[1]) : 0) : (await c.search(`HEADER MESSAGE-ID ${quote(id)}`))[0];
+      const uid = byUid ? (byUid[2] === folder ? Number(byUid[1]) : 0) : (await byId(c, id))[0];
       if (!uid) continue;
       out.set(id, { folder, uid });
       placeOf(a).set(id, { folder, uid });
@@ -615,8 +627,8 @@ function emailOf(f: Folders, folder: string, id: string, x: Fetched): EmailData 
 async function fetchFull(c: Conn, a: Box, ids: string[]): Promise<{ id: string; folder: string; x: Fetched }[]> {
   const f = await folders(c, a);
   const out: { id: string; folder: string; x: Fetched }[] = [];
-  const all = [f.sent, ...f.names.filter((n) => !f.special.has(n))];
-  let places = await locate(c, a, ids, ["INBOX", ...(f.archive ? [f.archive] : []), ...all]);
+  const all = [...mailFolders(f), ...f.names.filter((n) => !f.special.has(n))];
+  let places = await locate(c, a, ids, all);
   for (let round = 0; round < 2; round++) {
     const gone: string[] = [];
     for (const [folder, uids] of byFolder(places)) {
@@ -632,7 +644,7 @@ async function fetchFull(c: Conn, a: Box, ids: string[]): Promise<{ id: string; 
     // Moved since it was last seen: look again.
     if (!gone.length) break;
     for (const id of gone) placeOf(a).delete(id);
-    places = await locate(c, a, gone, ["INBOX", ...(f.archive ? [f.archive] : []), ...all]);
+    places = await locate(c, a, gone, all);
   }
   return out;
 }
@@ -782,7 +794,9 @@ async function draftRemove(c: Conn, a: Box, draftId: string) {
   const f = await folders(c, a);
   if (!f.names.includes(f.drafts)) return;
   await c.select(f.drafts);
-  await removeUids(c, await c.search(`HEADER MESSAGE-ID ${quote(draftId)}`));
+  const uids = await byId(c, draftId);
+  if (f.gmail && f.trash) await move(c, uids, f.trash);
+  else await removeUids(c, uids);
 }
 
 const bare = (id: string) => id.replace(/^<|>$/g, "");
@@ -860,11 +874,12 @@ export const imapMailbox: Mail = {
   list: (a, q) =>
     session(a, async (c) => {
       const f = await folders(c, a);
-      const look = q.inbox ? ["INBOX"] : ["INBOX", ...(f.archive ? [f.archive] : []), f.sent].filter((n) => n === "INBOX" || f.names.includes(n));
+      const look = q.inbox ? ["INBOX"] : mailFolders(f).reverse().filter((n) => n === "INBOX" || f.names.includes(n));
       const rows: HeaderRow[] = [];
       for (const folder of look) {
         await c.select(folder);
-        const uids = await c.search(q.days ? `SINCE ${searchDate(Date.now() - q.days * DAY)}` : "ALL");
+        // Gmail's All Mail has the drafts in it.
+        const uids = await c.search(`${q.days ? `SINCE ${searchDate(Date.now() - q.days * DAY)}` : "ALL"}${f.gmail && folder === f.archive ? " UNDRAFT" : ""}`);
         rows.push(...(await readHeads(c, a, folder, uids.slice(-q.cap))).map((p) => p.row));
       }
       const ids = [...new Set(rows.sort((x, y) => y.at.localeCompare(x.at)).map((r) => r.gmail_id))];
@@ -892,7 +907,7 @@ export const imapMailbox: Mail = {
       const missing = ids.filter((id) => !known.has(id));
       if (missing.length) {
         const f = await folders(c, a);
-        for (const [folder, uids] of byFolder(await locate(c, a, missing, ["INBOX", ...(f.archive ? [f.archive] : []), f.sent]))) await readHeads(c, a, folder, uids);
+        for (const [folder, uids] of byFolder(await locate(c, a, missing, mailFolders(f)))) await readHeads(c, a, folder, uids);
       }
       return ids.map((id) => known.get(id)).filter((r): r is HeaderRow => !!r);
     }),
@@ -928,7 +943,7 @@ export const imapMailbox: Mail = {
   headers: (a, id, names) =>
     session(a, async (c) => {
       const f = await folders(c, a);
-      const p = (await locate(c, a, [id], ["INBOX", ...(f.archive ? [f.archive] : []), f.sent])).get(id);
+      const p = (await locate(c, a, [id], mailFolders(f))).get(id);
       if (!p) throw new Error("The message is no longer in the mailbox");
       await c.select(p.folder);
       const [x] = await c.fetch([p.uid], `BODY.PEEK[HEADER.FIELDS (${names.map((n) => n.toUpperCase()).join(" ")})]`);
@@ -943,9 +958,10 @@ export const imapMailbox: Mail = {
     // Keep a copy in Sent, unless the server already put one there.
     await session(a, async (c) => {
       const f = await folders(c, a);
+      if (f.gmail) return;
       if (!f.names.includes(f.sent)) await makeFolder(c, a, f.sent);
       await c.select(f.sent);
-      if (!(await c.search(`HEADER MESSAGE-ID ${quote(id)}`)).length) await append(c, f.sent, "\\Seen", text);
+      if (!(await byId(c, id)).length) await append(c, f.sent, "\\Seen", text);
     }).catch((e) => console.error(`[imap] keeping a copy in Sent for ${a.address}:`, (e as Error).message));
     return { id };
   },
@@ -969,7 +985,7 @@ export const imapMailbox: Mail = {
       const f = await folders(c, a);
       if (!f.names.includes(f.drafts)) return null;
       await c.select(f.drafts);
-      const uid = (await c.search(`HEADER MESSAGE-ID ${quote(bare(draftId))}`)).at(-1);
+      const uid = (await byId(c, bare(draftId))).at(-1);
       const [x] = uid ? await c.fetch([uid], "BODY.PEEK[]") : [];
       if (!x?.body) return null;
       const r = readMessage(x.body);
@@ -1014,9 +1030,19 @@ export const imapMailbox: Mail = {
     session(a, async (c) => {
       const f = await folders(c, a);
       const system = new Set(["INBOX", "UNREAD", "STARRED"]);
-      const places = await locate(c, a, ids);
+      const places = await locate(c, a, ids, f.gmail ? [f.archive!] : undefined);
       const flag = (list: string[], label: string, imapFlag: string, on: boolean) => (list.includes(label) ? [`${on ? "+" : "-"}FLAGS.SILENT (${imapFlag})`] : []);
       const stores = [...flag(add, "UNREAD", "\\Seen", false), ...flag(remove, "UNREAD", "\\Seen", true), ...flag(add, "STARRED", "\\Flagged", true), ...flag(remove, "STARRED", "\\Flagged", false)];
+      if (f.gmail) {
+        const named = (list: string[]) => list.filter((l) => l !== "UNREAD" && l !== "STARRED").map((l) => (l === "INBOX" ? "\\Inbox" : quote(toImapName(folderOf(f, l))))).join(" ");
+        for (const l of add) if (!system.has(l) && !f.names.includes(folderOf(f, l))) await makeFolder(c, a, folderOf(f, l));
+        if (named(add)) stores.push(`+X-GM-LABELS (${named(add)})`);
+        if (named(remove)) stores.push(`-X-GM-LABELS (${named(remove)})`);
+        await c.select(f.archive!);
+        const uids = [...places.values()].map((p) => p.uid).join(",");
+        if (uids) for (const s of stores) await c.cmd(`UID STORE ${uids} ${s}`);
+        return;
+      }
       for (const [folder, uids] of byFolder(places)) {
         await c.select(folder);
         for (const s of stores) await c.cmd(`UID STORE ${uids.join(",")} ${s}`);
@@ -1034,7 +1060,7 @@ export const imapMailbox: Mail = {
       if (labelsOff.length) {
         for (const folder of ["INBOX", ...(f.archive ? [f.archive] : [])]) {
           await c.select(folder);
-          for (const id of ids) if ((await c.search(`HEADER MESSAGE-ID ${quote(id)}`)).length) elsewhere.add(id);
+          for (const id of ids) if ((await byId(c, id)).length) elsewhere.add(id);
         }
       }
       for (const label of labelsOff) {
@@ -1043,7 +1069,7 @@ export const imapMailbox: Mail = {
         const drop: number[] = [];
         const keep: number[] = [];
         for (const id of ids) {
-          for (const uid of await c.search(`HEADER MESSAGE-ID ${quote(id)}`)) (elsewhere.has(id) ? drop : keep).push(uid);
+          for (const uid of await byId(c, id)) (elsewhere.has(id) ? drop : keep).push(uid);
         }
         await removeUids(c, drop);
         if (keep.length) await move(c, keep, await archiveFolder(c, a));
@@ -1085,13 +1111,13 @@ export const imapMailbox: Mail = {
       if (!/^[\x20-\x7e]*$/.test(q.text + q.from)) return [];
       const f = await folders(c, a);
       const found: HeaderRow[] = [];
-      for (const folder of ["INBOX", ...(f.archive ? [f.archive] : []), f.sent].filter((n) => n === "INBOX" || f.names.includes(n))) {
+      for (const folder of mailFolders(f).reverse().filter((n) => n === "INBOX" || f.names.includes(n))) {
         await c.select(folder);
         const words = quote(q.text);
-        const uids = await c.search(`HEADER CONTENT-TYPE "multipart/mixed"${q.from ? ` FROM ${quote(q.from)}` : ""}${q.text ? ` OR OR FROM ${words} TO ${words} OR SUBJECT ${words} BODY ${words}` : ""}`);
+        const uids = await c.search(f.gmail ? `X-GM-RAW ${quote(`has:attachment ${q.from ? `from:(${q.from}) ` : ""}${q.text}`.trim())}` : `HEADER CONTENT-TYPE "multipart/mixed"${q.from ? ` FROM ${quote(q.from)}` : ""}${q.text ? ` OR OR FROM ${words} TO ${words} OR SUBJECT ${words} BODY ${words}` : ""}`);
         found.push(...(await readHeads(c, a, folder, uids.slice(-cap))).map((p) => p.row));
       }
-      return found.sort((x, y) => y.at.localeCompare(x.at)).map((r) => r.gmail_id).slice(0, cap);
+      return [...new Set(found.sort((x, y) => y.at.localeCompare(x.at)).map((r) => r.gmail_id))].slice(0, cap);
     }),
 
   attachment: (a, id, attachmentId) =>
