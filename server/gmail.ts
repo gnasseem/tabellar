@@ -1064,6 +1064,9 @@ const googleCalendar: Calendar = {
     const ev = await calendarRequest(a.token_ref, `/calendars/primary/events/${encodeURIComponent(id)}?sendUpdates=${invite ? "all" : "none"}`, { method: "PATCH", body: JSON.stringify(gEvent(e)) });
     return { id: ev.id as string, link: (ev.htmlLink as string) ?? null };
   },
+  async cancel(a, id, invite) {
+    await calendarRequest(a.token_ref, `/calendars/primary/events/${encodeURIComponent(id)}?sendUpdates=${invite ? "all" : "none"}`, { method: "PATCH", body: JSON.stringify({ status: "cancelled" }) });
+  },
   find: (a, q) => findCalendarEvent(a.token_ref, q),
 };
 

@@ -310,6 +310,8 @@ async function status() {
       const e = (await (await fetch(`${baseUrl()}/api/engine/status`, { headers })).json()) as { level: string; paused: boolean; lastCycleAt: string | null; lastError: string | null };
       const last = e.lastCycleAt ? `last checked mail ${new Date(e.lastCycleAt).toLocaleTimeString()}` : "has not checked mail yet";
       console.log(`Engine:   ${e.paused ? "paused" : e.level}, ${last}${e.lastError ? ` (error: ${e.lastError})` : ""}`);
+      const d = (await (await fetch(`${baseUrl()}/api/briefing/decisions`, { headers })).json()) as { asked: number; mail: number; per100: number | null };
+      console.log(`Asked:    ${d.mail ? `${d.per100} decisions per 100 emails in the last 7 days (${d.asked} on ${d.mail})` : "no mail in the last 7 days"}`);
     }
   }
 }

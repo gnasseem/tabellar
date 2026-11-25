@@ -208,7 +208,7 @@ export default function RepliesView() {
   };
 
   // Sending goes through the outbox with a short window, so a slip can be
-  // taken back; the draft is restored if it is.
+  // taken back; the draft is there again if it is.
   const send = async (list: Reply[], at?: string) => {
     list = list.filter((r) => !r.going);
     const asked = [...list];
@@ -220,27 +220,18 @@ export default function RepliesView() {
     const gap = list.map((r) => answered(r).text.match(GAP)?.[0]).find(Boolean);
     if (gap) return addToast("error", `"${gap}" is still to be filled in. Open the reply with Edit.`);
     setSending(true);
-    const sendAt = at || new Date(Date.now() + 15_000).toISOString();
-    const queued: string[] = [];
+    let queued: string[] = [];
     try {
+      const drafts: { id: string; html?: string }[] = [];
       for (const [i, shownReply] of list.entries()) {
-        const kept = (list[i] = await approved(shownReply));
-        const r = { ...kept, html: choicesOf(shownReply.text).length ? answered(shownReply).html : kept.html };
-        const { account, from } = sender(r);
-        if (!account) throw new Error("No mailbox is connected");
-        // A draft that is also in Gmail's Drafts is sent from there.
-        const gmailDraftId = r.raw.gmail_draft_id && r.raw.account_id === account.id ? r.raw.gmail_draft_id : null;
-        const { data, error } = await supabase
-          .from("scheduled_emails")
-          .insert({ user_id: user.id, account_id: account.id, from_address: from, gmail_draft_id: gmailDraftId, to_addresses: r.to, cc_addresses: r.raw.cc_addresses?.length ? r.raw.cc_addresses : null, bcc_addresses: r.raw.bcc_addresses?.length ? r.raw.bcc_addresses : null, subject: r.subject, body_html: r.html, in_reply_to: r.source?.gmail_id, thread_id: r.source?.thread_id, send_at: sendAt, email_id: r.source?.id, forward: r.raw.forward ?? null, read_receipt: !!r.raw.read_receipt })
-          .select("id")
-          .single();
-        if (error || !data?.id) throw new Error(error?.message || "Could not queue the reply");
-        queued.push(data.id);
-        await supabase.from("draft_emails").delete().eq("id", r.id);
+        list[i] = await approved(shownReply);
+        drafts.push({ id: list[i].id, html: choicesOf(shownReply.text).length ? answered(shownReply).html : undefined });
       }
+      const r = (await api("/drafts/send", { drafts, at })) as { queued: string[]; error?: string };
+      queued = r.queued;
+      if (r.error) addToast("error", `${r.error} ${queued.length} queued, the rest are still drafts.`);
     } catch (e) {
-      addToast("error", `${(e as Error).message}. ${queued.length ? `${queued.length} queued, the rest are still drafts.` : "Nothing was sent."}`);
+      addToast("error", `${(e as Error).message}. Nothing was sent.`.replace("..", "."));
     }
     const done = list.slice(0, queued.length);
     setSending(false);
@@ -255,14 +246,11 @@ export default function RepliesView() {
     await load();
     if (!done.length) return;
     const undo = async () => {
-      const { data } = await supabase.from("scheduled_emails").update({ status: "cancelled" }).in("id", queued).eq("status", "pending").select("id");
-      const stopped = new Set(((data || []) as any[]).map((x) => x.id));
-      const back = done.filter((_, i) => stopped.has(queued[i]));
-      for (const r of back) await supabase.from("draft_emails").insert(restore(r));
+      const { stopped } = (await api("/drafts/unsend", { ids: queued })) as { stopped: string[] };
       notifyDraftChange();
       mail.reload();
       await load();
-      addToast(back.length ? "success" : "info", back.length === done.length ? "Not sent. Back in Replies." : back.length ? `${back.length} stopped, the rest had already gone.` : "Too late, already sent.");
+      addToast(stopped.length ? "success" : "info", stopped.length === done.length ? "Not sent. Back in Replies." : stopped.length ? `${stopped.length} stopped, the rest had already gone.` : "Too late, already sent.");
     };
     const who = done.length === 1 ? `to ${recipient(done[0])}` : `${done.length} replies`;
     if (at) addToast("success", `Scheduled ${who} for ${new Date(at).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`, { action: { label: "Undo", onClick: undo } });

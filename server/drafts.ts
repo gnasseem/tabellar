@@ -18,11 +18,12 @@
 
 import { db } from "./db.ts";
 import { mail, type DraftStub } from "./providers.ts";
-import { accountById, defaultAccount, fromLine, listAccounts, type Account } from "./accounts.ts";
+import { accountById, addressesOf, defaultAccount, defaultFrom, fromLine, listAccounts, replyFrom, type Account } from "./accounts.ts";
 import { messageIdOf, withForward, type Forward } from "./forward.ts";
-import { choicesOf } from "./choices.ts";
+import { choicesOf, choose, sharedText } from "./choices.ts";
 import { escapeHtml, htmlToText } from "./mime.ts";
-import { decide } from "./policy.ts";
+import { decide, GAP } from "./policy.ts";
+import { BY_PLAN, MOVED_ON, PASSED } from "./profile.ts";
 import { addressesIn } from "./senders.ts";
 import { serial } from "./sync.ts";
 import { displayNameOf, learnFromEdit, ownWords } from "./writing.ts";
@@ -216,6 +217,98 @@ async function pickUp(row: Row, account: Account, stub: DraftStub): Promise<bool
     })
     .eq("id", row.id);
   return true;
+}
+
+// ── Sending one ─────────────────────────────────────────────────────────────
+
+// How long a send waits in the outbox, so a slip can be taken back.
+export const UNDO_SEND_MS = 15_000;
+
+// Why a draft cannot go out as it is, or null.
+export function unsendable(to: string[] | null, text: string): string | null {
+  if (!list(to).length) return "It has no recipient. Open it to add one.";
+  if (choicesOf(text).length) return "Choose an answer first.";
+  const gap = sharedText(text).match(GAP)?.[0];
+  return gap ? `"${gap}" is still to be filled in. Open it to write it.` : null;
+}
+
+// Into the outbox, due after the undo window (or `at`). `html` is the text
+// with an answer chosen. The draft goes with it, and comes back if it is undone.
+export async function queueDraft(userId: string, id: string, opts: { html?: string; at?: string } = {}): Promise<{ id: string; to: string[] }> {
+  const { data } = await db.from("draft_emails").select("*, emails(gmail_id, thread_id, account_id, recipients, cc_recipients)").eq("id", id).eq("user_id", userId).maybeSingle();
+  if (!data) throw Object.assign(new Error("That draft was already sent or discarded"), { status: 409 });
+  const { emails: e, ...row } = data as Record<string, any>;
+  const html = opts.html ?? String(row.body_html ?? "");
+  const why = unsendable(row.to_addresses, htmlToText(html));
+  if (why) throw Object.assign(new Error(why), { status: 409 });
+  const account = (await accountById(userId, row.account_id ?? e?.account_id)) ?? (await defaultAccount(userId));
+  if (!account) throw Object.assign(new Error("No mailbox is connected"), { status: 400 });
+  const from = addressesOf(account).find((s) => s.address === row.from_address)?.address ?? (e ? replyFrom(account, e) : defaultFrom(account));
+  const { data: queued, error } = await db
+    .from("scheduled_emails")
+    .insert({
+      user_id: userId, account_id: account.id, from_address: from, to_addresses: row.to_addresses, cc_addresses: list(row.cc_addresses).length ? row.cc_addresses : null, bcc_addresses: list(row.bcc_addresses).length ? row.bcc_addresses : null,
+      // A draft that is also in the mailbox's Drafts is sent from there.
+      gmail_draft_id: row.account_id === account.id ? row.gmail_draft_id : null,
+      subject: row.subject ?? "", body_html: html, in_reply_to: e?.gmail_id ?? null, thread_id: e?.thread_id ?? null,
+      send_at: opts.at ?? new Date(Date.now() + UNDO_SEND_MS).toISOString(), email_id: row.email_id, forward: row.forward, read_receipt: !!row.read_receipt, draft: row,
+    })
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+  // Gone meanwhile (sent from another window, or the phone): it is not sent twice.
+  const gone = await db.from("draft_emails").delete().eq("id", id).select("id");
+  if (!gone.data?.length) {
+    await db.from("scheduled_emails").delete().eq("id", queued.id);
+    throw Object.assign(new Error("That draft was already sent or discarded"), { status: 409 });
+  }
+  return { id: queued.id as string, to: list(row.to_addresses) };
+}
+
+// Taken back before they went out: each is a draft again, as it was. Returns
+// the ones that were stopped.
+export async function unqueue(userId: string, ids: string[]): Promise<string[]> {
+  const { data } = await db.from("scheduled_emails").update({ status: "cancelled", error_message: "Cancelled" }).eq("user_id", userId).in("id", ids).eq("status", "pending").select("id, draft");
+  for (const r of data ?? []) if (r.draft) await db.from("draft_emails").insert(r.draft as Record<string, unknown>);
+  return (data ?? []).map((r) => String(r.id));
+}
+
+// What became of the drafts Tabellar wrote in the last 30 days: how many the
+// user decided on, and how many of those went out word for word.
+const KEPT_MS = 30 * 24 * 3600_000;
+export async function draftsKept(userId: string): Promise<{ first: string | null; decided: number; unchanged: number }> {
+  const since = new Date(Date.now() - KEPT_MS).toISOString();
+  const [{ data: log }, { data: signed }, { data: sentRows }, { data: here }, { data: going }] = await Promise.all([
+    db.from("action_log").select("id, status, reason, detail, created_at, emails!inner(thread_id)").eq("user_id", userId).eq("kind", "draft").eq("source", "engine").in("status", ["done", "dismissed", "undone"]).gte("created_at", since).order("created_at", { ascending: true }),
+    db.from("email_signatures").select("html").eq("user_id", userId),
+    db.from("emails").select("thread_id, body_text, received_at").eq("user_id", userId).contains("label_ids", ["SENT"]).gte("received_at", since).order("received_at", { ascending: true }),
+    db.from("draft_emails").select("id").eq("user_id", userId),
+    db.from("scheduled_emails").select("thread_id").eq("user_id", userId).eq("status", "pending"),
+  ]);
+  const notTheUser = new Set([PASSED, MOVED_ON, BY_PLAN, "Your preference", "Read again"]);
+  const words = (s: unknown) => said(htmlToText(String(s ?? "")));
+  const endings = ["", ...(signed ?? []).map((s) => words(s.html))];
+  const waiting = new Set((here ?? []).map((d) => String(d.id)));
+  const leaving = new Set((going ?? []).map((g) => String(g.thread_id)));
+  const all = ((log ?? []) as Record<string, any>[]).filter((r) => !r.detail?.forward && r.emails?.thread_id);
+  let decided = 0;
+  let unchanged = 0;
+  for (const r of all) {
+    const thread = r.emails.thread_id;
+    const next = all.find((x) => x.emails.thread_id === thread && x.created_at > r.created_at);
+    const sent = (sentRows ?? []).find((s) => s.thread_id === thread && String(s.received_at) > r.created_at && (!next || String(s.received_at) <= next.created_at));
+    if (!sent) {
+      // Not looked at yet, replaced by a newer one, or taken back by a rule or by time.
+      if (next || notTheUser.has(String(r.reason)) || waiting.has(String(r.detail.draftId ?? "")) || leaving.has(thread)) continue;
+      decided++;
+      continue;
+    }
+    decided++;
+    const open = choicesOf(String(r.detail.body ?? ""));
+    const texts = open.reduce<(number | undefined)[][]>((sets, c) => sets.flatMap((set) => c.map((_, i) => [...set, i])), [[]]).map((set) => said(choose(String(r.detail.body ?? ""), set)));
+    if (texts.some((t) => endings.some((end) => said(String(sent.body_text ?? "")) === `${t} ${end}`.trim()))) unchanged++;
+  }
+  return { first: all.length ? String(all[0].created_at) : null, decided, unchanged };
 }
 
 // What the user sent in place of a draft Tabellar wrote teaches how they write.

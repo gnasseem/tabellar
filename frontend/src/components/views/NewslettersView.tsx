@@ -4,7 +4,7 @@ import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { api } from "@/lib/outcomes";
 import { Empty, Seg, SkeletonRows, Tick, ViewBar } from "../ui";
-import { NotThis } from "../Profile";
+import { NotThis } from "../NotThis";
 
 // Newsletter cleanup: senders of bulk mail, the ones filling the inbox first.
 // Which senders are listed, and why, is decided on the server (newsletters.ts).

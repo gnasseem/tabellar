@@ -162,8 +162,12 @@ export default function AppShell({
   const updateProfile = useCallback((patch: Partial<Profile>) => {
     setProfileState((prev) => ({ ...prev, ...patch }));
   }, []);
-  // The view is kept in the address (#todos), so a reload stays where it was.
-  const [viewRaw, setViewRaw] = useState(() => window.location.hash.slice(1) || "inbox");
+  // The window opens on the Brief, or on the Inbox for someone who hid it. Any
+  // other view is kept in the address (#todos), so a reload stays where it was.
+  const home = appearanceOf(profileState).hidden.includes("briefing") ? "inbox" : "briefing";
+  const homeRef = useRef(home);
+  homeRef.current = home;
+  const [viewRaw, setViewRaw] = useState(() => window.location.hash.slice(1) || home);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const theme = useTheme(profileState.theme);
   const appearance = JSON.stringify(profileState.appearance ?? null);
@@ -177,11 +181,11 @@ export default function AppShell({
   const setView = useCallback((v: string) => {
     setViewRaw(v);
     setSearch("");
-    window.history.pushState(null, "", v === "inbox" ? window.location.pathname : `#${v}`);
+    window.history.pushState(null, "", v === homeRef.current ? window.location.pathname : `#${v}`);
   }, []);
   const view = viewRaw;
   useEffect(() => {
-    const follow = () => setViewRaw(window.location.hash.slice(1) || "inbox");
+    const follow = () => setViewRaw(window.location.hash.slice(1) || homeRef.current);
     window.addEventListener("hashchange", follow);
     return () => window.removeEventListener("hashchange", follow);
   }, []);

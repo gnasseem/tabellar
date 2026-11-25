@@ -8,7 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 import { db } from "./db.ts";
-import { mail } from "./providers.ts";
+import { mail, userCalendar } from "./providers.ts";
 import type { Account } from "./accounts.ts";
 import { decide, normalizeLevel, proposalHash, type AutoSend, type HandOn, type Kind, type Source } from "./policy.ts";
 import { learn, setPref, type Signal } from "./profile.ts";
@@ -329,10 +329,8 @@ export async function dismiss(userId: string, id: string): Promise<void> {
   await learnFrom(userId, res.data[0], "dismissed");
 }
 
-// Undo works while paused: pause stops Tabellar acting, not the user reversing.
-export async function undo(userId: string, id: string): Promise<void> {
-  const row = await loadRow(userId, id);
-  if (row.status !== "done") throw Object.assign(new Error("Only completed actions can be undone"), { status: 409 });
+// What an action made, taken back.
+async function takeBack(userId: string, row: Record<string, unknown>): Promise<void> {
   const d = row.detail as Record<string, unknown>;
   const kind = row.kind as string;
   if (kind === "send") {
@@ -374,7 +372,54 @@ export async function undo(userId: string, id: string): Promise<void> {
   } else {
     throw Object.assign(new Error(`A ${kind} cannot be undone`), { status: 409 });
   }
+}
+
+// Undo works while paused: pause stops Tabellar acting, not the user reversing.
+export async function undo(userId: string, id: string): Promise<void> {
+  const row = await loadRow(userId, id);
+  if (row.status !== "done") throw Object.assign(new Error("Only completed actions can be undone"), { status: 409 });
+  await takeBack(userId, row);
   await db.from("action_log").update({ status: "undone", undone_at: new Date().toISOString() }).eq("id", id);
   await learnFrom(userId, row, "dismissed");
   if (row.automation_id) await automationUndone(userId, row);
+}
+
+// An approval that was a slip: what it made goes and the proposal waits again,
+// as it was. It says nothing about what the user wants.
+export async function unapprove(userId: string, before: Record<string, unknown>): Promise<void> {
+  const row = await loadRow(userId, String(before.id));
+  if (row.status === "done") await takeBack(userId, row);
+  await db.from("action_log").update({ status: "proposed", detail: before.detail, reason: before.reason, decided_at: null, undone_at: null }).eq("id", row.id);
+}
+
+// Puts a meeting waiting to be confirmed on the calendar. Only the people the
+// user added are invited. Returns the event's page, and what takes it off again.
+export async function confirmMeeting(userId: string, id: string, changes: Record<string, unknown> = {}): Promise<{ link: string | null; undo: () => Promise<void> }> {
+  const fail = (message: string, status: number) => Object.assign(new Error(message), { status });
+  const { data: m } = await db.from("meetings").select("*").eq("id", id).eq("user_id", userId).maybeSingle();
+  if (!m) throw fail("That meeting is gone", 404);
+  if (m.status === "confirmed" && m.calendar_event_id) return { link: null, undo: async () => {} };
+  if (Object.keys(changes).length) await db.from("meetings").update(changes).eq("id", id);
+  const meeting: Record<string, any> = { ...m, ...changes };
+  const cal = await userCalendar(userId);
+  if (!cal) throw fail("No calendar is connected. Connect a Google or Outlook account in Settings.", 502);
+  const attendees = Array.isArray(meeting.attendees) ? (meeting.attendees as string[]) : [];
+  let ev: { id: string; link: string | null };
+  try {
+    ev = await cal.calendar.create(
+      cal.account,
+      { title: meeting.title, description: meeting.description ?? "", start: meeting.start_time, end: meeting.end_time, ...(meeting.location ? { location: meeting.location } : {}), attendees },
+      attendees.length > 0,
+    );
+  } catch {
+    throw fail("The calendar did not accept it", 502);
+  }
+  await db.from("meetings").update({ status: "confirmed", calendar_event_id: ev.id }).eq("id", id);
+  return {
+    link: ev.link,
+    undo: async () => {
+      await cal.calendar.cancel(cal.account, ev.id, attendees.length > 0);
+      await db.from("meetings").update({ status: "proposed", calendar_event_id: null }).eq("id", id);
+    },
+  };
 }

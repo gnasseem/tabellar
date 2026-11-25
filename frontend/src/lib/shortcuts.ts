@@ -15,8 +15,8 @@ export type ShortcutGroup = {
 // use. Keeping navigation behind a prefix leaves the single letters free for
 // actions on the selected email.
 export const GO_TO_VIEWS: Record<string, string> = {
-  i: "inbox",
   b: "briefing",
+  i: "inbox",
   t: "todos",
   m: "meetings",
   s: "sent",
@@ -34,8 +34,8 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: "Navigation",
     shortcuts: [
-      { keys: "g i", description: "Go to inbox" },
       { keys: "g b", description: "Go to brief" },
+      { keys: "g i", description: "Go to inbox" },
       { keys: "g t", description: "Go to todos" },
       { keys: "g m", description: "Go to meetings" },
       { keys: "g s", description: "Go to sent" },
@@ -57,6 +57,14 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: "z", description: "Undo the last change, up to ten minutes back" },
       { keys: "?", description: "Toggle this help" },
       { keys: "Esc", description: "Close overlay, email, or search" },
+    ],
+  },
+  {
+    title: "Brief",
+    shortcuts: [
+      { keys: "j k", description: "Move" },
+      { keys: "1 2 3", description: "Give that answer" },
+      { keys: "Enter", description: "Open the email" },
     ],
   },
   {

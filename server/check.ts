@@ -20,9 +20,9 @@ CHANNELS.length = 0;
 
 // A mailbox that records what is sent instead of sending it. The accounts
 // made here use it, so nothing in this file reaches a real mailbox.
-const sent: { to: string[]; threadId?: string; cc?: string[]; bcc?: string[]; from?: string }[] = [];
+const sent: { to: string[]; threadId?: string; cc?: string[]; bcc?: string[]; from?: string; html?: string }[] = [];
 const record = async (m: Outgoing, threadId?: string) => {
-  sent.push({ to: m.to, threadId, cc: m.cc, bcc: m.bcc, from: m.from });
+  sent.push({ to: m.to, threadId, cc: m.cc, bcc: m.bcc, from: m.from, html: m.html });
   return { id: `sent-${sent.length}` };
 };
 const nothing = async () => [];
@@ -33,7 +33,7 @@ MAILBOXES.fake = {
   list: nothing, fetch: nothing, headerRows: nothing, sent: nothing, headers: async () => ({}), threadOf: async () => "",
   send: (_a, m, t) => record(m, t), drafts: nothing, readDraft: async () => null, saveDraft: async () => `draft-${++draftN}`, discardDraft: async (_a, id) => void discarded.push(id), sendDraft: (_a, _d, m, t) => record(m, t),
   label: async (_a, name) => name, labelNames: nothing, modify: async () => {}, sendAs: nothing, hasSentTo: async () => false, attachment: async () => null, disconnect: async () => {},
-  calendar: { busy: nothing, events: nothing, create: async () => ({ id: "event-1", link: null }), update: async () => ({ id: "event-1", link: null }), find: async () => null },
+  calendar: { busy: nothing, events: nothing, create: async () => ({ id: "event-1", link: null }), update: async () => ({ id: "event-1", link: null }), cancel: async () => {}, find: async () => null },
 } satisfies Mail;
 
 let passed = 0;
@@ -135,7 +135,7 @@ ok("the Gmail client cannot delete or trash mail; the one thing it deletes is a 
   assert.ok(deletes[0].includes("`/drafts/${encodeURIComponent(draftId)}`"), deletes[0]);
 });
 ok("only discarding a draft reaches a mailbox's drafts, and only with an id kept for its row", () => {
-  for (const f of ["actions", "agentExecute", "agentLoop", "ai", "api", "engine", "outbox", "profile", "sync", "newsletters"]) assert.ok(!/\.discardDraft\(/.test(readFileSync(sibling(f), "utf8")), f);
+  for (const f of ["actions", "agentExecute", "agentLoop", "ai", "answers", "api", "engine", "outbox", "profile", "sync", "newsletters"]) assert.ok(!/\.discardDraft\(/.test(readFileSync(sibling(f), "utf8")), f);
   const calls = readFileSync(sibling("drafts"), "utf8").match(/\.discardDraft\([^)]*\)/g);
   assert.deepEqual(calls, [".discardDraft(account, row.gmail_draft_id)"]);
 });
@@ -2161,6 +2161,286 @@ ok("a meeting is told about once, within the hour, and only when there is someth
 });
 CHANNELS.length = 0;
 
+// ── Answering a line of the Brief ───────────────────────────────────────────
+console.log("\nAnswers");
+const answers = await import("./answers.ts");
+const outbox = await import("./outbox.ts");
+const ansUser = randomUUID();
+const cancelled: string[] = [];
+MAILBOXES.ans = { ...MAILBOXES.fake, calendar: { ...MAILBOXES.fake.calendar!, cancel: async (_a, id) => void cancelled.push(id) } };
+await db.from("profiles").insert({ id: ansUser, email: "iris@lumen.example", display_name: "Iris Vale", autonomy_level: "suggest", notification_level: "none", brief: { length: "long" }, working_hours: { start: "09:00", end: "17:00", days: [1, 2, 3, 4, 5], timezone: "UTC" } });
+const { data: ansAccount } = await db.from("accounts").insert({ user_id: ansUser, provider: "ans", address: "iris@lumen.example", token_ref: "check:none", is_default: true }).select("id").single();
+const ansMail = async (id: string, o: Record<string, unknown> = {}) =>
+  (await db.from("emails").insert({ user_id: ansUser, gmail_id: `ans-${id}`, thread_id: `ans-${id}`, account_id: ansAccount!.id, subject: `About ${id}`, sender: "Ann Lee <ann@client.example>", sender_email: "ann@client.example", recipients: "iris@lumen.example", body_text: "?", label_ids: ["INBOX"], received_at: new Date(Date.now() - 3_600_000).toISOString(), ...o }).select("id").single()).data!.id as string;
+const ansDraft = async (emailId: string | null, text: string, o: Record<string, unknown> = {}) =>
+  (await db.from("draft_emails").insert({ user_id: ansUser, email_id: emailId, account_id: ansAccount!.id, to_addresses: ["ann@client.example"], subject: "Re: x", body_html: draftsModule.textToHtml(text), source: "tabellar", ...o }).select("id").single()).data!.id as string;
+const ansPropose = async (emailId: string | null, kind: string, detail: Record<string, unknown>) => {
+  await (await import("./actions.ts")).act(ansUser, { kind: kind as "todo", emailId, summary: `${kind} proposed`, detail }, { level: "suggest", paused: false, source: "engine" });
+  return (await db.from("action_log").select("id").eq("user_id", ansUser).eq("status", "proposed").eq("email_id", emailId).eq("kind", kind).single()).data!.id as string;
+};
+const lineFor = async (key: string) => (await penBrief(ansUser)).needs.find((n) => n.key === key);
+const keys = async () => (await penBrief(ansUser, { all: true })).needs.map((n) => n.key);
+const pressed = async (key: string, label: string) => {
+  const o = await answers.options(ansUser, key);
+  const pick = o?.options.find((x) => x.label === label)?.pick;
+  assert.ok(pick, `${key} has no "${label}": ${JSON.stringify(o)}`);
+  return answers.answer(ansUser, key, pick);
+};
+// The outbox's window is over.
+const letGo = async () => {
+  await db.from("scheduled_emails").update({ send_at: new Date(Date.now() - 1000).toISOString() }).eq("user_id", ansUser).eq("status", "pending");
+  await outbox.sendDueEmails();
+};
+
+const openText = "Hi Ann,\n\n[Yes]\nThursday at 3 works for me.\n\n[No]\nI can't make Thursday.\n\nBest,\nIris";
+const e1 = await ansMail("one");
+const dOne = await ansDraft(e1, openText);
+const line1 = (await lineFor(`draft:${dOne}`))!;
+const answered1 = await pressed(`draft:${dOne}`, "Yes");
+const while1 = await keys();
+const back1 = await answers.undoAnswer(answered1.undo!);
+await letGo();
+const line1b = (await lineFor(`draft:${dOne}`))!;
+const before1 = sent.length;
+await pressed(`draft:${dOne}`, "No");
+await letGo();
+ok("a chosen answer goes out as the exact text shown, and undo brings the line back as it was", () => {
+  assert.deepEqual(line1.options.map((o) => o.label), ["Yes", "No", "Discard"]);
+  assert.equal(line1.to, "ann@client.example");
+  assert.equal(line1.shows, openText);
+  assert.ok(!while1.includes(`draft:${dOne}`));
+  assert.equal(back1.said, "Not sent");
+  assert.deepEqual(line1b, line1);
+  assert.equal(sent.length, before1 + 1);
+  assert.equal(htmlToText(sent[before1].html!), line1.options[1].sends);
+  assert.equal(line1.options[1].sends, "Hi Ann,\n\nI can't make Thursday.\n\nBest,\nIris");
+  assert.deepEqual([sent[before1].to, sent[before1].threadId], [["ann@client.example"], "ans-one"]);
+});
+await assert.rejects(answers.answer(ansUser, `draft:${dOne}`, line1.options[0].pick), /already answered/);
+await assert.rejects(answers.undoAnswer(answered1.undo!), /Too late/);
+ok("an answer is given once, and undone once", () => assert.equal(sent.length, before1 + 1));
+
+const e2 = await ansMail("two");
+const d2 = await ansDraft(e2, "Hi Ann,\n\nFloor 4.\n\nBest");
+const seen2 = (await answers.options(ansUser, `draft:${d2}`))!;
+await db.from("draft_emails").update({ body_html: "<p>Something else.</p>" }).eq("id", d2);
+await assert.rejects(answers.answer(ansUser, `draft:${d2}`, seen2.options[0].pick), /changed after you saw it/);
+const twice = await Promise.allSettled([pressed(`draft:${d2}`, "Send"), pressed(`draft:${d2}`, "Send")]);
+const queued2 = (await db.from("scheduled_emails").select("id").eq("user_id", ansUser).eq("status", "pending")).data!.length;
+await letGo();
+ok("a draft that changed after it was shown is not sent, and two presses send one", () => {
+  assert.equal(queued2, 1);
+  assert.equal(twice.filter((x) => x.status === "fulfilled").length, 1);
+  assert.equal(htmlToText(sent[sent.length - 1].html!), "Something else.");
+});
+
+const e3 = await ansMail("three");
+const d3 = await ansDraft(e3, "Hi Ann,\n\n[Yes]\nIt can move.\n\n[No]\nIt cannot move.\n\nAbout the day:\n\n[Monday]\nMonday is best.\n\n[Friday]\nFriday is best.\n\nBest");
+const half = await pressed(`draft:${d3}`, "No");
+const halfway = (await answers.options(ansUser, `draft:${d3}`))!;
+await answers.undoAnswer(half.undo!);
+const whole = (await answers.options(ansUser, `draft:${d3}`))!;
+await pressed(`draft:${d3}`, "Yes");
+await pressed(`draft:${d3}`, "Friday");
+await letGo();
+ok("two decisions are answered one after the other, then it goes out", () => {
+  assert.equal(half.next, `draft:${d3}`);
+  assert.deepEqual(halfway.options.map((o) => o.label), ["Monday", "Friday", "Discard"]);
+  assert.deepEqual(whole.options.map((o) => o.label), ["Yes", "No", "Discard"]);
+  assert.equal(htmlToText(sent[sent.length - 1].html!), "Hi Ann,\n\nIt can move.\n\nAbout the day:\n\nFriday is best.\n\nBest");
+});
+
+const e4 = await ansMail("four");
+const d4 = await ansDraft(e4, "Hi Ann,\n\nThe room is [room name].\n\nBest");
+const d5 = await ansDraft(null, "To hand on.", { to_addresses: [], forward: { email_id: e4 } });
+const gap = (await answers.options(ansUser, `draft:${d4}`))!.options.map((o) => o.label);
+const nobody = (await answers.options(ansUser, `draft:${d5}`))!.options.map((o) => o.label);
+await assert.rejects(draftsModule.queueDraft(ansUser, d4), /still to be filled in/);
+await assert.rejects(draftsModule.queueDraft(ansUser, d5), /no recipient/);
+const off4 = await pressed(`draft:${d4}`, "Tomorrow");
+const off4keys = await keys();
+await answers.undoAnswer(off4.undo!);
+const gone4 = await pressed(`draft:${d4}`, "Discard");
+const gone4keys = await keys();
+await answers.undoAnswer(gone4.undo!);
+const back4keys = await keys();
+ok("a draft with a gap or no recipient cannot be sent, only put off or discarded, and comes back", () => {
+  assert.deepEqual(gap, ["Discard", "Tomorrow"]);
+  assert.deepEqual(nobody, ["Discard"]);
+  assert.ok(!off4keys.includes(`draft:${d4}`) && !gone4keys.includes(`draft:${d4}`));
+  assert.ok(back4keys.includes(`draft:${d4}`));
+});
+await db.from("draft_emails").delete().in("id", [d4, d5]);
+
+const e6 = await ansMail("six");
+const p6 = await ansPropose(e6, "draft", { to: ["ann@client.example"], subject: "Re: x", body: openText, accountId: ansAccount!.id });
+const six = await pressed(`act:${p6}`, "Yes");
+await answers.undoAnswer(six.undo!);
+const again6 = [(await keys()).includes(`act:${p6}`), (await db.from("draft_emails").select("id").eq("email_id", e6)).data!.length];
+await pressed(`act:${p6}`, "Yes");
+await letGo();
+ok("a proposed reply is approved, its answer taken and sent in one press; undone, it waits for approval again", () => {
+  assert.deepEqual(again6, [true, 0]);
+  assert.equal(htmlToText(sent[sent.length - 1].html!), "Hi Ann,\n\nThursday at 3 works for me.\n\nBest,\nIris");
+});
+
+const e7 = await ansMail("seven", { sender_email: "bo@else.example" });
+const p7 = await ansPropose(e7, "todo", { text: "Send the plan", due: "2026-12-01" });
+const knew7 = (await db.from("preferences").select("id").eq("user_id", ansUser)).data!.length;
+const added7 = await pressed(`act:${p7}`, "Add");
+const todos7 = (await db.from("todos").select("id").eq("email_id", e7)).data!.length;
+const learned7 = (await db.from("preferences").select("id").eq("user_id", ansUser)).data!.length;
+await answers.undoAnswer(added7.undo!);
+const after7 = [(await db.from("todos").select("id").eq("email_id", e7)).data!.length, (await db.from("preferences").select("id").eq("user_id", ansUser)).data!.length, (await keys()).includes(`act:${p7}`)];
+await pressed(`act:${p7}`, "Add");
+const e7b = await ansMail("sevenb", { sender_email: "bo@else.example" });
+const p7b = await ansPropose(e7b, "todo", { text: "Send it again" });
+const no7 = await pressed(`act:${p7b}`, "Dismiss");
+await answers.undoAnswer(no7.undo!);
+const p7bBack = (await keys()).includes(`act:${p7b}`);
+await pressed(`act:${p7b}`, "Dismiss");
+ok("a proposed todo is added or dismissed; undone it waits again, and what it taught is forgotten", () => {
+  assert.deepEqual([todos7, learned7], [1, knew7 + 1]);
+  assert.deepEqual(after7, [0, knew7, true]);
+  assert.ok(p7bBack);
+});
+
+const soonAt = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
+const e8 = await ansMail("eight");
+const p8 = await ansPropose(e8, "meeting", { title: "Go over the plan", start_time: soonAt(5), end_time: soonAt(6), quote: "Could we meet at 3?" });
+const on8 = await pressed(`act:${p8}`, "Add to calendar");
+const cal8 = (await db.from("meetings").select("status").eq("email_id", e8).single()).data!.status;
+await answers.undoAnswer(on8.undo!);
+const undone8 = [(await db.from("meetings").select("id").eq("email_id", e8)).data!.length, (await keys()).includes(`act:${p8}`), [...cancelled]];
+MAILBOXES.ans.calendar!.create = async () => { throw new Error("down"); };
+await assert.rejects(pressed(`act:${p8}`, "Add to calendar"), /did not accept/);
+const kept8 = [(await db.from("meetings").select("id").eq("email_id", e8)).data!.length, (await keys()).includes(`act:${p8}`)];
+MAILBOXES.ans.calendar!.create = async () => ({ id: "event-2", link: "https://cal.example/2" });
+const m8 = (await db.from("meetings").insert({ user_id: ansUser, title: "Walk-through", start_time: soonAt(7), end_time: soonAt(8), status: "proposed", email_id: e8 }).select("id").single()).data!.id as string;
+const in8 = await pressed(`meeting:${m8}`, "Add to calendar");
+await answers.undoAnswer(in8.undo!);
+const out8 = await pressed(`meeting:${m8}`, "Dismiss");
+const gone8 = (await keys()).includes(`meeting:${m8}`);
+await answers.undoAnswer(out8.undo!);
+const here8 = (await keys()).includes(`meeting:${m8}`);
+ok("a meeting goes on the calendar in one press; undone, the event is taken off and the line is back", () => {
+  assert.equal(cal8, "confirmed");
+  assert.deepEqual(undone8, [0, true, ["event-1"]]);
+  assert.deepEqual(kept8, [0, true]);
+  assert.equal(in8.link, "https://cal.example/2");
+  assert.deepEqual(cancelled, ["event-1", "event-2"]);
+  assert.deepEqual([gone8, here8], [false, true]);
+});
+
+const t9 = (await db.from("todos").insert({ user_id: ansUser, text: "Pay the deposit", due: new Date().toISOString().slice(0, 10) }).select("id").single()).data!.id as string;
+const done9 = await pressed(`todo:${t9}`, "Done");
+const done9keys = (await keys()).includes(`todo:${t9}`);
+await answers.undoAnswer(done9.undo!);
+const later9 = await pressed(`todo:${t9}`, "Tomorrow");
+const due9 = (await db.from("todos").select("due").eq("id", t9).single()).data!.due;
+const later9keys = (await keys()).includes(`todo:${t9}`);
+await answers.undoAnswer(later9.undo!);
+const back9keys = (await keys()).includes(`todo:${t9}`);
+ok("a todo is done or put off, and comes back", () => {
+  assert.deepEqual([done9keys, later9keys, back9keys], [false, false, true]);
+  assert.equal(due9, new Date(Date.now() + 86_400_000).toISOString().slice(0, 10));
+});
+
+await profileModule.ask(ansUser, { text: "Do you deal with Cy?", detail: "A todo waits on it", about: "cy@x.example", options: [{ label: "Yes", pref: { kind: "sender", subject: "cy@x.example", value: "normal" } }, { label: "No, ignore them", pref: { kind: "sender", subject: "cy@x.example", value: "quiet" } }, { label: "Not now" }] });
+const q10 = (await db.from("questions").select("id").eq("user_id", ansUser).single()).data!.id as string;
+const asked10 = (await lineFor(`question:${q10}`))!;
+const said10 = await pressed(`question:${q10}`, "No, ignore them");
+const prefs10 = (await profileModule.prefsFor(ansUser, "cy@x.example")).map((p) => p.value);
+await answers.undoAnswer(said10.undo!);
+const back10 = [(await profileModule.prefsFor(ansUser, "cy@x.example")).length, (await keys()).includes(`question:${q10}`)];
+ok("a question is answered in place, and asked again when that is undone", () => {
+  assert.deepEqual(asked10.options.map((o) => o.label), ["Yes", "No, ignore them", "Not now"]);
+  assert.deepEqual(prefs10, ["quiet"]);
+  assert.deepEqual(back10, [0, true]);
+});
+
+await profileModule.setPref(ansUser, "sender", "boss@else.example", "vip", "user");
+const e11 = await ansMail("eleven", { sender: "Boss <boss@else.example>", sender_email: "boss@else.example", label_ids: ["INBOX", "UNREAD"] });
+const e12 = await ansMail("twelve", { label_ids: ["INBOX", "UNREAD"], snooze_until: new Date(Date.now() - 60_000).toISOString() });
+const mailLine: unknown[] = [];
+const standing = async (id: string) => {
+  const { data } = await db.from("emails").select("is_read, is_archived, is_snoozed, snooze_until, resolved_at, label_ids").eq("id", id).single();
+  return { ...data, label_ids: [...(data!.label_ids as string[])].sort() };
+};
+for (const [key, label] of [[`read:${e11}`, "Mark read"], [`read:${e11}`, "Archive"], [`read:${e11}`, "Tomorrow"], [`back:${e12}`, "Done"], [`back:${e12}`, "Archive"], [`back:${e12}`, "Tomorrow"]]) {
+  const was = await standing(key.split(":")[1]);
+  const done = await pressed(key, label);
+  const left = !(await keys()).includes(key);
+  await answers.undoAnswer(done.undo!);
+  const now = await standing(key.split(":")[1]);
+  assert.deepEqual(now, was, `${key} ${label}`);
+  mailLine.push([left, (await keys()).includes(key)]);
+}
+ok("mail to look at is read, archived, done or put off, and each is taken back to how it was", () => assert.deepEqual(mailLine, Array(6).fill([true, true])));
+
+const s13 = await ansMail("asked", { label_ids: ["SENT"], sender: "Iris Vale <iris@lumen.example>", sender_email: "iris@lumen.example", recipients: "Dan Roe <dan@client.example>", body_text: "Could you send the file?", awaits_reply: true, received_at: hoursAgo(80) });
+const waitOf = async () => (await penBrief(ansUser)).waiting.find((w) => w.email_id === s13);
+const w13 = (await waitOf())!;
+const drop13 = await pressed(w13.key, "Drop");
+const dropped13 = await waitOf();
+await answers.undoAnswer(drop13.undo!);
+const in3 = await pressed((await waitOf())!.key, "In 3 days");
+const away13 = await waitOf();
+await answers.undoAnswer(in3.undo!);
+await ansDraft(s13, "Any news on the file?", { to_addresses: ["dan@client.example"] });
+const chased13 = await penBrief(ansUser);
+ok("who owes an answer is put off or dropped, and a follow-up drafted to them takes the line's place", () => {
+  assert.ok(w13.options.map((o) => o.label).join().endsWith("In 3 days,Drop"));
+  assert.equal(dropped13, undefined);
+  assert.equal(away13, undefined);
+  assert.ok(!chased13.waiting.some((w) => w.email_id === s13));
+  const n = chased13.needs.find((x) => x.email_id === s13);
+  assert.deepEqual([n?.who, n?.text], ["Dan Roe", "Follow-up drafted: About asked"]);
+});
+
+// Every line of a Brief carries one to three answers.
+const everyLine = await penBrief(ansUser, { all: true });
+ok("every line has one to three answers", () => {
+  for (const n of [...everyLine.needs, ...everyLine.waiting]) assert.ok(n.options.length >= 1 && n.options.length <= 3, n.key);
+});
+
+// Drafts that went out word for word, once a week of them shows it.
+const proofUser = randomUUID();
+await db.from("profiles").insert({ id: proofUser, email: "kit@lumen.example", display_name: "Kit", autonomy_level: "assist", notification_level: "none" });
+const { data: proofAccount } = await db.from("accounts").insert({ user_id: proofUser, provider: "fake", address: "kit@lumen.example", token_ref: "check:none", is_default: true }).select("id").single();
+for (let i = 0; i < 7; i++) {
+  const { data: m } = await db.from("emails").insert({ user_id: proofUser, gmail_id: `pr-${i}`, thread_id: `pr-${i}`, account_id: proofAccount!.id, sender_email: "ann@client.example", label_ids: ["INBOX"], received_at: hoursAgo(220) }).select("id").single();
+  await db.from("action_log").insert({ user_id: proofUser, kind: "draft", status: i === 6 ? "dismissed" : "done", source: "engine", email_id: m!.id, summary: "Draft", detail: { body: openText, draftId: randomUUID() }, created_at: hoursAgo(200 - i) });
+  if (i < 6) await db.from("emails").insert({ user_id: proofUser, gmail_id: `pr-s${i}`, thread_id: `pr-${i}`, account_id: proofAccount!.id, label_ids: ["SENT"], body_text: i === 5 ? "Hi Ann,\n\nLet us talk on the phone.\n\nKit" : choices.choose(openText, [i % 2]), received_at: hoursAgo(180 - i) });
+}
+const keptCount = await draftsModule.draftsKept(proofUser);
+const shown1 = (await penBrief(proofUser)).proof;
+const brief1 = await import("./brief.ts");
+await brief1.proofShown(proofUser, "2020-01-01");
+const anotherDay = (await penBrief(proofUser)).proof;
+await db.from("profiles").update({ proof: null }).eq("id", proofUser);
+const raise = (await answers.options(proofUser, "proof:"))!;
+const raised = await answers.answer(proofUser, "proof:", raise.options[0].pick);
+const at1 = (await db.from("profiles").select("autonomy_level, autopilot_known_only, proof").eq("id", proofUser).single()).data;
+await answers.undoAnswer(raised.undo!);
+const at2 = (await db.from("profiles").select("autonomy_level, proof").eq("id", proofUser).single()).data;
+await db.from("action_log").update({ created_at: hoursAgo(24) }).eq("user_id", proofUser);
+const tooSoon = (await penBrief(proofUser)).proof;
+ok("drafts sent unchanged are counted, shown after a week, once, and raise the level only when asked", () => {
+  assert.deepEqual([keptCount.decided, keptCount.unchanged], [7, 5]);
+  assert.equal(shown1?.text, "5 of 7 drafts were sent unchanged");
+  assert.equal(anotherDay, null);
+  assert.deepEqual(at1, { autonomy_level: "autopilot", autopilot_known_only: true, proof: "done" });
+  assert.deepEqual(at2, { autonomy_level: "assist", proof: null });
+  assert.equal(tooSoon, null);
+});
+const askedOf7 = await brief1.decisions(ansUser);
+ok("what was asked in seven days is counted against the mail that came", () => {
+  // Reply, two todos, the meeting proposed, and one question; drafts and the meeting put in by hand here are not the engine's.
+  assert.equal(askedOf7.asked, 5);
+  assert.equal(askedOf7.per100, Math.round((5 / askedOf7.mail) * 100));
+});
+
 if (modelConfigured()) {
   console.log("Rules through the configured model (this can take a minute)");
   const { processFullEmail, expectsAnswer } = await import("./ai.ts");
@@ -2213,6 +2493,19 @@ if (modelConfigured()) {
     if (got !== as) misread.push(`${said}: ${got}`);
   }
   ok("the configured model reads a sentence into the automation it says", () => assert.deepEqual(misread, []));
+
+  // Someone who owes an answer, nudged in one press.
+  await db.from("draft_emails").delete().eq("user_id", ansUser);
+  const nudged = await pressed((await waitOf())!.key, "Nudge");
+  const nudge = (await lineFor(`draft:${(await db.from("draft_emails").select("id").eq("email_id", s13).single()).data!.id}`))!;
+  await pressed(nudge.key, "Send");
+  await letGo();
+  console.log(`      ${nudge.shows.replace(/\n+/g, " / ")}`);
+  ok("a nudge is drafted in its thread, to the one who owes the answer, and goes out as shown", () => {
+    assert.equal(nudged.said, "Follow-up drafted");
+    const out = sent[sent.length - 1];
+    assert.deepEqual([out.to, out.threadId, htmlToText(out.html!)], [["dan@client.example"], "ans-asked", nudge.shows]);
+  });
 
   // A writing rule in a real draft: forbidden, the opening is not there.
   const { draftReply } = await import("./replies.ts");

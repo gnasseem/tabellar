@@ -8,7 +8,7 @@ import DateTimePicker from "../DateTimePicker";
 import { ReaderById } from "../EmailDetail";
 import { EmailField, useContacts } from "../EmailAutocomplete";
 import { Empty, Glyph, Seg, SkeletonRows, ViewBar, clock } from "../ui";
-import { NotThis } from "../Profile";
+import { NotThis } from "../NotThis";
 import { MeetingPrep, useUpNext } from "../Prep";
 
 // Meetings: two lists. To confirm holds what Tabellar found in mail, with the

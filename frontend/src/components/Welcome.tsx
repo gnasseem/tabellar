@@ -144,7 +144,7 @@ export default function Welcome({ session, error, again = false }: { session?: S
       )}
       {again && (
         <a href="/" className={`link ${step === "welcome" ? "ml-auto" : "ml-4"}`}>
-          Back to the Inbox
+          Back to Tabellar
         </a>
       )}
     </>
@@ -228,16 +228,16 @@ function InboxPicture() {
             <Logo size={16} />
           </div>
           {[
+            ["description", "Brief", ""],
             ["inbox", "Inbox", "2"],
+            ["chat_bubble", "Ask", ""],
+            ["bolt", "Automations", ""],
             ["reply", "Replies", "1"],
-            ["checklist", "Todos", ""],
-            ["calendar_month", "Meetings", "1"],
-            ["schedule", "Follow-ups", ""],
           ].map(([icon, label, count], i) => (
-            <div key={label} className={`flex h-7 items-center gap-2 rounded-md px-2 ${i === 0 ? "bg-sel font-medium text-ink" : "text-ink2"}`}>
+            <div key={label} className={`flex h-7 items-center gap-2 rounded-md px-2 ${i === 1 ? "bg-sel font-medium text-ink" : "text-ink2"}`}>
               <Icon name={icon} size={15} className="text-ink3" />
               <span className="flex-1">{label}</span>
-              {count && <span className={`text-xs ${i === 0 ? "font-semibold text-wax-ink" : "text-ink3"}`}>{count}</span>}
+              {count && <span className={`text-xs ${i === 1 ? "font-semibold text-wax-ink" : "text-ink3"}`}>{count}</span>}
             </div>
           ))}
         </div>
@@ -725,7 +725,7 @@ function LevelStep({ again, current }: { again: boolean; current: string }) {
       text="How much Tabellar does on its own. Change it any time at the foot of the sidebar, where Pause stops everything."
       actions={
         <button type="button" className="btn btn-pri h-8 px-3.5" disabled={busy} onClick={finish}>
-          {busy ? "Opening" : "Open the Inbox"}
+          {busy ? "Opening" : "Open Tabellar"}
         </button>
       }
       aside={

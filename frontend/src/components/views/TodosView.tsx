@@ -5,7 +5,7 @@ import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { ReaderById } from "../EmailDetail";
 import { Empty, SkeletonRows, Tick, ViewBar, VirtualList, useSizes } from "../ui";
-import { NotThis } from "../Profile";
+import { NotThis } from "../NotThis";
 
 // Todos: a plain checklist, grouped by when each is due. A todo Tabellar
 // found but has not added (it waits for approval) is an ordinary row with a

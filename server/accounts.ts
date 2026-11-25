@@ -176,6 +176,10 @@ export async function removeAccount(userId: string, id: string): Promise<void> {
   }
 }
 
+// Pages a new user's sidebar does not show until they turn them on in
+// Settings, Appearance.
+const HIDDEN = ["sent", "scheduled", "files", "labels", "newsletters"];
+
 // Keep a mailbox that was just signed in to: the profile is made with the
 // first one (and the window's first run carries on from its mailbox step),
 // an account signed in to again keeps its row and settings. A new mailbox is
@@ -185,7 +189,7 @@ export async function connectAccount(a: { provider: string; address: string; nam
   const address = a.address.toLowerCase();
   let { data: profile } = await db.from("profiles").select("id").limit(1).maybeSingle();
   if (!profile) {
-    const created = await db.from("profiles").insert({ id: randomUUID(), email: address, display_name: a.name, avatar_url: a.picture ?? null, home: HOME, onboarding: "mailboxes", rules_version: RULES_VERSION }).select("id").single();
+    const created = await db.from("profiles").insert({ id: randomUUID(), email: address, display_name: a.name, avatar_url: a.picture ?? null, home: HOME, onboarding: "mailboxes", rules_version: RULES_VERSION, appearance: { hidden: HIDDEN } }).select("id").single();
     if (created.error) throw new Error(created.error.message);
     profile = created.data;
   }

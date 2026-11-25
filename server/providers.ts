@@ -167,6 +167,8 @@ export type Calendar = {
   events(a: Box, from: Date, to: Date, max: number): Promise<CalEvent[]>;
   create(a: Box, e: NewEvent, invite: boolean): Promise<{ id: string; link: string | null }>;
   update(a: Box, id: string, e: NewEvent, invite: boolean): Promise<{ id: string; link: string | null }>;
+  // Takes back an event just made here; with invite, the people on it are told.
+  cancel(a: Box, id: string, invite: boolean): Promise<void>;
   // Is this event already on the calendar? By iCalendar UID, else an event
   // a day either side that starts then or has one of `people` on it.
   find(a: Box, q: { uid?: string; start?: string | null; people?: string[] }): Promise<LinkedEvent | null>;

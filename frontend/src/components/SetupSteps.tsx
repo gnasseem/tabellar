@@ -432,7 +432,7 @@ export function ExamplesStep({ onNext }: { onNext: () => void }) {
             })}
           </ul>
           {waiting && <Waiting lines={noModel(onboarding) ? 0 : list.length ? 2 : 4} text={noModel(onboarding) ? NEEDS_MODEL : onboarding && !onboarding.model ? "Examples appear once the model is ready and your mail is sorted." : "More appear here as your mail is sorted."} />}
-          {!waiting && !list.length && <p className="py-3 text-ink3">Nothing to ask about yet. Tabellar asks in the Inbox when it needs to.</p>}
+          {!waiting && !list.length && <p className="py-3 text-ink3">Nothing to ask about yet. Tabellar asks in the Brief when it needs to.</p>}
           {failed && <p className="mt-2 text-xs text-danger">{failed}</p>}
         </div>
       }

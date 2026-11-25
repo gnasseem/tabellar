@@ -415,6 +415,10 @@ const outlookCalendar: Calendar = {
     const ev = await graph(a, `/me/events/${id}`, { method: "PATCH", body: JSON.stringify(graphEvent(e, invite)) });
     return { id: ev.id, link: ev.webLink ?? null };
   },
+  // Graph tells the people invited by itself.
+  async cancel(a, id) {
+    await graph(a, `/me/events/${id}`, { method: "DELETE" });
+  },
   async find(a, q) {
     if (q.uid) {
       const [hit] = await pages(a, `/me/events?$filter=iCalUId eq '${q.uid.replace(/'/g, "''")}'&$select=${EVENT}`, 1);

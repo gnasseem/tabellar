@@ -9,7 +9,6 @@ import { addressesIn } from "@/lib/accounts";
 import { useApp } from "../AppShell";
 import EmailBody from "../EmailBody";
 import EmailDetail from "../EmailDetail";
-import { Questions } from "../Profile";
 import { SnoozeMenu, snoozedText, useSnooze } from "../Snooze";
 import { AccountMark, Countdown, Empty, Glyph, Menu, OutcomeLines, Seg, SkeletonRows, Tick, ViewBar, VirtualList, useSizes, dayLabel, shortWhen, type MailState, clock } from "../ui";
 
@@ -736,7 +735,6 @@ export default function InboxView() {
       )}
       <div className="flex min-h-0 flex-1">
         <div className="mail-list flex min-w-0 flex-1 flex-col">
-          <Questions />
           <div className="flex min-h-0 min-w-0 flex-1 flex-col" role="listbox" aria-label="Inbox">
           {(loading || fetching) && !emails.length ? (
             <div className="pt-9">

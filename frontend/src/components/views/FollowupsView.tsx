@@ -4,7 +4,7 @@ import { api } from "@/lib/outcomes";
 import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { Empty, Glyph, SkeletonRows, ViewBar, VirtualList, shortWhen, useSizes } from "../ui";
-import { NotThis } from "../Profile";
+import { NotThis } from "../NotThis";
 
 // Follow-ups: mail the user sent that still waits on an answer, one line
 // each: who, what they were asked, how long ago. A reminder the user set and

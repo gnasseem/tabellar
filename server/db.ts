@@ -40,6 +40,8 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       first_read: "json", rules_version: "int ! =0", label_suggestions: "json",
       // The first-run step the window is on (onboarding.ts); "done" after it.
       onboarding: 'text ! ="done"',
+      // The day the line on drafts sent unchanged was shown, "done" once answered (brief.ts).
+      proof: "text",
       // The data folder this database was last started from (pauseIfCopied).
       home: "text",
       created_at: "time ! =now", updated_at: "time ! =now",
@@ -118,6 +120,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       gmail_draft_id: "text", // sent through Gmail's Drafts, which it then leaves
       // A forwarded email and the attachments left out: {email_id, without} (forward.ts).
       forward: "json", read_receipt: "bool ! =false",
+      draft: "json", // the draft it was made from, put back when it is undone (drafts.ts)
     },
   },
   // Senders the user dealt with in Newsletters: kept, or unsubscribed from.

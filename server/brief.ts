@@ -4,6 +4,9 @@
 // action log), so every line is something that is there to act on. Today's
 // calendar comes from /calendar/events.
 //
+// Each line that needs the user, and each person they wait on, carries its
+// answers (answers.ts), so nothing has to be opened to deal with it.
+//
 // profiles.brief holds the settings: the time of day a new Brief starts, how
 // long it is, which sections it has, whether a notification with its first
 // three lines goes out then, and an optional opening paragraph with
@@ -13,6 +16,9 @@
 import { db } from "./db.ts";
 import { briefParagraph } from "./ai.ts";
 import { modelConfigured } from "./llm.ts";
+import { options, type Options } from "./answers.ts";
+import { draftsKept } from "./drafts.ts";
+import { normalizeLevel } from "./policy.ts";
 import { followupList } from "./followups.ts";
 import { inQuietHours, notify, wallClock, minutes, type Hours } from "./notify.ts";
 import { allPrefs, displayName, pick, stops } from "./profile.ts";
@@ -57,26 +63,25 @@ export function briefDay(settings: BriefSettings, tz: string, at = new Date()): 
 
 // ── The lines ───────────────────────────────────────────────────────────────
 
-export type NeedItem = {
+export type NeedItem = Options & {
   key: string;
-  kind: "reply" | "forward" | "approve" | "meeting" | "todo" | "question" | "back" | "read";
+  kind: "reply" | "forward" | "approve" | "meeting" | "todo" | "question" | "back" | "read" | "proof";
   who: string; // the person, or "Todo", or "Tabellar"
   text: string; // one line: what it is
   email_id: string | null;
   id: string; // the draft, action, meeting, todo or question
-  hash?: string; // a proposal's hash, for approve
   start?: string; // a meeting's start
   due?: string; // a todo's day, YYYY-MM-DD
 };
 
-export type WaitingItem = { key: string; email_id: string; thread_id: string; who: string; address: string; text: string; subject: string; sent_at: string };
+export type WaitingItem = Options & { key: string; email_id: string; thread_id: string; who: string; address: string; text: string; subject: string; sent_at: string };
 
 export type HandledItem = { email_id: string; who: string; subject: string; what: string; at: string };
 
 // The mail an automation gathered at its time.
 export type Digest = { id: string; title: string; at: string; items: { email_id: string; who: string; text: string; at: string }[] };
 
-export type Brief = { settings: BriefSettings; summary: string | null; digests: Digest[]; needs: NeedItem[]; more: number; waiting: WaitingItem[]; waitingMore: number; handled: HandledItem[]; day: string; at: string };
+export type Brief = { settings: BriefSettings; summary: string | null; digests: Digest[]; needs: NeedItem[]; more: number; proof: NeedItem | null; waiting: WaitingItem[]; waitingMore: number; handled: HandledItem[]; day: string; at: string };
 
 type Row = Record<string, unknown>;
 
@@ -93,14 +98,16 @@ function proposalText(p: Row, subject: string | undefined): string {
   return subject && ["archive", "read", "snooze", "label", "vip"].includes(String(p.kind)) ? `${String(p.summary)}: ${subject}` : String(p.summary ?? "");
 }
 
-export async function brief(userId: string): Promise<Brief> {
-  const { data: profile } = await db.from("profiles").select("working_hours, brief, brief_summary").eq("id", userId).maybeSingle();
+// The lines past its length are counted; `all` lists them too.
+const ALL_MAX = 100;
+export async function brief(userId: string, { all: every = false } = {}): Promise<Brief> {
+  const { data: profile } = await db.from("profiles").select("working_hours, brief, brief_summary, autonomy_level, proof").eq("id", userId).maybeSingle();
   const settings = briefSettings(profile?.brief);
   const { day: today, since } = briefDay(settings, zoneOf(profile));
   const written = profile?.brief_summary as Summary | null;
   const max = LENGTHS[settings.length];
 
-  const [drafts, proposals, meetings, todos, questions, recent, prefs, waiting, back, hidden, unread, placed, gathered] = await Promise.all([
+  const [drafts, proposals, meetings, todos, questions, recent, prefs, owed, back, hidden, unread, placed, gathered, leaving] = await Promise.all([
     db.from("draft_emails").select("id, email_id, subject, to_addresses, forward, created_at").eq("user_id", userId).or("email_id.not.is.null,forward.not.is.null").order("created_at", { ascending: false }).limit(200),
     db.from("action_log").select("id, kind, email_id, summary, detail, hash, created_at").eq("user_id", userId).eq("status", "proposed").or("kind.neq.label,source.eq.automation").order("created_at", { ascending: false }).limit(200),
     db.from("meetings").select("id, email_id, title, start_time, as_written").eq("user_id", userId).eq("status", "proposed").order("start_time", { ascending: true }).limit(100),
@@ -120,6 +127,7 @@ export async function brief(userId: string): Promise<Brief> {
     db.from("emails").select("id, subject, sender, sender_email, received_at, email_processed(summary)").eq("user_id", userId).eq("is_read", false).eq("is_archived", false).eq("is_calendar", false).gte("received_at", new Date(Date.now() - 7 * DAY).toISOString()).not("label_ids", "cs", '{"SENT"}').order("received_at", { ascending: false }).limit(500),
     db.from("email_processed").select("email_id, brief").eq("user_id", userId).not("brief", "is", null).order("processed_at", { ascending: false }).limit(2000),
     db.from("automations").select("id, text, digest").eq("user_id", userId).not("digest", "is", null),
+    db.from("scheduled_emails").select("thread_id").eq("user_id", userId).eq("status", "pending"),
   ]);
   // Where an automation put an email: first, or out of the Brief.
   const place = new Map<string, string>(((placed.data ?? []) as Row[]).map((r) => [String(r.email_id), String(r.brief)]));
@@ -130,12 +138,15 @@ export async function brief(userId: string): Promise<Brief> {
   // The people the needs are about, by email.
   const ids = new Set<string>();
   for (const r of [...(drafts.data ?? []), ...(proposals.data ?? []), ...(meetings.data ?? []), ...(todos.data ?? [])] as Row[]) if (r.email_id) ids.add(String(r.email_id));
-  const senders = new Map<string, { who: string; address: string; subject: string; received: string }>();
+  const senders = new Map<string, { who: string; address: string; subject: string; received: string; own: boolean; thread: string }>();
   const list = [...ids];
   for (let i = 0; i < list.length; i += 300) {
-    const { data } = await db.from("emails").select("id, sender, sender_email, subject, received_at").in("id", list.slice(i, i + 300));
+    const { data } = await db.from("emails").select("id, sender, sender_email, recipients, subject, received_at, label_ids, thread_id").in("id", list.slice(i, i + 300));
     for (const e of (data ?? []) as Row[]) {
-      senders.set(String(e.id), { who: displayName(e.sender as string, String(e.sender_email ?? "")), address: String(e.sender_email ?? "").toLowerCase(), subject: String(e.subject || "(no subject)"), received: String(e.received_at ?? "") });
+      // On the user's own mail it is about the one it went to.
+      const own = ((e.label_ids as string[] | null) ?? []).includes("SENT");
+      const to = String(e.recipients ?? "").split(",")[0].trim();
+      senders.set(String(e.id), { own, thread: String(e.thread_id ?? ""), who: own ? displayName(to, to) : displayName(e.sender as string, String(e.sender_email ?? "")), address: String(e.sender_email ?? "").toLowerCase(), subject: String(e.subject || "(no subject)"), received: String(e.received_at ?? "") });
     }
   }
   const whoOf = (emailId: unknown) => senders.get(String(emailId ?? ""))?.who ?? "";
@@ -145,7 +156,7 @@ export async function brief(userId: string): Promise<Brief> {
   // who matters and mail back from snooze, unread mail from someone who
   // matters, other replies and approvals, other meetings, todos due today,
   // then the questions. Newest first within each.
-  type Ranked = NeedItem & { rank: number; at: string };
+  type Ranked = Omit<NeedItem, keyof Options> & { rank: number; at: string };
   const all: Ranked[] = [];
   const draftedEmails = new Set<string>();
   for (const d of (drafts.data ?? []) as Row[]) {
@@ -157,11 +168,11 @@ export async function brief(userId: string): Promise<Brief> {
     if (!d.email_id) continue;
     draftedEmails.add(String(d.email_id));
     const s = senders.get(String(d.email_id));
-    all.push({ key: `draft:${d.id}`, kind: "reply", who: s?.who || String((d.to_addresses as string[] | null)?.[0] ?? ""), text: `Reply drafted: ${s?.subject ?? String(d.subject ?? "")}`, email_id: String(d.email_id), id: String(d.id), rank: vip(d.email_id) ? 2 : 3, at: String(d.created_at) });
+    all.push({ key: `draft:${d.id}`, kind: "reply", who: s?.who || String((d.to_addresses as string[] | null)?.[0] ?? ""), text: `${s?.own ? "Follow-up" : "Reply"} drafted: ${s?.subject ?? String(d.subject ?? "")}`, email_id: String(d.email_id), id: String(d.id), rank: vip(d.email_id) ? 2 : 3, at: String(d.created_at) });
   }
   for (const p of (proposals.data ?? []) as Row[]) {
     if (p.kind === "draft" && draftedEmails.has(String(p.email_id))) continue;
-    all.push({ key: `act:${p.id}`, kind: "approve", who: whoOf(p.email_id) || "Tabellar", text: proposalText(p, senders.get(String(p.email_id ?? ""))?.subject), email_id: (p.email_id as string) ?? null, id: String(p.id), hash: String(p.hash ?? ""), rank: vip(p.email_id) ? 2 : 3, at: String(p.created_at) });
+    all.push({ key: `act:${p.id}`, kind: "approve", who: whoOf(p.email_id) || "Tabellar", text: proposalText(p, senders.get(String(p.email_id ?? ""))?.subject), email_id: (p.email_id as string) ?? null, id: String(p.id), rank: vip(p.email_id) ? 2 : 3, at: String(p.created_at) });
   }
   const soon = Date.now() + DAY;
   for (const m of (meetings.data ?? []) as Row[]) {
@@ -194,10 +205,23 @@ export async function brief(userId: string): Promise<Brief> {
   }
   for (const n of all) if (n.email_id && place.get(n.email_id) === "first") n.rank = -1;
   // Who owes the user an answer: their most important people first, then the longest wait.
+  // One with a follow-up drafted or on its way is a line of its own, or none.
+  const chased = new Set([...[...draftedEmails].map((id) => senders.get(id)?.thread), ...(leaving.data ?? []).map((r) => r.thread_id)].filter(Boolean).map(String));
+  const waiting = owed.filter((f) => !chased.has(f.thread_id));
   waiting.sort((a, b) => Number(matters(b.recipient_email)) - Number(matters(a.recipient_email)));
 
   all.sort((a, b) => a.rank - b.rank || (a.kind === "meeting" || a.kind === "todo" ? a.at.localeCompare(b.at) : b.at.localeCompare(a.at)));
-  const needs = all.slice(0, max.needs).map(({ rank: _rank, at: _at, ...n }) => n);
+  const length = every ? ALL_MAX : max.needs;
+  const needs: NeedItem[] = [];
+  for (const { rank: _rank, at: _at, ...n } of all.slice(0, length)) {
+    const o = await options(userId, n.key);
+    if (o) needs.push({ ...n, ...o });
+  }
+  const waits: WaitingItem[] = [];
+  for (const f of waiting.slice(0, max.waiting)) {
+    const o = await options(userId, `wait:${f.key}`);
+    if (o) waits.push({ key: `wait:${f.key}`, email_id: f.email_id, thread_id: f.thread_id, who: f.recipient_name, address: f.recipient_email, text: f.asked || f.subject, subject: f.subject, sent_at: f.sent_at, ...o });
+  }
   const needIds = new Set(all.map((n) => n.email_id).filter(Boolean) as string[]);
 
   // Handled: mail of the last day that needs nothing from the user, with
@@ -259,13 +283,55 @@ export async function brief(userId: string): Promise<Brief> {
     digests,
     summary: settings.summary && current(written, today, settings, all.map((n) => n.key)) ? written!.text : null,
     needs,
-    more: Math.max(0, all.length - max.needs),
+    more: Math.max(0, all.length - length),
+    proof: await proofLine(userId, profile, today),
     waitingMore: Math.max(0, waiting.length - max.waiting),
-    waiting: waiting.slice(0, max.waiting).map((f) => ({ key: f.key, email_id: f.email_id, thread_id: f.thread_id, who: f.recipient_name, address: f.recipient_email, text: f.asked || f.subject, subject: f.subject, sent_at: f.sent_at })),
+    waiting: waits,
     handled,
     day: today,
     at: new Date().toISOString(),
   };
+}
+
+// ── Proof before trust ──────────────────────────────────────────────────────
+
+// Once, after a week of drafts that mostly went out word for word: how many
+// did, and the offer to let the ones to people the user knows go on their own.
+const PROOF_DAYS = 7;
+const PROOF_FROM = 5;
+const PROOF_SHARE = 0.7;
+async function proofLine(userId: string, profile: Row | null, day: string): Promise<NeedItem | null> {
+  const level = normalizeLevel(profile?.autonomy_level);
+  if ((level !== "suggest" && level !== "assist") || (profile?.proof && profile.proof !== day)) return null;
+  const k = await draftsKept(userId);
+  if (!k.first || Date.now() - new Date(k.first).getTime() < PROOF_DAYS * DAY || k.decided < PROOF_FROM || k.unchanged < k.decided * PROOF_SHARE) return null;
+  const o = await options(userId, "proof:");
+  return o && { key: "proof:", kind: "proof", who: "Tabellar", text: `${k.unchanged} of ${k.decided} drafts were sent unchanged`, email_id: null, id: "", ...o };
+}
+
+// It was on screen today: it is not brought up on another day.
+export async function proofShown(userId: string, day: string): Promise<void> {
+  await db.from("profiles").update({ proof: day }).eq("id", userId).is("proof", null);
+}
+
+// What Tabellar asked the user to decide in the last seven days, against the
+// mail that came: drafts, proposals, meetings and questions, each once, not
+// what a rule or time took back.
+export async function decisions(userId: string): Promise<{ asked: number; mail: number; per100: number | null }> {
+  const since = new Date(Date.now() - 7 * DAY).toISOString();
+  const [{ data: log }, { count: questions }, { count: mail }] = await Promise.all([
+    db.from("action_log").select("id, kind, email_id, hash, source, reason, status").eq("user_id", userId).in("source", ["engine", "automation"]).in("status", ["proposed", "done", "dismissed", "undone"]).gte("created_at", since),
+    db.from("questions").select("id", { count: "exact", head: true }).eq("user_id", userId).in("status", ["open", "answered", "skipped"]).gte("created_at", since),
+    db.from("emails").select("id", { count: "exact", head: true }).eq("user_id", userId).gte("received_at", since).eq("is_receipt", false).not("label_ids", "cs", '{"SENT"}'),
+  ]);
+  const asked = new Set<string>();
+  for (const r of (log ?? []) as Row[]) {
+    if (!(r.hash || r.kind === "draft" || r.kind === "meeting") || (r.kind === "label" && r.source === "engine")) continue;
+    if (r.reason === "Read again" || r.reason === "Your preference") continue;
+    asked.add(`${r.kind}:${r.email_id ?? r.id}`);
+  }
+  const n = asked.size + (questions ?? 0);
+  return { asked: n, mail: mail ?? 0, per100: mail ? Math.round((n / mail) * 100) : null };
 }
 
 // How many emails wait on the user: the count on the Inbox and in the menu bar.
@@ -331,7 +397,7 @@ export function supported(text: string, lines: string): boolean {
 
 function linesFor(b: Brief): string {
   const line = (n: NeedItem): string => {
-    const about = n.text.replace(/^Reply drafted: |^Reply to approve: /, "");
+    const about = n.text.replace(/^(Reply|Follow-up) drafted: |^Reply to approve: /, "");
     if (n.kind === "reply" || /^Reply to approve/.test(n.text)) return `A reply to ${n.who} about "${about}" is drafted and waits for the user to send it`;
     if (n.kind === "forward") return `A forward to ${n.who} is drafted and waits for the user to send it: ${n.text.replace(/^Forward drafted: /, "")}`;
     if (n.kind === "meeting") return `A meeting with ${n.who} waits to be confirmed: ${n.text}`;

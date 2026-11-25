@@ -6,7 +6,7 @@
 //   POST /refine-draft          Rewrite a draft
 //   POST /analyze-inbox         Re-analyze unprocessed or all emails
 //   POST /writing/...           How the user writes: learn, set a line, a sample reply
-//   GET  /briefing              The Brief
+//   GET  /briefing, POST /briefing/answer|undo, GET /briefing/decisions   The Brief, answered in place
 //   GET  /calendar/free-slots   Free calendar slots
 //   GET  /calendar/events       Calendar events
 //   POST /calendar/create-event Create a Google Calendar event
@@ -16,6 +16,7 @@
 //   GET  /contacts/search       Search contacts
 //   POST /contacts/sync         Import Google contacts
 //   POST /accounts/remove       Disconnect a mailbox
+//   POST /drafts/save|send|unsend|discard   Drafts, here and in the mailbox
 //   POST /chat                  Assistant chat with inbox tools
 //   GET|POST /follow-ups, PATCH|DELETE /follow-ups/:id, GET /follow-ups/list
 //   GET|POST /signatures, PATCH|DELETE /signatures/:id
@@ -44,7 +45,7 @@ import {
 import { syncMail, analyzeInbox } from "./sync.ts";
 import { modelStatus } from "./analyzeEmails.ts";
 import { accountById, accountFor, accountsForWindow, defaultAccount, fromLine, listAccounts, removeAccount, replyFrom, updateAccount } from "./accounts.ts";
-import { discardDrafts, saveUserDraft } from "./drafts.ts";
+import { discardDrafts, queueDraft, saveUserDraft, unqueue } from "./drafts.ts";
 import { messageIdOf, withForward } from "./forward.ts";
 import { escapeHtml, htmlToText } from "./mime.ts";
 import { realAttendees } from "./senders.ts";
@@ -56,11 +57,12 @@ import { draftReply, sampleReply, writeTo, type EmailRow } from "./replies.ts";
 import { displayNameOf, isRule, keepRules, learnFromEdit, RECIPIENTS, setAvoid, setLine, stylePrompt, writingFor } from "./writing.ts";
 import { learnFromSent, startFirstRead } from "./firstRead.ts";
 import * as onboarding from "./onboarding.ts";
-import { approve, dismiss, undo, engineSettings, setMailState } from "./actions.ts";
+import { approve, confirmMeeting, dismiss, undo, engineSettings, setMailState } from "./actions.ts";
+import { answer as answerLine, undoAnswer } from "./answers.ts";
 import { answer, applyPref, feedback, profileContext, reopen, setPref, type Feedback } from "./profile.ts";
 import * as automations from "./automations.ts";
 import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
-import { brief, prepareBrief } from "./brief.ts";
+import { brief, decisions, prepareBrief, proofShown } from "./brief.ts";
 import { applyLabel, labelsBySender, labelsForPrompt, suggestLabels, userLabels } from "./labels.ts";
 import {
   runAgentStep,
@@ -565,10 +567,26 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       return json({ draft: refined, kept }, 200, corsHeaders);
     }
 
-    // ── GET /briefing: what needs the user today (brief.ts) ──────────────
+    // ── The Brief: what needs the user today (brief.ts), answered in place
+    // (answers.ts). `all=1` lists every line that needs the user.
     if (path === "/briefing" && req.method === "GET") {
-      return json(await brief(userId), 200, corsHeaders);
+      const b = await brief(userId, { all: url.searchParams.get("all") === "1" });
+      if (b.proof) await proofShown(userId, b.day);
+      return json(b, 200, corsHeaders);
     }
+    if ((path === "/briefing/answer" || path === "/briefing/undo") && req.method === "POST") {
+      const b = await req.json();
+      try {
+        if (path === "/briefing/undo") return json({ ok: true, ...(await undoAnswer(String(b.id ?? ""))) });
+        const done = await answerLine(userId, String(b.key ?? ""), String(b.pick ?? ""));
+        if (done.replan) kickEngine();
+        return json(done);
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
+      }
+    }
+    // How much Tabellar asked of the user in the last seven days.
+    if (path === "/briefing/decisions" && req.method === "GET") return json(await decisions(userId));
     // The opening paragraph, written now if today's is not there yet.
     if (path === "/briefing/summary" && req.method === "POST") {
       return json({ summary: await prepareBrief(userId, { now: true }) });
@@ -783,43 +801,23 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     }
 
     // ── POST /meetings/confirm ─────────────────────────────────────────────
-    // Puts a meeting waiting to be confirmed on Google Calendar: a meetings
-    // row by `id`, or a proposal by `proposal` {id, hash}, which is approved
-    // first. `title`, `start_time`, `end_time`, `location` and `attendees`
-    // change it on the way. Only the
-    // people the user added are invited; Tabellar invites nobody by itself.
+    // Puts a meeting waiting to be confirmed on the calendar: a meetings row
+    // by `id`, or a proposal by `proposal` {id, hash}, which is approved first.
+    // `title`, `start_time`, `end_time`, `location` and `attendees` change it
+    // on the way.
     if (path === "/meetings/confirm" && req.method === "POST") {
       const body = await req.json();
       let meetingId = typeof body.id === "string" ? body.id : "";
-      try {
-        if (body.proposal?.id) meetingId = String((await approve(userId, String(body.proposal.id), String(body.proposal.hash ?? ""))).meetingId ?? "");
-      } catch (e) {
-        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
-      }
-      const { data: m } = await db.from("meetings").select("*").eq("id", meetingId).eq("user_id", userId).maybeSingle();
-      if (!m) return json({ error: "That meeting is gone" }, 404);
-      if (m.status === "confirmed" && m.calendar_event_id) return json({ ok: true, meetingId: m.id, link: null });
       const changes: Record<string, unknown> = {};
       for (const k of ["title", "start_time", "end_time", "location"]) if (typeof body[k] === "string" && body[k]) changes[k] = body[k];
       if (Array.isArray(body.attendees)) changes.attendees = body.attendees.map(String).filter(Boolean);
-      if (Object.keys(changes).length) await db.from("meetings").update(changes).eq("id", m.id);
-      const meeting = { ...m, ...changes };
-      const cal = await userCalendar(userId);
-      if (!cal) return json({ error: "No calendar is connected. Connect a Google or Outlook account in Settings." }, 502);
-      const attendees = Array.isArray(meeting.attendees) ? (meeting.attendees as string[]) : [];
-      let ev: { id: string; link: string | null };
       try {
-        // Only the people the user added are invited.
-        ev = await cal.calendar.create(
-          cal.account,
-          { title: meeting.title, description: meeting.description ?? "", start: meeting.start_time, end: meeting.end_time, ...(meeting.location ? { location: meeting.location } : {}), attendees },
-          attendees.length > 0,
-        );
-      } catch {
-        return json({ error: "The calendar did not accept it" }, 502);
+        if (body.proposal?.id) meetingId = String((await approve(userId, String(body.proposal.id), String(body.proposal.hash ?? ""))).meetingId ?? "");
+        const { link } = await confirmMeeting(userId, meetingId, changes);
+        return json({ ok: true, meetingId, link });
+      } catch (e) {
+        return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
       }
-      await db.from("meetings").update({ status: "confirmed", calendar_event_id: ev.id }).eq("id", m.id);
-      return json({ ok: true, meetingId: m.id, link: ev.link });
     }
 
     // ── POST /calendar/create-event, /calendar/update-event ────────────────
@@ -994,6 +992,25 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     // A draft from compose, kept here and in the mailbox's Drafts.
     if (path === "/drafts/save" && req.method === "POST") {
       return json(await saveUserDraft(userId, await req.json()));
+    }
+
+    // Sent through the outbox, with a short window in which it can be taken
+    // back: `drafts` [{id, html?}], html when an answer in it was chosen; `at`
+    // sends it then instead.
+    if (path === "/drafts/send" && req.method === "POST") {
+      const { drafts, at } = await req.json();
+      if (!Array.isArray(drafts) || !drafts.length) return json({ error: "drafts required" }, 400);
+      const queued: string[] = [];
+      try {
+        for (const d of drafts) queued.push((await queueDraft(userId, String(d.id), { html: typeof d.html === "string" ? d.html : undefined, at: typeof at === "string" ? at : undefined })).id);
+      } catch (e) {
+        return json({ queued, error: (e as Error).message }, queued.length ? 200 : ((e as { status?: number }).status ?? 500));
+      }
+      return json({ queued });
+    }
+    if (path === "/drafts/unsend" && req.method === "POST") {
+      const { ids } = await req.json();
+      return json({ stopped: await unqueue(userId, Array.isArray(ids) ? ids.map(String) : []) });
     }
 
     // Discarded here, and in the mailbox's Drafts where Tabellar saved it.

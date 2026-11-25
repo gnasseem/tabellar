@@ -235,20 +235,21 @@ function GoingOut() {
 }
 
 // The views in the sidebar, in their three groups. Settings, Appearance can
-// hide any but the Inbox; a hidden view still shows while it is open.
+// hide any but the Inbox; a hidden view still shows while it is open. A new
+// user starts without the last group (HIDDEN in server/accounts.ts).
 type Item = { id: string; icon: string; label: string; count?: "need" | "replies" | "todos" | "meetings" | "followups" };
 export const NAV: Item[][] = [
   [
+    { id: "briefing", icon: "description", label: "Brief" },
     { id: "inbox", icon: "inbox", label: "Inbox", count: "need" },
+    { id: "ask", icon: "chat_bubble", label: "Ask" },
+    { id: "automations", icon: "bolt", label: "Automations" },
+  ],
+  [
     { id: "replies", icon: "reply", label: "Replies", count: "replies" },
     { id: "todos", icon: "checklist", label: "Todos", count: "todos" },
     { id: "meetings", icon: "event", label: "Meetings", count: "meetings" },
     { id: "followups", icon: "schedule_send", label: "Follow-ups", count: "followups" },
-  ],
-  [
-    { id: "briefing", icon: "description", label: "Brief" },
-    { id: "ask", icon: "chat_bubble", label: "Ask" },
-    { id: "automations", icon: "bolt", label: "Automations" },
   ],
   [
     { id: "sent", icon: "send", label: "Sent" },
