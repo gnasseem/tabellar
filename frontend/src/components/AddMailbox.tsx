@@ -1,5 +1,6 @@
 import { useState, type ChangeEvent, type InputHTMLAttributes, type ReactNode } from "react";
 import { setupPost, type MailboxChoice, type SetupState } from "@/lib/setup";
+import { vault } from "@/lib/host";
 import { ErrorLine, ui } from "./ModelSetup";
 
 // Adding a mailbox, in the first run and in Settings > Accounts. The choices
@@ -180,7 +181,7 @@ function PasswordForm({ choice, onAdded }: { choice: MailboxChoice; onAdded: (fi
         <button type="submit" className={ui.btnPrimary} disabled={busy || !f.address.trim() || !f.password}>
           {busy ? "Checking" : `Add ${choice.id === "imap" ? "mailbox" : choice.name}`}
         </button>
-        <span className="text-xs text-ink2">Kept in the macOS Keychain.{choice.calendar ? "" : " Mail only: no calendar."}</span>
+        <span className="text-xs text-ink2">Kept in {vault()}.{choice.calendar ? "" : " Mail only: no calendar."}</span>
       </div>
       <ErrorLine text={error} />
     </form>

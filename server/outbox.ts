@@ -5,7 +5,8 @@
 // send is never picked up twice. An Autopilot row is checked again when it
 // falls due, against the stored email it answers: if Tabellar was paused or
 // taken off Autopilot in the meantime, or the reply no longer passes
-// checkAutoSend, it is not sent and is kept as a draft instead.
+// checkAutoSend, it is not sent and is kept as a draft instead. What fell due
+// while Tabellar was away waits until the mailbox was read again (awake.ts).
 
 import { db } from "./db.ts";
 import { mail } from "./providers.ts";
@@ -17,6 +18,7 @@ import { messageIdOf, withForward } from "./forward.ts";
 import { htmlToText } from "./mime.ts";
 import { addressesIn } from "./senders.ts";
 import { answered } from "./snooze.ts";
+import { sinceWoke, waitsForMail } from "./awake.ts";
 
 type Row = Record<string, any>;
 
@@ -26,6 +28,8 @@ const ANSWERED = "You answered it yourself";
 // it, no connection, or no sign-in to send with. Tried again until it is this
 // late; anything else may have gone out, and is never sent twice.
 const RETRY_FOR_MS = 12 * 3600_000;
+// An automatic reply later than this is the user's to look at first.
+const TOO_LATE_MS = 12 * 3600_000;
 const NOT_SENT = /ENOTFOUND|EAI_AGAIN|ENETUNREACH|ENETDOWN|EHOSTUNREACH|EHOSTDOWN|ECONNREFUSED|UND_ERR_CONNECT_TIMEOUT|Could not reach /;
 function notSent(e: unknown): boolean {
   const err = e as { message?: string; cause?: { code?: string; message?: string } };
@@ -47,6 +51,7 @@ async function autopilotRefusal(row: Row): Promise<string | null> {
   const { level, paused } = await engineSettings(row.user_id);
   if (paused) return "Tabellar was paused before it was sent";
   if (level !== "autopilot") return "Autopilot was turned off before it was sent";
+  if (Date.now() - new Date(row.send_at).getTime() > TOO_LATE_MS) return "Tabellar was away when it was due";
   if (!row.email_id) return "The email it answered is no longer in Tabellar";
   const { data: email } = await db.from("emails").select("sender_email, reply_to_email, thread_id, received_at").eq("id", row.email_id).maybeSingle();
   if (!email) return "The email it answered is no longer in Tabellar";
@@ -97,6 +102,7 @@ export async function sendDueEmails(): Promise<void> {
     .eq("status", "pending")
     .lte("send_at", new Date().toISOString());
   for (const row of (due ?? []) as Row[]) {
+    if (waitsForMail(row.account_id, row.send_at)) continue;
     const claimed = await db.from("scheduled_emails").update({ status: "sending" }).eq("id", row.id).eq("status", "pending").select("id");
     if (!claimed.data?.length) continue;
     const autopilot = row.source === "autopilot";
@@ -147,7 +153,7 @@ export async function sendDueEmails(): Promise<void> {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (notSent(e) && Date.now() - new Date(row.send_at).getTime() < RETRY_FOR_MS) {
+      if (notSent(e) && Math.min(sinceWoke(), Date.now() - new Date(row.send_at).getTime()) < RETRY_FOR_MS) {
         await db.from("scheduled_emails").update({ status: "pending", error_message: "Waiting for the network" }).eq("id", row.id);
         continue;
       }

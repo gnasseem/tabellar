@@ -3,7 +3,7 @@
 // for what was sent to the bot (long polling), so there is no server and no
 // public address.
 //
-// The token goes in the Keychain. The window shows a code; the private chat
+// The token is kept with the other secrets. The window shows a code; the private chat
 // that sends it to the bot is the only one listened to or written to from then
 // on. Everything else that reaches the bot is dropped.
 //
@@ -91,7 +91,7 @@ function call(s: State, method: string, body: Row = {}): Promise<any> {
   return callWith(token, method, body);
 }
 
-const LOST = "The bot's token is not on this Mac. Connect it again.";
+const LOST = "The bot's token is not kept here. Connect it again.";
 // What is wrong with asking Telegram, and with writing to the chat.
 let problem: string | null = null;
 let refused: string | null = null;
@@ -255,7 +255,7 @@ async function briefMessage(userId: string, b: Brief, me: Row | null): Promise<O
   const tz = timeZone(me);
   const has = (section: string) => b.settings.sections.includes(section);
   const summaries = await summariesOf(b.needs.map((n) => n.email_id));
-  const head: string[] = b.summary ? [b.summary] : [];
+  const head = [b.away, b.summary].filter((t): t is string => !!t);
   if (has("calendar")) {
     try {
       const cal = await userCalendar(userId);

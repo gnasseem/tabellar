@@ -2,6 +2,7 @@ import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, u
 import Logo from "@/components/Logo";
 import { Glyph } from "@/components/ui";
 import type { Session } from "@/lib/db";
+import { here, host, vault } from "@/lib/host";
 import { appearanceOf, applyAppearance, useTheme, type ThemeChoice } from "@/lib/appearance";
 import { api, formatBytes, setupPost, type Onboarding, type SetupState } from "@/lib/setup";
 import { CloudPanel, ErrorLine, Icon, LocalPanel, localPair, modelLabel, ProgressBar, RadioDot, ui, useLocalJob, useSetupState, useTimeLeft } from "./ModelSetup";
@@ -360,8 +361,8 @@ function WhatStays() {
   );
   return (
     <div className="max-w-[440px] space-y-5 leading-[1.6] lg:border-l lg:border-line lg:pl-10">
-      {block("What stays on this Mac", "Your mail, in one file in your home folder. Keys and sign-in tokens, in the macOS Keychain. Nothing is hosted anywhere.")}
-      {block("What leaves it", "Calls to your mail provider, to read and act on your own mail and calendar, and calls to the model you choose. With a model on this Mac, nothing else leaves at all.")}
+      {block(`What stays on ${here()}`, `Your mail, in one file in your home folder. Keys and sign-in tokens, in ${vault()}. Nothing is hosted anywhere else.`)}
+      {block("What leaves it", `Calls to your mail provider, to read and act on your own mail and calendar, and calls to the model you choose. With a model on ${here()}, nothing else leaves at all.`)}
       {block("What it never does", "Delete mail, archive on its own, or send anything before you choose a level that allows it.")}
     </div>
   );
@@ -490,7 +491,7 @@ function OwnGoogleClient({ state, refresh, onDone }: { state: SetupState; refres
                   <p className="truncate font-mono text-xs text-ink3" title={state.google.clientId!}>
                     {state.google.clientId}
                   </p>
-                  <p className="text-xs text-ink2">The secret is in your Keychain.</p>
+                  <p className="text-xs text-ink2">The secret is in {vault()}.</p>
                   {warning && <p className="mt-1 text-xs text-warn">{warning}</p>}
                 </div>
               </div>
@@ -503,7 +504,7 @@ function OwnGoogleClient({ state, refresh, onDone }: { state: SetupState; refres
                 <p className="text-xs text-ink2">Saved {ago(found.modified)}</p>
                 <label className="mt-2.5 flex items-center gap-2 text-ink2">
                   <input type="checkbox" checked={trash} onChange={(e) => setTrash(e.target.checked)} />
-                  Move the file to the Trash once it is in the Keychain
+                  Move the file to the Trash once it is in {vault()}
                 </label>
                 <button type="button" className={`${ui.btnPrimary} mt-4`} disabled={busy} onClick={() => save({ path: found.path, trash })}>
                   {busy ? "Saving" : "Use this file"}
@@ -559,7 +560,7 @@ function BigChoice({ on, onClick, title, tag, detail }: { on: boolean; onClick: 
 function ModelStep({ state, refresh, onNext }: { state: SetupState; refresh: () => Promise<void>; onNext: () => void }) {
   const pair = useMemo(() => localPair(state), [state]);
   const current = state.model;
-  const [where, setWhere] = useState<"local" | "cloud">(current && current.format !== "ollama" ? "cloud" : "local");
+  const [where, setWhere] = useState<"local" | "cloud">((current ? current.format !== "ollama" : !host.mac && !state.ollama.installed) ? "cloud" : "local");
   const [advanced, setAdvanced] = useState(false);
   const [error, setError] = useState("");
   const { job, running, start } = useLocalJob(refresh);
@@ -583,11 +584,11 @@ function ModelStep({ state, refresh, onNext }: { state: SetupState; refresh: () 
   };
 
   const installed = new Set(state.ollama.models.map((m) => m.name));
-  const sizeOf = (name: string) => (installed.has(name) ? "On this Mac" : formatBytes(state.local.choices.find((c) => c.name === name)?.size ?? 0));
+  const sizeOf = (name: string) => (installed.has(name) ? `On ${here()}` : formatBytes(state.local.choices.find((c) => c.name === name)?.size ?? 0));
   const localDetail = (
     <>
       {pair.fast ? `${pair.careful} writes, ${pair.fast} reads each email. ` : `${pair.careful} reads and writes. `}
-      {pair.missing.length || !state.ollama.installed ? `${formatBytes(pair.download)} to download` : "Already on this Mac"}
+      {pair.missing.length || !state.ollama.installed ? `${formatBytes(pair.download)} to download` : `Already on ${here()}`}
       {pair.minutes ? `; the first 300 emails take about ${pair.minutes} minutes.` : "."}
     </>
   );
@@ -637,7 +638,7 @@ function ModelStep({ state, refresh, onNext }: { state: SetupState; refresh: () 
               )}
             </div>
             <p className="mt-3 text-[12.5px] leading-normal text-ink3">
-              Picked for this Mac's {state.local.memoryGb} GB of memory. Downloads once, then runs offline{state.local.small ? "; with this much memory a cloud model writes drafts faster and closer to your voice" : ""}.
+              Picked for {here()}'s {state.local.memoryGb} GB of memory. Downloads once, then runs offline{state.local.small ? "; with this much memory a cloud model writes drafts faster and closer to your voice" : ""}.
             </p>
             {(running || localReady || job?.error) && (
               <div className="mt-6">
@@ -661,7 +662,7 @@ function ModelStep({ state, refresh, onNext }: { state: SetupState; refresh: () 
       }
     >
       <div role="radiogroup" aria-label="Where the model runs" className="space-y-2">
-        <BigChoice on={where === "local"} onClick={() => setWhere("local")} title="On this Mac" tag="Private, slower" detail={localDetail} />
+        <BigChoice on={where === "local"} onClick={() => setWhere("local")} title={`On ${here()}`} tag="Private, slower" detail={localDetail} />
         <BigChoice
           on={where === "cloud"}
           onClick={() => setWhere("cloud")}
@@ -764,7 +765,7 @@ function NotAnswering({ message }: { message: string }) {
       title="Tabellar is not answering"
       text={
         <>
-          This window could not reach the Tabellar server on this Mac. Make sure <code className="rounded bg-field px-1 py-0.5 font-mono text-[12.5px]">tabellar start</code> is still running in Terminal, then try again.
+          This window could not reach the Tabellar server. Make sure <code className="rounded bg-field px-1 py-0.5 font-mono text-[12.5px]">tabellar start</code> is still running in Terminal, then try again.
         </>
       }
     >

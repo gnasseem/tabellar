@@ -21,7 +21,8 @@
   "bugs": "https://github.com/gnasseem/tabellar/issues",
   "type": "module",
   "os": [
-    "darwin"
+    "darwin",
+    "linux"
   ],
   "engines": {
     "node": ">=24"

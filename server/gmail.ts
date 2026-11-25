@@ -539,7 +539,7 @@ async function findCalendarEvent(tokenRef: string, q: { uid?: string; start?: st
   const { tokenData } = await resolveTokens(tokenRef);
   const get = async (params: Record<string, string>): Promise<GEvent[]> => {
     const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?${new URLSearchParams({ ...params, fields: "items(id,summary,status,htmlLink,start,end,attendees(email),organizer(email))" })}`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${tokenData.token}` } });
+    const res = await fetch(url, { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${tokenData.token}` } });
     if (!res.ok) throw new Error(`Calendar lookup failed (${res.status})`);
     return (((await res.json()).items ?? []) as GEvent[]).filter((e) => e.status !== "cancelled");
   };
@@ -747,6 +747,7 @@ async function fetchGoogleContacts(
   do {
     const url = `https://people.googleapis.com/v1/people/me/connections?personFields=names,emailAddresses&pageSize=1000${pageToken ? `&pageToken=${pageToken}` : ""}`;
     const res = await fetch(url, {
+      signal: AbortSignal.timeout(30_000),
       headers: { Authorization: `Bearer ${tokenData.token}` },
     });
     if (!res.ok) break;
@@ -786,7 +787,7 @@ export async function listAllGoogleContacts(
       });
       const res = await fetch(
         `https://people.googleapis.com/v1/people/me/connections?${params}`,
-        { headers: { Authorization: `Bearer ${tokenData.token}` } },
+        { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${tokenData.token}` } },
       );
       if (!res.ok) break;
       const data = await res.json();
@@ -816,7 +817,7 @@ export async function listAllGoogleContacts(
       });
       const res = await fetch(
         `https://people.googleapis.com/v1/otherContacts?${params}`,
-        { headers: { Authorization: `Bearer ${tokenData.token}` } },
+        { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${tokenData.token}` } },
       );
       if (!res.ok) break;
       const data = await res.json();
@@ -846,7 +847,7 @@ export async function listAllGoogleContacts(
       });
       const res = await fetch(
         `https://people.googleapis.com/v1/people:listDirectoryPeople?${params}`,
-        { headers: { Authorization: `Bearer ${tokenData.token}` } },
+        { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${tokenData.token}` } },
       );
       if (!res.ok) break;
       const data = await res.json();
@@ -869,7 +870,7 @@ export async function listAllGoogleContacts(
   try {
     const sentListRes = await fetch(
       `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=in:sent&maxResults=500&fields=messages/id`,
-      { headers: { Authorization: `Bearer ${tokenData.token}` } },
+      { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${tokenData.token}` } },
     );
     if (sentListRes.ok) {
       const sentData = await sentListRes.json();
@@ -883,7 +884,7 @@ export async function listAllGoogleContacts(
           batch.map((id) =>
             fetch(
               `https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=To&metadataHeaders=Cc&fields=payload/headers`,
-              { headers: { Authorization: `Bearer ${tokenData.token}` } },
+              { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${tokenData.token}` } },
             ).then((r) => (r.ok ? r.json() : null)).catch(() => null),
           ),
         );
@@ -925,7 +926,7 @@ export async function searchGoogleContacts(
   try {
     const dirRes = await fetch(
       `https://people.googleapis.com/v1/people:searchDirectoryPeople?query=${encodeURIComponent(query)}&readMask=names,emailAddresses&sources=DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE&pageSize=10`,
-      { headers: { Authorization: `Bearer ${tokenData.token}` } },
+      { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${tokenData.token}` } },
     );
     if (dirRes.ok) {
       const data = await dirRes.json();
@@ -946,7 +947,7 @@ export async function searchGoogleContacts(
   try {
     const contRes = await fetch(
       `https://people.googleapis.com/v1/people:searchContacts?query=${encodeURIComponent(query)}&readMask=names,emailAddresses&pageSize=10`,
-      { headers: { Authorization: `Bearer ${tokenData.token}` } },
+      { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${tokenData.token}` } },
     );
     if (contRes.ok) {
       const data = await contRes.json();
@@ -969,7 +970,7 @@ export async function searchGoogleContacts(
   try {
     const otherRes = await fetch(
       `https://people.googleapis.com/v1/otherContacts:search?query=${encodeURIComponent(query)}&readMask=names,emailAddresses&pageSize=10`,
-      { headers: { Authorization: `Bearer ${tokenData.token}` } },
+      { signal: AbortSignal.timeout(30_000), headers: { Authorization: `Bearer ${tokenData.token}` } },
     );
     if (otherRes.ok) {
       const data = await otherRes.json();
@@ -997,6 +998,7 @@ const CALENDAR = "https://www.googleapis.com/calendar/v3";
 async function calendarRequest(tokenRef: string, path: string, init: RequestInit = {}): Promise<any> {
   const { tokenData } = await resolveTokens(tokenRef);
   const res = await fetch(`${CALENDAR}${path}`, {
+    signal: AbortSignal.timeout(30_000),
     ...init,
     headers: { Authorization: `Bearer ${tokenData.token}`, "Content-Type": "application/json", ...(init.headers ?? {}) },
   });

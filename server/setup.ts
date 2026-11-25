@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { homedir, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, saveConfig, keychainGet, keychainSet, keychainDelete, googleClient, BUILT_IN_GOOGLE, modelKey, modelKeyName, HOME, type ModelConfig, type Slot } from "./config.ts";
+import { MAC, loadConfig, saveConfig, googleClient, BUILT_IN_GOOGLE, modelKey, modelKeyName, HOME, type ModelConfig, type Slot, secrets } from "./config.ts";
 // providers.ts, imap.ts and accounts.ts open the database, so they are
 // imported only when used: `tabellar setup`, `status` and `check` must not
 // touch it.
@@ -62,11 +62,11 @@ export function useBuiltInGoogleClient(): void {
   const config = loadConfig();
   delete config.googleClientId;
   saveConfig(config);
-  keychainDelete("google-client-secret");
+  secrets.delete("google-client-secret");
 }
 
 // Check a client file's contents and save it: the id to config.json, the
-// secret to the Keychain. Returns a warning when the client is the wrong type.
+// secret among the secrets. Returns a warning when the client is the wrong type.
 export function saveGoogleClient(text: string): { clientId: string; warning?: string } {
   let json: { installed?: { client_id?: string; client_secret?: string }; web?: { client_id?: string; client_secret?: string } };
   try {
@@ -78,7 +78,7 @@ export function saveGoogleClient(text: string): { clientId: string; warning?: st
   if (!client?.client_id || !client?.client_secret) throw new Error("That is not a Google OAuth client file.");
   const config = loadConfig();
   config.googleClientId = client.client_id;
-  keychainSet("google-client-secret", client.client_secret);
+  secrets.set("google-client-secret", client.client_secret);
   saveConfig(config);
   return {
     clientId: client.client_id,
@@ -238,6 +238,7 @@ function failure(out: ReturnType<typeof createWriteStream>): Promise<never> {
 // Download Ollama.app from ollama.com, check Apple's signature on it, put it in
 // Applications and start it.
 export async function* installOllama(): AsyncGenerator<Progress> {
+  if (!MAC) throw new Error("Install Ollama on this machine first (ollama.com/download/linux), or use a cloud model.");
   const work = mkdtempSync(join(tmpdir(), "tabellar-ollama-"));
   try {
     const zip = join(work, "Ollama-darwin.zip");
@@ -466,15 +467,15 @@ export async function listModels(p: Provider, base: string, key: string): Promis
   }
 }
 
-// The key saved in the Keychain for this provider.
+// The key saved for this provider.
 export function savedKeyFor(providerId: string): string | null {
-  return keychainGet(modelKeyName(providerId));
+  return secrets.get(modelKeyName(providerId));
 }
 
 // Save a slot. The careful model is chosen first and the fast slot follows
 // it until it is set on its own; `sameAsCareful` puts it back to following.
 export function saveModel(slot: Slot, model: ModelConfig | null, key?: string): void {
-  if (key && model) keychainSet(modelKeyName(model.provider), key);
+  if (key && model) secrets.set(modelKeyName(model.provider), key);
   const config = loadConfig();
   if (slot === "careful" && model) config.model = model;
   else if (slot === "fast") {

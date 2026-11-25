@@ -26,6 +26,7 @@ type Digest = { id: string; title: string; at: string; items: { email_id: string
 type Brief = {
   digests: Digest[];
   settings: { sections: string[]; summary: boolean };
+  away: string | null;
   summary: string | null;
   needs: Need[];
   more: number;
@@ -339,6 +340,7 @@ export default function BriefingView() {
             </div>
           ) : (
             <>
+              {brief.away && <p className="px-5 pt-4 text-ink2">{brief.away}</p>}
               {brief.settings.summary && (brief.summary || writing) && (
                 <p className="max-w-[68ch] px-5 pb-1.5 pt-4 leading-relaxed text-ink" aria-busy={writing || undefined}>
                   {brief.summary || <span className="skel mt-1 block h-2.5 w-[60%]" />}

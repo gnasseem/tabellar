@@ -60,6 +60,7 @@ type Profile = {
   notify_meetings?: boolean | null;
   mailbox_drafts?: boolean | null;
   menu_bar?: boolean | null;
+  keep_awake?: boolean | null;
 };
 
 const UNDO_MS = 10 * 60_000;

@@ -1,13 +1,14 @@
 // The text of an attachment, for a reply that has to know what is in it. Text
 // kinds are decoded here; Word, PDF and slides are read by what macOS has
-// (textutil, PDFKit, unzip), each in a process of its own with a time limit,
-// since a file that arrived by email is not to be trusted. "" when it has no
-// text or cannot be read.
+// (textutil, PDFKit, unzip) or Linux (pdftotext, unzip), each in a process of
+// its own with a time limit, since a file that arrived by email is not to be
+// trusted. "" when it has no text or cannot be read.
 
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MAC } from "./config.ts";
 import { decodeText, htmlToText } from "./mime.ts";
 
 const LIMIT_MS = 10_000;
@@ -81,8 +82,9 @@ export async function fileText(name: string, mime: string, bytes: Buffer): Promi
   let text = "";
   if (TEXT.test(kind)) text = decodeText(bytes);
   else if (/^html?$/.test(kind)) text = htmlToText(decodeText(bytes));
+  else if (!MAC && kind === "docx") text = await inFile(bytes, kind, async (path) => unxml((await run("unzip", ["-p", path, "word/document.xml"])).replace(/<\/w:p>/g, "\n").replace(/<w:(tab|br)\b[^>]*>/g, " ")));
   else if (TEXTUTIL.test(kind)) text = await run("/usr/bin/textutil", ["-noload", "-convert", "txt", "-encoding", "UTF-8", "-stdin", "-stdout", "-format", kind], bytes);
-  else if (kind === "pdf") text = await inFile(bytes, kind, (path) => run("/usr/bin/osascript", ["-l", "JavaScript", "-e", PDF, path]));
+  else if (kind === "pdf") text = await inFile(bytes, kind, (path) => (MAC ? run("/usr/bin/osascript", ["-l", "JavaScript", "-e", PDF, path]) : run("pdftotext", ["-enc", "UTF-8", path, "-"])));
   else if (kind === "xlsx") text = await inFile(bytes, kind, sheet);
   else if (kind === "pptx") text = await inFile(bytes, kind, slides);
   return text.replace(/\r\n?/g, "\n").replace(/[^\S\n]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();

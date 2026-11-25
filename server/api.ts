@@ -57,7 +57,7 @@ import { answer as answerLine, undoAnswer } from "./answers.ts";
 import { answer, applyPref, feedback, profileContext, reopen, setPref, type Feedback } from "./profile.ts";
 import * as automations from "./automations.ts";
 import * as telegram from "./telegram.ts";
-import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
+import { autostartInstalled, installAutostart, removeAutostart } from "./autostart.ts";
 import { brief, decisions, prepareBrief, proofShown } from "./brief.ts";
 import { applyLabel, labelsBySender, labelsForPrompt, suggestLabels, userLabels } from "./labels.ts";
 import { runAgentStepParallel, answerPendingQuestion } from "./agentLoop.ts";

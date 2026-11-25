@@ -1,7 +1,8 @@
 // The Tabellar server: serves the interface, the local API, the database
 // bridge and the live event stream, on 127.0.0.1 only, and runs the
 // background engine (engine.ts), the timer for scheduled sends and snoozed
-// mail, the menu bar item (menubar.ts) and Telegram (telegram.ts).
+// mail, the menu bar item (menubar.ts) and Telegram (telegram.ts). Headless
+// (`tabellar serve`) has no menu bar item and no macOS notifications.
 //
 // Access: every request must name this machine as its Host (which defeats DNS
 // rebinding) and, when a browser sends an Origin, come from Tabellar's own
@@ -16,7 +17,7 @@ import { existsSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { CONFIG_PATH, loadConfig, accessToken, googleClient } from "./config.ts";
+import { CONFIG_PATH, KEYCHAIN, MAC, loadConfig, accessToken, googleClient } from "./config.ts";
 import { db, execute, callRpc, changes, type Change } from "./db.ts";
 import type { QuerySpec } from "./query.ts";
 import { handleApi } from "./api.ts";
@@ -28,7 +29,9 @@ import { modelConfigured } from "./llm.ts";
 import { startEngine, windowClosed, windowOpened } from "./engine.ts";
 import { connectAccount } from "./accounts.ts";
 import { wakeDue } from "./snooze.ts";
+import { beat, startKeepAwake } from "./awake.ts";
 import { startMenuBar } from "./menubar.ts";
+import { CHANNELS, macos } from "./notify.ts";
 import { startTelegram } from "./telegram.ts";
 import { spawn } from "node:child_process";
 
@@ -93,7 +96,7 @@ const loginCodes = new Map<string, number>();
 
 function mintLoginCode(): string {
   const code = randomBytes(24).toString("base64url");
-  loginCodes.set(code, Date.now() + 60_000);
+  loginCodes.set(code, Date.now() + 5 * 60_000);
   return code;
 }
 
@@ -118,7 +121,7 @@ async function completeSignIn(code: string, state: string): Promise<boolean> {
 
 // ── Server ──────────────────────────────────────────────────────────────────
 
-export function startServer(): Promise<{ port: number; close: () => void }> {
+export function startServer({ headless = false, stop = () => {} } = {}): Promise<{ port: number; close: () => Promise<void> }> {
   const { port } = loadConfig();
   const token = accessToken();
   const origins = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
@@ -139,10 +142,15 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
       const hasCookie = sameSecret(cookie(req, COOKIE), token);
 
       // Token-only endpoints: the API, the database bridge, the CLI.
-      if (path.startsWith("/api/") || path === "/db" || path === "/db/rpc" || path === "/session" || path === "/auth/login-code") {
+      if (path.startsWith("/api/") || path === "/db" || path === "/db/rpc" || path === "/session" || path === "/auth/login-code" || path === "/stop") {
         if (!hasToken) return sendJson(res, 401, { error: "Missing or wrong access token" });
         if (path === "/auth/login-code" && req.method === "POST") return sendJson(res, 200, { code: mintLoginCode() });
-        if (path === "/session" && req.method === "GET") return sendJson(res, 200, await sessionInfo());
+        if (path === "/session" && req.method === "GET") return sendJson(res, 200, { ...(await sessionInfo()), host: { mac: MAC, headless, keychain: KEYCHAIN } });
+        // Ends this process, for `tabellar move`.
+        if (path === "/stop" && req.method === "POST") {
+          res.once("close", stop);
+          return sendJson(res, 200, { ok: true });
+        }
         if (path === "/db" && req.method === "POST") {
           const spec = JSON.parse((await readBody(req)).toString("utf8")) as QuerySpec;
           return sendJson(res, 200, execute(spec));
@@ -258,8 +266,10 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
   });
 
   // Every 10 seconds: mail due to go out, and snoozed mail due back.
+  let sending: Promise<unknown> = Promise.resolve();
   const timer = setInterval(() => {
-    sendDueEmails().catch((e) => console.error("[scheduled]", e));
+    beat();
+    sending = Promise.all([sending, sendDueEmails().catch((e) => console.error("[scheduled]", e))]);
     wakeDue().catch((e) => console.error("[snooze]", e));
   }, 10_000);
 
@@ -273,16 +283,21 @@ export function startServer(): Promise<{ port: number; close: () => void }> {
       // A local model needs Ollama running; start it if it is not.
       if ([loadConfig().model, loadConfig().fastModel].some((m) => m?.format === "ollama")) startOllama().catch(() => {});
       const stopEngine = startEngine();
-      const stopMenuBar = startMenuBar(() => spawn("open", [`http://127.0.0.1:${port}/?code=${mintLoginCode()}`], { stdio: "ignore" }).on("error", () => {}));
+      if (headless) CHANNELS.splice(CHANNELS.indexOf(macos), 1);
+      const stopKeepAwake = headless ? () => {} : startKeepAwake();
+      const stopMenuBar = headless ? () => {} : startMenuBar(() => spawn("open", [`http://127.0.0.1:${port}/?code=${mintLoginCode()}`], { stdio: "ignore" }).on("error", () => {}));
       const stopTelegram = startTelegram();
       resolve({
         port,
-        close: () => {
+        // What is being sent is let finish, for a few seconds.
+        close: async () => {
           stopEngine();
           stopMenuBar();
+          stopKeepAwake();
           stopTelegram();
           clearInterval(timer);
           server.close();
+          await Promise.race([sending, new Promise((r) => setTimeout(r, 8_000))]);
         },
       });
     });

@@ -1,7 +1,8 @@
 // Settings, General: the level and pause, Autopilot's limits while it is on,
-// starting at login, and the first-run steps.
+// starting at login, staying awake, and the first-run steps.
 import { useEffect, useState } from "react";
 import { api } from "@/lib/outcomes";
+import { host } from "@/lib/host";
 import { useApp } from "../AppShell";
 import { LevelControl } from "../Sidebar";
 import { Group, Row, Switch, useProfile } from "./parts";
@@ -63,13 +64,20 @@ export default function General() {
         </Group>
       )}
 
-      <Group title="This Mac">
-        <Row name="Start at login" text="Keeps running with the window closed">
-          {autostart === null ? <span className="skel block h-[18px] w-8" aria-label="Loading" /> : <Switch label="Start at login" on={autostart} onChange={toggleAutostart} />}
-        </Row>
-        <Row name="Menu bar" text="What needs you, and Pause">
-          <Switch label="Menu bar" on={profile.menu_bar !== false} onChange={(v) => save({ menu_bar: v })} />
-        </Row>
+      <Group title={host.headless ? "Setup" : "This Mac"}>
+        {!host.headless && (
+          <>
+            <Row name="Start at login" text="Keeps running with the window closed">
+              {autostart === null ? <span className="skel block h-[18px] w-8" aria-label="Loading" /> : <Switch label="Start at login" on={autostart} onChange={toggleAutostart} />}
+            </Row>
+            <Row name="Stay awake on power" text="While plugged in, with the lid open">
+              <Switch label="Stay awake on power" on={!!profile.keep_awake} onChange={(v) => save({ keep_awake: v })} />
+            </Row>
+            <Row name="Menu bar" text="What needs you, and Pause">
+              <Switch label="Menu bar" on={profile.menu_bar !== false} onChange={(v) => save({ menu_bar: v })} />
+            </Row>
+          </>
+        )}
         <Row name="First-run steps" text="Mail, model, About you, examples from your mail, people and labels, level">
           <button
             className="btn"

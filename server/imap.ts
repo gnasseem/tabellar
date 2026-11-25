@@ -2,7 +2,7 @@
 // takes an app password, on node:tls with no dependency. imapMailbox is the
 // "imap" mailbox in providers.ts.
 //
-// The app password is in the Keychain (accounts.token_ref names the item);
+// The app password is among the secrets (accounts.token_ref names the item);
 // accounts.server holds the servers and the user name.
 //
 // How Gmail's terms map onto IMAP:
@@ -387,7 +387,7 @@ async function open(server: ImapServer["imap"], user: string, password: string):
 function login(a: Box): Promise<Conn> {
   const s = a.server as ImapServer | null;
   const password = secrets.get(a.token_ref);
-  if (!s?.imap || !password) throw Object.assign(new Error(`The app password for ${a.address} is not on this Mac. Add the account again.`), { status: 401 });
+  if (!s?.imap || !password) throw Object.assign(new Error(`The app password for ${a.address} is not kept here. Add the account again.`), { status: 401 });
   return open(s.imap, s.user || a.address, password);
 }
 
@@ -746,7 +746,7 @@ async function smtpSend(server: ImapServer["smtp"], user: string, password: stri
 function sendWith(a: Box, m: Outgoing): Promise<string> {
   const s = a.server as ImapServer;
   const password = secrets.get(a.token_ref);
-  if (!s?.smtp || !password) throw Object.assign(new Error(`The app password for ${a.address} is not on this Mac. Add the account again.`), { status: 401 });
+  if (!s?.smtp || !password) throw Object.assign(new Error(`The app password for ${a.address} is not kept here. Add the account again.`), { status: 401 });
   const id = newMessageId(a.address);
   const date = `Date: ${new Date().toUTCString().replace("GMT", "+0000")}`;
   const rcpts = [...m.to, ...(m.cc ?? []), ...(m.bcc ?? [])].map(address).filter(Boolean);

@@ -33,6 +33,8 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       // Before a meeting (prep.ts): whether to tell, and the events told about.
       notify_meetings: "bool ! =true", meetings_told: "json ! =[]",
       menu_bar: "bool ! =true",
+      // Awake while plugged in, and the last time away, {from, to} (awake.ts).
+      keep_awake: "bool ! =false", away: "json",
       // Reply drafts Tabellar makes are also in the mailbox's own Drafts (drafts.ts).
       mailbox_drafts: "bool ! =true",
       autonomy_level: 'text ! ="suggest"', engine_paused: "bool ! =false",
@@ -42,8 +44,9 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       onboarding: 'text ! ="done"',
       // The day the line on drafts sent unchanged was shown, "done" once answered (brief.ts).
       proof: "text",
-      // The data folder this database was last started from (pauseIfCopied).
-      home: "text",
+      // Where this database was last started from (pauseIfCopied), and when it
+      // moved elsewhere (move.ts).
+      home: "text", moved_at: "time",
       created_at: "time ! =now", updated_at: "time ! =now",
     },
   },
@@ -56,7 +59,9 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
     cols: {
       id: "uuid pk =uuid", user_id: "uuid !", provider: 'text ! ="gmail"', address: "text !", token_ref: "text !",
       history_id: "text", server: "json", send_as: "json ! =[]", send_as_at: "time", default_from: "text",
-      is_default: "bool ! =false", paused: "bool ! =false", read_at: "time", created_at: "time ! =now",
+      is_default: "bool ! =false", paused: "bool ! =false", read_at: "time",
+      // When its mail was last brought in (awake.ts).
+      synced_at: "time", created_at: "time ! =now",
     },
     unique: [["user_id", "address"]],
   },

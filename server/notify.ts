@@ -55,7 +55,7 @@ export type Channel = (n: Note) => void;
 
 // Title and text are passed as arguments to an AppleScript run handler, never
 // spliced into the script, so nothing in an email can inject AppleScript.
-const macos: Channel = (n) => {
+export const macos: Channel = (n) => {
   if (process.platform !== "darwin") return;
   const script = [
     "on run argv",

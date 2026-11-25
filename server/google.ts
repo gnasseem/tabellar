@@ -2,12 +2,12 @@
 //
 // Sign-in uses the OAuth flow for installed apps: the browser goes to Google,
 // and Google sends it back to this machine's loopback address with a one-time
-// code, protected by PKCE. Refresh tokens are kept in the macOS Keychain; the
-// database only stores a reference to the Keychain item. Access tokens live in
+// code, protected by PKCE. Refresh tokens are kept with the secrets (config.ts);
+// the database only stores a reference to one. Access tokens live in
 // memory and are refreshed when they expire.
 
 import { createHash, randomBytes } from "node:crypto";
-import { getEnv, keychainGet, keychainSet, keychainDelete } from "./config.ts";
+import { getEnv, secrets } from "./config.ts";
 
 export const SCOPES = [
   "openid",
@@ -38,14 +38,14 @@ export async function saveTokens(t: TokenData): Promise<string> {
   if (!t.refresh_token) throw new Error("Google did not return a refresh token");
   const ref = "google:" + createHash("sha256").update(t.refresh_token).digest("hex").slice(0, 16);
   const stored = JSON.stringify({ refresh_token: t.refresh_token, scopes: t.scopes });
-  if (keychainGet(ref) !== stored) keychainSet(ref, stored);
+  if (secrets.get(ref) !== stored) secrets.set(ref, stored);
   if (t.token) accessTokens.set(ref, { token: t.token, expiry: t.expiry ?? new Date(Date.now() + 3000_000).toISOString() });
   return ref;
 }
 
 export async function loadTokens(ref: string): Promise<TokenData> {
-  const stored = keychainGet(ref);
-  if (!stored) throw Object.assign(new Error("This Google account is not connected on this Mac. Sign in again."), { status: 401 });
+  const stored = secrets.get(ref);
+  if (!stored) throw Object.assign(new Error("This Google account is not connected here. Sign in again."), { status: 401 });
   const { refresh_token, scopes } = JSON.parse(stored) as { refresh_token: string; scopes?: string[] };
   const cached = accessTokens.get(ref);
   // No cached access token: report it as expired so callers refresh first.
@@ -54,12 +54,13 @@ export async function loadTokens(ref: string): Promise<TokenData> {
 
 export function forgetTokens(ref: string): void {
   accessTokens.delete(ref);
-  keychainDelete(ref);
+  secrets.delete(ref);
 }
 
 export async function refreshAccessToken(refreshToken: string): Promise<TokenData> {
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
+    signal: AbortSignal.timeout(30_000),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id: getEnv("GOOGLE_CLIENT_ID"),
@@ -89,6 +90,7 @@ export async function revokeGoogleTokens(ref: string): Promise<void> {
     const t = await loadTokens(ref);
     await fetch("https://oauth2.googleapis.com/revoke", {
       method: "POST",
+      signal: AbortSignal.timeout(30_000),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ token: t.refresh_token! }).toString(),
     });
@@ -132,6 +134,7 @@ export async function finishSignIn(code: string, state: string): Promise<{ email
   if (!pending || pending.expires < Date.now()) throw new Error("This sign-in link has expired. Start again.");
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
+    signal: AbortSignal.timeout(30_000),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       client_id: getEnv("GOOGLE_CLIENT_ID"),
@@ -145,6 +148,7 @@ export async function finishSignIn(code: string, state: string): Promise<{ email
   if (!res.ok) throw new Error(`Google refused the sign-in (${res.status}): ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();
   const info = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+    signal: AbortSignal.timeout(30_000),
     headers: { Authorization: `Bearer ${data.access_token}` },
   }).then((r) => r.json());
   if (!info.email) throw new Error("Google did not say which account signed in.");

@@ -22,7 +22,7 @@
 // Autopilot is a reply sent, and then only to the person who wrote, inside the
 // thread, after a cancel window (policy.checkAutoSend, outbox.ts).
 
-import { HOME } from "./config.ts";
+import { DEFAULT_HOME, HOME } from "./config.ts";
 import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { draftReply, HOLD, type EmailRow } from "./replies.ts";
@@ -37,6 +37,8 @@ import { inQuietHours, notify, worthNotifying } from "./notify.ts";
 import { prepareBrief, tellBrief } from "./brief.ts";
 import { endPass, runOnMail, runTimed, startPass } from "./automations.ts";
 import { tellMeetings } from "./prep.ts";
+import { answered, anyCaughtUp, beat, onWake, sinceWoke, woke } from "./awake.ts";
+import { place } from "./place.ts";
 import { firstReadState, relearnStyle, startFirstRead } from "./firstRead.ts";
 import { listAccounts, refreshStaleSendAs, replyFrom, type Account } from "./accounts.ts";
 import { syncDrafts, threadDrafts, withdrawAnswered } from "./drafts.ts";
@@ -583,8 +585,10 @@ async function mailboxChanged(userId: string, failures: Map<string, number>): Pr
     const box = mail(a);
     try {
       box.watch?.(a, () => wakeWatcher());
-      if (a.history_id && (await box.moved(a))) changed = true;
+      const moved = !!a.history_id && (await box.moved(a));
+      if (moved) changed = true;
       failures.delete(a.id);
+      if (a.history_id) await answered(a, !moved);
     } catch (e) {
       const n = (failures.get(a.id) ?? 0) + 1;
       failures.set(a.id, n);
@@ -674,14 +678,16 @@ function startWatcher(): () => void {
 // a cycle that has just finished, so it is about this morning's mail.
 let telling = false;
 async function tellUser(): Promise<void> {
+  beat();
   if (telling) return;
   telling = true;
   try {
     const userId = await localUser();
     if (!userId || (await engineSettings(userId)).paused) return;
-    const fresh = !!engineStatus.lastCycleAt && Date.now() - new Date(engineStatus.lastCycleAt).getTime() < 5 * 60_000;
+    const cycle = engineStatus.lastCycleAt ? Date.now() - new Date(engineStatus.lastCycleAt).getTime() : Infinity;
+    const fresh = cycle < Math.min(5 * 60_000, sinceWoke()) && anyCaughtUp();
     await runTimed(userId, { fresh });
-    await tellBrief(userId, { fresh });
+    await tellBrief(userId, { fresh, awake: sinceWoke() });
     await tellMeetings(userId);
   } catch (e) {
     console.error("[engine] notifications:", (e as Error).message);
@@ -695,24 +701,26 @@ async function tellUser(): Promise<void> {
 // is going to send.
 export async function pauseIfCopied(): Promise<void> {
   const { data: me } = await db.from("profiles").select("id, home").limit(1).maybeSingle();
-  if (!me || me.home === HOME) return;
-  if (me.home) {
+  const here = place();
+  // Home was once the folder alone, and before that nothing: such a database
+  // is at home in the default folder.
+  const copied = me?.home ? me.home !== here && me.home !== HOME : HOME !== DEFAULT_HOME;
+  if (!me || me.home === here) return;
+  if (copied) {
     await db.from("scheduled_emails").update({ status: "failed", error_message: "Not sent: this is a copy of another Tabellar folder." }).eq("status", "pending");
     // The bot answers to the original alone.
     await db.from("telegram").delete().eq("user_id", me.id);
-    console.log("This data folder was copied from " + me.home + ", so Tabellar is paused.");
+    console.log(`This data folder was copied from ${me.home ?? "another place"}, so Tabellar is paused.`);
   }
-  await db.from("profiles").update(me.home ? { home: HOME, engine_paused: true } : { home: HOME }).eq("id", me.id);
+  await db.from("profiles").update(copied ? { home: here, engine_paused: true } : { home: here }).eq("id", me.id);
 }
 
 export function startEngine(): () => void {
   let last = 0;
-  let ticked = Date.now();
+  woke();
   const tell = setInterval(() => void tellUser(), 60_000);
   const tick = () => {
-    // The timer did not run for a while: the Mac was asleep. Look at once.
-    if (Date.now() - ticked > 3 * TICK_MS) wakeWatcher();
-    ticked = Date.now();
+    beat();
     if (Date.now() - last < INTERVAL_MS) return;
     last = Date.now();
     void runCycle();
@@ -720,7 +728,10 @@ export function startEngine(): () => void {
   const first = setTimeout(tick, 5_000);
   const timer = setInterval(tick, TICK_MS);
   const stopWatcher = startWatcher();
+  // The Mac was asleep: look at once.
+  const stopWake = onWake(() => wakeWatcher());
   return () => {
+    stopWake();
     clearTimeout(first);
     clearInterval(timer);
     clearInterval(tell);

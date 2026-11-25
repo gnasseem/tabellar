@@ -15,7 +15,7 @@
 // labels are Outlook categories.
 
 import { createHash, randomBytes } from "node:crypto";
-import { keychainDelete, keychainGet, keychainSet, loadConfig } from "./config.ts";
+import { loadConfig, secrets } from "./config.ts";
 import { calendarHeaders, type CalendarEvent } from "./rules.ts";
 import { htmlToText } from "./mime.ts";
 import type { Box, CalEvent, Calendar, EmailData, HeaderRow, LabelChange, LinkedEvent, Mail, NewEvent, Outgoing, Sent } from "./providers.ts";
@@ -36,6 +36,7 @@ const refreshing = new Map<string, Promise<string>>();
 async function tokenRequest(params: Record<string, string>): Promise<{ access_token: string; refresh_token?: string; expires_in?: number }> {
   const res = await fetch(`${LOGIN}/token`, {
     method: "POST",
+    signal: AbortSignal.timeout(30_000),
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: microsoftClientId(), scope: SCOPES.join(" "), ...params }),
   });
@@ -45,7 +46,7 @@ async function tokenRequest(params: Record<string, string>): Promise<{ access_to
 }
 
 function keep(ref: string, t: { access_token: string; refresh_token?: string; expires_in?: number }) {
-  if (t.refresh_token) keychainSet(ref, JSON.stringify({ refresh_token: t.refresh_token }));
+  if (t.refresh_token) secrets.set(ref, JSON.stringify({ refresh_token: t.refresh_token }));
   accessTokens.set(ref, { token: t.access_token, expires: Date.now() + ((t.expires_in ?? 3600) - 120) * 1000 });
 }
 
@@ -55,8 +56,8 @@ function accessToken(ref: string, renew = false): Promise<string> {
   const inFlight = refreshing.get(ref);
   if (inFlight) return inFlight;
   const run = (async () => {
-    const stored = keychainGet(ref);
-    if (!stored) throw Object.assign(new Error("This Microsoft account is not connected on this Mac. Sign in again."), { status: 401 });
+    const stored = secrets.get(ref);
+    if (!stored) throw Object.assign(new Error("This Microsoft account is not connected here. Sign in again."), { status: 401 });
     const t = await tokenRequest({ grant_type: "refresh_token", refresh_token: JSON.parse(stored).refresh_token });
     keep(ref, t);
     return t.access_token;
@@ -651,7 +652,7 @@ export const microsoftMailbox: Mail = {
 
   async disconnect(a) {
     accessTokens.delete(a.token_ref);
-    keychainDelete(a.token_ref);
+    secrets.delete(a.token_ref);
   },
 
   calendar: outlookCalendar,

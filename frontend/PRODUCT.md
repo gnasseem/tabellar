@@ -22,6 +22,7 @@ Local and personal: mail stays in one SQLite file on the Mac, the model can run 
 
 - The window is a local web page served by the Tabellar process on 127.0.0.1, opened with `tabellar open`. The terminal is only for install and control.
 - The engine works with the window closed and reaches the user through macOS notifications and, once they connect a bot of their own, Telegram, where every line can be answered.
+- It can run on a machine of theirs that is always on (Linux or a Mac mini) with no screen: the same window through an SSH tunnel, Telegram in place of notifications. The wording names the machine Tabellar runs on, not the one the window is on.
 - The user still has Gmail itself for reading and writing mail by hand.
 
 ## Capabilities and Constraints

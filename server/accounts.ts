@@ -17,7 +17,8 @@ import { db } from "./db.ts";
 import { mail, type SendAs } from "./providers.ts";
 import { addressesIn } from "./senders.ts";
 import { RULES_VERSION } from "./rules.ts";
-import { HOME, keychainDelete } from "./config.ts";
+import { secrets } from "./config.ts";
+import { place } from "./place.ts";
 import { unsnoozeAll } from "./snooze.ts";
 
 export type { SendAs };
@@ -37,6 +38,7 @@ export type Account = {
   is_default: boolean;
   paused: boolean;
   read_at: string | null;
+  synced_at?: string | null;
   created_at: string;
 };
 
@@ -167,7 +169,7 @@ export async function removeAccount(userId: string, id: string): Promise<void> {
     await mail(a).disconnect(a);
   } catch (e) {
     console.error("[accounts] disconnect:", (e as Error).message);
-    keychainDelete(a.token_ref);
+    secrets.delete(a.token_ref);
   }
   await db.from("accounts").delete().eq("id", id);
   if (a.is_default) {
@@ -189,13 +191,13 @@ export async function connectAccount(a: { provider: string; address: string; nam
   const address = a.address.toLowerCase();
   let { data: profile } = await db.from("profiles").select("id").limit(1).maybeSingle();
   if (!profile) {
-    const created = await db.from("profiles").insert({ id: randomUUID(), email: address, display_name: a.name, avatar_url: a.picture ?? null, home: HOME, onboarding: "mailboxes", rules_version: RULES_VERSION, appearance: { hidden: HIDDEN } }).select("id").single();
+    const created = await db.from("profiles").insert({ id: randomUUID(), email: address, display_name: a.name, avatar_url: a.picture ?? null, home: place(), onboarding: "mailboxes", rules_version: RULES_VERSION, appearance: { hidden: HIDDEN } }).select("id").single();
     if (created.error) throw new Error(created.error.message);
     profile = created.data;
   }
   const userId = profile.id as string;
   const { data: existing } = await db.from("accounts").select("id, token_ref").eq("user_id", userId).eq("address", address).maybeSingle();
-  if (existing && existing.token_ref !== a.tokenRef) keychainDelete(existing.token_ref as string);
+  if (existing && existing.token_ref !== a.tokenRef) secrets.delete(existing.token_ref as string);
   const { count: others } = await db.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", userId).neq("address", address);
   const saved = await db
     .from("accounts")

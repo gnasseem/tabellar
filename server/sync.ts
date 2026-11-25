@@ -15,6 +15,7 @@ import type { Account } from "./accounts.ts";
 import { archivedByHand } from "./automations.ts";
 import { markSeen } from "./receipts.ts";
 import { answered, wakeThreads } from "./snooze.ts";
+import { answered as mailboxAnswered } from "./awake.ts";
 
 // Run fn after every earlier call on the same queue has finished.
 export function serial<A extends unknown[], R>(fn: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
@@ -30,12 +31,16 @@ export type { Account };
 
 const RECENT_DAYS = 30;
 const RECENT_CAP = 300;
+const AWAY_CAP = 3000;
 
 // Inbox mail from the last 30 days that is not stored yet, newest first, at
-// most 300. What a sync falls back on when the mailbox's change history has expired.
+// most 300, and all that came since it was last brought in. What a sync falls
+// back on when the mailbox's change history has expired.
 async function fetchRecent(userId: string, account: Account): Promise<EmailData[]> {
   const ids = await mail(account).list(account, { days: RECENT_DAYS, cap: RECENT_CAP, inbox: true });
-  const missing = await notStored(userId, ids);
+  const away = account.synced_at ? Math.ceil((Date.now() - Date.parse(account.synced_at)) / 86_400_000) + 1 : 0;
+  const since = away > 1 && (away > RECENT_DAYS || ids.length >= RECENT_CAP) ? await mail(account).list(account, { days: away, cap: AWAY_CAP, inbox: true }) : [];
+  const missing = await notStored(userId, [...new Set([...ids, ...since])]);
   // What was read, archived or labelled meanwhile: the labels the stored ones
   // have now, and out of the inbox what is no longer in the list.
   const absent = new Set(missing);
@@ -300,6 +305,7 @@ export const syncMail = serial(async (userId: string, isInitialFetch = false): P
       allNew.push(...(await storeInbox(userId, account, rawEmails)));
       if (cursor) await db.from("accounts").update({ history_id: cursor }).eq("id", account.id);
       syncErrors.delete(account.id);
+      await mailboxAnswered(account, true);
 
       // The mailbox's contacts into email_memory, for names and autocomplete.
       if (box.contacts && Date.now() - (lastContacts.get(account.id) ?? 0) > CONTACTS_EVERY_MS) try {

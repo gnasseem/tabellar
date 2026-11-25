@@ -3,6 +3,7 @@
 import { useCallback, useContext, useEffect, useState } from "react";
 import Icon from "@/components/Icon";
 import { createClient } from "@/lib/db";
+import { here, vault } from "@/lib/host";
 import { api } from "@/lib/outcomes";
 import { useApp } from "../AppShell";
 import { EmailField, useContacts } from "../EmailAutocomplete";
@@ -257,7 +258,7 @@ export default function AboutYou() {
         {!of("topic").length && adding !== "topic" && <p className="flex min-h-row items-center text-ink3">None</p>}
       </Group>
 
-      <Group title="Your data" note="All of it is in one file on this Mac. Keys and tokens are in the Keychain.">
+      <Group title="Your data" note={`All of it is in one file on ${here()}. Keys and tokens are in ${vault()}.`}>
         <Row name="Knowledge" text="People and companies noted from your mail">
           <button className="btn" onClick={() => setView("relationships")}>
             Open Knowledge

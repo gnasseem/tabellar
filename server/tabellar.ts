@@ -7,18 +7,25 @@
 //   tabellar setup google   Sign in to Google through your own client
 //   tabellar setup microsoft   The Azure app for Outlook and Microsoft 365
 //   tabellar start    Run Tabellar and open its window (Ctrl-C stops it)
+//   tabellar serve    Run it on a machine with no screen: no window, no menu
+//                     bar, Telegram for what would be a notification
 //   tabellar open     Open the window of a running Tabellar
 //   tabellar status   Is it running, which accounts and model it uses
-//   tabellar autostart on|off   Start Tabellar at login and keep it running
+//   tabellar autostart on|off   Start Tabellar at login (on Linux, with the
+//                     machine) and keep it running
+//   tabellar move [file]   Write everything into one encrypted file and stop
+//                     here for good; `start <file>` or `serve <file>` goes on
+//                     from it elsewhere. `move back` if that place is gone
 //   tabellar check    Safety checks, with planted-instruction emails
 
 import { createInterface } from "node:readline/promises";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
-import { loadConfig, saveConfig, keychainSet, modelKeyName, accessToken, googleClient, sibling, BUILT_IN_GOOGLE, HOME, type Config, type ModelConfig, type Slot } from "./config.ts";
-import { autostartInstalled, installAutostart, removeAutostart } from "./launchd.ts";
+import { accessSync, constants, existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { homedir, hostname, tmpdir, userInfo } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
+import { loadConfig, saveConfig, modelKeyName, accessToken, googleClient, sibling, BUILT_IN_GOOGLE, HOME, KEYCHAIN, MAC, type Config, type ModelConfig, type Slot, secrets } from "./config.ts";
+import { autostartHere, autostartInstalled, installAutostart, removeAutostart } from "./autostart.ts";
+import { lock, unlock } from "./place.ts";
 import {
   findClientFiles, saveGoogleClient, saveMicrosoftClient, useBuiltInGoogleClient, moveToTrash, OLLAMA_URL, LOCAL_CHOICES, SMALL_MAC_GB, memoryGb, recommendedLocalModel,
   ollamaInstalled, ollamaModels, startOllama, installOllama, pullOllamaModel, PROVIDERS, listModels, savedKeyFor, type Progress,
@@ -70,7 +77,11 @@ async function openWindow() {
   const r = await fetch(`${baseUrl()}/auth/login-code`, { method: "POST", headers: { Authorization: `Bearer ${accessToken()}` } });
   if (!r.ok) throw new Error(`Tabellar did not answer (${r.status})`);
   const { code } = (await r.json()) as { code: string };
-  spawnSync("open", [`${baseUrl()}/?code=${code}`]);
+  const link = `${baseUrl()}/?code=${code}`;
+  if (MAC && !process.env.SSH_CONNECTION) return void spawnSync("open", [link]);
+  const { port } = loadConfig();
+  console.log(`Open this within 5 minutes:\n  ${link}`);
+  console.log(`From another computer, first run this there and leave it running:\n  ssh -N -L ${port}:127.0.0.1:${port} ${existsSync("/.dockerenv") ? "you@your-server" : `${userInfo().username}@${hostname()}`}`);
 }
 
 async function yes(question: string, fallback = true): Promise<boolean> {
@@ -142,7 +153,7 @@ async function setupGoogle(config: Config) {
   const { clientId, warning } = saveGoogleClient(readFileSync(path, "utf8"));
   config.googleClientId = clientId;
   if (warning) console.log(`   ${warning}`);
-  console.log("   Saved. The client secret is now in the Keychain. An account connected through another client needs to sign in again.");
+  console.log(`   Saved. The client secret is now ${KEYCHAIN ? "in the Keychain" : "kept encrypted"}. An account connected through another client needs to sign in again.`);
   if (await yes(`   Move ${basename(path)} to the Trash? Tabellar no longer needs it.`)) {
     console.log(moveToTrash(path) ? "   Moved to the Trash." : `   Could not move it. Delete it yourself: ${path}`);
   }
@@ -174,12 +185,12 @@ async function setupLocal(current: ModelConfig | undefined, slot: Slot): Promise
   let model: string;
   if (names.length) {
     const options = names.map((n) => (about(n) ? `${n}: ${about(n)}` : n));
-    if (!names.includes(suggested)) options.push(`Download ${suggested}, recommended for this Mac (${size}): ${about(suggested)}`);
+    if (!names.includes(suggested)) options.push(`Download ${suggested}, recommended for this machine (${size}): ${about(suggested)}`);
     const fallback = current?.format === "ollama" && names.includes(current.model) ? names.indexOf(current.model) : Math.max(0, options.findIndex((o) => o === suggested || o.startsWith("Download")));
     const i = await choose("   Model:", options, fallback);
     model = i < names.length ? names[i] : suggested;
   } else {
-    console.log(`   No local models yet. The recommended one for this Mac is ${suggested} (${size}).`);
+    console.log(`   No local models yet. The recommended one for this machine is ${suggested} (${size}).`);
     console.log(`   ${about(suggested)}.`);
     if (!(await yes(`   Download ${suggested} now?`))) return current;
     model = suggested;
@@ -217,7 +228,7 @@ async function setupCloud(current?: ModelConfig): Promise<ModelConfig> {
   if (!key) throw new Error("A cloud model needs an API key.");
   const listed = await listModels(p, base, key);
   if (listed === "unauthorized") throw new Error("The provider rejected that API key, so it was not saved.");
-  keychainSet(modelKeyName(p.id), key);
+  secrets.set(modelKeyName(p.id), key);
   const model = await chooseModel(listed ?? [], same ? current!.model : (p.suggested ?? ""));
   return { provider: p.id, format: p.format, baseUrl: base, model };
 }
@@ -227,7 +238,7 @@ async function pickModel(current: ModelConfig | undefined, slot: Slot): Promise<
   const fallback = current ? (current.format === "ollama" ? 0 : 1) : ollamaUp ? 0 : 1;
   const where = await choose(
     "   Where should it run?",
-    ["On this Mac, free and private (Ollama)", "In the cloud, with your own API key (billed by the provider)"],
+    [MAC ? "On this Mac, free and private (Ollama)" : "On this machine, free and private (Ollama; needs a GPU to be quick)", "In the cloud, with your own API key (billed by the provider)"],
     fallback,
   );
   return where === 0 ? await setupLocal(current, slot) : await setupCloud(current);
@@ -269,25 +280,87 @@ async function setup() {
   console.log("Tabellar setup. Press Enter to accept the answer in brackets.\n");
   await setupGoogle(config);
   await setupModel(config);
-  console.log(`\nSettings are in ${HOME}/config.json; secrets are in the macOS Keychain.`);
+  console.log(`\nSettings are in ${HOME}/config.json; secrets are ${KEYCHAIN ? "in the macOS Keychain" : `encrypted in ${HOME}/secrets`}.`);
   if (!config.model) console.log("No AI model is set up yet, so Tabellar can sync mail but not sort or draft it. Run `tabellar setup` again when ready.");
   console.log("Next: run `tabellar start`, then add your mail in the window that opens.");
   process.stdin.pause();
 }
 
-async function start() {
+// A file `tabellar move` wrote, given to start or serve.
+const moveFile = () => args.find((a) => !a.startsWith("-"));
+
+async function start(headless: boolean) {
+  const file = moveFile();
+  const quiet = headless || args.includes("--no-open");
   if (await running()) {
+    if (file) throw new Error("Tabellar is already running here.");
     // The login item was turned on while this one was already running: it
     // takes over the next time, and opens no window.
-    if (args.includes("--no-open")) return console.log("Tabellar is already running.");
+    if (quiet) return console.log("Tabellar is already running.");
     console.log("Tabellar is already running. Opening its window.");
     return openWindow();
   }
+  if (!lock()) throw new Error(`Another Tabellar is running on ${HOME}.`);
+  if (file && existsSync(file)) {
+    const { unpack } = await import("./move.ts");
+    const deleted = unpack(file, process.env.TABELLAR_MOVE_PASSPHRASE || (await askSecret("The passphrase the file was written with:")));
+    process.stdin.pause();
+    console.log(`Moved here. ${deleted ? "The file is deleted." : `Delete ${file}: it holds your mail and sign-ins.`}`);
+  } else if (file && !existsSync(join(HOME, "tabellar.db"))) throw new Error(`No file at ${file}`);
+  const moved = await (await import("./move.ts")).movedAway();
+  // Ends well, so launchd and systemd do not start it again.
+  if (moved) return console.log(moved);
   const { startServer } = await import("./server.ts");
   await (await import("./engine.ts")).pauseIfCopied();
-  const { port } = await startServer();
+  let ending = false;
+  const stop = async () => {
+    if (ending) return;
+    ending = true;
+    await close();
+    process.exit(0);
+  };
+  const { port, close } = await startServer({ headless, stop: () => void stop() });
+  for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => void stop());
   console.log(`Tabellar is running at http://127.0.0.1:${port} (Ctrl-C to stop).`);
-  if (!args.includes("--no-open")) await openWindow();
+  if (!quiet) await openWindow();
+  else if (headless) console.log("Its window: run `tabellar open` for a link.");
+}
+
+async function move() {
+  if (args[0] === "back") {
+    if (!(await yes("Only if Tabellar does not run in the other place any more, or never did. Make this its place again?", false))) return process.stdin.pause();
+    process.stdin.pause();
+    if (!lock()) throw new Error(`A Tabellar is running on ${HOME}.`);
+    await (await import("./move.ts")).moveBack();
+    return console.log("Done. It is paused: start it, look, then turn Pause off.");
+  }
+  const { pack, WORDS } = await import("./move.ts");
+  const path = resolve(cleanPath(moveFile() ?? `tabellar-${new Date().toISOString().slice(0, 10)}.move`));
+  let passphrase = process.env.TABELLAR_MOVE_PASSPHRASE ?? "";
+  if (!passphrase) {
+    console.log(`Everything goes into ${path}, encrypted, and Tabellar stops here for good. The file holds your mail and sign-ins.`);
+    passphrase = await askSecret(`Choose a passphrase for it, at least ${WORDS} characters:`);
+    const again = await askSecret("The same again:");
+    process.stdin.pause();
+    if (passphrase !== again) throw new Error("The two are not the same. Nothing was done.");
+  }
+  if (passphrase.length < WORDS) throw new Error(`The passphrase needs at least ${WORDS} characters. Nothing was done.`);
+  if (existsSync(path)) throw new Error(`${path} is already there. Nothing was done.`);
+  try {
+    accessSync(dirname(path), constants.W_OK);
+  } catch {
+    throw new Error(`Nothing can be written to ${dirname(path)}. Nothing was done.`);
+  }
+  const up = await running();
+  if (up) await fetch(`${baseUrl()}/stop`, { method: "POST", headers: { Authorization: `Bearer ${accessToken()}` } });
+  for (let i = 0; !lock() || (up && (await running())); i++) {
+    if (i > 40) throw new Error("Tabellar is running here and did not stop. Stop it (Ctrl-C, `docker stop`), then run this again.");
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  await pack(path, passphrase);
+  unlock();
+  if (autostartHere()) removeAutostart();
+  console.log(`Written: ${path}\nOn the other machine, with Tabellar installed: tabellar ${MAC ? "serve" : "start"} <the file>\nIt is deleted there once Tabellar has begun from it. Delete this copy too.`);
 }
 
 async function status() {
@@ -297,11 +370,11 @@ async function status() {
   const client = googleClient();
   console.log(`Google:   ${client ? (client.own ? "your own sign-in client" : "built-in sign-in client") : "not set up (tabellar setup)"}`);
   console.log(`Outlook:  ${config.microsoftClientId ? `app ${config.microsoftClientId}` : "no Azure app yet (tabellar setup microsoft)"}`);
-  const where = (m: ModelConfig) => (m.format === "ollama" ? "on this Mac (Ollama)" : `via ${PROVIDERS.find((p) => p.id === m.provider)?.name ?? m.baseUrl}`);
+  const where = (m: ModelConfig) => (m.format === "ollama" ? "here (Ollama)" : `via ${PROVIDERS.find((p) => p.id === m.provider)?.name ?? m.baseUrl}`);
   const m = config.model;
   console.log(`Model:    ${m ? `${m.model} ${where(m)}` : "not set up (tabellar setup)"}`);
   if (m) console.log(`Fast:     ${config.fastModel ? `${config.fastModel.model} ${where(config.fastModel)}` : "the same model"}`);
-  console.log(`At login: ${autostartInstalled() ? "starts automatically (tabellar autostart off to stop)" : "no (tabellar autostart on)"}`);
+  console.log(`${MAC ? "At login: " : "At boot:  "}${autostartInstalled() ? "starts automatically (tabellar autostart off to stop)" : "no (tabellar autostart on)"}`);
   if (up) {
     const headers = { Authorization: `Bearer ${accessToken()}` };
     const s = (await (await fetch(`${baseUrl()}/session`, { headers })).json()) as { user: { email: string } | null; accounts: number };
@@ -320,13 +393,13 @@ async function autostart() {
   const which = args[0];
   if (which === "on") {
     installAutostart();
-    console.log("Tabellar now starts at login and keeps running in the background.");
-    console.log(`Its log is ${join(HOME, "server.log")}. Open the window with \`tabellar open\`.`);
+    console.log(`Tabellar now starts ${MAC ? "at login" : "with this machine"} and keeps running in the background.`);
+    console.log(`Its log is ${MAC ? join(HOME, "server.log") : "in `journalctl --user -u tabellar`"}. Open the window with \`tabellar open\`.`);
   } else if (which === "off") {
     removeAutostart();
-    console.log("Tabellar no longer starts at login, and the background copy is stopped.");
+    console.log("Tabellar no longer starts on its own, and the background copy is stopped.");
   } else {
-    console.log(autostartInstalled() ? "Tabellar starts at login." : "Tabellar does not start at login.");
+    console.log(autostartInstalled() ? "Tabellar starts on its own." : "Tabellar does not start on its own.");
     console.log("Usage: tabellar autostart on|off");
   }
 }
@@ -350,7 +423,8 @@ function check() {
 
 try {
   if (command === "setup") await setup();
-  else if (command === "start") await start();
+  else if (command === "start" || command === "serve") await start(command === "serve" || !MAC);
+  else if (command === "move") await move();
   else if (command === "open") {
     if (!(await running())) throw new Error("Tabellar is not running. Start it with `tabellar start`.");
     await openWindow();
@@ -358,7 +432,7 @@ try {
   else if (command === "autostart") await autostart();
   else if (command === "check") check();
   else {
-    console.log("Usage: tabellar <setup|start|open|status|autostart|check>");
+    console.log("Usage: tabellar <setup|start|serve|open|status|autostart|move|check>");
     process.exitCode = command === "help" ? 0 : 1;
   }
 } catch (e) {

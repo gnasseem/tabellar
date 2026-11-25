@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/Icon";
 import { Glyph, Seg } from "@/components/ui";
 import { formatBytes, getLocalJob, getSetupState, setupPost, type LocalJob, type ModelInfo, type SetupState, type Slot } from "@/lib/setup";
+import { here, host, vault } from "@/lib/host";
 
 // Choosing a model: on this Mac through Ollama, or a cloud provider with the
 // user's own key. There are two slots: the careful model writes and plans,
@@ -76,7 +77,7 @@ export function useTimeLeft(p?: { completed?: number; total?: number; label?: st
 
 export function modelLabel(m: ModelInfo | null, providers: SetupState["providers"]): string {
   if (!m) return "";
-  if (m.format === "ollama") return `${m.model} on this Mac`;
+  if (m.format === "ollama") return `${m.model} on ${here()}`;
   const name = providers.find((p) => p.id === m.provider)?.name ?? "the cloud";
   return `${m.model} through ${m.provider === "custom" ? "your endpoint" : name}`;
 }
@@ -191,11 +192,11 @@ type PanelProps = { state: SetupState; slot: Slot; current: ModelInfo | null; re
 
 export default function ModelSetup({ state, refresh, onSaved, slot = "careful" }: { state: SetupState; refresh: () => Promise<void>; onSaved?: () => void; slot?: Slot }) {
   const current = slot === "fast" ? (state.fastModel ?? state.model) : state.model;
-  const [where, setWhere] = useState<"local" | "cloud">(current && current.format !== "ollama" ? "cloud" : "local");
+  const [where, setWhere] = useState<"local" | "cloud">((current ? current.format !== "ollama" : !host.mac && !state.ollama.installed) ? "cloud" : "local");
   return (
     <div className="space-y-5">
       <div role="radiogroup" aria-label="Where the model runs" className="-mx-2">
-        <Choice on={where === "local"} onClick={() => setWhere("local")} title="On this Mac" hint="Private: nothing is sent to a model provider. Runs with Ollama; slower on long threads." />
+        <Choice on={where === "local"} onClick={() => setWhere("local")} title={`On ${here()}`} hint="Private: nothing is sent to a model provider. Runs with Ollama; slower on long threads." />
         <Choice on={where === "cloud"} onClick={() => setWhere("cloud")} title="Cloud" hint="Faster. Your own API key, billed by the provider; the mail being read is sent to it." />
       </div>
       {where === "local" ? (
@@ -258,8 +259,8 @@ export function LocalPanel({ state, slot, current: model, refresh, onSaved }: Pa
               disabled={running}
               onClick={() => setSelected(m.name)}
               title={m.name}
-              hint={[m.name === recommendedName && `Recommended for this Mac's ${local.memoryGb} GB of memory`, about.get(m.name) ?? (m.name !== recommendedName && "Already on this Mac")].filter(Boolean).join(". ")}
-              right={current === m.name && model?.ready ? "In use" : installed.has(m.name) ? "On this Mac" : formatBytes(m.size)}
+              hint={[m.name === recommendedName && `Recommended for ${here()}'s ${local.memoryGb} GB of memory`, about.get(m.name) ?? (m.name !== recommendedName && `Already on ${here()}`)].filter(Boolean).join(". ")}
+              right={current === m.name && model?.ready ? "In use" : installed.has(m.name) ? `On ${here()}` : formatBytes(m.size)}
             />
           ))}
           <div className={`flex items-center gap-2.5 rounded-md px-2 py-1 transition-colors duration-150 ${selected === "__other" ? "bg-sel" : "hover:bg-hover"}`} onClick={() => !running && setSelected("__other")}>
@@ -300,7 +301,7 @@ export function LocalPanel({ state, slot, current: model, refresh, onSaved }: Pa
               {installed.has(pairFast) ? "Also uses" : "Also downloads"} <span className="font-mono">{pairFast}</span> to read new mail quickly.
             </span>
           )}
-          {!inUse && !ollama.installed && <span className="text-xs text-ink2">Installs Ollama first, the free app that runs models on this Mac.</span>}
+          {!inUse && !ollama.installed && <span className="text-xs text-ink2">{host.mac ? "Installs Ollama first, the free app that runs models on this Mac." : "Needs Ollama on this server first: ollama.com/download/linux"}</span>}
         </div>
       )}
       <ErrorLine text={error || job?.error || ""} />
@@ -418,13 +419,13 @@ export function CloudPanel({ state, slot, current: model, refresh, onSaved }: Pa
             className={`${input} font-mono`}
             value={key}
             onChange={(e) => setKey(e.target.value)}
-            placeholder={provider.hasKey ? "Saved in your Keychain. Paste a new one to replace it." : "Paste your key"}
+            placeholder={provider.hasKey ? "Saved. Paste a new one to replace it." : "Paste your key"}
           />
           <button type="submit" className={`${btnSecondary} flex-none`} disabled={busy !== "" || (!key && !provider.hasKey)}>
             {busy === "check" ? "Checking" : models && !key ? "Refresh" : "Check key"}
           </button>
         </div>
-        <p className="mt-1.5 text-xs text-ink2">Stored in the macOS Keychain, never in a file. Usage is billed by {providerId === "custom" ? "your provider" : provider.name}.</p>
+        <p className="mt-1.5 text-xs text-ink2">Stored in {vault()}. Usage is billed by {providerId === "custom" ? "your provider" : provider.name}.</p>
       </form>
 
       {models && (

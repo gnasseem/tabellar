@@ -15,6 +15,7 @@
 
 import { db } from "./db.ts";
 import { briefParagraph } from "./ai.ts";
+import type { Away } from "./awake.ts";
 import { modelConfigured } from "./llm.ts";
 import { options, type Options } from "./answers.ts";
 import { draftsKept } from "./drafts.ts";
@@ -81,7 +82,7 @@ export type HandledItem = { email_id: string; who: string; subject: string; what
 // The mail an automation gathered at its time.
 export type Digest = { id: string; title: string; at: string; items: { email_id: string; who: string; text: string; at: string }[] };
 
-export type Brief = { settings: BriefSettings; summary: string | null; digests: Digest[]; needs: NeedItem[]; more: number; proof: NeedItem | null; waiting: WaitingItem[]; waitingMore: number; handled: HandledItem[]; day: string; at: string };
+export type Brief = { settings: BriefSettings; away: string | null; summary: string | null; digests: Digest[]; needs: NeedItem[]; more: number; proof: NeedItem | null; waiting: WaitingItem[]; waitingMore: number; handled: HandledItem[]; day: string; at: string };
 
 type Row = Record<string, unknown>;
 
@@ -101,7 +102,7 @@ function proposalText(p: Row, subject: string | undefined): string {
 // The lines past its length are counted; `all` lists them too.
 const ALL_MAX = 100;
 export async function brief(userId: string, { all: every = false } = {}): Promise<Brief> {
-  const { data: profile } = await db.from("profiles").select("working_hours, brief, brief_summary, autonomy_level, proof").eq("id", userId).maybeSingle();
+  const { data: profile } = await db.from("profiles").select("working_hours, brief, brief_summary, autonomy_level, proof, away").eq("id", userId).maybeSingle();
   const settings = briefSettings(profile?.brief);
   const { day: today, since } = briefDay(settings, zoneOf(profile));
   const written = profile?.brief_summary as Summary | null;
@@ -280,6 +281,7 @@ export async function brief(userId: string, { all: every = false } = {}): Promis
 
   return {
     settings,
+    away: await awayLine(userId, profile?.away as Away | null),
     digests,
     summary: settings.summary && current(written, today, settings, all.map((n) => n.key)) ? written!.text : null,
     needs,
@@ -291,6 +293,20 @@ export async function brief(userId: string, { all: every = false } = {}): Promis
     day: today,
     at: new Date().toISOString(),
   };
+}
+
+// For some hours after Tabellar was away (awake.ts): how long, and what came
+// meanwhile.
+const AWAY_SHOWN_MS = 6 * 3600_000;
+const plural = (n: number, one: string) => `${n.toLocaleString("en-US")} ${one}${n === 1 ? "" : "s"}`;
+async function awayLine(userId: string, away: Away | null): Promise<string | null> {
+  if (!away || Date.now() - Date.parse(away.to) > AWAY_SHOWN_MS) return null;
+  const hours = Math.max(1, Math.round((Date.parse(away.to) - Date.parse(away.from)) / 3600_000));
+  const came = () => db.from("emails").select("id, email_processed(id)").eq("user_id", userId).eq("is_receipt", false).not("label_ids", "cs", '{"SENT"}').gt("received_at", away.from).lte("received_at", away.to).limit(5000);
+  const mail = ((await came()).data ?? []) as Row[];
+  const left = mail.filter((e) => !(Array.isArray(e.email_processed) ? e.email_processed.length : e.email_processed)).length;
+  const read = !mail.length ? "Nothing came meanwhile." : `${plural(mail.length, "email")} came meanwhile${left ? `, ${left} still to read.` : mail.length === 1 ? ", and it is read." : ", all read."}`;
+  return `Tabellar was away for ${hours < 48 ? plural(hours, "hour") : plural(Math.round(hours / 24), "day")}. ${read}`;
 }
 
 // ── Proof before trust ──────────────────────────────────────────────────────
@@ -359,13 +375,14 @@ const short = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1).tri
 // Once a day, when the Brief's time has come (or the quiet hours it fell in
 // are over), its first three lines. Nothing when nothing needs the user, or
 // when the Mac was off until long after. Mail still being read (not `fresh`)
-// holds it for at most half an hour. Returns whether it went out.
-export async function tellBrief(userId: string, { at = new Date(), fresh = true } = {}): Promise<boolean> {
+// holds it for at most half an hour, from when its time came or the machine
+// woke (`awake` ms ago). Returns whether it went out.
+export async function tellBrief(userId: string, { at = new Date(), fresh = true, awake = Infinity } = {}): Promise<boolean> {
   const { data: me } = await db.from("profiles").select("working_hours, brief, brief_told, notification_level, notification_preview, notification_quiet, onboarding").eq("id", userId).maybeSingle();
   if (!me || me.onboarding !== "done" || me.notification_level === "none") return false;
   const settings = briefSettings(me.brief);
   const { day, due, past } = briefDay(settings, zoneOf(me), at);
-  if (!settings.notify || !due || me.brief_told === day || inQuietHours(me, at) || (!fresh && past < 30)) return false;
+  if (!settings.notify || !due || me.brief_told === day || inQuietHours(me, at) || (!fresh && Math.min(past, awake / 60_000) < 30)) return false;
   await db.from("profiles").update({ brief_told: day }).eq("id", userId);
   if (past > LATE_MIN) return false;
   const b = await brief(userId);

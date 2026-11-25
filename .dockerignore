@@ -1,0 +1,8 @@
+*
+!bin
+!server
+!frontend
+!package.json
+!package-lock.json
+frontend/node_modules
+frontend/dist

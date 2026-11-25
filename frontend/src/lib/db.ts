@@ -8,6 +8,7 @@
 // Queries are recorded by the same builder the server uses and posted to /db.
 // Changes arrive over one EventSource on /events.
 
+import { host, type Host } from "./host";
 import { Query, type QuerySpec, type Result } from "../../../server/query.ts";
 
 declare global {
@@ -27,6 +28,7 @@ export type Session = {
   accounts: number;
   googleConfigured: boolean;
   modelConfigured: boolean;
+  host: Host;
 };
 
 let currentUser: User | null = null;
@@ -36,6 +38,12 @@ export async function loadSession(): Promise<Session> {
   if (!r.ok) throw new Error(`Tabellar answered ${r.status}`);
   const s = (await r.json()) as Session;
   currentUser = s.user;
+  Object.assign(host, s.host);
+  // A server's own clock is not the user's: their day is the one of their window.
+  if (s.profile && !host.mac && !s.profile.working_hours?.timezone) {
+    s.profile.working_hours = { ...s.profile.working_hours, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+    await createClient().from("profiles").update({ working_hours: s.profile.working_hours }).eq("id", s.profile.id);
+  }
   return s;
 }
 

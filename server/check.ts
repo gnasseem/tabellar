@@ -489,10 +489,11 @@ ok("the mail quoted under an email is told from its own words, in several langua
 });
 const files = [await fileText("a.csv", "text/csv", Buffer.from("Item,Price\nBanner,2400\n")), await fileText("a.html", "", Buffer.from("<style>x</style><p>Total 14300</p>")), await fileText("a.png", "image/png", Buffer.from("x")), await fileText("bad.pdf", "", Buffer.from("no pdf")), await fileText("bad.xlsx", "", Buffer.from("no zip"))];
 ok("an attachment's text is read, and what cannot be read is empty", () => assert.deepEqual(files, ["Item,Price\nBanner,2400", "Total 14300", "", "", ""]));
-if (process.platform === "darwin") {
+const onMac = process.platform === "darwin";
+if (onMac || !(await import("node:child_process")).spawnSync("pdftotext", ["-v"]).error) {
   const pdf = "%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 100]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj\n4 0 obj<</Length 44>>stream\nBT /F1 12 Tf 20 50 Td (Total due 14300) Tj ET\nendstream endobj\n5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF";
-  const read = [await fileText("a.pdf", "", Buffer.from(pdf)), await fileText("a.rtf", "", Buffer.from("{\\rtf1\\ansi Total due 14300}"))];
-  ok("PDF and Word files are read with what macOS has", () => assert.deepEqual(read, ["Total due 14300", "Total due 14300"]));
+  const read = [await fileText("a.pdf", "", Buffer.from(pdf)), onMac ? await fileText("a.rtf", "", Buffer.from("{\\rtf1\\ansi Total due 14300}")) : "Total due 14300"];
+  ok("PDF and Word files are read with what the machine has", () => assert.deepEqual(read, ["Total due 14300", "Total due 14300"]));
 }
 
 // A fake mailbox whose Drafts can be changed as on a phone.
@@ -2755,12 +2756,202 @@ await db.from("telegram").insert({ user_id: tgHome.id, bot: "b", token_ref: "tel
 await db.from("profiles").update({ home: "/elsewhere" }).eq("id", tgHome.id);
 await (await import("./engine.ts")).pauseIfCopied();
 const tgCopied = (await db.from("telegram").select("user_id")).data!.length;
+await db.from("profiles").update({ home: null, engine_paused: false }).eq("id", tgHome.id);
+await (await import("./engine.ts")).pauseIfCopied();
+const oldCopy = (await db.from("profiles").select("engine_paused").eq("id", tgHome.id).single()).data!;
 await db.from("profiles").update({ home: tgHome.home, engine_paused: tgHome.engine_paused }).eq("id", tgHome.id);
-ok("a copied data folder does not answer for the original's bot", () => assert.equal(tgCopied, 0));
+ok("a copied data folder does not answer for the original's bot, and one from before it named its home is paused", () => {
+  assert.equal(tgCopied, 0);
+  assert.equal(oldCopy.engine_paused, true);
+});
 await db.from("emails").update({ awaits_reply: true }).eq("id", s13);
 stopTelegram();
 fakeTelegram.closeAllConnections();
 fakeTelegram.close();
+
+// ── Always on ───────────────────────────────────────────────────────────────
+console.log("Always on");
+{
+  const awake = await import("./awake.ts");
+  const { tellBrief, brief: briefNow } = await import("./brief.ts");
+  const box = { id: account!.id as string, user_id: userId };
+  await db.from("profiles").update({ autonomy_level: "autopilot", engine_paused: false, away: null }).eq("id", userId);
+  const dueWhileAway = await incoming("ann@example.org");
+  assert.ok(dueWhileAway.row);
+  await fallDue(dueWhileAway.row.id);
+  awake.woke();
+  const sentBefore = sent.length;
+  await sendDueEmails();
+  ok("what fell due while asleep waits until the mailbox was read again", () => assert.equal(sent.length, sentBefore));
+  await awake.answered(box, true);
+  await sendDueEmails();
+  ok("and goes out then", () => assert.equal(sent.length, sentBefore + 1));
+  const daysLate = await incoming("ann@example.org");
+  await db.from("scheduled_emails").update({ send_at: new Date(Date.now() - 13 * 3600_000).toISOString() }).eq("id", daysLate.row.id);
+  await sendDueEmails();
+  const { data: lateRow } = await db.from("scheduled_emails").select("status").eq("id", daysLate.row.id).single();
+  const { data: lateDraft } = await db.from("draft_emails").select("id").eq("email_id", daysLate.row.email_id);
+  ok("an Autopilot reply half a day late is kept as a draft", () => {
+    assert.equal(sent.length, sentBefore + 1);
+    assert.deepEqual([lateRow!.status, lateDraft!.length], ["cancelled", 1]);
+  });
+
+  const hoursOn = (n: number) => Date.now() + n * 3600_000;
+  const awayNow = async () => (await db.from("profiles").select("away").eq("id", userId).single()).data!.away as { from: string; to: string } | null;
+  await awake.answered(box, true, hoursOn(0.5));
+  const notAway = await awayNow();
+  await awake.answered(box, true, hoursOn(3.5));
+  await awake.answered(box, true, hoursOn(3.6));
+  await awake.answered(box, true, hoursOn(9.5));
+  const gone9 = (await awayNow())!;
+  const quietAway = (await briefNow(userId)).away;
+  await db.from("emails").insert({ user_id: userId, gmail_id: "came-meanwhile", account_id: account!.id, subject: "Meanwhile", sender_email: "ann@example.org", label_ids: ["INBOX"], received_at: new Date(hoursOn(5)).toISOString() });
+  const awayBrief = (await briefNow(userId)).away;
+  await db.from("emails").delete().eq("user_id", userId).eq("gmail_id", "came-meanwhile");
+  ok("time away is kept, a moment awake in between counted in, and the Brief says it", () => {
+    assert.equal(notAway, null);
+    assert.equal(Math.round((Date.parse(gone9.to) - Date.parse(gone9.from)) / 3600_000), 9);
+    assert.equal(quietAway, "Tabellar was away for 9 hours. Nothing came meanwhile.");
+    assert.equal(awayBrief, "Tabellar was away for 9 hours. 1 email came meanwhile, 1 still to read.");
+  });
+  await db.from("profiles").update({ away: null }).eq("id", userId);
+
+  await db.from("profiles").update({ notification_level: "needs", notification_quiet: false, brief_told: null, onboarding: "done", brief: { time: "00:00" }, working_hours: { timezone: "UTC" } }).eq("id", userId);
+  const atNine = new Date(`${new Date().toISOString().slice(0, 10)}T05:00:00Z`);
+  const heldFor = async () => (await db.from("profiles").select("brief_told").eq("id", userId).single()).data!.brief_told;
+  await tellBrief(userId, { at: atNine, fresh: false, awake: 60_000 });
+  const heldBack = await heldFor();
+  await tellBrief(userId, { at: atNine, fresh: false, awake: 31 * 60_000 });
+  const goneOut = await heldFor();
+  ok("after a night asleep the Brief waits for this morning's mail, for half an hour at most", () => {
+    assert.equal(heldBack, null);
+    assert.ok(goneOut);
+  });
+  await db.from("profiles").update({ notification_level: "none", autonomy_level: "suggest" }).eq("id", userId);
+
+  const { seal, unseal } = await import("./seal.ts");
+  ok("what is sealed opens with its passphrase only, and not once changed", () => {
+    const box = seal("a long passphrase", Buffer.from("sign-ins"));
+    assert.equal(unseal("a long passphrase", box, "").toString(), "sign-ins");
+    assert.ok(!box.includes("sign-ins"));
+    assert.throws(() => unseal("another passphrase", box, "wrong"), /wrong/);
+    box[box.length - 1] ^= 1;
+    assert.throws(() => unseal("a long passphrase", box, "changed"), /changed/);
+    assert.throws(() => unseal("a long passphrase", Buffer.from("x"), ""), /not a file/);
+  });
+  const { autostartUnit, environmentFile } = await import("./autostart.ts");
+  ok("the systemd unit runs serve, and its passphrase is kept as it is", () => {
+    assert.match(autostartUnit(), /^ExecStart="[^"]+" "[^"]+" serve$/m);
+    assert.equal(environmentFile({ TABELLAR_PASSPHRASE: 'a "$b\\c #d' }), `TABELLAR_PASSPHRASE='a "$b\\c #d'\n`);
+    assert.throws(() => environmentFile({ TABELLAR_PASSPHRASE: "it's" }), /single quote/);
+  });
+}
+
+// A real move, between two data folders, with two servers.
+{
+  const { spawn, spawnSync } = await import("node:child_process");
+  const { createServer: listenOn } = await import("node:net");
+  const { mkdtempSync, rmSync, writeFileSync, statSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { DatabaseSync } = await import("node:sqlite");
+  const freePort = () => new Promise<number>((done) => { const s = listenOn().listen(0, "127.0.0.1", () => { const p = (s.address() as { port: number }).port; s.close(() => done(p)); }); });
+  const root = mkdtempSync(join(tmpdir(), "tabellar-move-"));
+  const [oldHome, newHome, file] = [join(root, "old"), join(root, "new"), join(root, "out.move")];
+  const envOf = (home: string, phrase: string) => ({ ...process.env, TABELLAR_HOME: home, TABELLAR_PASSPHRASE: phrase, TABELLAR_MOVE_PASSPHRASE: "carried between machines" });
+  const envs: Record<string, ReturnType<typeof envOf>> = { [oldHome]: envOf(oldHome, "kept on the old machine"), [newHome]: envOf(newHome, "kept on the new machine") };
+  const cli = (home: string, ...a: string[]) => spawnSync(process.execPath, [sibling("tabellar"), ...a], { env: envs[home], encoding: "utf8", timeout: 60_000 });
+  const serve = async (home: string, ...a: string[]) => {
+    const child = spawn(process.execPath, [sibling("tabellar"), "serve", ...a], { env: envs[home], stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    child.stdout.on("data", (t) => (out += t));
+    child.stderr.on("data", (t) => (out += t));
+    const ended = new Promise<number | null>((done) => child.on("exit", done));
+    for (let i = 0; i < 300 && !/Tabellar is running at/.test(out) && child.exitCode === null; i++) await new Promise((r) => setTimeout(r, 100));
+    return { child, ended, out: () => out };
+  };
+  const row = (home: string, sql: string) => {
+    const d = new DatabaseSync(join(home, "tabellar.db"), { readOnly: true });
+    try {
+      return d.prepare(sql).get() as Record<string, unknown> | undefined;
+    } finally {
+      d.close();
+    }
+  };
+  const servers: Awaited<ReturnType<typeof serve>>[] = [];
+  try {
+    const seed = spawnSync(process.execPath, ["--input-type=module", "-e", `
+      const { db } = await import(${JSON.stringify(new URL(sibling("db"), "file://").href)});
+      const { secrets, saveConfig } = await import(${JSON.stringify(new URL(sibling("config"), "file://").href)});
+      const { place } = await import(${JSON.stringify(new URL(sibling("place"), "file://").href)});
+      saveConfig({ port: ${await freePort()} });
+      secrets.set("imap:abc", "the app password");
+      const { data: p } = await db.from("profiles").insert({ id: crypto.randomUUID(), email: "kai@own.example", home: place(), autonomy_level: "assist" }).select("id").single();
+      const { data: a } = await db.from("accounts").insert({ user_id: p.id, provider: "imap", address: "kai@own.example", token_ref: "imap:abc", server: { imap: { host: "127.0.0.1", port: 1 }, smtp: { host: "127.0.0.1", port: 1 }, user: "kai" } }).select("id").single();
+      await db.from("telegram").insert({ user_id: p.id, bot: "b", token_ref: "telegram:9", next: 1, messages: [] });
+      await db.from("scheduled_emails").insert({ user_id: p.id, account_id: a.id, to_addresses: ["ann@example.org"], subject: "Later", body_html: "x", send_at: new Date(Date.now() + 86400000).toISOString(), status: "pending" });
+    `], { env: envs[oldHome], encoding: "utf8" });
+    assert.equal(seed.status, 0, seed.stderr);
+    ok("without a Keychain the secrets are in one file only its owner can read, encrypted", () => {
+      assert.equal(statSync(join(oldHome, "secrets")).mode & 0o777, 0o600);
+      assert.ok(!readFileSync(join(oldHome, "secrets")).includes("the app password"));
+    });
+    const first = await serve(oldHome);
+    servers.push(first);
+    assert.match(first.out(), /Tabellar is running at/, first.out());
+    const second = cli(oldHome, "move", join(root, "missing", "out.move"));
+    ok("a move that cannot be written leaves the old place running", () => {
+      assert.equal(second.status, 1);
+      assert.equal(first.child.exitCode, null);
+      assert.equal(row(oldHome, "SELECT moved_at FROM profiles")!.moved_at, null);
+    });
+    const moved = cli(oldHome, "move", file);
+    assert.equal(moved.status, 0, moved.stdout + moved.stderr);
+    const left = await first.ended;
+    ok("a move stops the old engine, closes its place, and writes one encrypted file", () => {
+      assert.equal(left, 0);
+      assert.deepEqual({ ...row(oldHome, "SELECT engine_paused, moved_at IS NOT NULL AS moved FROM profiles") }, { engine_paused: 1, moved: 1 });
+      assert.equal(row(oldHome, "SELECT status FROM scheduled_emails")!.status, "failed");
+      assert.equal(row(oldHome, "SELECT bot FROM telegram"), undefined);
+      const bytes = readFileSync(file);
+      for (const t of ["the app password", "kai@own.example", "SQLite"]) assert.ok(!bytes.includes(t), t);
+      assert.equal(statSync(file).mode & 0o777, 0o600);
+    });
+    const wrong = spawnSync(process.execPath, [sibling("tabellar"), "serve", file], { env: { ...envs[newHome], TABELLAR_MOVE_PASSPHRASE: "not this one at all" }, encoding: "utf8", timeout: 60_000 });
+    ok("the wrong passphrase begins nothing, and the file stays", () => {
+      assert.equal(wrong.status, 1);
+      assert.match(wrong.stderr, /not the passphrase/);
+      assert.ok(existsSync(file) && !existsSync(join(newHome, "tabellar.db")));
+    });
+    writeFileSync(join(newHome, "config.json"), JSON.stringify({ port: await freePort() }));
+    const there = await serve(newHome, file);
+    servers.push(there);
+    assert.match(there.out(), /Tabellar is running at/, there.out());
+    const again = cli(oldHome, "serve");
+    ok("started from the file, the new place is home and runs, and the old one does not start", () => {
+      assert.deepEqual({ ...row(newHome, "SELECT engine_paused, moved_at FROM profiles") }, { engine_paused: 0, moved_at: null });
+      assert.ok(String(row(newHome, "SELECT home FROM profiles")!.home).endsWith(newHome));
+      assert.equal(row(newHome, "SELECT status FROM scheduled_emails")!.status, "pending");
+      assert.equal(row(newHome, "SELECT bot FROM telegram")!.bot, "b");
+      assert.ok(!existsSync(file));
+      assert.equal(again.status, 0);
+      assert.match(again.stdout, /moved from here/);
+      assert.equal(there.child.exitCode, null);
+    });
+    writeFileSync(join(newHome, "config.json"), JSON.stringify({ port: await freePort() }));
+    const twice = cli(newHome, "serve");
+    ok("one data folder is run by one process", () => {
+      assert.equal(twice.status, 1);
+      assert.match(twice.stderr, /Another Tabellar is running/);
+    });
+    there.child.kill("SIGTERM");
+    const endedWell = await there.ended;
+    ok("it ends well when told to", () => assert.equal(endedWell, 0));
+  } finally {
+    for (const s of servers) s.child.kill("SIGKILL");
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 if (modelConfigured()) {
   console.log("Rules through the configured model (this can take a minute)");

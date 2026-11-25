@@ -72,7 +72,7 @@ export function modelFailure(slot: Slot, status: number, text: string): string {
     // not JSON
   }
   const m = slotModel(slot);
-  if (m?.format === "ollama") return status === 404 ? `${m.model} is not on this Mac. Choose a model in Settings, under Models.` : said || "The model on this Mac is not answering.";
+  if (m?.format === "ollama") return status === 404 ? `${m.model} is not here. Choose a model in Settings, under Models.` : said || "The local model is not answering.";
   if (status === 401 || status === 403) return `The API key was not accepted. Check it in Settings, under Models.${said ? ` (${said.slice(0, 160)})` : ""}`;
   if (status === 429) return said ? `The model provider refused: ${said.slice(0, 200)}` : "The model provider is over its limit. Try again in a minute.";
   return status ? `The model provider answered with an error (${status})${said ? `: ${said.slice(0, 200)}` : ""}` : "The model provider could not be reached.";
