@@ -45,7 +45,7 @@ export function briefSettings(stored: unknown): BriefSettings {
     time: /^([01]\d|2[0-3]):[0-5]\d$/.test(String(b.time)) ? String(b.time) : "08:00",
     length: b.length && b.length in LENGTHS ? b.length : "standard",
     sections: Array.isArray(b.sections) ? SECTIONS.filter((s) => b.sections!.includes(s)) : [...SECTIONS],
-    summary: b.summary === true,
+    summary: b.summary !== false,
     tone: b.tone && b.tone in TONES ? b.tone : "plain",
     notify: b.notify !== false,
   };
@@ -430,7 +430,6 @@ function linesFor(b: Brief): string {
   const out: string[] = [];
   if (has("needs")) out.push(`Needs the user today (${b.needs.length + b.more} things, the first ${b.needs.length}):`, ...b.needs.map((n) => `- ${line(n)}`));
   if (has("waiting") && b.waiting.length) out.push(`The user waits for an answer from (${b.waiting.length + b.waitingMore}):`, ...b.waiting.map((w) => `- ${w.who}, asked: ${w.text}`));
-  if (has("handled")) out.push(`Handled without the user since yesterday: ${b.handled.length} emails`);
   return out.join("\n");
 }
 

@@ -12,8 +12,8 @@ import { SkeletonRows, clock, initials, shortWhen } from "../ui";
 
 // The Brief: where the window opens. What needs the user today, each line with
 // its answers (server/answers.ts), so nothing has to be opened to deal with it;
-// who they are waiting on, the same way; today's calendar; and how much
-// Tabellar handled since yesterday, one line until it is opened. The line the
+// who they are waiting on, the same way; and today's calendar beside them.
+// The day's paragraph sits at the top beside the date. The line the
 // cursor is on shows what its answers stand on: the reply as it would go out,
 // the sentence a meeting came from. Settings, Brief chooses the sections.
 
@@ -132,7 +132,6 @@ export default function BriefingView() {
   const [failed, setFailed] = useState(false);
   const [events, setEvents] = useState<CalEvent[] | null>(null);
   const [calError, setCalError] = useState(false);
-  const [showHandled, setShowHandled] = useState(false);
   const [shownDigest, setShownDigest] = useState<string | null>(null);
   // Every line, past the Brief's length.
   const [all, setAll] = useState(false);
@@ -343,15 +342,25 @@ export default function BriefingView() {
   const now = new Date();
   const weekday = now.toLocaleDateString([], { weekday: "long" });
   const date = now.toLocaleDateString([], { day: "numeric", month: "long" });
+  const hour = now.getHours();
+  const greeting = hour < 5 ? "Good night" : hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const first = String(profile.display_name ?? "").trim().split(/\s+/)[0];
   const nextUp = events?.find((e) => !e.allDay && new Date(e.start).getTime() > Date.now());
   const count = needs.length + (brief?.more ?? 0);
   const owed = waiting.length + (show("waiting") ? (brief?.waitingMore ?? 0) : 0);
-  // Where things stand, from the lines below.
+  // Where things stand, from the lines below, when there is no paragraph.
   const stands = [
-    show("needs") && (count ? `${count.toLocaleString()} ${count === 1 ? "thing needs" : "things need"} you.` : "Nothing needs you."),
+    show("needs") && (count ? `${count.toLocaleString()} ${count === 1 ? "thing needs" : "things need"} you today.` : "Nothing needs you today."),
     owed > 0 && `${owed.toLocaleString()} ${owed === 1 ? "person owes" : "people owe"} you an answer.`,
     show("calendar") && nextUp && `${nextUp.title} at ${clock(nextUp.start)}.`,
   ].filter(Boolean).join(" ");
+  const main = brief?.settings.summary && brief.summary ? brief.summary : stands;
+  const facts = [
+    show("needs") && { n: count, label: count === 1 ? "needs you" : "need you", need: count > 0 },
+    show("waiting") && { n: owed, label: owed === 1 ? "owes you" : "owe you", need: false },
+    show("calendar") && events && { n: events.length, label: events.length === 1 ? "event today" : "events today", need: false },
+  ].filter((f) => f && f.n > 0) as { n: number; label: string; need: boolean }[];
+  const calendar = show("calendar") && (calError || !!events?.length);
 
   return (
     <>
@@ -365,12 +374,43 @@ export default function BriefingView() {
             <Icon name="settings" size={16} />
           </button>
         </header>
-        <div ref={listRef} className="mx-auto w-full max-w-[800px]">
-          <div className="px-6 pb-1 pt-6 lg:pt-14">
-            <h1 className="font-brand text-[42px] font-[600] leading-[1.02] tracking-[-0.012em] text-ink">
-              {weekday} <span className="inline-block text-ink3">{date}</span>
-            </h1>
-            {brief && stands && <p className="mt-3 max-w-[60ch] text-[15px] leading-[1.5] text-ink2">{stands}</p>}
+        <div ref={listRef} className="mx-auto w-full max-w-[1080px]">
+          <div className="grid gap-x-12 gap-y-5 border-b border-line-soft px-6 pb-8 pt-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)] lg:pt-14">
+            <div>
+              <p className="text-[13px] text-ink3">
+                {greeting}
+                {first ? `, ${first}` : ""}
+              </p>
+              <h1 className="mt-1.5 font-brand text-[46px] font-[600] leading-[1] tracking-[-0.014em] text-ink">
+                {weekday}
+                <span className="block text-ink3">{date}</span>
+              </h1>
+            </div>
+            <div className="min-w-0 self-end lg:pb-1">
+              {!brief ? (
+                <div className="grid gap-2">
+                  <span className="skel block h-3 w-[85%]" />
+                  <span className="skel block h-3 w-[60%]" />
+                </div>
+              ) : (
+                <>
+                  <p className="text-[17px] leading-[1.55] text-ink" aria-busy={writing || undefined}>
+                    {writing && !brief.summary ? <span className="text-ink3">{stands}</span> : main}
+                  </p>
+                  {facts.length > 0 && (
+                    <div className="mt-4 flex flex-wrap gap-x-6 gap-y-1">
+                      {facts.map((f) => (
+                        <span key={f.label} className="flex items-baseline gap-1.5">
+                          <b className={`font-brand text-[22px] font-[620] leading-none ${f.need ? "text-wax-ink" : "text-ink"}`}>{f.n.toLocaleString()}</b>
+                          <span className="text-[12.5px] text-ink3">{f.label}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {brief.away && <p className="mt-3 text-[12.5px] text-ink3">{brief.away}</p>}
+                </>
+              )}
+            </div>
           </div>
           {failed && !brief ? (
             <p className="px-6 pt-6 text-danger" role="alert">
@@ -384,121 +424,112 @@ export default function BriefingView() {
               <SkeletonRows count={9} />
             </div>
           ) : (
-            <>
-              {brief.away && <p className="px-6 pt-3 text-ink2">{brief.away}</p>}
-              {brief.settings.summary && (brief.summary || writing) && (
-                <p className="max-w-[68ch] px-6 pt-4 text-[14px] leading-relaxed text-ink" aria-busy={writing || undefined}>
-                  {brief.summary || <span className="skel mt-1 block h-2.5 w-[60%]" />}
-                </p>
-              )}
-              {show("needs") && (
-                <>
-                  {head("Needs you today")}
-                  {!needs.length && quiet("Nothing needs you")}
-                  <div role="listbox" aria-label="Needs you today">
-                    {needs.map(render)}
-                  </div>
-                  {brief.more > 0 && more(`${brief.more.toLocaleString()} more`, () => setAll(true))}
-                </>
-              )}
+            <div className={`grid gap-x-6 ${calendar ? "lg:grid-cols-[minmax(0,1fr)_300px]" : ""}`}>
+              <div className="min-w-0">
+                {show("needs") && (
+                  <>
+                    {head("Needs you today")}
+                    {!needs.length ? (
+                      <div className="mx-2 flex items-center gap-3.5 rounded-[12px] px-4 py-3 text-ink2">
+                        <span className="grid h-9 w-9 flex-none place-items-center rounded-full bg-ok-soft text-ok">
+                          <Icon name="check" size={16} />
+                        </span>
+                        You are clear. New mail that needs you shows up here.
+                      </div>
+                    ) : (
+                      <div role="listbox" aria-label="Needs you today">
+                        {needs.map(render)}
+                      </div>
+                    )}
+                    {brief.more > 0 && more(`${brief.more.toLocaleString()} more`, () => setAll(true))}
+                  </>
+                )}
 
-              {brief.changes.length > 0 && (
-                <>
-                  {head("Changed on your calendar")}
-                  {brief.changes.map((c) => (
-                    <div key={c.id} className="mx-2 flex min-h-[40px] items-center gap-3.5 rounded-[12px] px-4 py-1.5 transition-colors duration-150 hover:bg-hover">
-                      <Icon name="event" size={16} className="flex-none text-ink3" />
-                      <button className="min-w-0 flex-1 truncate text-left text-ink" title={c.text} onClick={() => (c.email_id ? setReading(c.email_id) : setView("meetings"))}>
-                        {c.text}
-                      </button>
-                      <button className="btn btn-plain btn-sm flex-none" onClick={() => mail.undo(c.id).then(() => (addToast("info", "Undone"), refresh())).catch((e) => addToast("error", (e as Error).message))}>
-                        Undo
-                      </button>
-                    </div>
-                  ))}
-                </>
-              )}
-
-              {brief.digests.map((d) => (
-                <div key={d.id}>
-                  {head(
-                    "Digest",
-                    <button className="link" aria-expanded={shownDigest === d.id} onClick={() => setShownDigest(shownDigest === d.id ? null : d.id)}>
-                      {shownDigest === d.id ? "Hide" : "Show"}
-                    </button>,
-                  )}
-                  <p className="truncate px-6 py-1 text-ink2" title={d.title}>
-                    {d.items.length.toLocaleString()} email{d.items.length === 1 ? "" : "s"}
-                    <span className="pl-2 text-ink3">{d.title}</span>
-                  </p>
-                  {shownDigest === d.id &&
-                    d.items.map((m) => (
-                      <div key={m.email_id} className="row cursor-default !mx-2 !px-4" onClick={() => setReading(m.email_id)} title={m.text}>
-                        <span className="w-[96px] flex-none truncate pr-3 md:w-[164px]">{m.who}</span>
-                        <span className="min-w-0 flex-1 truncate">{m.text}</span>
-                        <time className="w-[46px] flex-none text-right text-xs text-ink3">{shortWhen(m.at)}</time>
+                {brief.changes.length > 0 && (
+                  <>
+                    {head("Changed on your calendar")}
+                    {brief.changes.map((c) => (
+                      <div key={c.id} className="mx-2 flex min-h-[40px] items-center gap-3.5 rounded-[12px] px-4 py-1.5 transition-colors duration-150 hover:bg-hover">
+                        <Icon name="event" size={16} className="flex-none text-ink3" />
+                        <button className="min-w-0 flex-1 truncate text-left text-ink" title={c.text} onClick={() => (c.email_id ? setReading(c.email_id) : setView("meetings"))}>
+                          {c.text}
+                        </button>
+                        <button className="btn btn-plain btn-sm flex-none" onClick={() => mail.undo(c.id).then(() => (addToast("info", "Undone"), refresh())).catch((e) => addToast("error", (e as Error).message))}>
+                          Undo
+                        </button>
                       </div>
                     ))}
-                </div>
-              ))}
+                  </>
+                )}
 
-              {waiting.length > 0 && (
-                <>
-                  {head("Waiting on others")}
-                  <div role="listbox" aria-label="Waiting on others">
-                    {waiting.map(render)}
+                {waiting.length > 0 && (
+                  <>
+                    {head("Waiting on others")}
+                    <div role="listbox" aria-label="Waiting on others">
+                      {waiting.map(render)}
+                    </div>
+                    {brief.waitingMore > 0 && more(`${brief.waitingMore.toLocaleString()} more in Follow-ups`, () => setView("followups"))}
+                  </>
+                )}
+
+                {brief.digests.map((d) => (
+                  <div key={d.id}>
+                    {head(
+                      d.title,
+                      <button className="link" aria-expanded={shownDigest === d.id} onClick={() => setShownDigest(shownDigest === d.id ? null : d.id)}>
+                        {shownDigest === d.id ? "Hide" : `Show ${d.items.length.toLocaleString()}`}
+                      </button>,
+                    )}
+                    {shownDigest === d.id &&
+                      d.items.map((m) => (
+                        <div key={m.email_id} className="row cursor-default !mx-2 !px-4" onClick={() => setReading(m.email_id)} title={m.text}>
+                          <span className="w-[96px] flex-none truncate pr-3 md:w-[164px]">{m.who}</span>
+                          <span className="min-w-0 flex-1 truncate">{m.text}</span>
+                          <time className="w-[46px] flex-none text-right text-xs text-ink3">{shortWhen(m.at)}</time>
+                        </div>
+                      ))}
                   </div>
-                  {brief.waitingMore > 0 && more(`${brief.waitingMore.toLocaleString()} more in Follow-ups`, () => setView("followups"))}
-                </>
-              )}
+                ))}
 
-              {show("calendar") && (calError || !!events?.length) && (
-                <>
-                  {head("Today's calendar")}
-                  {calError
-                    ? quiet("The calendar could not be read")
-                    : events!.map((ev) => {
+                {show("handled") && brief.handled.length > 0 && (
+                  <p className="px-6 pt-10">
+                    <button className="link" onClick={() => setView("history")}>
+                      What Tabellar did for you
+                    </button>
+                  </p>
+                )}
+              </div>
+
+              {calendar && (
+                <aside className="min-w-0 lg:pr-2">
+                  {head("Today")}
+                  {calError ? (
+                    quiet("The calendar could not be read")
+                  ) : (
+                    <div className="mx-2 rounded-[12px] bg-side p-1.5">
+                      {events!.map((ev) => {
                         const over = !ev.allDay && new Date(ev.end).getTime() < Date.now();
                         return (
                           <div key={ev.id}>
-                            <a className="mx-2 grid min-h-[44px] grid-cols-[84px_2px_minmax(0,1fr)] items-center gap-x-4 rounded-[12px] px-4 py-1.5 transition-colors duration-150 hover:bg-hover" href={ev.htmlLink || undefined} target="_blank" rel="noopener noreferrer">
-                              <span className={`leading-tight ${over ? "text-ink3" : "text-ink"}`}>{ev.allDay ? "All day" : `${clock(ev.start)} to ${clock(ev.end)}`}</span>
+                            <a className="grid min-h-[44px] grid-cols-[2px_minmax(0,1fr)] items-center gap-x-3 rounded-[9px] px-2.5 py-1.5 transition-colors duration-150 hover:bg-hover" href={ev.htmlLink || undefined} target="_blank" rel="noopener noreferrer">
                               <span className={`h-full min-h-[28px] rounded-full ${upNext === ev.id ? "bg-wax" : "bg-line"}`} />
                               <span className="min-w-0">
                                 <span className={`block truncate ${over ? "text-ink3" : "font-medium text-ink"}`}>{ev.title}</span>
-                                {ev.attendees.length > 0 && <span className="block truncate text-[12.5px] text-ink3">{ev.attendees.join(", ")}</span>}
+                                <span className="block truncate text-[12.5px] text-ink3">
+                                  {ev.allDay ? "All day" : `${clock(ev.start)} to ${clock(ev.end)}`}
+                                  {ev.attendees.length > 0 && `, ${ev.attendees.join(", ")}`}
+                                </span>
                               </span>
                             </a>
-                            {upNext === ev.id && !!ev.people?.length && <MeetingPrep title={ev.title} people={ev.people} onOpen={setReading} className="pl-6 md:pl-[126px]" />}
+                            {upNext === ev.id && !!ev.people?.length && <MeetingPrep title={ev.title} people={ev.people} onOpen={setReading} className="px-3 pb-2" />}
                           </div>
                         );
                       })}
-                </>
-              )}
-
-              {show("handled") && brief.handled.length > 0 && (
-                <>
-                  {head(
-                    "Handled for you",
-                    <button className="link" aria-expanded={showHandled} onClick={() => setShowHandled(!showHandled)}>
-                      {showHandled ? "Hide" : "Show"}
-                    </button>,
+                    </div>
                   )}
-                  <p className="px-6 py-1 text-ink2">
-                    {brief.handled.length.toLocaleString()} email{brief.handled.length === 1 ? "" : "s"} since yesterday
-                  </p>
-                  {showHandled &&
-                    brief.handled.map((h) => (
-                      <div key={h.email_id} className="row cursor-default !mx-2 !px-4" onClick={() => setReading(h.email_id)} title={h.subject}>
-                        <span className="w-[96px] flex-none truncate pr-3 md:w-[164px]">{h.who}</span>
-                        <span className="min-w-0 flex-1 truncate">{h.subject}</span>
-                        <span className="w-[172px] flex-none truncate pl-3 text-[12.5px] text-ink3 max-md:hidden">{h.what}</span>
-                        <time className="w-[46px] flex-none text-right text-xs text-ink3">{shortWhen(h.at)}</time>
-                      </div>
-                    ))}
-                </>
+                </aside>
               )}
-            </>
+            </div>
           )}
         </div>
       </div>

@@ -4,7 +4,7 @@
 import { applyLabel } from "./labels.ts";
 import { act, engineSettings } from "./actions.ts";
 import { discardDrafts } from "./drafts.ts";
-import { userCalendar } from "./providers.ts";
+import { WEEKDAYS, userCalendar } from "./providers.ts";
 import { parseWallClock, wallClockToUtc } from "./agentExecute.ts";
 import { chatCompletion, isLocalModel, modelFailure, modelTimeoutMs, requireModel } from "./llm.ts";
 import type { Slot } from "./config.ts";
@@ -851,10 +851,66 @@ export async function briefParagraph(lines: string, tone: string): Promise<strin
   return raw.replace(/\s+/g, " ").replace(/\*/g, "").trim().slice(0, 600);
 }
 
+// What the user typed about their own time ("I have Machine Learning Mon and
+// Wed 10 to 11:30 until 15 December"), as events to put on the calendar.
+// Checked here: real days and times, the end after the start. The window
+// shows them before anything is added.
+export type TypedEvent = { title: string; date: string; start: string; end: string; days: string[]; until: string | null; location: string | null };
+export async function eventsFromText(text: string, timezone: string): Promise<TypedEvent[]> {
+  const today = dateContextFor(timezone);
+  const todayIso = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const raw = await llm(
+    `Someone tells their calendar about their own time: classes, a gym slot, a standing meeting, one appointment. Today is ${today}. Read every event they name into JSON. For one that repeats every week, "days" lists its weekdays as MO, TU, WE, TH, FR, SA, SU and "date" is the first day it happens from today; for a one-off, "days" is [] and "date" is its day. Times are 24-hour "HH:MM" as they said them; when no end is said, one hour after the start. "until" is the last day ("YYYY-MM-DD") only when they say one, else null. "location" only when they say one, else null. Use their own words for the title. Return only JSON: {"events": [{"title": "...", "date": "YYYY-MM-DD", "start": "HH:MM", "end": "HH:MM", "days": [], "until": null, "location": null}]}.`,
+    text.slice(0, 1500),
+    0,
+    1200,
+  );
+  const list = (parseJson(raw) as { events?: unknown } | null)?.events;
+  if (!Array.isArray(list)) throw new UnreadableAnswer("The model's answer could not be read.");
+  const hhmm = (v: unknown) => (/^([01]?\d|2[0-3]):[0-5]\d$/.test(String(v ?? "")) ? String(v).padStart(5, "0") : "");
+  const day = (v: unknown) => (/^\d{4}-\d\d-\d\d$/.test(String(v ?? "")) && !isNaN(Date.parse(String(v))) ? String(v) : "");
+  const out: TypedEvent[] = [];
+  for (const e of list as Record<string, unknown>[]) {
+    const title = String(e?.title ?? "").replace(/\s+/g, " ").trim().slice(0, 120);
+    const start = hhmm(e?.start);
+    const end = hhmm(e?.end);
+    const days = [...new Set((Array.isArray(e?.days) ? e.days : []).map((d) => String(d).toUpperCase().slice(0, 2)).filter((d) => WEEKDAYS.includes(d)))].sort((a, b) => WEEKDAYS.indexOf(a) - WEEKDAYS.indexOf(b));
+    let date = day(e?.date);
+    if (!title || !start || !end || end <= start || !date) continue;
+    const next = (d: string, n: number) => new Date(Date.parse(`${d}T12:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+    // "On Thursday" said on a Friday is next week's, not yesterday's.
+    if (date < todayIso && next(date, 7) >= todayIso) date = next(date, 7);
+    if (days.length && date < todayIso) date = todayIso;
+    // A weekly event starts on one of its days, else Google adds the start as an extra one.
+    if (days.length) for (let i = 0; i < 7 && !days.includes(WEEKDAYS[(new Date(`${date}T12:00Z`).getUTCDay() + 6) % 7]); i++) date = next(date, 1);
+    if (date < todayIso) continue;
+    const until = day(e?.until);
+    out.push({ title, date, start, end, days, until: until && until >= date ? until : null, location: String(e?.location ?? "").trim().slice(0, 200) || null });
+  }
+  return out.slice(0, 20);
+}
+
+// A short name for a label from the sentence that says which mail belongs.
+// Falls back to the sentence's first words when the model does not answer.
+export async function labelName(description: string): Promise<string> {
+  const fallback = description.replace(/[^\p{L}\p{N}\s&'-]/gu, " ").split(/\s+/).filter(Boolean).slice(0, 3).join(" ");
+  const raw = await llm(
+    'Someone describes which emails a mail label should hold. Name the label the way they would: 1 to 3 words, title case, no quotes, no "Emails" or "Mail" in it ("Job Applications", "Receipts", "NYU Admin"). Return only JSON: {"name": "..."}.',
+    description.slice(0, 300),
+    0.2,
+    64,
+    "fast",
+  ).catch(() => "");
+  const name = String((parseJson(raw) as { name?: unknown } | null)?.name ?? "").replace(/\s+/g, " ").replace(/^["']|["'.]$/g, "").trim();
+  const out = /^[\p{L}\p{N}][\p{L}\p{N}\s&'/-]{0,38}$/u.test(name) ? name : fallback;
+  return out ? out[0].toUpperCase() + out.slice(1) : "Label";
+}
+
 // Labels the user would want, from who writes to them and about what. Each
 // names the senders from the list it would hold, so it can be checked.
-export async function labelsFromMail(sample: string): Promise<{ name: string; description: string; senders: string[] }[]> {
+export async function labelsFromMail(sample: string, have: string[] = []): Promise<{ name: string; description: string; senders: string[] }[]> {
   const raw = await llm(
+    (have.length ? `They already have the labels ${have.map((n) => `"${n}"`).join(", ")}: suggest only other groups, none that overlaps these. ` : "") +
     'Below are the people and services that email this person most, then recent subjects. Suggest the labels they would want to sort their mail into: groups that recur and matter to them, named the way they would name them ("Job applications", "NYU admin", "Receipts", "Course: Machine Learning"), not generic types like "Important" or "Updates", and not one label per sender. For each give a one-line description that tells a reader which emails belong in it, and the sender addresses from the list that belong in it. Return only JSON: {"labels": [{"name": "...", "description": "...", "senders": ["..."]}]}, 3 to 6 labels, names under 4 words.',
     sample,
     0.3,

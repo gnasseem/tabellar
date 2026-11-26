@@ -39,7 +39,7 @@ const SCHEMA: Record<string, { cols: Record<string, string>; unique?: string[][]
       mailbox_drafts: "bool ! =true",
       autonomy_level: 'text ! ="suggest"', engine_paused: "bool ! =false",
       autopilot_delay_min: "int ! =5", autopilot_daily_cap: "int ! =5", autopilot_known_only: "bool ! =true",
-      first_read: "json", rules_version: "int ! =0", label_suggestions: "json",
+      first_read: "json", rules_version: "int ! =0", label_suggestions: "json", read_days: "int ! =30",
       // The first-run step the window is on (onboarding.ts); "done" after it.
       onboarding: 'text ! ="done"',
       // The day the line on drafts sent unchanged was shown, "done" once answered (brief.ts).

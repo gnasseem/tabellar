@@ -11,8 +11,9 @@
 //            is read as soon as there is a model, beside the headers, so
 //            About you fills in early; labels are suggested once there are
 //            a few hundred headers.
-//   deep     Inbox mail from the last 30 days, real people before bulk, newest
-//            first, 300 in all: bodies fetched, then sorted. Bulk mail is
+//   deep     Inbox mail from the last week, month or three months (picked in
+//            the first run), real people before bulk, newest first, 150, 300
+//            or 600 in all: bodies fetched, then sorted. Bulk mail is
 //            sorted from its headers alone (analyzeEmails.ts).
 //
 // Progress is kept in profiles.first_read for the window. Every step can be
@@ -37,8 +38,14 @@ import { defaultAccount } from "./accounts.ts";
 
 const HEADER_DAYS = 90;
 const HEADER_CAP = 5000;
-const DEEP_DAYS = 30;
-const DEEP_CAP = 300;
+// How far back the first read sorts mail: the user's pick in the first run
+// (profiles.read_days, a week, a month or three), and how many emails at most.
+const DEEP_CAPS: Record<number, number> = { 7: 150, 30: 300, 90: 600 };
+async function deepOf(userId: string): Promise<{ days: number; cap: number }> {
+  const { data } = await db.from("profiles").select("read_days").eq("id", userId).maybeSingle();
+  const days = [7, 30, 90].includes(Number(data?.read_days)) ? Number(data!.read_days) : 30;
+  return { days, cap: DEEP_CAPS[days] };
+}
 const SENT_CAP = 200;
 const LABELS_FROM = 300;
 const DAY = 86_400_000;
@@ -297,12 +304,13 @@ export async function relearnStyle(userId: string): Promise<void> {
   if (account) await (await learnFromSent(userId, account, { facts: false })).style?.();
 }
 
-// ── The last 30 days ────────────────────────────────────────────────────────
+// ── The last month (or the week, or three months) ───────────────────────────
 
-// Fetch the bodies of the inbox mail from the last 30 days that is not stored
-// yet: people before bulk, newest first, up to 300 stored in all.
+// Fetch the bodies of the inbox mail from those days that is not stored
+// yet: people before bulk, newest first, up to the cap stored in all.
 async function fetchDeep(userId: string, account: Account): Promise<void> {
-  const since = new Date(Date.now() - DEEP_DAYS * DAY).toISOString();
+  const { days, cap } = await deepOf(userId);
+  const since = new Date(Date.now() - days * DAY).toISOString();
   const { data } = await db
     .from("mail_index")
     .select("gmail_id, from_addr, from_name, category, list_unsubscribe, list_id, precedence")
@@ -315,7 +323,7 @@ async function fetchDeep(userId: string, account: Account): Promise<void> {
     .limit(5000);
   const rows = data ?? [];
   const missing = new Set(await notStored(userId, rows.map((r) => r.gmail_id as string)));
-  const room = Math.max(0, DEEP_CAP - (rows.length - missing.size));
+  const room = Math.max(0, cap - (rows.length - missing.size));
   const written = await writtenTo(userId);
   const bulk = (r: Record<string, unknown>) =>
     isBulk(
@@ -337,10 +345,10 @@ async function fetchDeep(userId: string, account: Account): Promise<void> {
 }
 
 // Sort everything stored that is not sorted yet, a batch at a time, newest
-// first, keeping the count of the last 30 days up to date. Each batch is
+// first, keeping the count of those days up to date. Each batch is
 // planned while the next is sorted.
 async function sortDeep(userId: string, plan: () => unknown): Promise<void> {
-  const since = new Date(Date.now() - DEEP_DAYS * DAY).toISOString();
+  const since = new Date(Date.now() - (await deepOf(userId)).days * DAY).toISOString();
   const progress = async () => {
     const { data: recent } = await db.from("emails").select("id").eq("user_id", userId).not("label_ids", "cs", '{"SENT"}').gte("received_at", since).limit(5000);
     const ids = (recent ?? []).map((e) => e.id as string);

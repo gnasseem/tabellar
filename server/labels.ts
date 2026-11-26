@@ -94,9 +94,10 @@ async function findSuggestions(userId: string): Promise<Suggestion[]> {
     "RECENT SUBJECTS (sender: subject):",
     ...((mail ?? []) as Record<string, unknown>[]).map((e) => `${e.sender_email}: ${String(e.subject ?? "").slice(0, 90)}`),
   ].join("\n");
-  const taken = new Set((await userLabels(userId)).map((l) => l.display_name.toLowerCase()));
+  const have = (await userLabels(userId)).map((l) => l.display_name);
+  const taken = new Set(have.map((n) => n.toLowerCase()));
   const out: Suggestion[] = [];
-  for (const l of await labelsFromMail(sample)) {
+  for (const l of await labelsFromMail(sample, have)) {
     const own = [...new Set(l.senders.filter((s) => known.has(s)))];
     if (!own.length || taken.has(l.name.toLowerCase())) continue;
     out.push({ name: l.name, description: l.description, senders: own, count: own.reduce((n, s) => n + (known.get(s) ?? 0), 0) });

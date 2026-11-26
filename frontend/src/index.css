@@ -303,7 +303,7 @@
     @apply flex gap-0.5;
   }
   .seg > button {
-    @apply flex h-7 flex-none items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-ink2 transition-colors duration-150;
+    @apply flex h-7 flex-none items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-ink2 transition-colors duration-150;
   }
   .seg > button:hover {
     @apply bg-hover;
@@ -320,7 +320,7 @@
     @apply font-semibold text-wax-ink;
   }
   .searchbox {
-    @apply flex h-8 w-[340px] min-w-[36px] shrink items-center gap-2 rounded-full bg-field pl-3 pr-2 text-ink3;
+    @apply flex h-8 w-[340px] min-w-[36px] shrink items-center gap-2 rounded-lg bg-field pl-3 pr-2 text-ink3;
   }
   .searchbox input {
     @apply min-w-0 flex-1 bg-transparent text-[13px] text-ink outline-none;

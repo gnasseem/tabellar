@@ -11,13 +11,12 @@ const SECTIONS = [
   { id: "needs", label: "Needs you today" },
   { id: "waiting", label: "Waiting on others" },
   { id: "calendar", label: "Today's calendar" },
-  { id: "handled", label: "Handled for you" },
 ];
 
 export default function Brief() {
   const { setView } = useApp();
   const { profile, save } = useProfile();
-  const b: Settings = { time: "08:00", length: "standard", sections: SECTIONS.map((s) => s.id), summary: false, tone: "plain", ...((profile.brief as Partial<Settings> | null) ?? {}) };
+  const b: Settings = { time: "08:00", length: "standard", sections: SECTIONS.map((s) => s.id), summary: true, tone: "plain", ...((profile.brief as Partial<Settings> | null) ?? {}) };
   const set = (patch: Partial<Settings>) => save({ brief: { ...b, ...patch } });
   return (
     <>
@@ -29,7 +28,7 @@ export default function Brief() {
           </button>
         }
       >
-        <Row name="Time" text="A new Brief starts; what was handled counts from this time the day before">
+        <Row name="Time" text="When a new Brief starts">
           <input type="time" className="input w-[120px]" value={b.time} onChange={(e) => e.target.value && set({ time: e.target.value })} aria-label="Time" />
         </Row>
         <Row name="Length" text={{ short: "3 lines in each section", standard: "5 lines in each section", long: "10 lines in each section" }[b.length]}>
@@ -54,7 +53,7 @@ export default function Brief() {
       </Group>
 
       <Group title="Summary">
-        <Row name="A paragraph at the top" text="Written by the careful model from the lines of the Brief, at its time">
+        <Row name="A paragraph at the top" text="What matters today in two or three sentences">
           <Switch label="A paragraph at the top" on={b.summary} onChange={(summary) => set({ summary })} />
         </Row>
         {b.summary && (

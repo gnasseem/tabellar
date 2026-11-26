@@ -36,7 +36,7 @@ import { db } from "./db.ts";
 import { modelConfigured } from "./llm.ts";
 import { searchGoogleContacts, listAllGoogleContacts } from "./gmail.ts";
 import { mail, userCalendar } from "./providers.ts";
-import { refineDraft, processFullEmail } from "./ai.ts";
+import { eventsFromText, labelName, refineDraft, processFullEmail, type TypedEvent } from "./ai.ts";
 import { syncMail, analyzeInbox } from "./sync.ts";
 import { modelStatus } from "./analyzeEmails.ts";
 import { accountById, accountFor, accountsForWindow, defaultAccount, fromLine, listAccounts, removeAccount, updateAccount } from "./accounts.ts";
@@ -355,6 +355,8 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     //   GET  /labels/gmail                        the user's own Gmail labels
     //   GET  /labels/suggestions                  labels to suggest, worked out once
     //   POST /labels/suggestions/dismiss {name}
+    //   POST /labels/suggestions/refresh          work them out again now
+    //   POST /labels/name {description}           a short name for a new label
     if (path === "/labels/apply" && req.method === "POST") {
       const { email_id, slug, on } = await req.json();
       if (typeof email_id !== "string" || typeof slug !== "string") return json({ error: "email_id and slug are required" }, 400);
@@ -374,6 +376,18 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       const { data } = await db.from("profiles").select("label_suggestions").eq("id", userId).maybeSingle();
       const stored = data?.label_suggestions as unknown[] | null;
       return json({ suggestions: Array.isArray(stored) ? stored : await suggestLabels(userId).catch(() => []) });
+    }
+    if (path === "/labels/suggestions/refresh" && req.method === "POST") {
+      try {
+        return json({ suggestions: await suggestLabels(userId) });
+      } catch (e) {
+        return json({ error: (e as Error).message }, 500);
+      }
+    }
+    if (path === "/labels/name" && req.method === "POST") {
+      const { description } = await req.json();
+      if (typeof description !== "string" || !description.trim()) return json({ error: "description is required" }, 400);
+      return json({ name: await labelName(description.trim()) });
     }
     if (path === "/labels/suggestions/dismiss" && req.method === "POST") {
       const { name } = await req.json();
@@ -654,6 +668,34 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
       } catch (e) {
         return json({ error: (e as Error).message }, (e as { status?: number }).status ?? 500);
       }
+    }
+
+    // ── POST /calendar/from-text {text, timezone}: events read from what the user typed
+    //    POST /calendar/add-typed {events, timezone}: those events put on the calendar, nobody invited
+    if (path === "/calendar/from-text" && req.method === "POST") {
+      const { text, timezone } = await req.json();
+      if (typeof text !== "string" || !text.trim()) return json({ error: "text is required" }, 400);
+      try {
+        return json({ events: await eventsFromText(text, typeof timezone === "string" && timezone ? timezone : "UTC") });
+      } catch (e) {
+        return json({ error: (e as Error).message }, 500);
+      }
+    }
+    if (path === "/calendar/add-typed" && req.method === "POST") {
+      const { events, timezone } = (await req.json()) as { events: TypedEvent[]; timezone?: string };
+      const cal = await userCalendar(userId);
+      if (!cal) return json({ error: "No calendar is connected" }, 400);
+      if (!Array.isArray(events) || !events.length || events.length > 20) return json({ error: "events are required" }, 400);
+      const added: { title: string; link: string | null }[] = [];
+      for (const e of events) {
+        if (!/^\d{4}-\d\d-\d\d$/.test(e.date) || !/^\d\d:\d\d$/.test(e.start) || !/^\d\d:\d\d$/.test(e.end)) continue;
+        const ev = await cal.calendar
+          .create(cal.account, { title: e.title, start: `${e.date}T${e.start}:00`, end: `${e.date}T${e.end}:00`, timeZone: timezone || "UTC", ...(e.location ? { location: e.location } : {}), ...(e.days?.length ? { weekly: { days: e.days, ...(e.until ? { until: e.until } : {}) } } : {}) }, false)
+          .catch((err) => (console.error("[calendar/add-typed]", (err as Error).message), null));
+        if (ev) added.push({ title: e.title, link: ev.link });
+      }
+      if (!added.length) return json({ error: "The calendar did not take them" }, 502);
+      return json({ added });
     }
 
     // ── POST /calendar/create-event, /calendar/update-event ────────────────

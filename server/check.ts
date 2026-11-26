@@ -2158,7 +2158,7 @@ ok("quiet hours are the hours outside work, in the user's zone", () => {
 });
 ok("a Brief starts at its time, and counts from that time the day before", () => {
   const s = briefSettings({ time: "08:30", length: "endless", sections: ["handled", "nope"], tone: "rude" });
-  assert.deepEqual(s, { time: "08:30", length: "standard", sections: ["handled"], summary: false, tone: "plain", notify: true });
+  assert.deepEqual(s, { time: "08:30", length: "standard", sections: ["handled"], summary: true, tone: "plain", notify: true });
   assert.deepEqual(briefDay(s, "Asia/Dubai", new Date("2026-11-24T04:00:00Z")), { day: "2026-11-24", due: false, past: -30, since: "2026-11-23T04:30:00.000Z" });
   assert.deepEqual(briefDay(s, "Asia/Dubai", new Date("2026-11-24T18:00:00Z")), { day: "2026-11-24", due: true, past: 810, since: "2026-11-23T04:30:00.000Z" });
 });

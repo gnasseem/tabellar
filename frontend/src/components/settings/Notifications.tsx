@@ -37,7 +37,7 @@ export function Notifications({ go }: { go: (section: string) => void }) {
           text={
             <>
               Its first three lines, at its time{" "}
-              <button className="link ml-1" onClick={() => go("brief")}>
+              <button className="link ml-1" onClick={() => go("brief-itself")}>
                 Change
               </button>
             </>

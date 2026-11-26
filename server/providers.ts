@@ -161,7 +161,9 @@ export type CalEvent = {
 };
 
 // Times as ISO date-times; with timeZone, a wall-clock time in that zone.
-export type NewEvent = { title?: string; description?: string; start?: string; end?: string; timeZone?: string; location?: string; attendees?: string[] };
+// `weekly` repeats it on those days (MO, TU, ...) until that date, or for good.
+export type NewEvent = { title?: string; description?: string; start?: string; end?: string; timeZone?: string; location?: string; attendees?: string[]; weekly?: { days: string[]; until?: string } };
+export const WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
 
 export type Calendar = {
   busy(a: Box, from: Date, to: Date): Promise<{ start: string; end: string }[]>;

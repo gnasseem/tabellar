@@ -67,10 +67,11 @@ function NavItem({ id, icon, label, count, need, on: forced }: { id: string; ico
   );
 }
 
-// The level, with pause beside it. A line under it only when something is
+// The level, with pause and Settings beside it, on one line. A line under it only when something is
 // wrong: a mailbox or the model does not answer, or a sign-in is over.
 function Engine() {
-  const { user, profile, updateProfile, mail, addToast, setView, setViewCache } = useApp();
+  const { user, profile, updateProfile, mail, addToast, view, setView, setViewCache, setSidebarOpen } = useApp();
+  const onSettings = view === "settings" || view === "history" || view === "relationships";
   const supabase = createClient();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -113,7 +114,7 @@ function Engine() {
   };
 
   return (
-    <div ref={ref} className="relative grid grid-cols-[1fr_auto] items-center pl-2 pr-1">
+    <div ref={ref} className="relative grid grid-cols-[1fr_auto_auto] items-center gap-x-0.5 pl-2 pr-1">
       <button className="flex h-item items-center gap-2 justify-self-start rounded-md pr-1 font-medium" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className="grid w-4 place-items-center">
           <i className="h-[7px] w-[7px] rounded-full" style={{ background: paused && !e?.down ? "var(--warn)" : problem ? "var(--danger)" : "var(--run)" }} />
@@ -124,13 +125,25 @@ function Engine() {
       <button className="iconbtn" title={paused ? "Resume" : "Pause"} aria-label={paused ? "Resume" : "Pause"} onClick={() => save({ engine_paused: !paused })}>
         <Icon name={paused ? "play_arrow" : "pause"} size={16} />
       </button>
+      <button
+        className={`iconbtn ${onSettings ? "bg-tray-sel text-wax-ink shadow-control" : ""}`}
+        title="Settings (,)"
+        aria-label="Settings"
+        aria-current={onSettings ? "page" : undefined}
+        onClick={() => {
+          setView("settings");
+          setSidebarOpen(false);
+        }}
+      >
+        <Icon name="settings" size={16} />
+      </button>
       {problem &&
         (problem.go ? (
-          <button className="col-span-2 truncate pb-1 pl-6 text-left text-xs text-danger underline decoration-danger/40 underline-offset-2 hover:decoration-danger" title={problem.why ?? undefined} onClick={problem.go}>
+          <button className="col-span-3 truncate pb-1 pl-6 text-left text-xs text-danger underline decoration-danger/40 underline-offset-2 hover:decoration-danger" title={problem.why ?? undefined} onClick={problem.go}>
             {problem.text}
           </button>
         ) : (
-          <small className="col-span-2 truncate pb-1 pl-6 text-xs text-danger" title={problem.why ?? undefined}>
+          <small className="col-span-3 truncate pb-1 pl-6 text-xs text-danger" title={problem.why ?? undefined}>
             {problem.text}
           </small>
         ))}
@@ -273,7 +286,7 @@ export default function Sidebar() {
       >
         <div className="flex h-[68px] flex-none items-center pl-5 pr-3">
           <Logo size={25} className="flex-1" />
-          <button className="grid h-8 w-8 flex-none place-items-center rounded-full bg-tray-sel text-ink shadow-control transition-colors duration-150 hover:bg-hover" title="New message (C)" aria-label="New message" onClick={() => openCompose()}>
+          <button className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-tray-sel text-ink shadow-control transition-colors duration-150 hover:bg-hover" title="New message (C)" aria-label="New message" onClick={() => openCompose()}>
             <Icon name="compose" size={16} />
           </button>
         </div>
@@ -289,9 +302,8 @@ export default function Sidebar() {
           ))}
         </nav>
         <GoingOut />
-        <div className="mx-2.5 border-t border-line pb-3 pt-2">
+        <div className="mx-2.5 border-t border-line py-2">
           <Engine />
-          <NavItem id="settings" icon="settings" label="Settings" on={view === "settings" || view === "history" || view === "relationships"} />
         </div>
       </aside>
     </>

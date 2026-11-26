@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Logo from "@/components/Logo";
-import { Glyph, initials } from "@/components/ui";
+import { Glyph, Seg, initials } from "@/components/ui";
+import { createClient } from "@/lib/db";
 import type { Session } from "@/lib/db";
 import { here, host, vault } from "@/lib/host";
 import { appearanceOf, applyAppearance, useTheme, type ThemeChoice } from "@/lib/appearance";
@@ -516,7 +517,31 @@ function BigChoice({ on, onClick, title, tag, detail }: { on: boolean; onClick: 
   );
 }
 
+// How far back the first read sorts mail, and how many emails at most
+// (DEEP_CAPS in server/firstRead.ts).
+const READ_BACK = [
+  { id: "7", label: "A week", count: 150 },
+  { id: "30", label: "A month", count: 300 },
+  { id: "90", label: "Three months", count: 600 },
+];
+
 function ModelStep({ state, refresh, onNext }: { state: SetupState; refresh: () => Promise<void>; onNext: () => void }) {
+  const { userId } = useContext(FlowContext);
+  const [readDays, setReadDays] = useState("30");
+  useEffect(() => {
+    if (!userId) return;
+    createClient()
+      .from("profiles")
+      .select("read_days")
+      .eq("id", userId)
+      .maybeSingle()
+      .then(({ data }) => data?.read_days && setReadDays(String(data.read_days)));
+  }, [userId]);
+  const chooseReadDays = (days: string) => {
+    setReadDays(days);
+    if (userId) createClient().from("profiles").update({ read_days: Number(days) }).eq("id", userId).then(() => {});
+  };
+  const readCount = READ_BACK.find((r) => r.id === readDays)?.count ?? 300;
   const pair = useMemo(() => localPair(state), [state]);
   const current = state.model;
   const [where, setWhere] = useState<"local" | "cloud">((current ? current.format !== "ollama" : !host.mac && !state.ollama.installed) ? "cloud" : "local");
@@ -548,7 +573,7 @@ function ModelStep({ state, refresh, onNext }: { state: SetupState; refresh: () 
     <>
       {pair.fast ? `${pair.careful} writes, ${pair.fast} reads each email. ` : `${pair.careful} reads and writes. `}
       {pair.missing.length || !state.ollama.installed ? `${formatBytes(pair.download)} to download` : `Already on ${here()}`}
-      {pair.minutes ? `; the first 300 emails take about ${pair.minutes} minutes.` : "."}
+      {pair.minutes ? `; the first ${readCount} emails take about ${Math.round((pair.minutes * readCount) / 300)} minutes.` : "."}
     </>
   );
   const label = where === "cloud" ? "Continue" : localReady || running || advanced ? "Continue" : pair.missing.length || !state.ollama.installed ? "Download and continue" : "Use and continue";
@@ -645,6 +670,11 @@ function ModelStep({ state, refresh, onNext }: { state: SetupState; refresh: () 
           In use: {modelLabel(current, state.providers)}
         </p>
       )}
+      <div className="mt-7">
+        <div className="label mb-2">How far back to read</div>
+        <Seg value={readDays} onChange={chooseReadDays} options={READ_BACK.map((r) => ({ id: r.id, label: r.label }))} />
+        <p className="mt-2 text-[12.5px] text-ink3">Up to {readCount} emails, people before newsletters. Older mail stays searchable in your mailbox.</p>
+      </div>
       <div className="mt-3">
         <ErrorLine text={error} />
       </div>

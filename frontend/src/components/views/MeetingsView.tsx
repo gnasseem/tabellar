@@ -15,7 +15,9 @@ import { MeetingPrep, useUpNext } from "../Prep";
 // sentence the time came from and the free time that day; Add to calendar
 // puts it on Google Calendar. Upcoming is Google Calendar itself, the next two
 // weeks, with the email an event came from. The form for a new meeting or a
-// changed time opens only when asked for.
+// changed time opens at the top only when asked for, and the line above the
+// list takes the user's own time in words ("I have Machine Learning Mon and
+// Wed 10 to 11:30"), read by the model and shown before it is added.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Pending = {
@@ -36,6 +38,16 @@ type Source = { sender: string; subject: string };
 type Slot = { start: string; end: string };
 type Draft = { title: string; minutes: string; attendees: string; location: string; start: string };
 type Form = { mode: "new" } | { mode: "change"; pending: Pending };
+type Typed = { title: string; date: string; start: string; end: string; days: string[]; until: string | null; location: string | null };
+
+const DAY_NAMES: Record<string, string> = { MO: "Mon", TU: "Tue", WE: "Wed", TH: "Thu", FR: "Fri", SA: "Sat", SU: "Sun" };
+const at = (date: string, hhmm: string) => clock(new Date(`${date}T${hhmm}:00`).toISOString());
+function typedWhen(e: Typed): string {
+  const time = `${at(e.date, e.start)} to ${at(e.date, e.end)}`;
+  if (!e.days.length) return `${shortDay(`${e.date}T12:00`)}, ${time}`;
+  const until = e.until ? `, until ${shortDay(`${e.until}T12:00`)}` : "";
+  return `Every ${e.days.map((d) => DAY_NAMES[d]).join(" and ")}, ${time}, from ${shortDay(`${e.date}T12:00`)}${until}`;
+}
 
 const DAYS_AHEAD = 14;
 const DURATIONS = [
@@ -129,6 +141,9 @@ export default function MeetingsView() {
   const [form, setForm] = useState<Form | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [reading, setReading] = useState<string | null>(null);
+  const [said, setSaid] = useState("");
+  const [typed, setTyped] = useState<Typed[] | null>(null);
+  const [reading2, setReadingTyped] = useState(false);
   const free = useFreeSlots();
   // The meeting coming up in the next hour shows what is open on its own;
   // any other opens it on Enter or a click.
@@ -265,6 +280,35 @@ export default function MeetingsView() {
     if (ok) setForm(null);
   };
 
+  const readTyped = async () => {
+    if (!said.trim() || reading2) return;
+    setReadingTyped(true);
+    try {
+      const r = (await api("/calendar/from-text", { text: said.trim(), timezone: tz() })) as { events: Typed[] };
+      if (!r.events.length) addToast("info", "No day and time in that. Try: Gym every Tuesday 7 to 8am.");
+      else setTyped(r.events);
+    } catch {
+      addToast("error", "That needs the model, which did not answer. Check Settings, Models.");
+    }
+    setReadingTyped(false);
+  };
+
+  const addTyped = async () => {
+    if (!typed?.length) return;
+    setBusy("typed");
+    try {
+      const r = (await api("/calendar/add-typed", { events: typed, timezone: tz() })) as { added: { title: string }[] };
+      addToast("success", r.added.length === 1 ? `${r.added[0].title} is on your calendar` : `${r.added.length} events are on your calendar`);
+      setTyped(null);
+      setSaid("");
+      free.forget();
+      loadEvents();
+    } catch (e) {
+      addToast("error", (e as Error).message || "The calendar did not take them.");
+    }
+    setBusy(null);
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (reading || form || document.querySelector("[data-compose-modal]")) return;
@@ -307,7 +351,58 @@ export default function MeetingsView() {
   const loading = pending === null || events === null;
   const list = (
     <div className="min-h-0 flex-1 overflow-y-auto pb-4" role="listbox" aria-label="Meetings">
-      <div className={form ? "" : "page"}>
+      <div className="px-6 pb-2 pt-5">
+        <form
+          className="addfield"
+          onSubmit={(e) => {
+            e.preventDefault();
+            readTyped();
+          }}
+        >
+          <Icon name="add" size={16} className="text-ink3" />
+          <input value={said} maxLength={1500} placeholder="Add your own time: I have Machine Learning Mon and Wed 10 to 11:30 until 15 December" aria-label="Add your own time in words" onChange={(e) => (setSaid(e.target.value), setTyped(null))} />
+          {said.trim() && (
+            <button type="submit" className="btn-act" disabled={reading2}>
+              {reading2 ? "Reading" : "Read"}
+            </button>
+          )}
+        </form>
+        {typed && (
+          <div className="mt-2 rounded-[12px] bg-raised p-2 shadow-control">
+            {typed.map((e, i) => (
+              <div key={i} className="group flex min-h-[40px] items-center gap-3 rounded-[8px] px-2.5 hover:bg-hover">
+                <Icon name={e.days.length ? "repeat" : "event"} size={15} className="flex-none text-ink3" />
+                <b className="min-w-0 shrink-0 truncate font-medium text-ink">{e.title}</b>
+                <span className="min-w-0 flex-1 truncate text-ink2">
+                  {typedWhen(e)}
+                  {e.location && <span className="text-ink3">, {e.location}</span>}
+                </span>
+                <button className="iconbtn h-6 w-6 opacity-0 group-hover:opacity-100" aria-label={`Leave out ${e.title}`} onClick={() => setTyped(typed.length > 1 ? typed.filter((_, j) => j !== i) : null)}>
+                  <Icon name="close" size={13} />
+                </button>
+              </div>
+            ))}
+            <div className="flex items-center gap-2 px-2.5 pb-1 pt-2">
+              <span className="flex-1 text-xs text-ink3">Nobody is invited</span>
+              <button className="btn btn-plain" onClick={() => (setTyped(null), setSaid(""))}>
+                Cancel
+              </button>
+              <button className="btn btn-pri" disabled={busy === "typed"} onClick={addTyped}>
+                {typed.length === 1 ? "Add to calendar" : `Add ${typed.length} to calendar`}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      {form && (
+        <Scheduler
+          key={form.mode === "new" ? "new" : form.pending.key}
+          form={form}
+          free={free.get}
+          onSubmit={submit}
+          onCancel={() => setForm(null)}
+        />
+      )}
       {loading ? (
         <div className="pt-9">
           <SkeletonRows count={10} />
@@ -416,7 +511,6 @@ export default function MeetingsView() {
           ))}
         </>
       )}
-      </div>
     </div>
   );
 
@@ -436,24 +530,14 @@ export default function MeetingsView() {
           </>
         }
       />
-      <div className="flex min-h-0 flex-1">
-        <div className={`min-w-0 flex-1 flex-col ${form ? "hidden md:flex" : "flex"}`}>{list}</div>
-        {form && (
-          <Scheduler
-            key={form.mode === "new" ? "new" : form.pending.key}
-            form={form}
-            free={free.get}
-            onSubmit={submit}
-            onCancel={() => setForm(null)}
-          />
-        )}
-      </div>
+      <div className="flex min-h-0 flex-1 flex-col">{list}</div>
     </>
   );
 }
 
-// The form for a new meeting or a changed time, beside the list: what, how
-// long, who, where, and when, picked from the day's free time or set by hand.
+// The form for a new meeting or a changed time, at the top of the list: what,
+// how long, who and where on the left; when, from the day's free time or set
+// by hand, on the right.
 function Scheduler({ form, free, onSubmit, onCancel }: { form: Form; free: (day: string, minutes: number) => Day | "failed" | null; onSubmit: (d: Draft) => Promise<void>; onCancel: () => void }) {
   const { user } = useApp();
   const { contacts, primaryAccountId } = useContacts(user?.id ?? "");
@@ -483,8 +567,8 @@ function Scheduler({ form, free, onSubmit, onCancel }: { form: Form; free: (day:
   const label = "label mb-1.5 mt-4 block";
 
   return (
-    <div className="flex w-full flex-none flex-col border-line md:w-[400px] md:border-l">
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5 pt-5">
+    <div className="mx-6 mb-3 mt-2 rounded-[12px] bg-raised shadow-control" onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), onCancel())}>
+      <div className="px-5 pb-4 pt-4">
         <div className="flex items-center">
           <h2 className="text-[15px] font-[650] tracking-[-0.01em] text-ink">{form.mode === "new" ? "New meeting" : "Change time"}</h2>
           <span className="flex-1" />
@@ -492,6 +576,8 @@ function Scheduler({ form, free, onSubmit, onCancel }: { form: Form; free: (day:
             <Icon name="close" size={15} />
           </button>
         </div>
+        <div className="grid gap-x-8 md:grid-cols-2">
+        <div>
         <label className={label} htmlFor="meeting-title">
           Title
         </label>
@@ -506,6 +592,8 @@ function Scheduler({ form, free, onSubmit, onCancel }: { form: Form; free: (day:
           Place
         </label>
         <input id="meeting-place" className="input" value={d.location} onChange={(e) => set({ location: e.target.value })} placeholder="A link, a room or an address" />
+        </div>
+        <div>
         <div className={label}>When</div>
         <DateTimePicker value={d.start} onChange={(start) => set({ start })} placeholder="Pick a day and time" />
         <div className="mt-3 flex items-center gap-0.5">
@@ -540,8 +628,10 @@ function Scheduler({ form, free, onSubmit, onCancel }: { form: Form; free: (day:
             </div>
           )}
         </div>
+        </div>
+        </div>
       </div>
-      <div className="flex flex-none items-center gap-2 border-t border-line px-6 py-3">
+      <div className="flex flex-none items-center gap-2 border-t border-line-soft px-5 py-3">
         <button
           className="btn btn-pri"
           disabled={saving || !d.title.trim() || !d.start}

@@ -365,11 +365,21 @@ function graphEvent(e: NewEvent, invite: boolean): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (e.title !== undefined) out.subject = e.title;
   if (e.description !== undefined) out.body = { contentType: "text", content: e.description };
-  if (e.start) out.start = graphTime(e.start, e.timeZone);
-  if (e.end) out.end = graphTime(e.end, e.timeZone);
+  // A weekly event keeps its wall-clock time, so the days do not move across midnight in UTC.
+  const time = (t: string) => (e.weekly && e.timeZone && !/(z|[+-]\d\d:?\d\d)$/i.test(t) ? { dateTime: t.slice(0, 19), timeZone: e.timeZone } : graphTime(t, e.timeZone));
+  if (e.start) out.start = time(e.start);
+  if (e.end) out.end = time(e.end);
   if (e.location !== undefined) out.location = { displayName: e.location };
   // Outlook invites every attendee it is given; without invites, nobody is added.
   if (e.attendees && invite) out.attendees = e.attendees.map((address) => ({ emailAddress: { address }, type: "required" }));
+  if (e.weekly?.days.length && e.start) {
+    const names: Record<string, string> = { MO: "monday", TU: "tuesday", WE: "wednesday", TH: "thursday", FR: "friday", SA: "saturday", SU: "sunday" };
+    const startDate = e.start.slice(0, 10);
+    out.recurrence = {
+      pattern: { type: "weekly", interval: 1, daysOfWeek: e.weekly.days.map((d) => names[d]), firstDayOfWeek: "monday" },
+      range: e.weekly.until ? { type: "endDate", startDate, endDate: e.weekly.until } : { type: "noEnd", startDate },
+    };
+  }
   return out;
 }
 

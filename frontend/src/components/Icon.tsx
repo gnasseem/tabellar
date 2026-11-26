@@ -2,6 +2,7 @@
 // stroke weight. Call sites name icons by what they mean in the app; this map
 // picks the drawing.
 import {
+  Repeat,
   Activity,
   Table2,
   Presentation,
@@ -138,6 +139,7 @@ const ICONS: Record<string, LucideIcon> = {
   power_settings_new: Power,
   upload_file: FileUp,
   add: Plus,
+  repeat: Repeat,
   drag: GripVertical,
   add_alert: BellPlus,
   add_link: Link,

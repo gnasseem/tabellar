@@ -19,8 +19,8 @@ export function checkoutPage(o: { open: boolean; full: boolean; token: string; s
     "Tabellar+",
     `<h1>Tabellar+</h1><p>Tabellar is free, and all of it stays free. Tabellar+ is for what needs someone else's computer.</p>
 <div class="plans">
-<div class="plan"><h2>Plus</h2><p class="price">$6 a month</p><p>Tabellar on your own computer, with the AI included. No API key. Your mail goes from your computer to the model, at companies that keep none of it, and not through us.</p>${buy("Plus", o.plus, false)}</div>
-<div class="plan"><h2>Always on</h2><p class="price">$12 a month</p><p>A server of your own that works with your computer off, opened from any browser with a passkey, with the AI included. For Outlook, iCloud, Fastmail, Yahoo, and Gmail with an app password.</p>${buy("Always on", o.always, o.full)}</div>
+<div class="plan"><h2>Plus</h2><p>Tabellar on your own computer, with the AI included. No API key. Your mail goes from your computer to the model, at companies that keep none of it, and not through us.</p>${buy("Plus", o.plus, false)}</div>
+<div class="plan"><h2>Always on</h2><p>A server of your own that works with your computer off, opened from any browser with a passkey, with the AI included. For Outlook, iCloud, Fastmail, Yahoo, and Gmail with an app password.</p>${buy("Always on", o.always, o.full)}</div>
 </div>
 <p class="small">Always on keeps your mail on a server we look after, on an encrypted disk, backed up for 14 days. We do not read it, but nothing technical would stop whoever looks after that server. When you leave, the server stays 30 days so you can move out, then it is deleted, and its backups within 14 days.</p>
 <p class="small"><a href="https://github.com/gnasseem/tabellar">Tabellar is open source.</a></p>

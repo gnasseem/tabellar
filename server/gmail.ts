@@ -1019,6 +1019,7 @@ function gEvent(e: NewEvent): Record<string, unknown> {
   if (e.end) out.end = gTime(e.end, e.timeZone);
   if (e.location !== undefined) out.location = e.location;
   if (e.attendees) out.attendees = e.attendees.map((email) => ({ email }));
+  if (e.weekly?.days.length) out.recurrence = [`RRULE:FREQ=WEEKLY;BYDAY=${e.weekly.days.join(",")}${e.weekly.until ? `;UNTIL=${e.weekly.until.replace(/-/g, "")}T235959Z` : ""}`];
   return out;
 }
 

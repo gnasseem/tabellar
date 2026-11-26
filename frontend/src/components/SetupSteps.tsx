@@ -140,7 +140,7 @@ function Live({ o }: { o: Onboarding | null }) {
   if (r.error) items.push(<LiveItem key="read" label={`Reading stopped: ${r.error.replace(/\.+$/, "")}. It starts again on its own.`} failed />);
   else if (r.step === "headers") items.push(r.headers_total ? <LiveItem key="read" label="Reading the last 90 days" pct={(r.headers / r.headers_total) * 100} numbers={`${n(r.headers)} of ${n(r.headers_total)} emails`} /> : <LiveItem key="read" label="Connecting to your mailbox" pct={null} />);
   else if (r.step === "sent") items.push(o.model ? <LiveItem key="read" label={r.learned ? "Working out labels to suggest" : "Learning from your sent mail"} pct={null} /> : <LiveItem key="read" label={`${n(r.headers_total || r.headers)} emails listed. ${noModel(o) ? "Sorting needs a model." : "Sorting starts once the model is ready."}`} />);
-  else if (r.step === "deep") items.push(r.deep_total ? <LiveItem key="read" label="Sorting the last 30 days" pct={(r.deep / r.deep_total) * 100} numbers={`${n(r.deep)} of ${n(r.deep_total)}`} /> : <LiveItem key="read" label="Fetching the last 30 days" pct={null} />);
+  else if (r.step === "deep") items.push(r.deep_total ? <LiveItem key="read" label="Sorting your recent mail" pct={(r.deep / r.deep_total) * 100} numbers={`${n(r.deep)} of ${n(r.deep_total)}`} /> : <LiveItem key="read" label="Fetching your recent mail" pct={null} />);
   else items.push(<LiveItem key="read" label={`Your mail is read: ${n(o.sorted)} emails sorted`} done />);
   if (r.step === "headers" && o.model && !r.learned && !r.error) items.push(<LiveItem key="sent" label="Learning from your sent mail" pct={null} />);
   return <div className="relative flex min-h-[64px] flex-none flex-wrap items-center gap-x-8 gap-y-1.5 px-5 py-4 sm:px-10 lg:px-[clamp(32px,5vw,80px)]">{items}</div>;
@@ -492,16 +492,16 @@ export function ExamplesStep({ onNext }: { onNext: () => void }) {
               </div>
             </div>
             <div className="mt-10 flex flex-wrap items-center justify-center gap-2.5" role="group" aria-label={QUESTION[now.kind]}>
-              <button type="button" className="btn h-12 min-w-[112px] justify-center rounded-full px-6 text-[15px]" disabled={busy === now.key} onClick={() => answer(now, "yes")} title="Y">
+              <button type="button" className="btn h-12 min-w-[112px] justify-center rounded-lg px-6 text-[15px]" disabled={busy === now.key} onClick={() => answer(now, "yes")} title="Y">
                 <Icon name="check" size={17} />
                 Yes
               </button>
-              <button type="button" className="btn h-12 min-w-[112px] justify-center rounded-full px-6 text-[15px]" disabled={busy === now.key} onClick={() => answer(now, "no")} title="N">
+              <button type="button" className="btn h-12 min-w-[112px] justify-center rounded-lg px-6 text-[15px]" disabled={busy === now.key} onClick={() => answer(now, "no")} title="N">
                 <Icon name="close" size={17} />
                 No
               </button>
               {now.kind !== "newsletter" && (
-                <button type="button" className="h-12 max-w-[240px] truncate rounded-full px-5 text-[15px] text-white transition-colors duration-150 hover:bg-white/15 disabled:opacity-50" disabled={busy === now.key} onClick={() => answer(now, "never")} title="X">
+                <button type="button" className="h-12 max-w-[240px] truncate rounded-lg px-5 text-[15px] text-white transition-colors duration-150 hover:bg-white/15 disabled:opacity-50" disabled={busy === now.key} onClick={() => answer(now, "never")} title="X">
                   Never for {firstName(now.who)}
                 </button>
               )}

@@ -343,7 +343,7 @@ export default function AskView() {
                 <Empty icon="chat_bubble" title="Ask about your mail">
                   <span className="mt-4 flex flex-wrap justify-center gap-2">
                     {STARTERS.map((q) => (
-                      <button key={q} className="btn rounded-full px-4" onClick={() => send(q)}>
+                      <button key={q} className="btn px-4" onClick={() => send(q)}>
                         {q}
                       </button>
                     ))}

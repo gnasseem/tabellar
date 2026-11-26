@@ -7,18 +7,18 @@ import { isTypingTarget } from "@/lib/shortcuts";
 import { useApp } from "../AppShell";
 import { Empty, SkeletonRows, ViewBar } from "../ui";
 
-// Labels: the user's own, in the order they want them. Each has a name, a
-// colour, a line that tells the model which mail belongs, examples (senders,
-// with the subject of an email put in the label by hand), and the Gmail label
-// it maps to. The order is the Inbox's Priority grouping. Suggestions from
-// the first read sit under the list until added or put away.
+// Labels: the user's own, in the order they want them. A label is made from
+// one sentence that says which mail belongs; its name is worked out from it
+// and its mailbox label is Tabellar/<name>. The order is the Inbox's Priority
+// grouping. Suggestions from the user's mail sit under the list until added
+// or put away, and can be worked out again at any time.
 
 type Example = { sender: string; subject?: string };
 type Label = { id: string; slug: string; display_name: string; color: string; description: string; examples: Example[]; position: number; gmail_label: string | null };
 type Suggestion = { name: string; description: string; senders: string[]; count: number };
-type Draft = { name: string; color: string; description: string; examples: Example[]; gmail: string };
+type Draft = { name: string; color: string; description: string };
 
-const COLUMNS = "!grid grid-cols-[26px_minmax(0,180px)_minmax(0,1fr)_64px] md:grid-cols-[26px_minmax(0,200px)_minmax(0,1fr)_minmax(0,180px)_64px]";
+const COLUMNS = "!grid grid-cols-[26px_minmax(0,1fr)_auto] md:grid-cols-[26px_minmax(0,240px)_minmax(0,1fr)_auto]";
 
 function Dot({ color }: { color: string }) {
   return <span aria-hidden className="block h-2 w-2 flex-none rounded-full" style={{ background: labelColor(color) }} />;
@@ -32,8 +32,11 @@ export default function LabelsView() {
   const [labels, setLabels] = useState<Label[] | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [gmailLabels, setGmailLabels] = useState<string[]>([]);
-  // The label being edited: its id, or "new".
+  const [suggesting, setSuggesting] = useState(false);
+  const [describe, setDescribe] = useState("");
+  const [adding, setAdding] = useState(false);
+  const addRef = useRef<HTMLInputElement>(null);
+  // The label open for changes, under its row.
   const [editing, setEditing] = useState<string | null>(null);
   const [cursorId, setCursorId] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
@@ -58,17 +61,14 @@ export default function LabelsView() {
     api("/labels/suggestions")
       .then((r: { suggestions: Suggestion[] }) => setSuggestions(r.suggestions || []))
       .catch(() => {});
-    api("/labels/gmail")
-      .then((r: { labels: string[] }) => setGmailLabels(r.labels || []))
-      .catch(() => {});
   }, []);
 
   const q = search.trim().toLowerCase();
   const shown = useMemo(() => (labels || []).filter((l) => !q || `${l.display_name} ${l.description}`.toLowerCase().includes(q)), [labels, q]);
   const taken = useMemo(() => new Set((labels || []).map((l) => l.display_name.toLowerCase())), [labels]);
   const offered = suggestions.filter((s) => !taken.has(s.name.toLowerCase()) && (!q || `${s.name} ${s.description}`.toLowerCase().includes(q)));
-  const current = editing && editing !== "new" ? (labels || []).find((l) => l.id === editing) ?? null : null;
   const cursor = shown.find((l) => l.id === cursorId) || null;
+  const nextColor = (n: number) => LABEL_COLORS[n % LABEL_COLORS.length].hex;
 
   // The new order, written as 0, 1, 2... on every label.
   const reorder = async (ids: string[]) => {
@@ -104,19 +104,46 @@ export default function LabelsView() {
     if (ids.join() !== (labels || []).map((x) => x.id).join()) reorder(ids);
   };
 
-  const save = async (d: Draft): Promise<boolean> => {
+  // A name no other label has: "Receipts", then "Receipts 2".
+  const freeName = (name: string) => {
+    let out = name;
+    for (let i = 2; taken.has(out.toLowerCase()); i++) out = `${name} ${i}`;
+    return out;
+  };
+
+  const insert = async (name: string, description: string, examples: Example[], n: number) => {
+    const { data, error } = await supabase
+      .from("categories")
+      .insert({ user_id: user.id, slug: slugOf(name), display_name: name, description, color: nextColor(n), examples, position: n })
+      .select("id")
+      .single();
+    if (error || !data) {
+      addToast("error", `The label was not added: ${error?.message || "the database did not answer"}`);
+      return null;
+    }
+    return (data as { id: string }).id;
+  };
+
+  const addFromSentence = async () => {
+    const description = describe.trim();
+    if (!description || adding) return;
+    setAdding(true);
+    const named = await api("/labels/name", { description }).catch(() => null);
+    const name = freeName(String(named?.name || description.split(/\s+/).slice(0, 3).join(" ")).slice(0, 40));
+    const id = await insert(name, description, [], (labels || []).length);
+    setAdding(false);
+    if (!id) return;
+    setDescribe("");
+    setCursorId(id);
+    addToast("success", `Added ${name}. New mail that fits goes in it.`);
+    load();
+  };
+
+  const save = async (l: Label, d: Draft): Promise<boolean> => {
     const name = d.name.trim();
     if (!name) return false;
-    const fields = { display_name: name, color: d.color, description: d.description.trim(), examples: d.examples, gmail_label: d.gmail.trim() && d.gmail.trim() !== `Tabellar/${name}` ? d.gmail.trim() : null };
-    if (current) {
-      const { error } = await supabase.from("categories").update(fields).eq("id", current.id);
-      if (error) return addToast("error", `That was not saved: ${error.message}`), false;
-    } else {
-      const slug = slugOf(name);
-      const { data, error } = await supabase.from("categories").insert({ user_id: user.id, slug, position: (labels || []).length, ...fields }).select("id").single();
-      if (error || !data) return addToast("error", `The label was not added: ${error?.message || "the database did not answer"}`), false;
-      setCursorId((data as { id: string }).id);
-    }
+    const { error } = await supabase.from("categories").update({ display_name: name, color: d.color, description: d.description.trim() }).eq("id", l.id);
+    if (error) return addToast("error", `That was not saved: ${error.message}`), false;
     setEditing(null);
     load();
     return true;
@@ -130,19 +157,27 @@ export default function LabelsView() {
     load();
   };
 
-  const addSuggestion = async (s: Suggestion) => {
-    const slug = slugOf(s.name);
-    const color = LABEL_COLORS[(labels || []).length % LABEL_COLORS.length].hex;
-    const { error } = await supabase
-      .from("categories")
-      .insert({ user_id: user.id, slug, display_name: s.name, description: s.description, color, examples: s.senders.map((sender) => ({ sender })), position: (labels || []).length });
-    if (error) return addToast("error", `The label was not added: ${error.message}`);
+  const addSuggestions = async (list: Suggestion[]) => {
+    let n = (labels || []).length;
+    for (const s of list) if (await insert(s.name, s.description, s.senders.map((sender) => ({ sender })), n)) n++;
     load();
   };
 
   const dismiss = (s: Suggestion) => {
     setSuggestions((list) => list.filter((x) => x.name !== s.name));
     api("/labels/suggestions/dismiss", { name: s.name }).catch(() => {});
+  };
+
+  const suggestNow = async () => {
+    setSuggesting(true);
+    try {
+      const r = await api("/labels/suggestions/refresh", {});
+      setSuggestions(r.suggestions || []);
+      if (!(r.suggestions || []).length) addToast("info", "Nothing new to suggest from your mail yet.");
+    } catch {
+      addToast("error", "Suggestions need the model. Check Settings, Models.");
+    }
+    setSuggesting(false);
   };
 
   useEffect(() => {
@@ -154,8 +189,9 @@ export default function LabelsView() {
       else if (e.altKey) return;
       else if ((e.key === "j" || e.key === "ArrowDown") && shown.length) setCursorId(shown[Math.min(shown.length - 1, at + 1)].id);
       else if ((e.key === "k" || e.key === "ArrowUp") && shown.length) setCursorId(shown[Math.max(0, at - 1)].id);
-      else if (e.key === "Enter" && cursor) setEditing(cursor.id);
+      else if (e.key === "Enter" && cursor) setEditing(editing === cursor.id ? null : cursor.id);
       else if (e.key === "Escape" && editing) setEditing(null);
+      else if (e.key === "n") addRef.current?.focus();
       else return;
       e.preventDefault();
     };
@@ -163,83 +199,104 @@ export default function LabelsView() {
     return () => document.removeEventListener("keydown", onKey);
   });
 
-  const list = (
-    <div className="min-h-0 flex-1 overflow-y-auto pb-6" role="listbox" aria-label="Labels">
-      {labels === null ? (
-        <div className="pt-9">
-          <SkeletonRows count={8} />
+  return (
+    <>
+      <ViewBar title="Labels" search="Search labels" />
+      <div className="min-h-0 flex-1 overflow-y-auto pb-10">
+        <div className="px-6 pt-5">
+          <form
+            className="addfield"
+            onSubmit={(e) => {
+              e.preventDefault();
+              addFromSentence();
+            }}
+          >
+            <Icon name="add" size={16} className="text-ink3" />
+            <input ref={addRef} value={describe} maxLength={200} placeholder="New label: describe its mail, like replies from companies I applied to" aria-label="Describe a new label" onChange={(e) => setDescribe(e.target.value)} />
+            {describe.trim() && (
+              <button type="submit" className="btn-act" disabled={adding}>
+                {adding ? "Naming it" : "Add"}
+              </button>
+            )}
+          </form>
         </div>
-      ) : !shown.length && !offered.length ? (
-        q ? (
-          <Empty icon="search" title="Nothing matches that search" />
-        ) : (
-          <Empty icon="label" title="No labels yet">
-            <button className="link" onClick={() => setEditing("new")}>
-              New label
-            </button>
-          </Empty>
-        )
-      ) : (
-        <>
-          {shown.length > 0 && (
-            <div className="day !static">
-              <b>Your labels</b>
-            </div>
-          )}
-          {shown.map((l, i) => (
-            <div
-              key={l.id}
-              role="option"
-              aria-selected={cursor?.id === l.id || editing === l.id}
-              draggable={!q}
-              onDragStart={(e) => {
-                e.dataTransfer.effectAllowed = "move";
-                setDragId(l.id);
-              }}
-              onDragEnd={() => (setDragId(null), setDropAt(null))}
-              onDragOver={(e) => {
-                if (!dragId) return;
-                e.preventDefault();
-                const box = e.currentTarget.getBoundingClientRect();
-                setDropAt(e.clientY < box.top + box.height / 2 ? i : i + 1);
-              }}
-              onDrop={(e) => (e.preventDefault(), drop(dropAt ?? i))}
-              className={`row group relative ${COLUMNS} ${dragId === l.id ? "opacity-45" : ""}`}
-              onClick={() => (setCursorId(l.id), setEditing(l.id))}
-              title={q ? undefined : "Drag to reorder"}
-            >
-              {dropAt === i && dragId && <i aria-hidden className="absolute inset-x-1 -top-px h-0.5 rounded-full bg-ink" />}
-              {dropAt === i + 1 && i === shown.length - 1 && dragId && <i aria-hidden className="absolute inset-x-1 -bottom-px h-0.5 rounded-full bg-ink" />}
-              <span className="grid place-items-center">
-                <span className="group-hover:hidden">
-                  <Dot color={l.color} />
-                </span>
-                <Icon name="drag" size={14} className="hidden cursor-grab text-ink3 group-hover:block" />
-              </span>
-              <span className="truncate pr-3 text-ink">{l.display_name}</span>
-              <span className="truncate pr-3 text-ink3">{l.description}</span>
-              <span className="hidden truncate pr-3 text-[12.5px] text-ink3 md:block" title="Mailbox label">
-                {mappedTo(l)}
-              </span>
-              <span className="text-right text-xs text-ink3">{(counts[l.slug] || 0).toLocaleString()}</span>
-            </div>
-          ))}
-          {offered.length > 0 && (
+
+        <div className="pt-3" role="listbox" aria-label="Labels">
+          {labels === null ? (
+            <SkeletonRows count={6} />
+          ) : !shown.length && q ? (
+            <Empty icon="search" title="Nothing matches that search" />
+          ) : (
             <>
-              <div className="day !static">
-                <b>Suggested</b>
+              {shown.length > 0 && (
+                <div className="day !static">
+                  <b>Your labels</b>
+                  <span className="text-ink3">Drag to reorder</span>
+                </div>
+              )}
+              {shown.map((l, i) => (
+                <div key={l.id}>
+                  <div
+                    role="option"
+                    aria-selected={cursor?.id === l.id || editing === l.id}
+                    draggable={!q && editing !== l.id}
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = "move";
+                      setDragId(l.id);
+                    }}
+                    onDragEnd={() => (setDragId(null), setDropAt(null))}
+                    onDragOver={(e) => {
+                      if (!dragId) return;
+                      e.preventDefault();
+                      const box = e.currentTarget.getBoundingClientRect();
+                      setDropAt(e.clientY < box.top + box.height / 2 ? i : i + 1);
+                    }}
+                    onDrop={(e) => (e.preventDefault(), drop(dropAt ?? i))}
+                    className={`row group relative cursor-default ${COLUMNS} ${dragId === l.id ? "opacity-45" : ""}`}
+                    onClick={() => (setCursorId(l.id), setEditing(editing === l.id ? null : l.id))}
+                  >
+                    {dropAt === i && dragId && <i aria-hidden className="absolute inset-x-1 -top-px h-0.5 rounded-full bg-ink" />}
+                    {dropAt === i + 1 && i === shown.length - 1 && dragId && <i aria-hidden className="absolute inset-x-1 -bottom-px h-0.5 rounded-full bg-ink" />}
+                    <span className="grid place-items-center">
+                      <span className="group-hover:hidden">
+                        <Dot color={l.color} />
+                      </span>
+                      <Icon name="drag" size={14} className="hidden cursor-grab text-ink3 group-hover:block" />
+                    </span>
+                    <span className="truncate pr-3 font-medium text-ink">{l.display_name}</span>
+                    <span className="hidden truncate pr-3 text-ink3 md:block">{l.description}</span>
+                    <span className="min-w-[40px] text-right text-xs text-ink3">{(counts[l.slug] || 0).toLocaleString()}</span>
+                  </div>
+                  {editing === l.id && <Editor key={l.id} label={l} onSave={(d) => save(l, d)} onCancel={() => setEditing(null)} onDelete={() => remove(l)} />}
+                </div>
+              ))}
+
+              <div className="day !static mt-4">
+                <b>Suggested from your mail</b>
+                <span className="flex-1" />
+                {offered.length > 1 && (
+                  <button className="link" onClick={() => addSuggestions(offered)}>
+                    Add all
+                  </button>
+                )}
+                <button className="link" disabled={suggesting} onClick={suggestNow}>
+                  {suggesting ? "Reading your mail" : offered.length ? "Suggest others" : "Suggest labels"}
+                </button>
               </div>
+              {!offered.length && !suggesting && <p className="px-6 py-2 text-ink3">Tabellar can look at who writes to you and suggest labels to sort it into.</p>}
+              {suggesting && !offered.length && <SkeletonRows count={3} />}
               {offered.map((s) => (
                 <div key={s.name} className={`row group ${COLUMNS}`} title={s.senders.join(", ")}>
-                  <span />
+                  <span className="grid place-items-center">
+                    <Icon name="add" size={13} className="text-ink4" />
+                  </span>
                   <span className="truncate pr-3 text-ink2">{s.name}</span>
-                  <span className="truncate pr-3 text-ink3">{s.description}</span>
-                  <span className="hidden truncate pr-3 text-[12.5px] text-ink3 md:block">{s.senders.length === 1 ? s.senders[0] : `${s.senders[0]} and ${s.senders.length - 1} more`}</span>
-                  <span className="flex items-center justify-end gap-3">
-                    <button className="link hidden group-hover:inline group-focus-within:inline" onClick={() => dismiss(s)}>
+                  <span className="hidden truncate pr-3 text-ink3 md:block">{s.description}</span>
+                  <span className="flex items-center justify-end gap-1">
+                    <button className="btn-act !font-normal !text-ink3 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100" onClick={() => dismiss(s)}>
                       Not now
                     </button>
-                    <button className="link" onClick={() => addSuggestion(s)}>
+                    <button className="btn-act" onClick={() => addSuggestions([s])}>
                       Add
                     </button>
                   </span>
@@ -247,174 +304,54 @@ export default function LabelsView() {
               ))}
             </>
           )}
-        </>
-      )}
-    </div>
-  );
-
-  return (
-    <>
-      <ViewBar
-        title="Labels"
-        search="Search labels"
-        right={
-          <button className="btn" onClick={() => setEditing("new")}>
-            New label
-          </button>
-        }
-      />
-      <div className="flex min-h-0 flex-1">
-        <div className={`min-h-0 min-w-0 flex-1 flex-col md:flex ${editing ? "hidden" : "flex"}`}>{list}</div>
-        {editing && (
-          <Editor
-            key={editing}
-            label={current}
-            next={(labels || []).length}
-            gmailLabels={gmailLabels}
-            onSave={save}
-            onCancel={() => setEditing(null)}
-            onDelete={current ? () => remove(current) : undefined}
-            onMove={current ? (d) => move(current, d) : undefined}
-          />
-        )}
+        </div>
       </div>
     </>
   );
 }
 
-// The column beside the list where a label is made or changed.
-function Editor({ label, next, gmailLabels, onSave, onCancel, onDelete, onMove }: { label: Label | null; next: number; gmailLabels: string[]; onSave: (d: Draft) => Promise<boolean>; onCancel: () => void; onDelete?: () => void; onMove?: (delta: number) => void }) {
-  const [d, setD] = useState<Draft>(() => ({
-    name: label?.display_name ?? "",
-    color: label ? labelColor(label.color) : LABEL_COLORS[next % LABEL_COLORS.length].hex,
-    description: label?.description ?? "",
-    examples: label?.examples ?? [],
-    gmail: label ? mappedTo(label) : "",
-  }));
-  const [sender, setSender] = useState("");
+// A label opened under its row: its name, the sentence and the colour.
+function Editor({ label, onSave, onCancel, onDelete }: { label: Label; onSave: (d: Draft) => Promise<boolean>; onCancel: () => void; onDelete: () => void }) {
+  const [d, setD] = useState<Draft>(() => ({ name: label.display_name, color: labelColor(label.color), description: label.description }));
   const [saving, setSaving] = useState(false);
-  const nameRef = useRef<HTMLInputElement>(null);
   const set = (patch: Partial<Draft>) => setD((prev) => ({ ...prev, ...patch }));
-  const field = "label mb-1.5 mt-4 block";
-  const validSender = /^(@[^\s@]+\.[^\s@]+|[^\s@]+@[^\s@]+\.[^\s@]+)$/.test(sender.trim());
-
-  useEffect(() => {
-    if (!label) nameRef.current?.focus();
-  }, [label]);
-
-  const addSender = () => {
-    const s = sender.trim().toLowerCase();
-    if (!validSender || d.examples.some((x) => x.sender === s && !x.subject)) return;
-    set({ examples: [{ sender: s }, ...d.examples] });
-    setSender("");
-  };
 
   return (
     <form
-      className="flex w-full flex-none flex-col border-line md:w-[400px] md:border-l"
+      className="mx-3 mb-2 mt-1 grid gap-3 rounded-[10px] bg-raised p-4 shadow-control"
       onSubmit={async (e) => {
         e.preventDefault();
         setSaving(true);
         await onSave(d);
         setSaving(false);
       }}
+      onKeyDown={(e) => e.key === "Escape" && (e.stopPropagation(), onCancel())}
     >
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-5 pt-4">
-        <div className="flex items-center">
-          <h2 className="text-[15px] font-[650] tracking-[-0.01em] text-ink">{label ? label.display_name : "New label"}</h2>
-          <span className="flex-1" />
-          {onMove && (
-            <>
-              <button type="button" className="iconbtn" aria-label="Move up" title="Move up (Alt Up)" onClick={() => onMove(-1)}>
-                <Icon name="expand_less" size={15} />
-              </button>
-              <button type="button" className="iconbtn" aria-label="Move down" title="Move down (Alt Down)" onClick={() => onMove(1)}>
-                <Icon name="expand_more" size={15} />
-              </button>
-            </>
-          )}
-          <button type="button" className="iconbtn" aria-label="Close" onClick={onCancel}>
-            <Icon name="close" size={15} />
-          </button>
-        </div>
-
-        <label className={field} htmlFor="label-name">
-          Name
-        </label>
-        <input id="label-name" ref={nameRef} className="input w-full" value={d.name} maxLength={40} onChange={(e) => set({ name: e.target.value, gmail: !label && (!d.gmail || d.gmail === `Tabellar/${d.name}`) ? `Tabellar/${e.target.value}` : d.gmail })} />
-
-        <div className={field}>Colour</div>
-        <div className="flex gap-1" role="radiogroup" aria-label="Colour">
+      <div className="grid gap-3 md:grid-cols-[200px_minmax(0,1fr)]">
+        <input className="input" aria-label="Name" value={d.name} maxLength={40} onChange={(e) => set({ name: e.target.value })} />
+        <input className="input" aria-label="Which mail belongs" value={d.description} maxLength={200} placeholder="Which mail belongs" onChange={(e) => set({ description: e.target.value })} />
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex gap-0.5" role="radiogroup" aria-label="Colour">
           {LABEL_COLORS.map((c) => (
             <button key={c.hex} type="button" role="radio" aria-checked={d.color === c.hex} aria-label={c.name} title={c.name} className={`grid h-7 w-7 place-items-center rounded-md ${d.color === c.hex ? "bg-sel" : "hover:bg-hover"}`} onClick={() => set({ color: c.hex })}>
               <span className="h-3 w-3 rounded-full" style={{ background: c.hex }} />
             </button>
           ))}
         </div>
-
-        <label className={field} htmlFor="label-description">
-          Which mail belongs
-        </label>
-        <input id="label-description" className="input w-full" value={d.description} maxLength={200} placeholder="Replies from companies I applied to" onChange={(e) => set({ description: e.target.value })} />
-
-        <label className={field} htmlFor="label-gmail">
-          Mailbox label
-        </label>
-        <input id="label-gmail" className="input w-full" list="gmail-labels" value={d.gmail} placeholder={d.name ? `Tabellar/${d.name}` : "Tabellar/Name"} onChange={(e) => set({ gmail: e.target.value })} />
-        <datalist id="gmail-labels">
-          {gmailLabels.map((n) => (
-            <option key={n} value={n} />
-          ))}
-        </datalist>
-
-        <div className={field}>Examples</div>
-        <div className="flex gap-1.5">
-          <input
-            className="input min-w-0 flex-1"
-            value={sender}
-            placeholder="name@company.com or @company.com"
-            aria-label="Add a sender"
-            onChange={(e) => setSender(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                addSender();
-              }
-            }}
-          />
-          <button type="button" className="btn" disabled={!validSender} onClick={addSender}>
-            Add
-          </button>
-        </div>
-        {d.examples.length > 0 && (
-          <ul className="pt-1.5">
-            {d.examples.map((x, i) => (
-              <li key={`${x.sender}:${x.subject ?? ""}`} className="group flex min-h-7 items-center gap-2">
-                <span className="min-w-0 flex-1 truncate">
-                  <span className="text-ink">{x.sender}</span>
-                  {x.subject && <span className="text-ink3">, {x.subject}</span>}
-                </span>
-                <button type="button" className="iconbtn h-6 w-6 flex-none opacity-0 focus-visible:opacity-100 group-hover:opacity-100" aria-label={`Remove ${x.sender}`} onClick={() => set({ examples: d.examples.filter((_, j) => j !== i) })}>
-                  <Icon name="close" size={13} />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-      <div className="flex flex-none items-center gap-2 border-t border-line px-6 py-[11px]">
-        <button type="submit" className="btn btn-pri" disabled={saving || !d.name.trim()}>
-          {label ? "Save" : "Add label"}
+        <span className="flex-1" />
+        <span className="hidden text-xs text-ink3 md:inline" title="The label it has in your mailbox">
+          {mappedTo(label)}
+        </span>
+        <button type="button" className="btn btn-plain !text-danger" onClick={onDelete}>
+          Delete
         </button>
         <button type="button" className="btn btn-plain" onClick={onCancel}>
           Cancel
         </button>
-        <span className="flex-1" />
-        {onDelete && (
-          <button type="button" className="btn btn-plain !text-danger" onClick={onDelete}>
-            Delete
-          </button>
-        )}
+        <button type="submit" className="btn btn-pri" disabled={saving || !d.name.trim()}>
+          Save
+        </button>
       </div>
     </form>
   );

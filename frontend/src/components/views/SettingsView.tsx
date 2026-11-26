@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useApp } from "../AppShell";
 import { ModelSettings } from "../ModelSetup";
 import { ViewBar } from "../ui";
@@ -19,20 +19,20 @@ import Writing from "../settings/Writing";
 const SECTIONS = [
   { id: "general", label: "General" },
   { id: "accounts", label: "Accounts" },
-  { id: "about", label: "About you" },
-  { id: "writing", label: "Writing" },
-  { id: "signatures", label: "Signatures and templates" },
+  { id: "you", label: "You and your writing" },
+  { id: "brief", label: "Brief and notifications" },
   { id: "appearance", label: "Appearance" },
-  { id: "brief", label: "Brief" },
-  { id: "notifications", label: "Notifications" },
-  { id: "hours", label: "Hours and calendar" },
   { id: "models", label: "Models" },
 ] as const;
 type Section = (typeof SECTIONS)[number]["id"];
 
+// The parts a section is made of, by the names links elsewhere use.
+const PART_OF: Record<string, Section> = { "brief-itself": "brief", about: "you", writing: "you", signatures: "you", notifications: "brief", hours: "brief" };
+const sectionOf = (id: string | null): Section | null => (id && (PART_OF[id] ?? (SECTIONS.some((s) => s.id === id) ? (id as Section) : null))) || null;
+
 // Back from adding an account the window opens on Accounts; a link elsewhere
-// can name the section, and leaving for History or Knowledge keeps it.
-function firstSection(asked: string | null): Section {
+// can name the section or a part of one, and leaving for History keeps it.
+function firstSection(asked: string | null): { section: Section; part: string | null } {
   let id = asked;
   try {
     id = sessionStorage.getItem(RETURN_TAB) ?? asked;
@@ -40,12 +40,27 @@ function firstSection(asked: string | null): Section {
   } catch {
     // the window then opens on General
   }
-  return SECTIONS.some((s) => s.id === id) ? (id as Section) : "general";
+  return { section: sectionOf(id) ?? "general", part: id && PART_OF[id] ? id : null };
+}
+
+// One part of a section that holds several, under its own heading.
+function Part({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <section id={`settings-${id}`} className="scroll-mt-6 pt-10 first:pt-0">
+      <h3 className="mb-4 font-brand text-[20px] font-[620] leading-none text-ink">{title}</h3>
+      {children}
+    </section>
+  );
 }
 
 export default function SettingsView() {
   const { setView, getViewCache, setViewCache } = useApp();
-  const [section, setSection] = useState<Section>(() => firstSection(getViewCache("settings:tab")));
+  const [first] = useState(() => firstSection(getViewCache("settings:tab")));
+  const [section, setSection] = useState<Section>(first.section);
+  const [part, setPart] = useState<string | null>(first.part);
+  useEffect(() => {
+    if (part) document.getElementById(`settings-${part}`)?.scrollIntoView({ block: "start" });
+  }, [part, section]);
   // Below md the section list and the chosen section show one at a time.
   const [listOpen, setListOpen] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -57,7 +72,8 @@ export default function SettingsView() {
   }, []);
 
   const go = (id: string) => {
-    setSection(id as Section);
+    setSection(sectionOf(id) ?? "general");
+    setPart(PART_OF[id] ? id : null);
     setViewCache("settings:tab", id);
     setListOpen(false);
   };
@@ -86,13 +102,33 @@ export default function SettingsView() {
             <h2 className="mb-6 font-brand text-[28px] font-[620] leading-none text-ink">{SECTIONS.find((s) => s.id === section)!.label}</h2>
             {section === "general" && <General />}
             {section === "accounts" && <Accounts />}
-            {section === "about" && <AboutYou />}
-            {section === "writing" && <Writing />}
-            {section === "signatures" && <SignaturesAndTemplates />}
+            {section === "you" && (
+              <>
+                <Part id="about" title="About you">
+                  <AboutYou />
+                </Part>
+                <Part id="writing" title="Writing">
+                  <Writing />
+                </Part>
+                <Part id="signatures" title="Signatures and templates">
+                  <SignaturesAndTemplates />
+                </Part>
+              </>
+            )}
             {section === "appearance" && <Appearance />}
-            {section === "brief" && <Brief />}
-            {section === "notifications" && <Notifications go={go} />}
-            {section === "hours" && <HoursAndCalendar />}
+            {section === "brief" && (
+              <>
+                <Part id="brief-itself" title="Brief">
+                  <Brief />
+                </Part>
+                <Part id="notifications" title="Notifications">
+                  <Notifications go={go} />
+                </Part>
+                <Part id="hours" title="Hours and calendar">
+                  <HoursAndCalendar />
+                </Part>
+              </>
+            )}
             {section === "models" && <ModelSettings />}
           </div>
         </div>
