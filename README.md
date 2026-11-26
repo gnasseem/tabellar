@@ -35,7 +35,7 @@ There is no hosted service and no sign-up. Your mail is stored in one SQLite fil
 
 - macOS, or Linux for [a server of your own](#on-a-server)
 - Node.js 24 or newer
-- A mailbox: Google (Gmail), Outlook or Microsoft 365 (after registering a free app, below), or iCloud, Fastmail, Yahoo, AOL, Zoho, GMX, Gmail or any IMAP and SMTP server with an app password
+- A mailbox: Google (Gmail), Outlook or Microsoft 365, or iCloud, Fastmail, Yahoo, AOL, Zoho, GMX, Gmail or any IMAP and SMTP server with an app password
 - For cloud AI, an API key from OpenRouter, Anthropic, OpenAI, Google Gemini, Groq, Mistral, DeepSeek, xAI, Together, Cerebras, or any OpenAI-compatible endpoint. Local AI needs nothing extra: Tabellar installs [Ollama](https://ollama.com) for you.
 
 ## Install
@@ -159,14 +159,9 @@ Tabellar signs in to both servers to check the password before it keeps the acco
 
 ### Outlook and Microsoft 365
 
-Microsoft only lets an app sign in once it is registered, which is free and takes about ten minutes, once:
+Choose Outlook when adding a mailbox and **Sign in with Microsoft**: Tabellar signs in through an app it has registered with Microsoft. Many organisations let only their administrator approve an app that reads mail; personal Outlook accounts do not need that.
 
-1. Microsoft keeps app registrations in a directory. A work account has one, and needs permission to register apps in it. A personal Microsoft account gets one with a [free Azure account](https://azure.microsoft.com/free) (a phone and a card to prove it is you; nothing is charged). Then sign in to [entra.microsoft.com](https://entra.microsoft.com), open **App registrations** and choose **New registration**.
-2. Name it Tabellar. Under **Supported account types**, choose **Any Entra ID Tenant + Personal Microsoft accounts**.
-3. Under **Redirect URI**, choose the platform **Public client/native (mobile & desktop)** and enter `http://localhost:4848/oauth/callback` (with your own port if you changed it). Register.
-4. On the app's **Overview** page, copy the **Application (client) ID**. There is no secret to make.
-5. Under **API permissions**, **Add a permission**, **Microsoft Graph**, **Delegated permissions**, add `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `MailboxSettings.Read`, `User.Read` and `offline_access`.
-6. In Tabellar, choose Outlook when adding a mailbox, paste the ID and save (or run `tabellar setup microsoft`), then **Sign in with Microsoft**. Many organisations let only their administrator approve an app that reads mail; personal Outlook accounts do not need that.
+To sign in through an app of your own instead, register one at [entra.microsoft.com](https://entra.microsoft.com) (App registrations, New registration): any name, **Any Entra ID Tenant + Personal Microsoft accounts**, and the platform **Public client/native (mobile & desktop)** with `http://localhost/oauth/callback`. Then run `tabellar setup microsoft` and paste its Application (client) ID. A personal Microsoft account needs a directory of its own for this, which a free Azure account gives it.
 
 Tabellar then reads Outlook mail and the Outlook calendar through Microsoft Graph, with delta queries for what changed; labels are Outlook categories.
 

@@ -5,7 +5,7 @@ import { api } from "@/lib/outcomes";
 import { ErrorLine } from "../ModelSetup";
 import { Group, loadingLines, Row } from "./parts";
 
-type State = { bot: string | null; oneTap?: boolean; making?: boolean; who?: string | null; paired?: boolean; code?: string | null; link?: string; error?: string | null };
+type State = { bot: string | null; oneTap?: boolean; making?: boolean; reaching?: boolean; who?: string | null; paired?: boolean; code?: string | null; link?: string; error?: string | null };
 
 const POLL_MS = 2000;
 
@@ -27,7 +27,7 @@ export function Telegram() {
   useEffect(load, [load]);
 
   // Until the bot is made, and until the code is sent from the phone or has run out.
-  const waiting = !!state?.code || !!state?.making;
+  const waiting = !!state?.code || !!state?.making || !!state?.reaching;
   useEffect(() => {
     if (!waiting) return;
     const timer = setInterval(load, POLL_MS);
@@ -69,6 +69,12 @@ export function Telegram() {
     <Group title="Telegram" note="Telegram can read what a bot sends you: who wrote, the summary, short answers, and a longer draft when you press Read. Attachments are never sent.">
       {!state ? (
         error ? <ErrorLine text={error} /> : loadingLines
+      ) : state.reaching ? (
+        <Row name="Your bot is saved" text={state.error ? <span className="text-danger">{state.error}</span> : "Reaching Telegram"}>
+          <button className="btn btn-plain btn-sm" disabled={busy} onClick={() => run("disconnect")}>
+            Cancel
+          </button>
+        </Row>
       ) : !state.bot && state.making ? (
         <Row name="Waiting for Telegram" text="Press Create there. This goes on by itself.">
           <button className="btn btn-plain btn-sm" onClick={make}>

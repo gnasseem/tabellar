@@ -101,7 +101,7 @@ function inWords(e: unknown): string {
   if (code === 401 || code === 404) return "Telegram does not accept the bot's token any more. Connect it again.";
   if (code === 409) return "Another program is using this bot. Stop it, or make a new bot.";
   if (code === 403) return "The bot was blocked in Telegram. Unblock it there.";
-  return typeof code === "number" ? (e as Error).message : "Telegram could not be reached.";
+  return typeof code === "number" ? (e as Error).message : "Telegram's bot service cannot be reached from this network. Tabellar keeps trying; it works on another network or through a VPN.";
 }
 
 // ── Connecting ──────────────────────────────────────────────────────────────
@@ -147,6 +147,7 @@ export async function telegramState(userId: string) {
   const s = await state();
   if (!s || s.user_id !== userId) return { bot: null, oneTap: !!wire.plus, making: making?.userId === userId };
   const code = !s.chat && pairing(s) ? s.code : null;
+  if (!s.bot) return { bot: null, reaching: true, error: problem };
   return { bot: s.bot, who: s.chat ? s.who : null, paired: !!s.chat, code, link: `https://t.me/${s.bot}${code ? `?start=${code}` : ""}`, error: s.chat || code ? (problem ?? refused) : null };
 }
 
@@ -162,14 +163,19 @@ export async function connect(userId: string, pasted: string): Promise<void> {
     await callWith(token, "setMyCommands", { commands: [{ command: "brief", description: "What needs you now" }] });
   } catch (e) {
     const code = (e as { code?: unknown }).code;
-    throw fail(code === 401 || code === 404 ? "Telegram does not know that token. Copy it again from BotFather." : inWords(e), 502);
+    if (typeof code === "number") throw fail(code === 401 || code === 404 ? "Telegram does not know that token. Copy it again from BotFather." : inWords(e), 502);
+    // Some networks block Telegram's bot service. The token is kept, and the
+    // bot is set up once it can be reached (listen).
+    me = { id: Number(token.split(":")[0]), username: "" };
+    problem = inWords(e);
   }
   const had = await state();
   if (had) await disconnect(had.user_id);
   const token_ref = `telegram:${me.id}`;
   secrets.set(token_ref, token);
   await db.from("telegram").insert({ user_id: userId, bot: me.username, token_ref, ...makeCode() });
-  problem = refused = null;
+  if (me.username) problem = null;
+  refused = null;
   listen();
 }
 
@@ -558,10 +564,18 @@ export function listen(): void {
     let wait = 0;
     while (!mine.signal.aborted) {
       const s = await state();
-      if (!s || !(s.chat || pairing(s))) break;
+      if (!s || !(s.chat || pairing(s) || !s.bot)) break;
       try {
         const token = secrets.get(s.token_ref);
         if (!token) throw Object.assign(new Error(LOST), { code: 401 });
+        if (!s.bot) {
+          const me = (await callWith(token, "getMe")) as { username: string };
+          await callWith(token, "deleteWebhook");
+          await callWith(token, "setMyCommands", { commands: [{ command: "brief", description: "What needs you now" }] });
+          await keep(s, { bot: me.username, ...makeCode() });
+          problem = null;
+          continue;
+        }
         const updates = (await callWith(token, "getUpdates", { offset: s.next, timeout: wire.pollSeconds, allowed_updates: ["message", "callback_query"] }, (wire.pollSeconds + 15) * 1000, mine.signal)) as Row[];
         problem = null;
         wait = 0;
@@ -573,7 +587,7 @@ export function listen(): void {
       } catch (e) {
         if (mine.signal.aborted) return;
         problem = inWords(e);
-        wait = Math.min(BACKOFF_MS, Math.max(5_000, wait * 2, ((e as { wait?: number }).wait ?? 0) * 1000));
+        wait = Math.min(BACKOFF_MS, Math.max(wire.retryMs[0], wait * 2, ((e as { wait?: number }).wait ?? 0) * 1000));
         await rest(wait);
       }
     }

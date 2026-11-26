@@ -2854,6 +2854,23 @@ await telegram.disconnect(ansUser);
   telegram.wire.plus = "";
   plus.close();
 }
+{
+  // A network that blocks Telegram's bot service.
+  const realBase = telegram.wire.base;
+  telegram.wire.base = "http://127.0.0.1:9";
+  await telegram.connect(ansUser, tgToken);
+  const blocked = await telegram.telegramState(ansUser);
+  telegram.wire.base = realBase;
+  await until("Telegram reached", async () => (await telegram.telegramState(ansUser)).bot === "iris_mail_bot");
+  const reached = await telegram.telegramState(ansUser);
+  ok("a token pasted where Telegram cannot be reached is kept, and the bot is set up once it can be", () => {
+    assert.deepEqual([blocked.bot, blocked.reaching], [null, true]);
+    assert.match(String(blocked.error), /cannot be reached from this network/);
+    assert.match(reached.code ?? "", /^[A-Z2-9]{8}$/);
+    assert.equal(reached.error, null);
+  });
+  await telegram.disconnect(ansUser);
+}
 tgText("/brief");
 tellAll({ title: "Ann Lee", body: "x", emails: [tgNew] });
 await telegram.idle();

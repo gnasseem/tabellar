@@ -48,7 +48,7 @@ export const BUILT_IN_GOOGLE = {
 // The app registered with Microsoft that ships with Tabellar: its Application
 // (client) ID. A public client, so there is no secret. When empty, the user
 // registers their own.
-export const BUILT_IN_MICROSOFT = "";
+export const BUILT_IN_MICROSOFT = "5d0d05a5-5f0d-4942-a765-49eeb696596f";
 
 // The Tabellar+ service (plus/), where a code is exchanged for a model key.
 // When empty, Tabellar+ is not offered.
