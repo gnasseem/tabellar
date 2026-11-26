@@ -7,7 +7,7 @@
 // memory and are refreshed when they expire.
 
 import { createHash, randomBytes } from "node:crypto";
-import { getEnv, secrets } from "./config.ts";
+import { getEnv, secrets, signIns } from "./config.ts";
 
 export const SCOPES = [
   "openid",
@@ -102,16 +102,13 @@ export async function revokeGoogleTokens(ref: string): Promise<void> {
 
 // ── Sign-in ─────────────────────────────────────────────────────────────────
 
-const pendingSignIns = new Map<string, { verifier: string; redirectUri: string; expires: number }>();
-
 const b64url = (b: Buffer) => b.toString("base64url");
 
 export function signInUrl(redirectUri: string): string {
   const state = b64url(randomBytes(24));
   const verifier = b64url(randomBytes(48));
   const challenge = b64url(createHash("sha256").update(verifier).digest());
-  for (const [k, v] of pendingSignIns) if (v.expires < Date.now()) pendingSignIns.delete(k);
-  pendingSignIns.set(state, { verifier, redirectUri, expires: Date.now() + 10 * 60_000 });
+  signIns.add(state, { verifier, redirectUri, expires: Date.now() + 10 * 60_000 });
   const params = new URLSearchParams({
     client_id: getEnv("GOOGLE_CLIENT_ID"),
     redirect_uri: redirectUri,
@@ -129,9 +126,8 @@ export function signInUrl(redirectUri: string): string {
 
 // Finish sign-in: exchange the code, store the tokens, return the address.
 export async function finishSignIn(code: string, state: string): Promise<{ email: string; name: string; picture: string | null; tokenRef: string }> {
-  const pending = pendingSignIns.get(state);
-  pendingSignIns.delete(state);
-  if (!pending || pending.expires < Date.now()) throw new Error("This sign-in link has expired. Start again.");
+  const pending = signIns.take(state);
+  if (!pending) throw new Error("This sign-in link has expired. Start again.");
   const res = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     signal: AbortSignal.timeout(30_000),

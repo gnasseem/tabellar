@@ -2525,6 +2525,17 @@ const tgKept = new Map<string, string>();
 secrets.get = (ref) => tgKept.get(ref) ?? null;
 secrets.set = (ref, value) => void tgKept.set(ref, value);
 secrets.delete = (ref) => void tgKept.delete(ref);
+{
+  const { signInUrl } = await import("./google.ts");
+  const { microsoftSignInUrl, isMicrosoftState } = await import("./microsoft.ts");
+  const state = new URL(signInUrl("http://127.0.0.1:4848/oauth/callback")).searchParams.get("state")!;
+  const ms = new URL(microsoftSignInUrl("http://localhost:4848/oauth/callback")).searchParams.get("state")!;
+  ok("a sign-in under way is kept with the secrets, so a restart in the middle does not lose it", () => {
+    assert.ok(JSON.parse(tgKept.get("sign-ins")!)[state].verifier);
+    assert.ok(isMicrosoftState(ms) && !isMicrosoftState(state));
+  });
+  tgKept.delete("sign-ins");
+}
 type TgCall = { method: string; body: Record<string, any> };
 const tgCalls: TgCall[] = [];
 let tgUpdates: Record<string, any>[] = [];
@@ -2858,6 +2869,7 @@ await telegram.disconnect(ansUser);
   // A network that blocks Telegram's bot service.
   const realBase = telegram.wire.base;
   telegram.wire.base = "http://127.0.0.1:9";
+  telegram.wire.elsewhere = realBase;
   await telegram.connect(ansUser, tgToken);
   const blocked = await telegram.telegramState(ansUser);
   telegram.wire.base = realBase;
@@ -2865,7 +2877,7 @@ await telegram.disconnect(ansUser);
   const reached = await telegram.telegramState(ansUser);
   ok("a token pasted where Telegram cannot be reached is kept, and the bot is set up once it can be", () => {
     assert.deepEqual([blocked.bot, blocked.reaching], [null, true]);
-    assert.match(String(blocked.error), /cannot be reached from this network/);
+    assert.match(String(blocked.error), /Telegram is blocked on this network. Turn on a VPN/);
     assert.match(reached.code ?? "", /^[A-Z2-9]{8}$/);
     assert.equal(reached.error, null);
   });

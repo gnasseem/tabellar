@@ -189,6 +189,22 @@ const file = {
 export const KEYCHAIN = MAC && !process.env.TABELLAR_PASSPHRASE;
 export const secrets = { ...(KEYCHAIN ? keychain : file) };
 
+// Sign-ins under way (Google's and Microsoft's), kept with the secrets for ten
+// minutes, so one that comes back while Tabellar restarts is not lost.
+type SignIn = { verifier: string; redirectUri: string; expires: number };
+const liveSignIns = (): Record<string, SignIn> => Object.fromEntries(Object.entries(JSON.parse(secrets.get("sign-ins") ?? "{}") as Record<string, SignIn>).filter(([, v]) => v.expires > Date.now()));
+export const signIns = {
+  add(state: string, v: SignIn): void {
+    secrets.set("sign-ins", JSON.stringify({ ...liveSignIns(), [state]: v }));
+  },
+  has: (state: string): boolean => state in liveSignIns(),
+  take(state: string): SignIn | null {
+    const { [state]: v, ...rest } = liveSignIns();
+    if (v) secrets.set("sign-ins", JSON.stringify(rest));
+    return v ?? null;
+  },
+};
+
 // The token the interface and CLI present to the local server.
 export function accessToken(): string {
   let token = secrets.get("access-token");

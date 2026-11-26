@@ -32,7 +32,7 @@ import { displayName } from "./profile.ts";
 import { userCalendar } from "./providers.ts";
 
 // Where Telegram is; `tabellar check` puts its own there.
-export const wire = { base: "https://api.telegram.org", plus: PLUS_URL, pollSeconds: 50, retryMs: [5_000, 15_000, 60_000, 300_000, 900_000] };
+export const wire = { base: "https://api.telegram.org", elsewhere: "https://www.google.com/generate_204", plus: PLUS_URL, pollSeconds: 50, retryMs: [5_000, 15_000, 60_000, 300_000, 900_000] };
 
 const CODE_MS = 10 * 60_000;
 const QUOTE = 300; // the longest text shown in a list
@@ -101,7 +101,18 @@ function inWords(e: unknown): string {
   if (code === 401 || code === 404) return "Telegram does not accept the bot's token any more. Connect it again.";
   if (code === 409) return "Another program is using this bot. Stop it, or make a new bot.";
   if (code === 403) return "The bot was blocked in Telegram. Unblock it there.";
-  return typeof code === "number" ? (e as Error).message : "Telegram's bot service cannot be reached from this network. Tabellar keeps trying; it works on another network or through a VPN.";
+  if (typeof code === "number") return (e as Error).message;
+  return blocked ? BLOCKED : "There is no internet connection. Tabellar tries again by itself.";
+}
+
+// Some networks block Telegram's bot service while the rest of the internet
+// works. Bots need it all the time, not only to be set up; what is waiting
+// goes out once it answers again.
+const BLOCKED = "Telegram is blocked on this network. Turn on a VPN, or use another network; what is waiting goes out then.";
+let blocked = false;
+async function judge(e: unknown): Promise<string> {
+  if (typeof (e as { code?: unknown }).code !== "number") blocked = await fetch(wire.elsewhere, { method: "HEAD", signal: AbortSignal.timeout(8_000) }).then(() => true, () => false);
+  return inWords(e);
 }
 
 // ── Connecting ──────────────────────────────────────────────────────────────
@@ -167,7 +178,7 @@ export async function connect(userId: string, pasted: string): Promise<void> {
     // Some networks block Telegram's bot service. The token is kept, and the
     // bot is set up once it can be reached (listen).
     me = { id: Number(token.split(":")[0]), username: "" };
-    problem = inWords(e);
+    problem = await judge(e);
   }
   const had = await state();
   if (had) await disconnect(had.user_id);
@@ -376,7 +387,7 @@ async function deliver(n: Note): Promise<void> {
       const { code, wait } = e as { code?: unknown; wait?: number };
       const again = wire.retryMs[Math.min(tries, wire.retryMs.length - 1)];
       if ((typeof code === "number" && code !== 429 && code < 500) || Date.now() - since > TRY_MS) {
-        refused = inWords(e);
+        refused = await judge(e);
         return console.error("[telegram] a message did not go out:", (e as Error).message);
       }
       await new Promise((r) => setTimeout(r, Math.max(again, (wait ?? 0) * 1000)));
@@ -586,7 +597,7 @@ export function listen(): void {
         }
       } catch (e) {
         if (mine.signal.aborted) return;
-        problem = inWords(e);
+        problem = await judge(e);
         wait = Math.min(BACKOFF_MS, Math.max(wire.retryMs[0], wait * 2, ((e as { wait?: number }).wait ?? 0) * 1000));
         await rest(wait);
       }

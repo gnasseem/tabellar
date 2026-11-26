@@ -15,7 +15,7 @@
 // labels are Outlook categories.
 
 import { createHash, randomBytes } from "node:crypto";
-import { BUILT_IN_MICROSOFT, loadConfig, secrets } from "./config.ts";
+import { BUILT_IN_MICROSOFT, loadConfig, secrets, signIns } from "./config.ts";
 import { calendarHeaders, type CalendarEvent } from "./rules.ts";
 import { htmlToText } from "./mime.ts";
 import type { Box, CalEvent, Calendar, EmailData, HeaderRow, LabelChange, LinkedEvent, Mail, NewEvent, Outgoing, Sent } from "./providers.ts";
@@ -66,14 +66,12 @@ function accessToken(ref: string, renew = false): Promise<string> {
   return run;
 }
 
-const pending = new Map<string, { verifier: string; redirectUri: string; expires: number }>();
 
 // `host` is the public name the browser is to be sent on to, if there is one.
 export function microsoftSignInUrl(redirectUri: string, host = ""): string {
   const state = `ms.${randomBytes(24).toString("base64url")}${host ? `.${host}` : ""}`;
   const verifier = randomBytes(48).toString("base64url");
-  for (const [k, v] of pending) if (v.expires < Date.now()) pending.delete(k);
-  pending.set(state, { verifier, redirectUri, expires: Date.now() + 10 * 60_000 });
+  signIns.add(state, { verifier, redirectUri, expires: Date.now() + 10 * 60_000 });
   const q = new URLSearchParams({
     client_id: microsoftClientId(),
     response_type: "code",
@@ -88,12 +86,11 @@ export function microsoftSignInUrl(redirectUri: string, host = ""): string {
   return `${LOGIN}/authorize?${q}`;
 }
 
-export const isMicrosoftState = (state: string) => pending.has(state);
+export const isMicrosoftState = (state: string) => state.startsWith("ms.") && signIns.has(state);
 
 export async function finishMicrosoftSignIn(code: string, state: string): Promise<{ email: string; name: string; tokenRef: string }> {
-  const p = pending.get(state);
-  pending.delete(state);
-  if (!p || p.expires < Date.now()) throw new Error("This sign-in link has expired. Start again.");
+  const p = signIns.take(state);
+  if (!p) throw new Error("This sign-in link has expired. Start again.");
   const t = await tokenRequest({ grant_type: "authorization_code", code, redirect_uri: p.redirectUri, code_verifier: p.verifier });
   const me = await (await fetch(`${GRAPH}/me?$select=mail,userPrincipalName,displayName`, { headers: { Authorization: `Bearer ${t.access_token}` } })).json();
   const email = String(me.mail || me.userPrincipalName || "").toLowerCase();
