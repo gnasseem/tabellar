@@ -219,6 +219,42 @@ async function paid(e: Event): Promise<void> {
   if (on) void makeServer(p.id);
 }
 
+// ── Telegram bots in one tap ────────────────────────────────────────────────
+
+// Our bot manages the bots people make with one tap (Telegram's managed bots).
+// A Tabellar says which username it will offer and the hash of a secret; once
+// Telegram says that bot exists, the Tabellar with the secret gets its token,
+// once. Nothing of it is written down, and what is not claimed in 15 minutes
+// is forgotten.
+const telegram = (method: string, body: unknown) => call(`https://api.telegram.org/bot${env("TELEGRAM_MANAGER_TOKEN")}`, "", "POST", `/${method}`, body).then((r) => r?.result);
+const expected = new Map<string, { claim: string; until: number; bot?: number }>();
+const BOT_NAME = /^tabellar_[0-9a-f]{10}_bot$/;
+
+function forgetOld(): void {
+  for (const [k, v] of expected) if (v.until < Date.now()) expected.delete(k);
+}
+
+function expect(username: string, claim: string): string {
+  forgetOld();
+  if (!env("TELEGRAM_MANAGER") || !BOT_NAME.test(username) || claim.length < 40 || expected.has(username) || expected.size > 2000) throw Object.assign(new Error("Not now"), { status: 400 });
+  expected.set(username, { claim: hash(claim), until: Date.now() + 15 * 60_000 });
+  return `https://t.me/newbot/${env("TELEGRAM_MANAGER")}/${username}?name=Tabellar`;
+}
+
+function made(update: { managed_bot?: { bot?: { id?: number; username?: string } } }): void {
+  const bot = update.managed_bot?.bot;
+  const e = expected.get(String(bot?.username ?? ""));
+  if (e && bot?.id) e.bot = bot.id;
+}
+
+async function claimed(username: string, claim: string): Promise<string | null> {
+  const e = expected.get(username);
+  if (!e || e.until < Date.now() || !timingSafeEqual(Buffer.from(e.claim), Buffer.from(hash(claim)))) throw Object.assign(new Error("Unknown"), { status: 404 });
+  if (!e.bot) return null;
+  expected.delete(username);
+  return telegram("getManagedBotToken", { user_id: e.bot });
+}
+
 // ── The service ─────────────────────────────────────────────────────────────
 
 const full = () => many("plan = 'always'").length >= MAX_SERVERS;
@@ -250,6 +286,21 @@ const server = createServer(async (req, res) => {
       await paid(JSON.parse(raw.toString("utf8")) as Event);
       return json(200, { ok: true });
     }
+    if (req.method === "POST" && url.pathname === "/telegram") {
+      const secret = String(req.headers["x-telegram-bot-api-secret-token"] ?? "");
+      const want = derive("telegram", "webhook");
+      if (secret.length !== want.length || !timingSafeEqual(Buffer.from(secret), Buffer.from(want))) return json(401, { error: "No" });
+      made(JSON.parse((await bodyOf(req, 100_000)).toString("utf8")));
+      return json(200, { ok: true });
+    }
+    if (req.method === "POST" && url.pathname.startsWith("/api/telegram/")) {
+      const b = JSON.parse((await bodyOf(req, 4096)).toString("utf8") || "{}");
+      if (url.pathname === "/api/telegram/expect") return json(200, { link: expect(String(b.username ?? ""), String(b.claim ?? "")) });
+      if (url.pathname === "/api/telegram/claim") {
+        const token = await claimed(String(b.username ?? ""), String(b.claim ?? ""));
+        return json(token ? 200 : 202, token ? { token } : { waiting: true });
+      }
+    }
     if (req.method === "POST" && (url.pathname === "/api/key" || url.pathname === "/api/status")) {
       const p = byCode(String(JSON.parse((await bodyOf(req, 4096)).toString("utf8") || "{}").code ?? ""));
       if (!p) return json(404, { error: "That is not a Tabellar+ code, or the payment has not arrived yet." });
@@ -276,7 +327,7 @@ const server = createServer(async (req, res) => {
     }
     return send(404, page("Not found", "<h1>Not found</h1>"));
   } catch (e) {
-    const status = (e as { status?: number }).status === 413 ? 413 : 500;
+    const status = [400, 404, 413].includes((e as { status?: number }).status ?? 0) ? (e as { status: number }).status : 500;
     console.error(`[plus] ${req.method} ${url.pathname}:`, (e as Error).message);
     if (!res.headersSent) json(status, { error: "Something went wrong. Try again in a minute." });
   }
@@ -301,10 +352,13 @@ if (command === "invite") {
 } else if (command === "update") {
   await updateServers(argument ?? env("IMAGE"));
 } else if (command === "check") {
-  await (await import("./check.ts")).check({ add, byCode, derive, end, hash, makeServer, modelKey, one, paid, resume, server, signed, sweep, updateServers, wire });
+  await (await import("./check.ts")).check({ add, byCode, derive, end, expected, hash, makeServer, modelKey, one, paid, resume, server, signed, sweep, updateServers, wire });
 } else {
   if (env("MASTER").length < 32) throw new Error("MASTER has to be set, at least 32 characters.");
   server.listen(Number(env("PORT", "8080")), () => console.log("Tabellar+ is running."));
+  if (env("TELEGRAM_MANAGER_TOKEN")) {
+    telegram("setWebhook", { url: `${env("PUBLIC_URL")}/telegram`, secret_token: derive("telegram", "webhook"), allowed_updates: ["managed_bot"] }).catch((e) => console.error("[telegram]", (e as Error).message));
+  }
   let month = new Date().getUTCMonth();
   setInterval(() => {
     const now = new Date().getUTCMonth();

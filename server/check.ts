@@ -2818,6 +2818,42 @@ ok("an update is read once", () => {
   assert.equal(tgNext, tgUpdateId + 1);
 });
 await telegram.disconnect(ansUser);
+{
+  // One tap, through a fake Tabellar+.
+  const asked: Record<string, any>[] = [];
+  let claims = 0;
+  const plus = httpServer((req, res) => {
+    let raw = "";
+    req.on("data", (d) => (raw += d));
+    req.on("end", () => {
+      const b = JSON.parse(raw || "{}");
+      asked.push({ path: req.url, ...b });
+      if (req.url === "/api/telegram/expect") return res.end(JSON.stringify({ link: `https://t.me/newbot/tabellar_setup_bot/${b.username}?name=Tabellar` }));
+      res.writeHead(++claims < 2 ? 202 : 200);
+      res.end(JSON.stringify(claims < 2 ? { waiting: true } : { token: tgToken }));
+    });
+  });
+  await new Promise<void>((r) => plus.listen(0, "127.0.0.1", r));
+  const before = await telegram.telegramState(ansUser);
+  telegram.wire.plus = `http://127.0.0.1:${(plus.address() as { port: number }).port}`;
+  const { link } = await telegram.makeBot(ansUser);
+  const waiting = await telegram.telegramState(ansUser);
+  await new Promise((r) => setTimeout(r, 2_100));
+  await telegram.telegramState(ansUser);
+  await new Promise((r) => setTimeout(r, 2_100));
+  const made = await telegram.telegramState(ansUser);
+  ok("with Tabellar+, one tap makes the bot, and it pairs by its code as before", () => {
+    assert.deepEqual([before.oneTap, waiting.making, waiting.bot], [false, true, null]);
+    assert.match(link, /^https:\/\/t\.me\/newbot\/tabellar_setup_bot\/tabellar_[0-9a-f]{10}_bot\?name=Tabellar$/);
+    assert.equal(asked[0].claim, asked[1].claim);
+    assert.ok(asked[0].claim.length >= 40 && asked.every((a) => a.username === asked[0].username));
+    assert.equal(made.bot, "iris_mail_bot");
+    assert.match(made.code ?? "", /^[A-Z2-9]{8}$/);
+  });
+  await telegram.disconnect(ansUser);
+  telegram.wire.plus = "";
+  plus.close();
+}
 tgText("/brief");
 tellAll({ title: "Ann Lee", body: "x", emails: [tgNew] });
 await telegram.idle();

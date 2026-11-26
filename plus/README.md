@@ -9,6 +9,7 @@ The service behind a Tabellar+ subscription (`server.ts`, `pages.ts`), one Node 
 | `OPENROUTER_MANAGEMENT_KEY` | makes the keys |
 | `FLY_API_TOKEN`, `FLY_ORG`, `FLY_REGION`, `IMAGE` | makes the servers; `IMAGE` is the pushed `hosted` image |
 | `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`, `PADDLE_PRICE_PLUS`, `PADDLE_PRICE_ALWAYS` | payments, with the webhook at `/paddle` and the `subscription.*` events |
+| `TELEGRAM_MANAGER`, `TELEGRAM_MANAGER_TOKEN` | the bot that makes Telegram bots in one tap: its username and token, with "Bot management" turned on in BotFather. Its webhook is `/telegram` |
 | `OPEN=1` | anyone can pay; without it, invitations only |
 | `PLUS_DB` | the file, `/data/plus.db` by default |
 

@@ -27,7 +27,7 @@
 //   GET  /files/search          Attachments in the mailboxes beyond the mail kept here
 //   POST /calendar/prep         The last thread with a meeting's people and what is open
 //   POST /actions/approve|dismiss|undo   The action log
-//   GET  /telegram, POST /telegram/connect|code|disconnect   The user's own bot
+//   GET  /telegram, POST /telegram/connect|make|code|disconnect   The user's own bot
 //   GET  /automations, POST /automations/compile|enable|mode|try|delete   What to do from now on
 
 import { followupList, judgeSent } from "./followups.ts";
@@ -203,6 +203,7 @@ export async function handleApi(req: Request, path: string): Promise<Response> {
     if (path.startsWith("/telegram/") && req.method === "POST") {
       try {
         if (path === "/telegram/connect") await telegram.connect(userId, String((await req.json()).token ?? ""));
+        else if (path === "/telegram/make") return json(await telegram.makeBot(userId));
         else if (path === "/telegram/code") await telegram.newCode(userId);
         else if (path === "/telegram/disconnect") await telegram.disconnect(userId);
         else return json({ error: "Not found" }, 404);

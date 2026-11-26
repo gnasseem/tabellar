@@ -19,12 +19,12 @@
 // presses Read, and never an attachment. Text is sent as it is, never as markup, and links
 // in it are not fetched.
 
-import { randomInt } from "node:crypto";
+import { randomBytes, randomInt } from "node:crypto";
 import { answer, options, undoAnswer } from "./answers.ts";
 import { askTabellar } from "./ask.ts";
 import { brief, briefSettings, type Brief, type NeedItem } from "./brief.ts";
 import { inLine } from "./choices.ts";
-import { secrets } from "./config.ts";
+import { PLUS_URL, secrets } from "./config.ts";
 import { changes, db, type Change } from "./db.ts";
 import { kickEngine } from "./engine.ts";
 import { CHANNELS, inQuietHours, wallClock, type Hours, type Note } from "./notify.ts";
@@ -32,7 +32,7 @@ import { displayName } from "./profile.ts";
 import { userCalendar } from "./providers.ts";
 
 // Where Telegram is; `tabellar check` puts its own there.
-export const wire = { base: "https://api.telegram.org", pollSeconds: 50, retryMs: [5_000, 15_000, 60_000, 300_000, 900_000] };
+export const wire = { base: "https://api.telegram.org", plus: PLUS_URL, pollSeconds: 50, retryMs: [5_000, 15_000, 60_000, 300_000, 900_000] };
 
 const CODE_MS = 10 * 60_000;
 const QUOTE = 300; // the longest text shown in a list
@@ -109,10 +109,43 @@ function inWords(e: unknown): string {
 const LETTERS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const makeCode = () => ({ code: Array.from({ length: 8 }, () => LETTERS[randomInt(LETTERS.length)]).join(""), code_until: new Date(Date.now() + CODE_MS).toISOString() });
 
+// ── One tap ─────────────────────────────────────────────────────────────────
+
+// Where Tabellar+ runs, its bot can have Telegram make a bot for the user
+// (managed bots): one tap there, and Tabellar+ hands this process the new
+// bot's token once, for the secret only this process holds. Tabellar+ is that
+// bot's manager, so it could ask Telegram for the token again.
+let making: { userId: string; username: string; claim: string; until: number; asked: number } | null = null;
+
+export async function makeBot(userId: string): Promise<{ link: string }> {
+  if (!wire.plus) throw fail("This copy of Tabellar makes the bot with BotFather.");
+  const username = `tabellar_${randomBytes(5).toString("hex")}_bot`;
+  const claim = randomBytes(32).toString("base64url");
+  const r = await fetch(`${wire.plus}/api/telegram/expect`, { method: "POST", signal: AbortSignal.timeout(20_000), headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, claim }) });
+  const d = (await r.json().catch(() => ({}))) as { link?: string; error?: string };
+  if (!r.ok || !d.link) throw fail(d.error ?? "Tabellar+ could not be reached. Make the bot with BotFather instead.", 502);
+  making = { userId, username, claim, until: Date.now() + 15 * 60_000, asked: 0 };
+  return { link: d.link };
+}
+
+// Whether the bot was made yet; asked at most every two seconds.
+async function madeYet(userId: string): Promise<void> {
+  const m = making;
+  if (!m || m.userId !== userId || Date.now() - m.asked < 2_000) return;
+  if (Date.now() > m.until) return void (making = null);
+  m.asked = Date.now();
+  const r = await fetch(`${wire.plus}/api/telegram/claim`, { method: "POST", signal: AbortSignal.timeout(20_000), headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username: m.username, claim: m.claim }) }).catch(() => null);
+  const d = r?.ok ? ((await r.json().catch(() => ({}))) as { token?: string }) : {};
+  if (!d.token || making !== m) return;
+  making = null;
+  await connect(userId, d.token);
+}
+
 // What Settings shows.
 export async function telegramState(userId: string) {
+  await madeYet(userId).catch((e) => console.error("[telegram] the new bot:", (e as Error).message));
   const s = await state();
-  if (!s || s.user_id !== userId) return { bot: null };
+  if (!s || s.user_id !== userId) return { bot: null, oneTap: !!wire.plus, making: making?.userId === userId };
   const code = !s.chat && pairing(s) ? s.code : null;
   return { bot: s.bot, who: s.chat ? s.who : null, paired: !!s.chat, code, link: `https://t.me/${s.bot}${code ? `?start=${code}` : ""}`, error: s.chat || code ? (problem ?? refused) : null };
 }

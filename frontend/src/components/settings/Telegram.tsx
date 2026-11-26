@@ -5,7 +5,7 @@ import { api } from "@/lib/outcomes";
 import { ErrorLine } from "../ModelSetup";
 import { Group, loadingLines, Row } from "./parts";
 
-type State = { bot: string | null; who?: string | null; paired?: boolean; code?: string | null; link?: string; error?: string | null };
+type State = { bot: string | null; oneTap?: boolean; making?: boolean; who?: string | null; paired?: boolean; code?: string | null; link?: string; error?: string | null };
 
 const POLL_MS = 2000;
 
@@ -26,8 +26,8 @@ export function Telegram() {
   }, []);
   useEffect(load, [load]);
 
-  // Until the code is sent from the phone, or has run out.
-  const waiting = !!state?.code;
+  // Until the bot is made, and until the code is sent from the phone or has run out.
+  const waiting = !!state?.code || !!state?.making;
   useEffect(() => {
     if (!waiting) return;
     const timer = setInterval(load, POLL_MS);
@@ -46,6 +46,20 @@ export function Telegram() {
     }
     setBusy(false);
   };
+  // The tab is opened before the link is known, or the browser blocks it.
+  const make = async () => {
+    const tab = window.open("about:blank", "_blank");
+    setError("");
+    try {
+      const { link } = (await api("/telegram/make", {})) as { link: string };
+      if (tab) tab.location.href = link;
+      else window.location.href = link;
+      load();
+    } catch (e) {
+      tab?.close();
+      setError((e as Error).message);
+    }
+  };
   const disconnect = () => {
     if (state?.paired && !window.confirm(`Disconnect @${state.bot}?\n\nNothing more goes to Telegram. The bot itself stays until you delete it in BotFather.`)) return;
     void run("disconnect");
@@ -55,6 +69,21 @@ export function Telegram() {
     <Group title="Telegram" note="Telegram can read what a bot sends you: who wrote, the summary, short answers, and a longer draft when you press Read. Attachments are never sent.">
       {!state ? (
         error ? <ErrorLine text={error} /> : loadingLines
+      ) : !state.bot && state.making ? (
+        <Row name="Waiting for Telegram" text="Press Create there. This goes on by itself.">
+          <button className="btn btn-plain btn-sm" onClick={make}>
+            Open it again
+          </button>
+        </Row>
+      ) : !state.bot && state.oneTap && !open ? (
+        <Row name="On your phone" text={error ? <span className="text-danger">{error}</span> : "The Brief and what needs you, answered there, through a bot of your own"}>
+          <button className="btn btn-sm" onClick={make}>
+            Make the bot in Telegram
+          </button>
+          <button className="btn btn-plain btn-sm" onClick={() => setOpen(true)}>
+            With BotFather
+          </button>
+        </Row>
       ) : !state.bot ? (
         <>
           <Row name="On your phone" text="The Brief and what needs you, answered there, through a bot of your own">

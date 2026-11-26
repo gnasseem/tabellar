@@ -25,6 +25,10 @@ export async function check(t: Parts): Promise<void> {
     const say = (status: number, data?: unknown) => new Response(data === undefined ? null : JSON.stringify(data), { status });
     if (refuse && path.endsWith(refuse)) return say(500, { error: "down" });
     const id = path.split("/")[2];
+    if (u.host === "api.telegram.org") {
+      calls.push({ method, path: u.pathname.replace(/^\/bot[^/]+/, ""), body });
+      return say(200, { ok: true, result: `${body.user_id}:token` });
+    }
     if (u.host === "openrouter.ai") {
       if (method === "POST") {
         const hash = `h${++n}`;
@@ -144,6 +148,29 @@ export async function check(t: Parts): Promise<void> {
     assert.deepEqual([kept, apps.size, t.one("subscription = ?", "sub_1")], [1, 0, undefined]);
     assert.ok(t.one("id = ?", plus.id), "the other subscription is untouched");
     assert.equal(keys.size, 1);
+  });
+  process.env.TELEGRAM_MANAGER = "tabellar_setup_bot";
+  process.env.TELEGRAM_MANAGER_TOKEN = "123:manager";
+  const name = "tabellar_0123456789_bot";
+  const claim = randomBytes(32).toString("base64url");
+  const link = await post("/api/telegram/expect", { username: name, claim });
+  const badNames = [await post("/api/telegram/expect", { username: "someone_else_bot", claim }), await post("/api/telegram/expect", { username: name, claim: newCode() })];
+  const early = await post("/api/telegram/claim", { username: name, claim });
+  const hook = (body: unknown, secret = t.derive("telegram", "webhook")) => fetch(`${base}/telegram`, { method: "POST", headers: { "x-telegram-bot-api-secret-token": secret }, body: JSON.stringify(body) });
+  const forged = await hook({ managed_bot: { bot: { id: 99, username: name } } }, "wrong");
+  const stillEarly = await post("/api/telegram/claim", { username: name, claim });
+  await hook({ update_id: 1, managed_bot: { user: { id: 5 }, bot: { id: 777, username: name } } });
+  const stranger = await post("/api/telegram/claim", { username: name, claim: newCode() });
+  const got2 = await post("/api/telegram/claim", { username: name, claim });
+  const again = await post("/api/telegram/claim", { username: name, claim });
+  ok("a bot made in one tap goes to the Tabellar with the secret, once, and to nobody else", () => {
+    assert.equal(link.body.link, `https://t.me/newbot/tabellar_setup_bot/${name}?name=Tabellar`);
+    assert.deepEqual(badNames.map((r) => r.status), [400, 400]);
+    assert.deepEqual([early.status, forged.status, stillEarly.status, stranger.status], [202, 401, 202, 404]);
+    assert.equal(got2.status, 200);
+    assert.equal(got2.body.token, "777:token");
+    assert.equal(again.status, 404);
+    assert.deepEqual(calls.filter((c) => c.path === "/getManagedBotToken").map((c) => c.body), [{ user_id: 777 }]);
   });
   const pages = [await fetch(`${base}/`), await fetch(`${base}/start`), await fetch(`${base}/nothing`)];
   const front = await pages[0].text();
