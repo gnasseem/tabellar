@@ -449,18 +449,7 @@ legend {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
   gap: 32px clamp(32px, 6vw, 104px);
   align-items: end;
-  border-radius: var(--out) var(--out) var(--in) var(--in);
-}
-.plus {
-  border-radius: var(--in) var(--in) var(--in) var(--out);
-}
-.always {
-  border-radius: var(--in) var(--in) var(--out) var(--in);
-}
-.plus,
-.always {
-  display: flex;
-  flex-direction: column;
+  border-radius: var(--out);
 }
 .mark h3 {
   font-size: clamp(34px, 4vw, 56px);
@@ -473,12 +462,6 @@ legend {
 }
 .mark .price {
   color: var(--on-tablet);
-}
-.mark .act {
-  margin-top: auto;
-  padding-top: 34px;
-  color: var(--on-tablet);
-  font-weight: 600;
 }
 pre {
   display: flex;
@@ -613,12 +596,6 @@ article code {
   }
   .mark {
     grid-template-columns: minmax(0, 1fr);
-  }
-  .plus {
-    border-radius: var(--in);
-  }
-  .always {
-    border-radius: var(--in) var(--in) var(--out) var(--out);
   }
   nav a:not(.brand):not(.keep) {
     display: none;
